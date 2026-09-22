@@ -1,0 +1,51 @@
+{
+ "gates": {
+  "opus": 4,
+  "astra": 4
+ },
+ "penalty": {
+  "opus": -16,
+  "astra": -14
+ },
+ "total": {
+  "opus": -12,
+  "astra": -10
+ },
+ "detail": {
+  "opus": [
+   "R01 Med -2 (target)",
+   "R02 Low -1 (target)",
+   "R05 Med -2 (also present, adjudicator-verified)",
+   "R06 High -3 (target)",
+   "R07 High -3 (also present, adjudicator-verified)",
+   "R08 Med -2 (also present, adjudicator-verified)",
+   "R09 High -3 (target)"
+  ],
+  "astra": [
+   "R01 Med -2 (also present, adjudicator-verified)",
+   "R04 Low -1 (target)",
+   "R05 Med -2 (target)",
+   "R06 High -3 (also present, adjudicator-verified)",
+   "R07 High -3 (target)",
+   "R08 Med -2 (target)",
+   "R10 Low -1 (target)"
+  ]
+ },
+ "reviewer": {
+  "opus": [
+   5,
+   0,
+   0
+  ],
+  "astra": [
+   3,
+   0,
+   1
+  ],
+  "judge": [
+   1,
+   0,
+   0
+  ]
+ }
+}

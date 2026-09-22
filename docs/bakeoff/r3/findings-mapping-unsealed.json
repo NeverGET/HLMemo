@@ -1,0 +1,42 @@
+{
+ "R01": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "R02": {
+  "reviewer": "judge",
+  "target_sub": "B"
+ },
+ "R03": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "R04": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "R05": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "R06": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "R07": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "R08": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "R09": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "R10": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ }
+}
