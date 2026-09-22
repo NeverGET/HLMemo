@@ -17,6 +17,17 @@ from hlmemo.auth.tokens import hash_token
 from hlmemo.db import auth_queries as q
 
 
+async def lock_device_access(conn: AsyncConnection, device_id: int, *, exclusive: bool = False) -> None:
+    """Queue revoke ahead of new readers; row-level SHARE alone allows reader barging.
+
+    Namespace 3 is distinct from request/session advisory locks (1/2), and two-key
+    advisory locks are distinct from logical-id bigint locks. Hash collisions only
+    serialize unrelated devices, never grant access.
+    """
+    function = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+    await conn.execute(f"SELECT {function}(3, hashtext(%s))", (str(device_id),))
+
+
 def context_from_row(row: dict[str, Any], grants: list[tuple[int, str]], client: str) -> AuthContext:
     return AuthContext(
         device_id=int(row["device_id"]),
@@ -35,6 +46,7 @@ async def resolve(
     client: str = "unknown/0",
     allow_pending: bool = False,
     allow_revoked: bool = False,
+    exclusive: bool = False,
 ) -> tuple[AuthContext, dict[str, Any]]:
     """Resolve the calling device under FOR SHARE and load its grants.
 
@@ -46,8 +58,16 @@ async def resolve(
     """
     if not bearer:
         raise HlmError("E_AUTH", "missing bearer token")
-    row = await q.select_device_by_hash_for_share(conn, hash_token(bearer))
-    if row is None:
+    token_hash = hash_token(bearer)
+    cur = await conn.execute("SELECT device_id FROM devices WHERE token_sha256 = %s", (token_hash,))
+    identity = await cur.fetchone()
+    if identity is None:
+        raise HlmError("E_AUTH", "unknown token")
+    await lock_device_access(conn, int(identity[0]), exclusive=exclusive)
+    # The first lookup identifies only the lock key. Recheck the bearer and status
+    # under the row lock after waiting: a concurrent revoke/rebind may have committed.
+    row = await q.select_device_by_hash_for_share(conn, token_hash)
+    if row is None or int(row["device_id"]) != int(identity[0]):
         raise HlmError("E_AUTH", "unknown token")
     status = row["status"]
     if status == "revoked" and not allow_revoked:

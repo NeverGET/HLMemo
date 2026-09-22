@@ -499,10 +499,15 @@ def _check_shapes(batch: _Batch, plans: list[_Plan]) -> None:
 async def _authorize_revisions(
     conn: AsyncConnection, ctx: AuthContext, batch: _Batch, plans: list[_Plan]
 ) -> dict[int, list[q.VersionRow]]:
-    """§3 (3): for every revised logical id (items and ``expected_versions``) the home project is
-    immutable and must equal ``project`` (else ``E_NOT_FOUND``); write on home ∪ old ∪ new."""
+    """§3 (3): every current segment must pass §4.4 (a), including cards and pins.
+
+    The home is immutable and must equal ``project``. Hidden and missing targets have the same
+    error, before old-project grants, replay or head checks can disclose anything about them.
+    Once every target is visible, require write on home ∪ old ∪ new.
+    """
     home_id = batch.project.project_id
     cache: dict[int, list[q.VersionRow]] = {}
+    write_grants: list[tuple[set[int], str]] = []
 
     async def load(lid: int) -> list[q.VersionRow]:
         if lid not in cache:
@@ -514,25 +519,29 @@ async def _authorize_revisions(
             continue
         rows = await load(p.logical_id)
         p.old_rows = rows
-        if p.is_card:
-            if not rows:
-                continue  # first card version: create
-        elif not rows or rows[0].project_id != home_id:
+        if p.is_card and not rows:
+            continue  # first card version: create
+        if not rows or any(r.project_id != home_id or not _endpoint_visible(ctx, home_id, r) for r in rows):
             raise ToolError("E_NOT_FOUND", f"items[{p.index}]: unknown logical_id", index=p.index)
         needed = {home_id, *p.project_ids}
         for r in rows:
             needed.update(r.project_ids)
-        for pid in sorted(needed):
-            if not ctx.has(pid, Role.WRITE):
-                raise ToolError("E_FORBIDDEN_PROJECT", "missing write grant on a project of the revised item")
+        write_grants.append((needed, "missing write grant on a project of the revised item"))
         p.head = max(r.version_id for r in rows) if rows else None
     for lid, _vid in batch.expected_versions:
         rows = await load(lid)
-        if not rows or rows[0].project_id != home_id:
+        if not rows or any(r.project_id != home_id or not _endpoint_visible(ctx, home_id, r) for r in rows):
             raise ToolError("E_NOT_FOUND", "expected_versions: unknown logical_id", logical_id=lid)
-        for pid in sorted({home_id, *(pid for r in rows for pid in r.project_ids)}):
+        write_grants.append(
+            (
+                {home_id, *(pid for r in rows for pid in r.project_ids)},
+                "missing write grant on a project of a pinned item",
+            )
+        )
+    for needed, message in write_grants:
+        for pid in sorted(needed):
             if not ctx.has(pid, Role.WRITE):
-                raise ToolError("E_FORBIDDEN_PROJECT", "missing write grant on a project of a pinned item")
+                raise ToolError("E_FORBIDDEN_PROJECT", message)
     return cache
 
 
