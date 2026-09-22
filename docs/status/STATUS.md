@@ -23,7 +23,7 @@ Updated: 2026-09-22 12:05
 - PRIVATE: NeverGET/hlmemo-ops (our deployment; create at first deploy artifact)
 
 ## Next
-- Owner answers pending: NotebookLM migration, Hetzner CX43 confirm (D-005). Privacy tier RESOLVED (D-016: OpenRouter, cloud OK for now).
+- Owner answer pending: Hetzner CX43 confirm (D-005). NotebookLM question RESOLVED (D-020: HLMemo is the import target; legacy estate inventory in progress).
 - Phase-0 implementation plan (7 tables, 5 tools, hlm wrapper) → consult codex #03 on schema DDL
 
 ## 2026-09-22 11:25 — OpenRouter access

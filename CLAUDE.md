@@ -24,4 +24,4 @@ Librarian model, embedding model, DB and hosting are configuration, never code. 
 - `docs/status/`     — save-state for resuming sessions (STATUS.md is the first thing to read)
 
 ## Project Memory
-Not yet migrated to NotebookLM-first memory (decision pending, see STATUS.md).
+This project is deliberately NOT on the NotebookLM-first protocol (D-020): HLMemo is the target that legacy memories (NotebookLM, serena, auto-memory) will be migrated INTO. Use docs/status/STATUS.md + docs/decisions/ as the memory layer here; Claude auto-memory is fine for personal working notes.
