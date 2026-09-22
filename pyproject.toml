@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hlmemo"
+version = "0.0.1"
+description = "HLMemo — self-hosted, bi-temporal long-term memory for CLI coding agents, exposed as one remote MCP server."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Cemal Kurt" }]
+# Pins verified against PyPI on 2026-09-22 (docs/decisions/PHASE0-ASSUMPTIONS-VERIFIED.md, PHASE0-SPEC.md §6).
+dependencies = [
+  "mcp==2.2.*",
+  "psycopg[binary,pool]==3.3.*",
+  "alembic==1.20.*",
+  "pgvector==0.5.*",
+  "onnxruntime==1.30.*",
+  "tokenizers==0.23.*",
+  "tiktoken==0.14.*",
+  "pydantic==2.13.*",
+  "pydantic-settings>=2.10,<3",
+  "typer==0.27.*",
+  "httpx==0.28.*",
+  "keyring==25.*",
+  "starlette>=0.47,<1",
+  "uvicorn[standard]>=0.34,<1",
+  "sqlalchemy>=2.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.*",
+  "pytest-asyncio>=1.0,<2",
+  "ruff>=0.12",
+]
+
+[project.scripts]
+hlm = "hlmemo.cli.hlm:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hlmemo"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
+  "pytest==9.*",
+  "pytest-asyncio>=1.0,<2",
+  "ruff>=0.12",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+  "integration: needs a live Postgres (compose db / HLM_TEST_DSN)",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+src = ["src", "tests"]
+extend-exclude = ["bench", "alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]

@@ -1,0 +1,5 @@
+# Self-hosted OpenAI-compatible server (vLLM / Ollama). Set HLM_LLM_MODEL to the served model id.
+HLM_LLM_BASE_URL = "http://127.0.0.1:8000/v1"
+HLM_LLM_MODEL    = "<served-model>"
+HLM_LLM_API_KEY  = "none"
+extra = { temperature = 0 }

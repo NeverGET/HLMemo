@@ -1,0 +1,41 @@
+# HLMemo configuration (PHASE0-SPEC §5). Copy to ./hlm.toml or ~/.config/hlm/hlm.toml.
+# Precedence: CLI flags > HLM_* env > ./hlm.toml > ~/.config/hlm/hlm.toml > profile > defaults.
+# "env:NAME" and "${NAME}" are expanded from the environment. Secrets never live in this file.
+
+[hlm]
+profile          = "openrouter"            # profiles/<name>.toml or [profiles.<name>] below
+fallback_profile = "openai"
+HLM_DB_DSN       = "env:HLM_DB_DSN"        # e.g. postgresql://hlm:hlm@127.0.0.1:5432/hlm
+HLM_EMBED_MODEL  = "intfloat/multilingual-e5-small"
+HLM_EMBED_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"   # mirrored in models.lock
+HLM_HOSTING_TARGET = "compose"
+# HLM_ADMIN_TOKEN = "env:HLM_ADMIN_TOKEN"  # bootstrap secret for device 1 (§2); env only
+# HLM_REGISTRATION_SECRET = "env:HLM_REGISTRATION_SECRET"
+
+[client]
+server_url  = "http://127.0.0.1:8765/mcp"
+project     = "hlmemo"
+device_name = "mbp-personal"               # token lives in keychain / credentials.toml
+
+[preflight]
+budget     = 3000
+timeout_s  = 5
+on_failure = "block"                       # block | warn
+
+# Inline profiles override profiles/<name>.toml key by key.
+[profiles.openrouter]
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "deepseek/deepseek-v4.1-flash"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+HLM_LLM_REASONING = '{"enabled":false}'
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny" } }
+
+[profiles.openai]
+HLM_LLM_BASE_URL = "https://api.openai.com/v1"
+HLM_LLM_MODEL    = "gpt-5.6-luna"
+HLM_LLM_API_KEY  = "env:OPENAI_API_KEY"
+
+[profiles.local-vllm]
+HLM_LLM_BASE_URL = "http://127.0.0.1:8000/v1"
+HLM_LLM_MODEL    = "<served-model>"
+HLM_LLM_API_KEY  = "none"

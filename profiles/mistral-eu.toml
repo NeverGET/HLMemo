@@ -1,0 +1,5 @@
+# EU-resident Mistral endpoint (D-009 shortlist).
+HLM_LLM_BASE_URL = "https://api.eu.mistral.ai/v1"
+HLM_LLM_MODEL    = "mistral-small-2603"
+HLM_LLM_API_KEY  = "env:MISTRAL_API_KEY"
+extra = { response_format = { type = "json_object" }, temperature = 0 }

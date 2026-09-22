@@ -1,0 +1,90 @@
+# HLMemo local stack (PHASE0-SPEC §6, D-004). Everything must pass the gates here before any VPS deploy.
+name: hlmemo
+
+x-app-env: &app-env
+  HLM_DB_DSN: postgresql://hlm:hlm@db:5432/hlm
+  HLM_ADMIN_TOKEN: ${HLM_ADMIN_TOKEN:-}
+  HLM_REGISTRATION_SECRET: ${HLM_REGISTRATION_SECRET:-}
+  HLM_PROFILES_DIR: /app/profiles
+  PYTHONUNBUFFERED: "1"
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg17   # verified 2026-09-22 (PHASE0-ASSUMPTIONS-VERIFIED.md row 8a)
+    environment:
+      POSTGRES_USER: hlm
+      POSTGRES_PASSWORD: hlm
+      POSTGRES_DB: hlm
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: ["postgres", "-c", "timezone=UTC", "-c", "log_min_duration_statement=250ms"]
+    ports:
+      - "${HLM_DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hlm -d hlm -h 127.0.0.1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  migrate:
+    build: .
+    image: hlmemo:dev
+    environment: *app-env
+    # `phase0@head` (not bare `head`): the deferred `hnsw` branch is a second head by design
+    # (alembic/versions/0002_hnsw.py) and must never be applied automatically.
+    command: ["alembic", "upgrade", "phase0@head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    image: hlmemo:dev
+    environment: *app-env
+    command: ["python", "-m", "hlmemo.server.app"]
+    ports:
+      - "${HLM_API_PORT:-8765}:8765"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: hlmemo:dev
+    environment: *app-env
+    command: ["python", "-m", "hlmemo.worker.main"]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"   # placeholder exits 0 until the outbox loop lands; switch to unless-stopped then
+
+  test:
+    profiles: ["test"]
+    build: .
+    image: hlmemo:dev
+    environment:
+      <<: *app-env
+      HLM_TEST_DSN: postgresql://hlm:hlm@db:5432/hlm
+    command: ["pytest", "-q", "tests/integration"]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

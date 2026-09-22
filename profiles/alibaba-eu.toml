@@ -1,0 +1,6 @@
+# Alibaba Model Studio, international (Frankfurt) endpoint, OpenAI-compatible mode (D-009 shortlist).
+HLM_LLM_BASE_URL  = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+HLM_LLM_MODEL     = "qwen3.8-flash"
+HLM_LLM_API_KEY   = "env:DASHSCOPE_API_KEY"
+HLM_LLM_REASONING = '{"enabled":false}'
+extra = { response_format = { type = "json_object" }, temperature = 0 }
