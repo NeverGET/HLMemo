@@ -8,8 +8,10 @@ Updated: 2026-09-22 12:05
 - research: librarian models (DeepSeek 0731 retired + EU-privacy blocked) → docs/research/01
 - research: VPS (Hetzner CX43 proposed) → docs/research/02
 - decisions D-001..D-016 logged; VALIDATION-GATES.md drafted
+## Done (cont.)
+- bench full run complete → D-019: deepseek-v4.1-flash (reasoning off) primary, gpt-5.6-luna fallback
 ## In flight
-- bench agent: empirical librarian bench harness (bench/) + 2-model smoke run
+- Phase-0 spec (Claude Plan agent) + codex consult #03 (DDL + interfaces), to be merged
 
 ## Open decisions (owner must answer)
 - Privacy tier for cloud librarian (PII scrubbing / EU routing / per-project opt-out)
@@ -22,7 +24,6 @@ Updated: 2026-09-22 12:05
 
 ## Next
 - Owner answers pending: NotebookLM migration, Hetzner CX43 confirm (D-005). Privacy tier RESOLVED (D-016: OpenRouter, cloud OK for now).
-- Full bench run on shortlist (qwen3.8-flash, gpt-5.6-luna, mistral-small-2603 + deepseek-flash as control)
 - Phase-0 implementation plan (7 tables, 5 tools, hlm wrapper) → consult codex #03 on schema DDL
 
 ## 2026-09-22 11:25 — OpenRouter access

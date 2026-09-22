@@ -13,6 +13,7 @@ Outputs bench/results/<timestamp>.json (raw, per call) and .md (summary table).
 from __future__ import annotations
 
 import argparse
+import signal
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
@@ -234,7 +235,7 @@ class Client:
 
         rec = {"used_response_format": use_rf, "reasoning_param": body.get("reasoning"), "attempts": 0, "error": None}
         dropped_rf = dropped_reasoning = False
-        for attempt in range(1, 5):
+        for attempt in range(1, 6):  # max 5 tries
             rec["attempts"] = attempt
             t0 = time.perf_counter()
             try:
@@ -259,7 +260,7 @@ class Client:
                 return rec
             if r.status_code in (408, 429, 500, 502, 503, 504):
                 rec["error"] = f"http {r.status_code}: {r.text[:200]}"
-                time.sleep(3 * attempt)
+                time.sleep(2 ** (attempt - 1) if r.status_code == 429 else 3 * attempt)  # 429: 1s,2s,4s,8s
                 continue
             if r.status_code != 200:
                 rec["error"] = f"http {r.status_code}: {r.text[:300]}"
@@ -330,6 +331,31 @@ def load_tasks(only: set[str] | None) -> list[tuple[str, dict]]:
     return out
 
 
+# Shared progress: every finished call lands here so a SIGTERM/SIGINT (or a crash) still
+# yields a results file for whatever completed, and a checkpoint is written every 25 calls.
+_PROGRESS = {"calls": [], "lock": threading.Lock(), "ctx": None, "checkpoint": None}
+
+
+def _record(rec: dict):
+    with _PROGRESS["lock"]:
+        _PROGRESS["calls"].append(rec)
+        n = len(_PROGRESS["calls"])
+        if _PROGRESS["ctx"] and n % 25 == 0:
+            args, models, models_json, client = _PROGRESS["ctx"]
+            ck = HERE / "results" / "checkpoint.json"
+            ck.write_text(json.dumps({"partial": True, "calls": _PROGRESS["calls"]}, ensure_ascii=False))
+            _PROGRESS["checkpoint"] = ck
+
+
+def _on_signal(signum, frame):
+    print(f"\n!! signal {signum}: writing partial results for {len(_PROGRESS['calls'])} completed calls", flush=True)
+    if _PROGRESS["ctx"]:
+        args, models, models_json, client = _PROGRESS["ctx"]
+        with _PROGRESS["lock"]:
+            finish(args, models, models_json, client, list(_PROGRESS["calls"]), partial=True)
+    os._exit(1)
+
+
 class SpendGuard:
     def __init__(self, cap: float):
         self.cap, self.total, self.lock, self.stop = cap, 0.0, threading.Lock(), False
@@ -364,19 +390,22 @@ def run_model(name: str, args, models_json: dict, client: "Client", tasks, guard
                     continue
                 resp = client.chat(model_id, user_msg, use_rf)
                 rec.update(resp)
+                rec["infra_error"] = bool(resp.get("error"))
                 obj, perr = parse_json(resp.get("content")) if not resp.get("error") else (None, resp["error"])
                 verr = validate(task, obj, case) if obj is not None else None
                 rec["parse_ok"] = obj is not None
                 rec["schema_ok"] = obj is not None and verr is None
-                rec["json_fail"] = not (rec["parse_ok"] and rec["schema_ok"])
+                # json_fail counts only model output faults; HTTP/infra faults (429 etc. after retries) are infra_error
+                rec["json_fail"] = not rec["infra_error"] and not (rec["parse_ok"] and rec["schema_ok"])
                 rec["fail_reason"] = perr or verr
                 rec["parsed"] = obj
-                if rec["json_fail"]:
+                if rec["json_fail"] or rec["infra_error"]:
                     rec["score"], rec["detail"] = 0.0, {}
                 else:
                     rec["score"], rec["detail"] = score(task, obj, case, cfg)
                 calls.append(rec)
-                flag = "OK " if not rec["json_fail"] else "BAD"
+                _record(rec)
+                flag = "ERR" if rec["infra_error"] else ("OK " if not rec["json_fail"] else "BAD")
                 print(f"  [{name}] {flag} {TASK_COLS[task]} {case['id']} run{run_i} score={rec['score']:.2f} "
                       f"{rec.get('latency_ms', '?')}ms tok={rec.get('prompt_tokens')}/{rec.get('completion_tokens')}"
                       f"{' r=' + str(rec['reasoning_tokens']) if rec.get('reasoning_tokens') else ''} "
@@ -403,20 +432,35 @@ def run(args) -> Path:
     tasks = load_tasks(set(args.tasks.split(",")) if args.tasks else None)
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     guard = SpendGuard(args.max_spend)
+    _PROGRESS["ctx"] = (args, models, models_json, client)
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGINT, _on_signal)
+    reused: dict[str, list[dict]] = {}
+    if args.reuse:
+        prev = json.loads(Path(args.reuse).read_text())
+        rerun = set(args.rerun.split(",")) if args.rerun else set()
+        for c in prev["calls"]:
+            if c["model"] in models and c["model"] not in rerun:
+                reused.setdefault(c["model"], []).append(c)
+        print(f"reusing {sum(len(v) for v in reused.values())} calls for {sorted(reused)} from {args.reuse}", flush=True)
+    todo = [m for m in models if m not in reused]
 
     with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:
-        per_model = list(ex.map(lambda n: run_model(n, args, models_json, client, tasks, guard), models))
-    calls = [c for lst in per_model for c in lst]
+        per_model = dict(zip(todo, ex.map(lambda n: run_model(n, args, models_json, client, tasks, guard), todo)))
+    calls = [c for m in models for c in (reused.get(m) or per_model.get(m) or [])]
+    ck = HERE / "results" / "checkpoint.json"
+    if ck.exists():
+        ck.unlink()
     return finish(args, models, models_json, client, calls)
 
 
-def finish(args, models, models_json, client, calls) -> Path:
-    ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+def finish(args, models, models_json, client, calls, partial: bool = False) -> Path:
+    ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + ("-partial" if partial else "")
     outdir = HERE / "results"
     outdir.mkdir(exist_ok=True)
     summary = summarize(models, models_json, client, calls)
     raw = {
-        "timestamp": ts, "args": vars(args), "system_prompt": SYSTEM_PROMPT,
+        "timestamp": ts, "partial": partial, "args": vars(args), "system_prompt": SYSTEM_PROMPT,
         "cost_model": {"jobs_per_day": JOBS_PER_DAY, "days": DAYS, "in_tokens": JOB_IN_TOKENS, "out_tokens": JOB_OUT_TOKENS},
         "summary": summary, "calls": calls,
     }
@@ -435,7 +479,7 @@ def summarize(models, models_json, client, calls) -> list[dict]:
         mc = [c for c in calls if c["model"] == name and not c.get("dry_run")]
         row = {"model": name, "model_id": model_id, "calls": len(mc)}
         for task, col in TASK_COLS.items():
-            tc = [c for c in mc if c["task"] == task]
+            tc = [c for c in mc if c["task"] == task and not c.get("infra_error")]
             row[col] = round(sum(c["score"] for c in tc) / len(tc), 4) if tc else None
         # variance: |run0 score - run1 score| per case, averaged per task, then over tasks
         task_vars = []
@@ -448,8 +492,10 @@ def summarize(models, models_json, client, calls) -> list[dict]:
             if diffs:
                 task_vars.append(sum(diffs) / len(diffs))
         row["variance"] = round(sum(task_vars) / len(task_vars), 4) if task_vars else None
+        row["infra_error"] = sum(1 for c in mc if c.get("infra_error"))
+        scored = [c for c in mc if not c.get("infra_error")]
         row["json_fail"] = sum(1 for c in mc if c["json_fail"])
-        row["json_fail_rate"] = round(row["json_fail"] / len(mc), 4) if mc else None
+        row["json_fail_rate"] = round(row["json_fail"] / len(scored), 4) if scored else None
         fails = [c for c in mc if c["json_fail"]]
         row["json_fail_examples"] = [
             {"case": f"{TASK_COLS[c['task']]}/{c['case_id']}/run{c['run']}", "reason": c.get("fail_reason"),
@@ -495,18 +541,18 @@ def fmt(v, pct=False):
 
 def render_md(ts, args, summary) -> str:
     lines = [
-        f"# Librarian bench {ts}", "",
+        f"# Librarian bench {ts}" + (" (PARTIAL: interrupted, only completed calls)" if "partial" in ts else ""), "",
         f"models=`{args.models}` runs={args.runs} reasoning={args.reasoning} tasks={args.tasks or 'all'}"
-        + (f" limit={args.limit}" if args.limit else ""), "",
+        + (f" limit={args.limit}" if args.limit else "") + (f" reuse={Path(args.reuse).name} rerun={args.rerun}" if args.reuse else ""), "",
         f"Monthly estimate = {JOBS_PER_DAY} jobs/day x {DAYS} days x ({JOB_IN_TOKENS} in + {JOB_OUT_TOKENS} out tokens). "
         "'list' = catalogue price; 'cached' = same, with the OpenRouter-observed cache-hit ratio of this run billed at the model's cache-read price ('-' = no cache hits observed).", "",
-        "| model | id | T1 | T2 | T3 | T4 | variance | JSON-fail | avg latency | avg out tok (reasoning) | cache hit | total cost USD | monthly list | monthly cached | reasoning param |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| model | id | T1 | T2 | T3 | T4 | variance | JSON-fail | infra_error | avg latency | avg out tok (reasoning) | cache hit | total cost USD | monthly list | monthly cached | reasoning param |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in summary:
         lines.append(
             f"| {r['model']} | `{r['model_id']}` | {fmt(r['T1'], True)} | {fmt(r['T2'], True)} | {fmt(r['T3'], True)} | {fmt(r['T4'], True)} "
-            f"| {fmt(r['variance'], True)} | {r['json_fail']}/{r['calls']} ({fmt(r['json_fail_rate'], True)}) | {fmt(r['avg_latency_ms'])} ms "
+            f"| {fmt(r['variance'], True)} | {r['json_fail']}/{r['calls'] - r['infra_error']} ({fmt(r['json_fail_rate'], True)}) | {r['infra_error']} | {fmt(r['avg_latency_ms'])} ms "
             f"| {fmt(r['avg_completion_tokens'])} ({r['reasoning_tokens']}) | {fmt(r['cache_hit_ratio'], True)} "
             f"| {r['total_cost_usd']:.4f} | {fmt(r['est_monthly_usd'])} | {fmt(r['est_monthly_usd_cached'])} | {r['reasoning_honored']} |"
         )
@@ -515,6 +561,7 @@ def render_md(ts, args, summary) -> str:
               "T3 = 0.7*Jaccard(clue_ids) + 0.3*length<=120w. T4 = 0.5*warn exact + 0.5*Jaccard(ids). "
               "variance = |run1 - run2| per case, averaged per task then over T1-T4 (needs --runs 2). "
               "JSON-fail = unparseable after fence strip OR schema violation (scored 0). "
+              "infra_error = HTTP 429/5xx/transport failure after 5 retries (1/2/4/8s backoff); excluded from task scores and JSON-fail rate. "
               "avg out tok = completion tokens per call incl. reasoning; (n) = total reasoning tokens reported by usage.",
               "", "## JSON-fail examples", ""]
     any_fail = False
@@ -540,6 +587,8 @@ def main():
     ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--parallel", type=int, default=4, help="models evaluated concurrently (calls within a model stay sequential)")
     ap.add_argument("--dry-run", action="store_true", help="build prompts, no API calls")
+    ap.add_argument("--reuse", default="", help="raw results .json: copy calls of models already in it instead of re-running them")
+    ap.add_argument("--rerun", default="", help="with --reuse: comma-separated models to run again anyway")
     args = ap.parse_args()
     run(args)
 

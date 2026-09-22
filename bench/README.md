@@ -56,3 +56,17 @@ cost, parse/schema status, fail reason, parsed object, score detail) plus the su
 `results/<timestamp>.md` — table: model | T1 | T2 | T3 | T4 | JSON-fail rate | avg latency |
 total cost USD | est. monthly USD (60 jobs/day x 30 d x 12K in + 1.5K out tokens, list price,
 no cache discount) | whether the low-reasoning request was honored (reasoning token count).
+
+## Robustness / merging (added after the first full run)
+
+- HTTP 429/5xx/transport errors are retried (429: 1s/2s/4s/8s backoff, 5 tries). If a call still fails it is
+  recorded as `infra_error`: excluded from task scores and from the JSON-fail rate, counted in its own column.
+- `--parallel N` evaluates N models concurrently (calls within a model stay sequential, so latency is per-call).
+- SIGTERM/SIGINT writes `results/<ts>-partial.{json,md}` from the calls completed so far; `results/checkpoint.json`
+  is refreshed every 25 calls and deleted on normal completion.
+- `--reuse results/<prev>.json [--rerun model_a,model_b]` copies the calls of models already present in a previous
+  raw file and runs only the missing (or `--rerun`) ones, then writes one merged results file. Use it to re-run a
+  single rate-limited model without paying for the others again.
+- Columns: `variance` = |run1 - run2| per case averaged over T1-T4 (needs `--runs 2`); `monthly list` vs
+  `monthly cached` (observed OpenRouter cache-hit ratio billed at the model's cache-read price);
+  `reasoning param` says whether `--reasoning low|off` was honored (reasoning tokens reported by usage).
