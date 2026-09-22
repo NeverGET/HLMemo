@@ -1,12 +1,15 @@
 # STATUS — HLMemo (read this first when resuming)
-Updated: 2026-09-22 11:20
+Updated: 2026-09-22 12:05
 
-## Phase: -1 (report analysis + foundational decisions). No code yet.
+## Phase: -1 (report analysis + foundational decisions). No product code yet. Repo public: https://github.com/NeverGET/HLMemo
 
+## Done this session
+- codex consults #01 (critique) and #02 (debate, converged) → docs/consults/
+- research: librarian models (DeepSeek 0731 retired + EU-privacy blocked) → docs/research/01
+- research: VPS (Hetzner CX43 proposed) → docs/research/02
+- decisions D-001..D-016 logged; VALIDATION-GATES.md drafted
 ## In flight
-- codex consult #01: architecture critique of the report → docs/consults/01-codex-architecture-critique.md
-- research agent: librarian model comparison (DeepSeek V4 Flash 0731 vs alternatives) → docs/research/01-librarian-model-analysis.md
-- research agent: VPS provider comparison → docs/research/02-vps-analysis.md
+- bench agent: empirical librarian bench harness (bench/) + 2-model smoke run
 
 ## Open decisions (owner must answer)
 - Privacy tier for cloud librarian (PII scrubbing / EU routing / per-project opt-out)
@@ -14,9 +17,9 @@ Updated: 2026-09-22 11:20
 - Language: Python vs TypeScript for MCP server (Claude leans Python)
 
 ## Next
-- Merge codex + claude positions into docs/decisions/ (D-006..D-008 resolved)
-- Write VALIDATION-GATES.md
-- Phase 0 implementation plan
+- Owner answers: privacy tier (D-016), NotebookLM migration, Hetzner CX43 confirm (D-005)
+- Full bench run on shortlist (qwen3.8-flash, gpt-5.6-luna, mistral-small-2603 + deepseek-flash as control)
+- Phase-0 implementation plan (7 tables, 5 tools, hlm wrapper) → consult codex #03 on schema DDL
 
 ## 2026-09-22 11:25 — OpenRouter access
 - Owner added `OPENROUTER_API_KEY` to `.env` (gitignored). Verified via /auth/key: paid tier, key valid.
