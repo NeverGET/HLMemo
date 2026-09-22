@@ -44,3 +44,6 @@ bench/results/*.json
 
 # codex scratch state
 .fable/
+
+# private (owner's estate details, belongs to hlmemo-ops)
+docs/private/
