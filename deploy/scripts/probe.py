@@ -4,13 +4,13 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import ssl
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from pathlib import Path
 
 
 class Probe:
@@ -24,7 +24,14 @@ class Probe:
         caddy = config["services"]["caddy"].get("environment", {})
         domain = os.environ.get("HLM_DOMAIN", caddy.get("HLM_DOMAIN", "localhost"))
         ports = config["services"]["caddy"].get("ports", [])
-        published = next((str(p["published"]) for p in ports if p.get("target") == 443 and p.get("protocol", "tcp") == "tcp"), "443")
+        published = next(
+            (
+                str(p["published"])
+                for p in ports
+                if p.get("target") == 443 and p.get("protocol", "tcp") == "tcp"
+            ),
+            "443",
+        )
         port = os.environ.get("BAKE_HTTPS_PORT", os.environ.get("HLM_HTTPS_PORT", published))
         self.url = os.environ.get("HLM_SMOKE_URL", f"https://{domain}:{port}").rstrip("/")
         parsed = urllib.parse.urlsplit(self.url)
@@ -50,7 +57,9 @@ class Probe:
         if body is not None:
             headers["Content-Type"] = "application/json"
         headers.update(extra or {})
-        req = urllib.request.Request(self.url + path, data=None if body is None else json.dumps(body).encode(), headers=headers)
+        req = urllib.request.Request(
+            self.url + path, data=None if body is None else json.dumps(body).encode(), headers=headers
+        )
         with urllib.request.urlopen(req, context=self.context, timeout=90) as response:
             self.session = response.headers.get("Mcp-Session-Id", self.session)
             raw = response.read().decode()
@@ -58,7 +67,9 @@ class Probe:
                 return None
             if "text/event-stream" in response.headers.get("Content-Type", ""):
                 for event in raw.split("\n\n"):
-                    data = "\n".join(line[5:].lstrip() for line in event.splitlines() if line.startswith("data:"))
+                    data = "\n".join(
+                        line[5:].lstrip() for line in event.splitlines() if line.startswith("data:")
+                    )
                     if data:
                         parsed = json.loads(data)
                         if "result" in parsed or "error" in parsed:
@@ -82,7 +93,15 @@ class Probe:
         return answer["result"]
 
     def initialize(self, token):
-        init = self.rpc(token, "initialize", {"protocolVersion": self.protocol, "capabilities": {}, "clientInfo": {"name": "deploy-probe", "version": "1"}})
+        init = self.rpc(
+            token,
+            "initialize",
+            {
+                "protocolVersion": self.protocol,
+                "capabilities": {},
+                "clientInfo": {"name": "deploy-probe", "version": "1"},
+            },
+        )
         self.protocol = init["protocolVersion"]
         self.rpc(token, "notifications/initialized", notification=True)
         tools = self.rpc(token, "tools/list")["tools"]
@@ -106,12 +125,20 @@ class Probe:
             if not any(item["slug"] == project for item in projects):
                 raise
             project_status = "reused"
-        registered = self.request("/devices/register", {"name": name, "class": "ci", "fingerprint": str(uuid.uuid4()), "client": "deploy-probe/1"}, extra={"X-HLM-Registration-Secret": self.settings.get("HLM_REGISTRATION_SECRET", "")})
+        registered = self.request(
+            "/devices/register",
+            {"name": name, "class": "ci", "fingerprint": str(uuid.uuid4()), "client": "deploy-probe/1"},
+            extra={"X-HLM-Registration-Secret": self.settings.get("HLM_REGISTRATION_SECRET", "")},
+        )
         device_id = registered["device"]["id"]
         token = registered["token"]
         state = {"project": project, "project_status": project_status, "token": token, "device_id": device_id}
         try:
-            self.request("/devices/approve", {"id": device_id, "class": "ci", "grants": [{"project": project, "role": "write"}]}, self.admin)
+            self.request(
+                "/devices/approve",
+                {"id": device_id, "class": "ci", "grants": [{"project": project, "role": "write"}]},
+                self.admin,
+            )
             self.initialize(token)
         except BaseException:
             self.revoke(state)
@@ -137,7 +164,10 @@ def main():
     if args.mode == "smoke":
         state = probe.bootstrap()
         probe.revoke(state)
-        print(f"PASS G-D3: HTTPS initialize + tools/list returned all five memory tools; project deploy-smoke {state['project_status']}; device revoked")
+        print(
+            "PASS G-D3: HTTPS initialize + tools/list returned all five memory tools; "
+            f"project deploy-smoke {state['project_status']}; device revoked"
+        )
         return
     if args.state is None:
         parser.error("--state is required for write/read")
@@ -145,7 +175,17 @@ def main():
         state = probe.bootstrap()
         try:
             state["marker"] = "Backup drill payload " + str(uuid.uuid4())
-            result = probe.call(state["token"], "memory.write", {"project": state["project"], "request_id": str(uuid.uuid4()), "client": "deploy-probe/1", "items": [{"kind": "fact", "title": "Backup restore drill", "body": state["marker"]}], "token_budget": 2000})
+            result = probe.call(
+                state["token"],
+                "memory.write",
+                {
+                    "project": state["project"],
+                    "request_id": str(uuid.uuid4()),
+                    "client": "deploy-probe/1",
+                    "items": [{"kind": "fact", "title": "Backup restore drill", "body": state["marker"]}],
+                    "token_budget": 2000,
+                },
+            )
             state["version_id"] = result["versions"][0]["version_id"]
             fd = os.open(args.state, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             with os.fdopen(fd, "w") as stream:
@@ -158,7 +198,11 @@ def main():
         state = json.loads(args.state.read_text())
         try:
             probe.initialize(state["token"])
-            result = probe.call(state["token"], "memory.raw", {"project": state["project"], "version_id": state["version_id"], "token_budget": 4000})
+            result = probe.call(
+                state["token"],
+                "memory.raw",
+                {"project": state["project"], "version_id": state["version_id"], "token_budget": 4000},
+            )
             if result["payload_item"]["body"] != state["marker"]:
                 raise ValueError("Restored payload does not match the original write")
         finally:

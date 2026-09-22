@@ -4,7 +4,51 @@ This directory implements DP1 (D-032). No cloud resource is needed to validate i
 belongs outside this checkout (D-018); the public templates contain placeholders. Commands below
 are operator instructions, not evidence that a VPS has been provisioned. Never use the development
 Compose project `hlmemo` for these scripts. Requirements: Docker Engine + Compose **2.24+**, Bash,
-Python 3, curl, `flock` (Ubuntu util-linux; macOS `brew install flock`); Terraform **1.6+** for provisioning; AWS CLI only for optional uploads.
+Python 3, curl, `flock` (Ubuntu util-linux; macOS `brew install flock`); Terraform **1.6+** only for optional Hetzner provisioning; AWS CLI only for optional uploads.
+
+## Provision any Ubuntu 24.04 VPS
+
+The launch target (D-042) is **2 vCPU / 8 GB RAM**, with local e5-small in both API and worker
+(e.g. Hostinger KVM 2 or OVH VPS-2). Use any provider's fresh Ubuntu 24.04 image. This script
+creates no cloud resources; obtain the host separately and verify its SSH host-key fingerprint
+through the provider console. Keep that console and the original SSH session available until
+another deploy-user login succeeds. The script supports SSH port 22 and requires root/sudo.
+
+```sh
+# Operator workstation: public key only; --dry-run makes no changes.
+bash deploy/bootstrap.sh --ssh-key ~/.ssh/id_ed25519.pub --dry-run
+scp -o StrictHostKeyChecking=yes deploy/bootstrap.sh ~/.ssh/id_ed25519.pub root@SERVER:/tmp/
+ssh -o StrictHostKeyChecking=yes root@SERVER \
+  'bash /tmp/bootstrap.sh --ssh-key /tmp/id_ed25519.pub'
+# Optional restricted SSH ingress: append --admin-cidr YOUR_ADMIN_IP/32 (or IPv6 /128).
+# The CIDR must include this SSH session's actual source. Existing unrelated UFW rules remain.
+
+# A NEW session explicitly proves deploy-user key authentication before hardening:
+ssh -o StrictHostKeyChecking=yes -o PasswordAuthentication=no \
+  -o KbdInteractiveAuthentication=no hlmdeploy@SERVER \
+  'sudo --preserve-env=SSH_CONNECTION,SSH_USER_AUTH bash /tmp/bootstrap.sh --finalize-ssh'
+# Keep that session open; verify another login and services before disconnecting the original.
+ssh -o StrictHostKeyChecking=yes hlmdeploy@SERVER \
+  'docker compose version && systemctl is-active docker fail2ban unattended-upgrades'
+```
+
+For an image with an existing sudo user, copy to that user's `/tmp` paths and run preparation
+with `sudo --preserve-env=SSH_CONNECTION bash /tmp/bootstrap.sh ...`. Use `--deploy-user NAME`
+in both phases to change the default `hlmdeploy`. Preparation installs Docker Engine and Compose
+from [Docker's signed apt repository](https://docs.docker.com/engine/install/ubuntu/), fail2ban,
+unattended upgrades (no automatic reboot), and UFW TCP 22/80/443 plus UDP 443. It creates
+`/opt/hlmemo`, `/var/backups/hlmemo`, `/etc/hlmemo` owned by the deploy user, mode 0750.
+Docker-group and passwordless-sudo membership grant administrative privilege.
+
+Preparation preserves existing root/password access. `--finalize-ssh` requires an authenticated
+public-key SSH session as the deploy user (OpenSSH `ExposeAuthInfo`), validates effective sshd
+configuration, then disables root/password login; a configuration/reload failure restores the
+prior drop-in. Re-running preparation appends no duplicate key, retains completed hardening,
+and keeps installed Docker versions. Patch/upgrade Docker deliberately in a maintenance window.
+`--prepare-only` skips service/firewall activation for non-systemd container tests; it does **not**
+produce a ready VPS. Docker publishes ports outside ordinary UFW filtering, so never publish
+API/DB ports; Compose publishes only Caddy. See the optional Terraform path below for managed
+provider firewall rules, then continue with configuration and first deployment.
 
 ## Configuration and local gate
 
@@ -51,6 +95,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:18443/anything-else
 bash deploy/scripts/smoke_tls.sh
 bash deploy/scripts/smoke_mcp.sh
 bash deploy/scripts/smoke_mcp.sh # same deploy-smoke project; device revoked after each run
+bash deploy/scripts/smoke_edge.sh # 5 MB through Caddy + actual TLS client IP in API log
 HLM_ALLOW_DESTRUCTIVE_DRILL=1 bash deploy/scripts/drill_backup_restore.sh
 HLM_ALLOW_DESTRUCTIVE_DRILL=1 bash deploy/scripts/drill_deploy_backup.sh
 bash deploy/scripts/stack.sh down -v   # disposable LOCAL bake data only
@@ -71,17 +116,34 @@ docker compose -f deploy/compose.prod.yaml --env-file deploy/.env.prod.example c
 That command is the example-only G-D1; replace paths with private files for actual operation.
 Scripts supply these paths automatically. Missing service files fail closed.
 
-`api`, `db` and `worker` have no published host ports. Resource ceilings are DB 4 GiB/2 CPUs,
-API 3 GiB/2 CPUs, worker 4 GiB/3 CPUs, migration 1 GiB/1 CPU, Caddy 256 MiB/0.5 CPU; these are limits,
-not reservations. Migration is intentionally one-shot, `restart: no`, and must exit zero.
+`api`, `db` and `worker` have no published host ports. Limits for the **2 vCPU / 8 GB** host:
+
+| Service | Memory ceiling | CPU ceiling |
+|---|---:|---:|
+| PostgreSQL | 2 GiB | 1 |
+| API (local e5-small) | 1.5 GiB | 1 |
+| Worker (local e5-small) | 1.5 GiB | 1 |
+| Migration (one-shot) | 768 MiB | 1 |
+| Caddy | 256 MiB | 0.5 |
+
+Steady ceilings total **5.25 GiB**; including migration, **6 GiB**, leaving about 2 GiB on an
+8 GiB host for Linux, Docker and other host services. Decimal 8 GB hosts have about 1.45 GiB
+headroom at the full combined ceiling. Limits are not reservations; CPU limits share the two
+physical vCPUs. e5-small is roughly 0.5 GB per process (D-042); the API/worker ceilings allow
+runtime/query overhead. PostgreSQL uses `shared_buffers=512MB`, `work_mem=4MB`,
+`maintenance_work_mem=128MB`, `max_connections=50`, and 512 MiB shared memory. `work_mem` applies
+per sort/hash operation, not once per connection; avoid increasing concurrency without measuring.
+The example API/worker pools each max at 8 connections. Monitor container RSS, OOM events and
+query latency on the actual VPS; these limits are capacity planning, not a production load test.
+Migration is intentionally one-shot, `restart: no`, and must exit zero.
 Logs rotate at 5 × 10 MiB per container. Worker health checks observe successful poll-loop log
 heartbeats; missing heartbeats for 180 seconds fail health. Docker does not automatically restart
 an unhealthy but running process: alert on unhealthy state and aging job backlog. Caddy's container
 probe checks its local admin listener; the external `/ready` probe verifies end-to-end service.
 
-## Provisioning (operator-controlled, incurs cost)
+## Alternative: Terraform provisioning on Hetzner (incurs cost)
 
-Confirm D-005 server choice, price and location before provisioning. No `terraform apply` is part
+Terraform remains optional. Confirm server size (at least the D-042 8 GB target), price and location before provisioning. No `terraform apply` is part
 of the tooling tests. Keep `HCLOUD_TOKEN` in your shell's secret manager, never tfvars. Put only the
 SSH **public** key and restricted administrator CIDRs into a private tfvars file outside Git.
 Terraform state contains infrastructure information; use an encrypted private backend with locking
@@ -202,10 +264,16 @@ immutable commit, builds including model assets, takes a snapshot-consistent pre
 the DB and writers are live, then stops writers and runs `alembic upgrade phase0@head`, starts with
 `up -d --wait`, verifies API readiness and local Caddy routing, then checks public HTTPS readiness
 with certificate validation. The runner itself is extracted on the server with `git show` from
-that same fetched commit. A ref without `deploy/scripts/remote-deploy.sh` is rejected before any
-checkout, build, backup or restore. A first uncached model build can take several minutes.
-Application images use `repository:<commit-sha>`; an existing release image is reused without
-retagging/rebuilding. Before an upgrade, the actual running baseline is frozen under its previous
+that same fetched commit. A ref without `deploy/scripts/remote-deploy.sh`, or without the exact supported
+`HLM_RUNNER_PROTOCOL=3` marker, is rejected before checkout, build, backup or restore. Older and
+unknown protocols are refused; the bootstrap retains its deployment lock across runner handoff. A first uncached model build can take several minutes.
+Application images use `repository:<commit-sha>`; each release build carries `org.opencontainers.image.revision=<target-sha>`.
+An existing image is reused only if that label matches the target. The label is checked again
+before migration and application startup. Missing/mismatched labels abort instead of overwriting
+an immutable tag; investigate/remove a known corrupt unused target image explicitly before retrying.
+Legacy unlabeled running images remain recoverable by captured image ID, but cannot be reused as
+new deployment targets. Local unversioned test builds carry `local`; set `HLM_IMAGE_REVISION`
+to the source SHA for deliberate release builds. Before an upgrade, the actual running baseline is frozen under its previous
 SHA (API and worker must agree). `prod.env` retains this previous `HLM_IMAGE` until internal
 readiness succeeds, when it is atomically switched to the new image. Failed builds/upgrades
 therefore leave later `restore.sh` and `stack.sh up` on the previous release, including Alembic.
@@ -411,10 +479,20 @@ public CA issuance remain external dependencies; a paid domain may be needed if 
 DNS policy block issuance. `internal` is a local test switch, not a public trusted-TLS fallback.
 
 The proxy forwards only `/mcp`, `/health`, `/ready`, `/devices/*`, `/admin/*`; all other paths are 404.
-It limits bodies to 2 MB, sets security headers, and flushes MCP responses immediately. Existing
+It caps `/mcp` bodies at **64 MiB** (D-037 transport bound), and `/devices/*`, `/admin/*`
+and health routes at **64 KiB**, sets security headers, and flushes MCP responses immediately. Existing
 Phase 0 MCP responds with stateless JSON; Caddy also preserves streaming/SSE without buffering.
-`FORWARDED_ALLOW_IPS=*` is safe only while API is unpublished and all containers on its networks are
-trusted; do not attach untrusted containers or expose its port. Registration uses a separate secret
+The frontend network is pinned to `172.30.39.0/24`; `api.env` sets
+`HLM_TRUSTED_PROXY_IPS=172.30.39.0/24`. Caddy resolves `api-frontend`, an alias registered only on
+that network, so its upstream cannot accidentally use the shared outbound bridge.
+[Caddy sets X-Forwarded-For by default and ignores untrusted incoming forwarding headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers).
+Keep API unpublished and do not attach untrusted containers to frontend. Multiple copies on one
+Docker host cannot share this pinned subnet; adjust both subnet and API trust together if needed.
+The application release must implement `HLM_TRUSTED_PROXY_IPS` (D-039); configuration alone cannot
+add proxy trust to older code. Validate a TLS request's API client-IP log against the actual client
+before enabling public registration. On native-IPv6 frontend networks, pin/trust their IPv6 subnet
+as well, or retain IPv4 upstream routing; an automatically chosen IPv6 ULA is not trusted by this
+IPv4-only setting. Registration uses a separate secret
 and device approval; admin routes still require app authorization. Provider/model choices remain in
 profiles/env configuration; current baked Phase 0 embedding assets are pinned by `models.lock` and
 cannot be replaced simply by changing a model-name environment variable.

@@ -3,6 +3,9 @@
 # All non-interactive children deliberately receive EOF.
 # shellcheck disable=SC2217
 set -Eeuo pipefail
+# Static compatibility marker read by the observer before this file is executed.
+HLM_RUNNER_PROTOCOL=3
+export HLM_RUNNER_PROTOCOL
 umask 077
 run_dir=$5
 rollback_config=
@@ -179,6 +182,15 @@ PYIMAGE
   python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "$previous_image" </dev/null
 fi
 export HLM_IMAGE="$image_repository:$revision"
+export HLM_IMAGE_REVISION="$revision"
+verify_release_image() {
+  local actual_revision
+  actual_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$HLM_IMAGE" </dev/null) || return 1
+  [[ $actual_revision == "$revision" ]] || {
+    printf 'Release image revision mismatch: %s expected %s, found %s; refusing deployment.\n' "$HLM_IMAGE" "$revision" "${actual_revision:-<missing>}" >&2
+    return 1
+  }
+}
 # Use Compose's dotenv parser; never source a secrets file as executable shell.
 domain=$(env_value HLM_DOMAIN)
 [[ $domain =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'HLM_DOMAIN must be a DNS hostname' >&2; exit 1; }
@@ -186,6 +198,8 @@ dc pull db caddy </dev/null
 if ! docker image inspect "$HLM_IMAGE" >/dev/null 2>&1 </dev/null; then
   dc build --pull api worker migrate </dev/null
 fi
+# Existence alone is never evidence that a release tag contains the right code.
+verify_release_image
 # Compilation/model download and the snapshot both happen while writers are live.
 if [[ -n $(dc ps </dev/null -q --status running db) ]]; then
   pre_upgrade_dump=$(bash deploy/backup/backup.sh --pre-upgrade "${previous:-$revision}" </dev/null)
@@ -203,8 +217,10 @@ fi
 writers_stopped=1
 dc stop caddy api worker </dev/null
 dc up -d --wait --wait-timeout 180 db </dev/null
+verify_release_image
 migration_started=1
 dc run --rm --no-deps migrate </dev/null
+verify_release_image
 dc up -d --no-deps --wait --wait-timeout 300 db api worker caddy </dev/null
 # Test application readiness and Caddy routing without public DNS/ACME. Only
 # failures before this boundary may restore the snapshot automatically.

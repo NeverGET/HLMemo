@@ -1,4 +1,5 @@
 """Fail when the worker has not completed a poll/heartbeat in three minutes."""
+
 import time
 from pathlib import Path
 

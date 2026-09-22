@@ -1,4 +1,5 @@
 """Read Compose JSON on stdin without logging secrets; check the actual running containers."""
+
 import json
 import subprocess
 import sys
@@ -37,4 +38,6 @@ for path in ("/anything-else", "/mcp/", "/mcp-extra", "/ready/extra", "/admin"):
         if exc.code == 404:
             continue
     sys.exit(f"Unexpected allowlist response: {path}")
-print("PASS G-D2: healthy stack; TLS ready=200, unknown=404; DB has no host ports and only internal networking")
+print(
+    "PASS G-D2: healthy stack; TLS ready=200, unknown=404; DB has no host ports and only internal networking"
+)

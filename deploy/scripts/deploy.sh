@@ -28,6 +28,7 @@ command -v python3 >/dev/null || { echo 'Deployment observer requires local pyth
 deadline=$((SECONDS + timeout))
 run_dir='(not created yet)'
 observer_timeout() {
+  printf '\n' >&2
   echo "Deployment observation timed out after ${timeout}s; remote work may still be running. Inspect $run_dir/log, $run_dir/pid, $run_dir/heartbeat and $run_dir/status on $host; do not launch a duplicate deploy." >&2
   exit 124
 }
@@ -100,21 +101,25 @@ if ! git show "$HLM_DEPLOY_PREPARED_REVISION:deploy/scripts/remote-deploy.sh" > 
   exit 1
 fi
 [[ -s $run_dir/deploy.sh ]] || { echo 'Requested ref contains an empty deployment runner' >&2; exit 1; }
-# Older target runners acquire their own lock and do not understand the bootstrap
-# protocol. Give a new clone a clean worktree without adopting it as a baseline.
+# Read the marker as data, never source an unverified runner. Older runners can
+# overwrite the currently selected immutable image tag with the wrong revision.
+if ! grep -qx 'HLM_RUNNER_PROTOCOL=3' "$run_dir/deploy.sh"; then
+  echo "Requested ref $ref ($HLM_DEPLOY_PREPARED_REVISION) has an unsupported deployment runner protocol; protocol 3 is required. Refusing before checkout, build, backup or restore." >&2
+  exit 1
+fi
+# Give a new clone a clean worktree without adopting it as a baseline.
 if [[ $HLM_DEPLOY_NEW_CHECKOUT == 1 ]]; then
   git checkout --detach "$HLM_DEPLOY_PREPARED_REVISION"
   touch "$parent_dir/.deploy-managed"
 fi
-exec 9>&-
-HLM_DEPLOY_LOCK_HELD=0
+# Protocol 3 inherits the exclusive lock across the exec handoff.
 exec bash "$run_dir/deploy.sh" "$HLM_DEPLOY_PREPARED_REVISION" "$repository" "$app_dir" "$remote_env" "$run_dir"
 BOOTSTRAP
 )
 printf -v launch 'nohup setsid bash -c %q deploy-bootstrap %q %q %q %q %q </dev/null >%q/log 2>&1 &' \
   "$bootstrap" "$ref" "$repository" "$remote_dir" "$remote_env" "$run_dir" "$run_dir"
 # shellcheck disable=SC2016
-printf -v command 'umask 077; for required in nohup setsid bash git flock ps; do command -v "$required" >/dev/null || { echo "Missing required remote command: $required" >&2; exit 1; }; done; : >%q/log; %s launcher=$!; printf "%%s\n" "$launcher" >%q/launcher.pid; attempts=0; while ! test -s %q/pid && ! test -f %q/status; do attempts=$((attempts + 1)); if ! kill -0 "$launcher" 2>/dev/null || test "$attempts" -ge 50; then echo "Detached deployment runner failed to start; inspect the remote log" >&2; exit 1; fi; sleep 0.1; done' \
+printf -v command 'umask 077; for required in nohup setsid bash git flock ps grep; do command -v "$required" >/dev/null || { echo "Missing required remote command: $required" >&2; exit 1; }; done; : >%q/log; %s launcher=$!; printf "%%s\n" "$launcher" >%q/launcher.pid; attempts=0; while ! test -s %q/pid && ! test -f %q/status; do attempts=$((attempts + 1)); if ! kill -0 "$launcher" 2>/dev/null || test "$attempts" -ge 50; then echo "Detached deployment runner failed to start; inspect the remote log" >&2; exit 1; fi; sleep 0.1; done' \
   "$run_dir" "$launch" "$run_dir" "$run_dir" "$run_dir"
 result=0
 ssh_bounded "$command" || result=$?
@@ -131,6 +136,7 @@ while :; do
   output=$(ssh_bounded "$command") || result=$?
   (( result != 124 )) || observer_timeout
   if (( result != 0 )); then
+    printf '\n' >&2
     echo "SSH observation interrupted; deployment continues. Inspect $run_dir/log and $run_dir/status on $host." >&2
     exit 255
   fi
@@ -145,6 +151,7 @@ while :; do
     pid=${output##*$'\nHLM_DEPLOY_RUNNER_GONE='}
     output=${output%$'\nHLM_DEPLOY_RUNNER_GONE='*}
     [[ -z $output ]] || printf '%s\n' "$output"
+    printf '\n' >&2
     echo "Deployment runner PID $pid is gone without final status (SIGKILL/OOM or launcher failure). Inspect $run_dir/log and $run_dir/heartbeat on $host before recovery." >&2
     exit 1
   fi

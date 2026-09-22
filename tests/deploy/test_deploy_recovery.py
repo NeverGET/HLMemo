@@ -23,6 +23,8 @@ with open(os.environ["EVENTS"], "a") as f: f.write(json.dumps(["docker", *args])
 fail=os.environ.get("FAIL", "")
 state_path=Path(os.environ["EVENTS"]+".images")
 images=json.loads(state_path.read_text()) if state_path.exists() else {}
+labels_path=Path(os.environ["EVENTS"]+".labels")
+labels=json.loads(labels_path.read_text()) if labels_path.exists() else {}
 env_file=Path(os.environ["HLM_REMOTE_ENV"])
 settings={}
 if env_file.exists():
@@ -30,7 +32,10 @@ if env_file.exists():
 selected=os.environ.get("HLM_IMAGE") or settings.get("HLM_IMAGE", "hlmemo:prod")
 if args[:2] == ["image", "inspect"]:
     if args[-1] not in images: sys.exit(1)
-    print(images[args[-1]])
+    if "--format" in args and "org.opencontainers.image.revision" in args[args.index("--format")+1]:
+        print(labels.get(args[-1], ""))
+    else:
+        print(images[args[-1]])
     sys.exit()
 if args[:2] == ["image", "tag"]:
     images[args[-1]]=args[-2]
@@ -39,8 +44,15 @@ if args[:2] == ["image", "tag"]:
 if "build" in args:
     images[selected]="sha256:new-image"
     state_path.write_text(json.dumps(images))
+    assert os.environ["HLM_IMAGE_REVISION"] == "b"*40
+    if fail != "build-missing-label":
+        labels[selected] = "a"*40 if fail == "build-wrong-label" else os.environ["HLM_IMAGE_REVISION"]
+    labels_path.write_text(json.dumps(labels))
 if "run" in args and "migrate" in args:
     Path(os.environ["EVENTS"]+".migration-image").write_text(images.get(selected, selected))
+    if fail == "retag-during-migration":
+        labels[selected] = "a"*40
+        labels_path.write_text(json.dumps(labels))
 if "up" in args and "api" in args:
     Path(os.environ["EVENTS"]+".running-image").write_text(images.get(selected, selected))
 if "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
@@ -60,6 +72,9 @@ elif "exec" in args:
         assert sys.stdin.read() == "", "pg_dump inherited input"
         if fail == "dump": sys.exit(7)
         print("valid-snapshot")
+        if fail == "retag-during-snapshot":
+            labels[selected] = "a"*40
+            labels_path.write_text(json.dumps(labels))
     elif "dropdb" in args[-1]:
         assert sys.stdin.read() in ("", "valid-snapshot\n")
     elif "pg_restore" in args: sys.stdin.read()
@@ -234,6 +249,7 @@ class DeployRecoveryTest(unittest.TestCase):
     def test_existing_release_image_is_reused_without_rebuild(self):
         root, env = self.prepare_deploy("")
         (root / "events.images").write_text(json.dumps({f"hlmemo:{NEXT}": "sha256:built-release"}))
+        (root / "events.labels").write_text(json.dumps({f"hlmemo:{NEXT}": NEXT}))
         result = subprocess.run(
             [
                 "bash",
@@ -251,6 +267,58 @@ class DeployRecoveryTest(unittest.TestCase):
         rows = [json.loads(line) for line in (root / "events").read_text().splitlines()]
         self.assertFalse(any("build" in row for row in rows))
         self.assertEqual("sha256:built-release", (root / "events.running-image").read_text())
+
+    def test_existing_release_with_missing_or_wrong_revision_fails_before_build_or_stop(self):
+        for label in (None, PREVIOUS):
+            with self.subTest(label=label):
+                root, env = self.prepare_deploy("")
+                (root / "events.images").write_text(json.dumps({f"hlmemo:{NEXT}": "sha256:wrong"}))
+                labels = {} if label is None else {f"hlmemo:{NEXT}": label}
+                (root / "events.labels").write_text(json.dumps(labels))
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(ROOT / "deploy/scripts/deploy.sh"),
+                        "local",
+                        "next",
+                        "https://example.invalid/repo.git",
+                    ],
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Release image revision mismatch", result.stdout)
+                rows = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+                self.assertFalse(any("build" in row or "stop" in row or "pg_dump" in row[-1] for row in rows))
+                self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
+
+    def test_new_build_with_missing_or_wrong_revision_fails_before_backup_or_stop(self):
+        for failure in ("build-missing-label", "build-wrong-label"):
+            with self.subTest(failure=failure):
+                root, result, rows = self.run_deploy(failure)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Release image revision mismatch", result.stdout)
+                self.assertTrue(any("build" in row for row in rows))
+                self.assertFalse(any("stop" in row or "pg_dump" in row[-1] for row in rows))
+                self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
+
+    def test_revision_is_rechecked_before_migration_and_service_start(self):
+        for failure, migrated in (("retag-during-snapshot", False), ("retag-during-migration", True)):
+            with self.subTest(failure=failure):
+                root, result, rows = self.run_deploy(failure)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Release image revision mismatch", result.stdout)
+                self.assertIn("Previous stack restored", result.stdout)
+                self.assertEqual(migrated, any("run" in row and "migrate" in row for row in rows))
+                self.assertFalse(
+                    any(
+                        "up" in row and "api" in row and ".rollback-compose." not in " ".join(row)
+                        for row in rows
+                    )
+                )
+                self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
 
     def test_conflicting_previous_release_tag_fails_without_retag_or_build(self):
         root, env = self.prepare_deploy("")
