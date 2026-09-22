@@ -757,7 +757,9 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                     for seg in surviving_segments(r.valid_from, r.valid_to, p.interval.start, p.interval.end)
                 )
         if p.logical_id is not None and (p.links or p.is_card):
-            existing = await q.current_links_from(conn, p.logical_id)
+            existing = await q.current_links_from(
+                conn, p.logical_id, valid_from=p.interval.start, valid_to=p.interval.end
+            )
             matching = set()
             for spec in p.links:
                 dst = spec.get("dst_logical_id")

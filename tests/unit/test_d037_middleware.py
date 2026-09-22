@@ -41,7 +41,7 @@ def test_rate_limiter_evicts_expired_and_bounds_live_keys(monkeypatch):
 )
 def test_forwarding_requires_trusted_peer_and_peels_only_trusted_hops(peer, forwarded, expected):
     scope = {"client": (peer, 1234), "headers": [(b"x-forwarded-for", forwarded.encode())]}
-    assert trusted_client_ip(scope, "127.0.0.1,::1,172.18.0.0/16") == expected
+    assert trusted_client_ip(scope, "127.0.0.1/32,::1/128,172.18.0.0/16") == expected
 
 
 async def _body_request(settings, chunks, *, path="/ready", headers=()):

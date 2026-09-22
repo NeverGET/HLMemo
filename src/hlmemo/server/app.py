@@ -27,6 +27,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -57,7 +58,7 @@ from hlmemo.db.pool import create_pool
 from hlmemo.server import admin, devices
 from hlmemo.server.common import device_view
 from hlmemo.server.mcp_server import McpEndpoint, create_mcp_endpoint
-from hlmemo.server.middleware import AuthMiddleware, RateLimiter
+from hlmemo.server.middleware import AuthMiddleware, RateLimiter, _proxy_networks
 
 log = logging.getLogger("hlmemo.server")
 
@@ -159,22 +160,66 @@ def _verify_models_blocking(model_dir: Path, lock: Path | None, cache: dict[str,
     return result
 
 
+@dataclass
+class _ReadinessProbe:
+    """One shielded probe per process; both successes and failures have a short TTL."""
+
+    db_slot: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1))
+    task: asyncio.Task | None = None
+    result: tuple[bool, dict[str, Any]] | None = None
+    expires_at: float = 0.0
+
+    async def get(self, app: Starlette, settings: Settings) -> tuple[bool, dict[str, Any]]:
+        if self.result is not None and asyncio.get_running_loop().time() < self.expires_at:
+            return self.result
+        # There is no suspension between inspecting and publishing the shared task.
+        if self.task is None or self.task.done():
+            self.task = asyncio.create_task(self._run(app, settings))
+        # A disconnected/cancelled caller cannot release the DB slot or start another probe.
+        return await asyncio.shield(self.task)
+
+    async def _run(self, app: Starlette, settings: Settings) -> tuple[bool, dict[str, Any]]:
+        self.result = await _check_readiness(app, settings, self.db_slot)
+        self.expires_at = asyncio.get_running_loop().time() + settings.readiness_cache_ttl_s
+        return self.result
+
+
 async def readiness(app: Starlette) -> tuple[bool, dict[str, Any]]:
     settings = getattr(app.state, "settings", None) or get_settings()
+    probe = getattr(app.state, "readiness_probe", None)
+    if probe is None:
+        probe = app.state.readiness_probe = _ReadinessProbe()
+    return await probe.get(app, settings)
+
+
+async def _check_readiness(
+    app: Starlette, settings: Settings, db_slot: asyncio.Semaphore
+) -> tuple[bool, dict[str, Any]]:
     checks: dict[str, Any] = {
         "embed_config": embed_config_check(settings.embed_model, settings.embed_revision)
     }
+    try:
+        _proxy_networks(settings.trusted_proxy_ips)
+        checks["trusted_proxy_ips"] = {"ok": True}
+    except ValueError as exc:
+        checks["trusted_proxy_ips"] = {
+            "ok": False,
+            "error": f"HLM_TRUSTED_PROXY_IPS must be an empty string or a valid CIDR list: {exc}",
+        }
     head = phase0_head()
     try:
-        async with asyncio.timeout(settings.readiness_timeout_s):
-            async with await AsyncConnection.connect(
-                settings.db_dsn,
-                autocommit=True,
-                connect_timeout=2,
-                options=f"-c statement_timeout={int(settings.readiness_timeout_s * 1000)}",
-            ) as conn:
-                cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
-                applied = [r[0] for r in await cur.fetchall()]
+        # The dedicated permit covers connect, query AND connection close, independently of
+        # either traffic pool. Timeout/cancellation cleanup finishes before it can be reused.
+        async with db_slot:
+            async with asyncio.timeout(settings.readiness_timeout_s):
+                async with await AsyncConnection.connect(
+                    settings.db_dsn,
+                    autocommit=True,
+                    connect_timeout=2,
+                    options=f"-c statement_timeout={int(settings.readiness_timeout_s * 1000)}",
+                ) as conn:
+                    cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
+                    applied = [r[0] for r in await cur.fetchall()]
         checks["db"] = {"ok": True}
         checks["migration"] = {"ok": head in applied, "expected": head, "applied": applied}
     except Exception as exc:  # noqa: BLE001 - report, never raise from a probe
@@ -301,6 +346,9 @@ def create_app(
             async with mcp.run():  # MCP session manager lives exactly as long as the app
                 yield
         finally:
+            probe = getattr(app.state, "readiness_probe", None)
+            if probe is not None and probe.task is not None:
+                await asyncio.shield(probe.task)
             await admin_pool.close()
             await pool.close()
 

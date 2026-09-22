@@ -161,10 +161,15 @@ class Settings(BaseSettings):
     request_max_body_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
     request_body_timeout_s: float = Field(default=10.0, gt=0)
     request_body_total_timeout_s: float = Field(default=300.0, gt=0)
+    request_body_global_budget_bytes: int = Field(default=256 * 1024 * 1024, gt=0)
+    request_body_client_budget_bytes: int = Field(default=128 * 1024 * 1024, gt=0)
+    request_body_min_rate_bytes_s: int = Field(default=128 * 1024, gt=0)
+    request_body_rate_grace_bytes: int = Field(default=64 * 1024, gt=0)
     request_db_timeout_s: float = Field(default=15.0, gt=0)
     readiness_timeout_s: float = Field(default=2.0, gt=0)
-    # Only these peers may supply X-Forwarded-For; override for the actual Caddy subnet.
-    trusted_proxy_ips: str = "127.0.0.1,::1,172.18.0.0/16"
+    readiness_cache_ttl_s: float = Field(default=1.0, gt=0)
+    # No implicit trust, including loopback; configure the actual Caddy subnet explicitly.
+    trusted_proxy_ips: str = ""
 
     # --- pool ---
     pool_min_size: int = 1

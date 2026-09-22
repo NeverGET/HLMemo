@@ -207,15 +207,30 @@ async def get_version(conn: AsyncConnection, version_id: int) -> VersionRow | No
     return None if row is None else _version_row(row)
 
 
-async def current_links_from(conn: AsyncConnection, src_logical_id: int) -> list[LinkRow]:
+async def current_links_from(
+    conn: AsyncConnection,
+    src_logical_id: int,
+    *,
+    valid_from: datetime,
+    valid_to: datetime | None,
+) -> list[LinkRow]:
+    """Current edges affected by a revision's valid-time interval.
+
+    Historical card survivor segments remain available to as-of reads, but must not all be
+    materialized on each session close. The range predicate matches the existing exclusion
+    GiST index and also covers backdated corrections spanning several historical segments.
+    """
     cur = await conn.execute(
         """
         SELECT link_id, project_id, project_ids, device_scope, src_logical_id, dst_logical_id,
                dst_version_id, rel, props, valid_from, nullif(valid_to, 'infinity'), recorded_at,
                source_event_id, supersedes_link_id
-        FROM links WHERE src_logical_id = %s AND superseded_at = 'infinity' ORDER BY link_id
+        FROM links WHERE src_logical_id = %s AND superseded_at = 'infinity'
+          AND tstzrange(valid_from, valid_to, '[)')
+              && tstzrange(%s, COALESCE(%s, 'infinity'::timestamptz), '[)')
+        ORDER BY link_id
         """,
-        (src_logical_id,),
+        (src_logical_id, valid_from, valid_to),
     )
     return [LinkRow(*r) for r in await cur.fetchall()]
 
