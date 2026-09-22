@@ -4,7 +4,7 @@
 #   run_gates.sh WORKTREE PROJECT HTTP_PORT HTTPS_PORT
 #
 # Runs, against the contestant worktree WORKTREE (absolute path):
-#   G-D1  compose config -q with the example env file
+#   G-D1  compose config -q with the example env file(s) (per-service *.env.example since D-035)
 #   G-D5  terraform init -backend=false / validate / fmt -check -recursive
 #   G-D6  shellcheck deploy/**/*.sh (globstar on, i.e. recursive)
 #   G-D7  gitleaks dir deploy --no-banner
@@ -86,7 +86,13 @@ git -C "$WORKTREE" status --short >>"$LOG" 2>&1
 # ------------------------------------------------------------------ static gates
 
 # G-D1
-if run G-D1 "$WORKTREE" docker compose -f deploy/compose.prod.yaml --env-file deploy/.env.prod.example config -q; then
+# D-035 split secrets into per-service env files; render G-D1 against the shipped examples when present.
+GD1_ENV=()
+for svc in APP API DB BACKUP; do
+  lower=$(printf '%s' "$svc" | tr '[:upper:]' '[:lower:]')
+  if [[ -f "$WORKTREE/deploy/$lower.env.example" ]]; then GD1_ENV+=("HLM_${svc}_ENV_FILE=$WORKTREE/deploy/$lower.env.example"); fi
+done
+if run G-D1 "$WORKTREE" env "${GD1_ENV[@]}" docker compose -f deploy/compose.prod.yaml --env-file deploy/.env.prod.example config -q; then
   RESULT[G-D1]=PASS
 fi
 
