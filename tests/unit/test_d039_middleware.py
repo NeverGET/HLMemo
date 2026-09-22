@@ -142,8 +142,7 @@ async def test_completed_body_stays_accounted_until_route_releases_it(end):
 async def test_minimum_average_rate_expires_despite_inactivity_progress():
     settings = get_settings(
         request_body_timeout_s=1,
-        request_body_total_timeout_s=5,
-        request_body_rate_grace_bytes=64,
+        request_body_base_s=0.01,
         request_body_min_rate_bytes_s=1024,
     )
     reads = 0

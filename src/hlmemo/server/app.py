@@ -377,6 +377,8 @@ def main() -> None:
         host=s.api_host,
         port=s.api_port,
         log_level="info",
+        limit_concurrency=s.api_limit_concurrency,
+        timeout_keep_alive=s.api_timeout_keep_alive,
         proxy_headers=False,  # Registration validates forwarded addresses against trusted_proxy_ips.
     )
 

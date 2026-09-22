@@ -138,6 +138,23 @@ def trusted_client_ip(scope: Scope, trusted_proxy_ips: str) -> str:
         return host
 
 
+def _body_client_key(scope: Scope, trusted_proxy_ips: str) -> str:
+    client = trusted_client_ip(scope, trusted_proxy_ips)
+    try:
+        address = ip_address(client)
+    except ValueError:
+        return client
+    if address.version == 6:
+        return str(ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
+class _BodyReadError(Exception):
+    def __init__(self, status: int, message: str) -> None:
+        self.status = status
+        super().__init__(message)
+
+
 class BodyBudget:
     """Event-loop-local accounting; no await separates admission from reservation."""
 
@@ -189,6 +206,7 @@ class AuthMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
         self.body_budget: BodyBudget | None = None
+        self.body_readers: dict[str, int] = {}
 
     async def commit_request(self, conn: Any) -> None:
         """The outer ``COMMIT`` of the request transaction (seam for the G6 commit-failure test)."""
@@ -204,11 +222,13 @@ class AuthMiddleware:
             self.body_budget = BodyBudget(
                 settings.request_body_global_budget_bytes, settings.request_body_client_budget_bytes
             )
-        reservation = BodyReservation(self.body_budget, trusted_client_ip(scope, settings.trusted_proxy_ips))
+        reservation = BodyReservation(self.body_budget, _body_client_key(scope, settings.trusted_proxy_ips))
         try:
             # No allocation is based on untrusted Content-Length. Large uploads roll
             # to disk; the byte budget also bounds disk use until the request ends.
-            with SpooledTemporaryFile(max_size=settings.request_body_spool_threshold_bytes) as body:
+            with SpooledTemporaryFile(
+                max_size=settings.request_body_spool_threshold_bytes, dir=settings.request_spool_dir
+            ) as body:
                 await self._request(scope, receive, send, reservation, body)
         finally:
             # Keep accounting through authentication, route execution and slow responses.
@@ -249,77 +269,41 @@ class AuthMiddleware:
             and admin_token is not None
             and constant_time_equal(bearer, admin_token.get_secret_value())
         )
-        # Untrusted network input must never own a database connection or device lock.
+        # Slots cover body reads only; byte reservations also cover downstream handling.
+        key = reservation.client
+        readers = self.body_readers.get(key, 0)
+        if readers >= settings.request_body_client_concurrency:
+            await self._body_error(scope, receive, send, 429, "too many concurrent request body reads")
+            return
+        self.body_readers[key] = readers + 1
+        failure = None
         try:
-            loop = asyncio.get_running_loop()
-            started = loop.time()
-            total_deadline = started + settings.request_body_total_timeout_s
-            async with asyncio.timeout_at(
-                min(total_deadline, loop.time() + settings.request_body_timeout_s)
-            ) as body_deadline:
-                size = 0
-                on_disk = False
-                length = headers.get("content-length")
-                if length is not None:
-                    try:
-                        declared = int(length)
-                    except ValueError:
-                        declared = -1
-                    if declared < 0:
-                        await error_response(HlmError("E_INVALID_ARG", "invalid content-length"))(
-                            scope, receive, send
-                        )
-                        return
-                    if declared > body_cap:
-                        await self._body_error(scope, receive, send, 413, "request body too large")
-                        return
-                while True:
-                    message = await receive()
-                    if message["type"] == "http.disconnect":
-                        del message
-                        return
-                    chunk = message.get("body", b"")
-                    if size + len(chunk) > body_cap:
-                        del message, chunk
-                        await self._body_error(scope, receive, send, 413, "request body too large")
-                        return
-                    if not reservation.grow(len(chunk)):
-                        del message, chunk
-                        await self._body_error(scope, receive, send, 503, "request body budget exhausted")
-                        return
-                    # Roll BEFORE the write to avoid copying an arbitrarily large
-                    # ASGI chunk into BytesIO on its way to disk.
-                    if not on_disk and size + len(chunk) > settings.request_body_spool_threshold_bytes:
-                        await _body_io(body.rollover)
-                        on_disk = True
-                    if on_disk:
-                        await _body_io(body.write, chunk)
-                    else:
-                        body.write(chunk)
-                    size += len(chunk)
-                    if chunk:
-                        next_deadline = min(total_deadline, loop.time() + settings.request_body_timeout_s)
-                        if size >= settings.request_body_rate_grace_bytes:
-                            rate_deadline = started + size / settings.request_body_min_rate_bytes_s
-                            if loop.time() > rate_deadline:
-                                del message, chunk
-                                await self._body_error(
-                                    scope, receive, send, 408, "request body transfer rate too low"
-                                )
-                                return
-                        body_deadline.reschedule(next_deadline)
-                    more_body = message.get("more_body", False)
-                    # The ASGI message owns its chunk: do not pin a second copy
-                    # throughout authentication, route handling or the next receive.
-                    del message, chunk
-                    if not more_body:
-                        break
-        except TimeoutError:
-            await self._body_error(scope, receive, send, 408, "request body read timed out")
+            try:
+                result = await self._read_body(receive, headers, settings, body_cap, reservation, body)
+            finally:
+                remaining_readers = self.body_readers[key] - 1
+                if remaining_readers:
+                    self.body_readers[key] = remaining_readers
+                else:
+                    del self.body_readers[key]
+        except (_BodyReadError, TimeoutError, OSError) as exc:
+            # A slow error consumer must not retain either storage or admission capacity.
+            body.close()
+            reservation.release(reservation.size)
+            if isinstance(exc, _BodyReadError):
+                status, message = exc.status, str(exc)
+            elif isinstance(exc, TimeoutError):
+                status, message = 408, "request body read timed out"
+            else:
+                status, message = 503, "request body storage unavailable"
+            failure = (status, message)
+        # Leave the exception scope before sending: its traceback owns the last chunk.
+        if failure is not None:
+            await self._body_error(scope, receive, send, *failure)
             return
-        except OSError:
-            await self._body_error(scope, receive, send, 503, "request body storage unavailable")
+        if result is None:
             return
+        size, on_disk = result
 
         body.seek(0)
         original_receive = receive
@@ -527,10 +511,77 @@ class AuthMiddleware:
             await send(message)
 
     @staticmethod
+    async def _read_body(
+        receive: Receive,
+        headers: Headers,
+        settings: Any,
+        body_cap: int,
+        reservation: BodyReservation,
+        body: Any,
+    ) -> tuple[int, bool] | None:
+        # No untrusted network input owns a database connection or device lock.
+        length = headers.get("content-length")
+        max_body_bytes = body_cap
+        if length is not None:
+            try:
+                max_body_bytes = int(length)
+            except ValueError:
+                raise _BodyReadError(400, "invalid content-length") from None
+            if max_body_bytes < 0:
+                raise _BodyReadError(400, "invalid content-length")
+            if max_body_bytes > body_cap:
+                raise _BodyReadError(413, "request body too large")
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        base_deadline = started + settings.request_body_base_s
+        rate = settings.request_body_min_rate_bytes_s
+        total_deadline = base_deadline + max_body_bytes / rate
+        idle_deadline = started + settings.request_body_timeout_s
+        next_deadline = min(total_deadline, base_deadline, idle_deadline)
+        size = 0
+        on_disk = False
+        async with asyncio.timeout_at(next_deadline) as body_deadline:
+            while True:
+                message = await receive()
+                # A receive callable may complete without yielding; do not let a
+                # late chunk buy more time before the timeout callback can run.
+                if loop.time() > next_deadline:
+                    raise _BodyReadError(408, "request body read timed out")
+                if message["type"] == "http.disconnect":
+                    return None
+                chunk = message.get("body", b"")
+                if size + len(chunk) > body_cap:
+                    raise _BodyReadError(413, "request body too large")
+                if not reservation.grow(len(chunk)):
+                    raise _BodyReadError(503, "request body budget exhausted")
+                if chunk:
+                    idle_deadline = loop.time() + settings.request_body_timeout_s
+                size += len(chunk)
+                next_deadline = min(total_deadline, base_deadline + size / rate, idle_deadline)
+                body_deadline.reschedule(next_deadline)
+                # Roll before writing, avoiding a large intermediate BytesIO copy.
+                if not on_disk and size > settings.request_body_spool_threshold_bytes:
+                    await _body_io(body.rollover)
+                    on_disk = True
+                if on_disk:
+                    await _body_io(body.write, chunk)
+                else:
+                    body.write(chunk)
+                if loop.time() > next_deadline:
+                    raise _BodyReadError(408, "request body read timed out")
+                more_body = message.get("more_body", False)
+                del message, chunk
+                if not more_body:
+                    return size, on_disk
+
+    @staticmethod
     async def _body_error(scope: Scope, receive: Receive, send: Send, status: int, message: str) -> None:
-        response = error_response(
-            HlmError("E_UNAVAILABLE" if status in (408, 503) else "E_INVALID_ARG", message)
+        code = (
+            "E_RATE_LIMITED"
+            if status == 429
+            else ("E_UNAVAILABLE" if status in (408, 503) else "E_INVALID_ARG")
         )
+        response = error_response(HlmError(code, message))
         response.status_code = status
         await response(scope, receive, send)
 
