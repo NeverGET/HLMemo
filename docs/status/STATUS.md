@@ -17,7 +17,7 @@ Updated: 2026-09-22 12:05
 - Language: Python vs TypeScript for MCP server (Claude leans Python)
 
 ## Next
-- Owner answers: privacy tier (D-016), NotebookLM migration, Hetzner CX43 confirm (D-005)
+- Owner answers pending: NotebookLM migration, Hetzner CX43 confirm (D-005). Privacy tier RESOLVED (D-016: OpenRouter, cloud OK for now).
 - Full bench run on shortlist (qwen3.8-flash, gpt-5.6-luna, mistral-small-2603 + deepseek-flash as control)
 - Phase-0 implementation plan (7 tables, 5 tools, hlm wrapper) → consult codex #03 on schema DDL
 
