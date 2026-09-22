@@ -157,10 +157,17 @@ class Settings(BaseSettings):
     server_url: str = "http://127.0.0.1:8765/mcp"
     api_host: str = "0.0.0.0"
     api_port: int = 8765
+    request_max_body_bytes: int = Field(default=4 * 1024 * 1024, gt=0)
+    request_body_timeout_s: float = Field(default=10.0, gt=0)
+    request_db_timeout_s: float = Field(default=15.0, gt=0)
 
     # --- pool ---
     pool_min_size: int = 1
     pool_max_size: int = 8
+    pool_timeout_s: float = Field(default=5.0, gt=0)
+    db_lock_timeout_ms: int = Field(default=2000, gt=0)
+    db_statement_timeout_ms: int = Field(default=10000, gt=0)
+    db_idle_in_transaction_timeout_ms: int = Field(default=5000, gt=0)
 
     # --- wrapper sections passed through from hlm.toml ---
     client: dict[str, Any] = Field(default_factory=dict)

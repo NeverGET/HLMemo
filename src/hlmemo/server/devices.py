@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse
 
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.auth.errors import HlmError
+from hlmemo.auth.resolve import lock_device_access
 from hlmemo.auth.tokens import generate_token, hash_token
 from hlmemo.db import auth_queries as q
 from hlmemo.server.common import (
@@ -222,6 +223,15 @@ async def _revoke(request: Request, target_id: int) -> JSONResponse:
         raise HlmError("E_FORBIDDEN", "device 1 is reserved")
     if not (ctx.is_admin or target_id == ctx.device_id):
         raise HlmError("E_FORBIDDEN", "only device 1 or the device itself may revoke")
+    # Ordinary requests have a hard lifetime. Allow this exclusive lock to wait
+    # beyond that lifetime so a healthy revocation succeeds instead of repeatedly
+    # hitting the shorter pool lock_timeout. The advisory gate queues new readers
+    # behind this exclusive waiter. LOCAL settings cannot leak to the next borrower.
+    settings = request.app.state.settings
+    wait_ms = int(settings.request_db_timeout_s * 1000) + settings.db_lock_timeout_ms
+    for name in ("lock_timeout", "statement_timeout"):
+        await conn.execute("SELECT set_config(%s, %s, true)", (name, f"{wait_ms}ms"))
+    await lock_device_access(conn, target_id, exclusive=True)
     target = await q.select_device_for_update(conn, target_id)
     if target is None:
         raise HlmError("E_NOT_FOUND", "device not found", {"id": target_id})
