@@ -50,3 +50,4 @@ docs/private/
 
 # embedding model cache (downloaded at build, pinned by models.lock)
 models/
+hlm.log

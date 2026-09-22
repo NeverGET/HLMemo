@@ -1,0 +1,5 @@
+# Pinned coding-CLI versions the hlm wrapper and smoke scripts are verified against
+# (PHASE0-ASSUMPTIONS-VERIFIED.md #9, 2026-09-22). Format: "<cli> <version>".
+claude 2.1.278
+codex 0.155.1
+agy 1.1.4
