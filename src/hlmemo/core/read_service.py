@@ -14,6 +14,7 @@ is the exact o200k measure of its canonical JSON and never exceeds ``limit``). E
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
@@ -27,7 +28,7 @@ from hlmemo.auth.cursors import load_cursor_secret, sign_cursor, verify_cursor
 from hlmemo.auth.errors import HlmError
 from hlmemo.core import MODEL_ID, MODEL_REVISION
 from hlmemo.core.budget import BudgetError, Meter, canonical, validate_budget
-from hlmemo.core.clues import Clue, decode_clue, encode_clue
+from hlmemo.core.clues import Clue, InvalidClue, decode_clue, encode_clue
 from hlmemo.core.embedder import Embedder, default_model_dir
 from hlmemo.core.errors import ToolError
 from hlmemo.core.read_models import DrilldownRequest, QueryRequest, RawRequest, parse_request
@@ -122,6 +123,42 @@ def _verify_cursor(deps: ReadDeps, ctx: AuthContext, cursor: str) -> dict[str, A
 
 def _not_found(what: str) -> ToolError:
     return ToolError("E_NOT_FOUND", f"{what} not found")
+
+
+def _pack_page(
+    meter: Meter,
+    envelope: dict[str, Any],
+    budget: int,
+    n_total: int,
+    apply: Callable[[int], None],
+    estimate: Callable[[int], int],
+) -> int:
+    """Pack a paged drilldown/raw result; returns the number of units in the page.
+
+    The size is not monotonic in the unit count: every partial page carries a signed
+    ``next_cursor``, the complete page does not. So the complete page is measured exactly first
+    and wins whenever it fits; only otherwise is the largest cursor-bearing prefix
+    ``1 ≤ n < n_total`` packed. A page must hold at least one unit (or be complete), else
+    ``E_BUDGET_TOO_SMALL`` with ``min`` = the smallest exact size that would be served
+    (F17: the first partial page or the complete page, whichever is smaller)."""
+    apply(n_total)
+    full = meter.settle(envelope, budget)
+    if full <= budget:
+        return n_total
+    n = 0
+    if n_total > 1:
+        try:
+            n, _used = pack_prefix(meter, envelope, budget, n_total - 1, apply, estimate)
+        except BudgetError:
+            n = 0
+    if n > 0:
+        return n
+    need = full
+    if n_total > 1:
+        apply(1)
+        need = min(need, meter.settle(envelope, budget))
+    what = "the first chunk" if n_total else "the result envelope"
+    raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold {what}", min=need)
 
 
 # --------------------------------------------------------------------------- memory.query
@@ -279,7 +316,10 @@ async def drilldown(
     request = parse_request(DrilldownRequest, req)
     deps = deps or default_read_deps()
     budget = _budget(request.token_budget)
-    clues = [decode_clue(c) for c in request.clue_ids]
+    try:
+        clues = [decode_clue(c) for c in request.clue_ids]
+    except InvalidClue as exc:  # defence in depth; the request model already rejects these
+        raise ToolError("E_INVALID_ARG", str(exc)) from exc
     clue_hash = _sha(request.clue_ids)
     async with conn.transaction():
         project = await _read_project(conn, ctx, request.project)
@@ -355,16 +395,7 @@ async def drilldown(
             envelope["items"] = _render_items(page[:n], links)
             envelope["next_cursor"] = cursor_for(n)
 
-        try:
-            n, _used = pack_prefix(meter, envelope, budget, len(page), apply, lambda k: base + prefix[k])
-        except BudgetError as exc:
-            raise ToolError(exc.code, str(exc), **exc.details) from exc
-        if n == 0:
-            apply(1)
-            need = meter.settle(envelope, budget)  # the exact measure that did not fit
-            raise ToolError(
-                "E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold the first chunk", min=need
-            )
+        n = _pack_page(meter, envelope, budget, len(page), apply, lambda k: base + prefix[k])
 
         at = await q.clock_now(conn)
         await q.record_access(
@@ -566,16 +597,7 @@ async def raw(
                 )
             )
 
-        try:
-            n, _used = pack_prefix(meter, envelope, budget, len(rendered), apply, lambda k: base + prefix[k])
-        except BudgetError as exc:
-            raise ToolError(exc.code, str(exc), **exc.details) from exc
-        if n == 0 and rendered:
-            apply(1)
-            need = meter.settle(envelope, budget)
-            raise ToolError(
-                "E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold the first chunk", min=need
-            )
+        _pack_page(meter, envelope, budget, len(rendered), apply, lambda k: base + prefix[k])
 
         at = await q.clock_now(conn)
         await q.record_access(

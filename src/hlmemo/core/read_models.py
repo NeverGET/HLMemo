@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator
 
-from hlmemo.core.clues import CLUE_PATTERN
+from hlmemo.core.clues import is_valid_clue
 from hlmemo.core.write_models import SLUG_RE, Kind, _Strict, parse_request
 
 Evidence = Literal["matched", "none"]
@@ -49,12 +49,12 @@ class DrilldownRequest(_ReadRequest):
     @field_validator("clue_ids")
     @classmethod
     def _clues(cls, v: list[str]) -> list[str]:
-        import re
-
         if len(set(v)) != len(v):
             raise ValueError("clue_ids must be unique")
         for c in v:
-            if not isinstance(c, str) or not re.match(CLUE_PATTERN, c):
+            # Canonical spelling only (F01): ``v0``/``v01`` pass the wire pattern but name no
+            # version; they are a caller error (E_INVALID_ARG), never a retryable crash.
+            if not is_valid_clue(c):
                 raise ValueError(f"malformed clue {c!r}")
         return v
 

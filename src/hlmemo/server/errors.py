@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from starlette.responses import JSONResponse
 
 from hlmemo.auth.errors import HTTP_STATUS, HlmError
+from hlmemo.core.write_models import bounded_validation_errors
 
 log = logging.getLogger("hlmemo.server")
 
@@ -44,8 +45,9 @@ def invalid_arg(message: str, **details: Any) -> HlmError:
 
 
 def from_validation_error(exc: ValidationError) -> HlmError:
-    errs = [{"loc": [str(p) for p in e["loc"]], "msg": e["msg"]} for e in exc.errors()]
-    return HlmError("E_INVALID_ARG", "invalid request body", {"errors": errs})
+    errs, total = bounded_validation_errors(exc)  # no input echo, capped (F06)
+    errs = [{"loc": [str(p) for p in e["loc"]], "msg": e["msg"]} for e in errs]
+    return HlmError("E_INVALID_ARG", "invalid request body", {"errors": errs, "error_count": total})
 
 
 def from_db_error(exc: pgerrors.Error) -> HlmError | None:

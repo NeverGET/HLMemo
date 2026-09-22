@@ -35,6 +35,64 @@ def repo_root() -> Path | None:
     return root if (root / "pyproject.toml").exists() or (root / "src" / "hlmemo").is_dir() else None
 
 
+class EmbedConfigMismatch(RuntimeError):
+    """``HLM_EMBED_MODEL`` / ``HLM_EMBED_REVISION`` name something other than the pinned model."""
+
+
+def _models_lock_path() -> Path | None:
+    root = repo_root()
+    for cand in ((root / "models.lock") if root else None, Path.cwd() / "models.lock"):
+        if cand is not None and cand.is_file():
+            return cand
+    return None
+
+
+def pinned_model() -> tuple[str, str]:
+    """``(model_id, revision)`` the Phase-0 contract pins: the ``models.lock`` header when the
+    file is found, else the compiled-in constants (which the lock must equal)."""
+    lock = _models_lock_path()
+    if lock is None:
+        return MODEL_ID, MODEL_REVISION
+    head: dict[str, str] = {}
+    for line in lock.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key in ("model", "revision") and key not in head:
+            head[key] = value.strip()
+    return head.get("model", MODEL_ID), head.get("revision", MODEL_REVISION)
+
+
+def embed_config_check(model: str | None, revision: str | None) -> dict[str, object]:
+    """F04: the embedder is pinned (models.lock); a configured model/revision that differs is an
+    error, never silently ignored. Returns a ``/ready``-style check ``{ok, pinned, configured[,
+    error]}``; ``None`` means "not configured" (the pinned value applies)."""
+    lock_model, lock_rev = pinned_model()
+    pinned = f"{lock_model}@{lock_rev}"
+    configured = f"{model or lock_model}@{revision or lock_rev}"
+    out: dict[str, object] = {"ok": True, "pinned": pinned, "configured": configured}
+    if (lock_model, lock_rev) != (MODEL_ID, MODEL_REVISION):
+        out.update(
+            ok=False,
+            error=f"models.lock pins {pinned} but this build embeds with {MODEL_ID}@{MODEL_REVISION}",
+        )
+    elif configured != pinned:
+        out.update(
+            ok=False,
+            error=(
+                f"HLM_EMBED_MODEL/HLM_EMBED_REVISION = {configured} differ from the pinned embedder "
+                f"{pinned} (models.lock); the Phase-0 embedder is not configurable — unset them or "
+                "set them to the pinned values"
+            ),
+        )
+    return out
+
+
+def require_pinned_embed_config(model: str | None, revision: str | None) -> None:
+    """Fail fast at start-up (api + worker) on a non-pinned embed configuration (F04)."""
+    check = embed_config_check(model, revision)
+    if not check["ok"]:
+        raise EmbedConfigMismatch(str(check["error"]))
+
+
 def default_models_dir() -> Path:
     """``$HLM_MODELS_DIR`` if set, else ``<repo root>/models``, else ``./models``."""
     env = os.environ.get("HLM_MODELS_DIR")
@@ -179,8 +237,12 @@ class Embedder:
 
 
 __all__ = [
+    "EmbedConfigMismatch",
     "Embedder",
     "ModelHashMismatch",
+    "embed_config_check",
+    "pinned_model",
+    "require_pinned_embed_config",
     "QUERY_PREFIX",
     "PASSAGE_PREFIX",
     "MAX_TOKENS",

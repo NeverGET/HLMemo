@@ -54,6 +54,7 @@ from hlmemo.auth.errors import HlmError
 from hlmemo.auth.resolve import resolve
 from hlmemo.auth.tokens import parse_bearer
 from hlmemo.core.budget import BudgetError, canonical
+from hlmemo.core.clues import InvalidClue
 from hlmemo.core.errors import ToolError
 from hlmemo.server.tools import TOOL_BY_NAME, TOOLS
 
@@ -94,6 +95,8 @@ def error_envelope(err: BaseException) -> dict[str, Any]:
             "retryable": bool(err.retryable),
             "details": _jsonable(err.details),
         }
+    if isinstance(err, InvalidClue):  # F01: a malformed clue is the caller's error, never retryable
+        return {"code": "E_INVALID_ARG", "message": str(err)[:300], "retryable": False, "details": {}}
     if isinstance(err, BudgetError):
         env = err.as_error()
         env["details"] = _jsonable(env.get("details"))
@@ -191,7 +194,7 @@ async def on_call_tool(
             # usable and the middleware still commits the (read-only) outer transaction.
             async with conn.transaction():
                 result = await spec.handler(conn, auth, dict(arguments))
-    except (ToolError, HlmError, BudgetError) as err:
+    except (ToolError, HlmError, BudgetError, InvalidClue) as err:
         outcome = getattr(err, "code", type(err).__name__)
         return error_result(err)
     except pgerrors.Error as err:

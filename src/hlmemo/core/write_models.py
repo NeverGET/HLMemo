@@ -10,11 +10,13 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from hlmemo.core.errors import ToolError
 
 SLUG_RE = r"^[a-z0-9][a-z0-9-]{1,63}$"
+ITEM_BODY_MAX = 64000  # memory.write ``items[].body`` limit; call_the_day's derived items obey it too
+ITEM_LINKS_MAX = 32  # memory.write ``items[].links`` limit
 DEVICE_SCOPE_RE = r"^(all|class:(personal|work|server|ci|other)|device:[0-9]+)$"
 
 Kind = Literal["fact", "episode", "lesson", "experience", "project_card", "session_note", "doc_chunk"]
@@ -24,6 +26,17 @@ Stability = Literal["stable", "volatile"]
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=False)
+
+
+def canonical_device_scope(v: str) -> str:
+    """F08: ``device:<id>`` must be spelled canonically (no leading zeros). Readers match the
+    stored string against ``'device:' || device_id``, so ``device:02`` would be acked on write and
+    then be visible to nobody, including the writer. Rejected, never silently rewritten."""
+    if v.startswith("device:"):
+        digits = v[len("device:") :]
+        if digits.startswith("0"):
+            raise ValueError(f"device_scope {v!r} is not canonical: use 'device:<id>' without leading zeros")
+    return v
 
 
 class LinkSpec(_Strict):
@@ -50,7 +63,7 @@ class Item(_Strict):
     logical_id: int | None = Field(default=None, ge=1)
     expected_version_id: int | None = Field(default=None, ge=1)
     title: str = Field(min_length=1, max_length=200)
-    body: str = Field(min_length=1, max_length=64000)
+    body: str = Field(min_length=1, max_length=ITEM_BODY_MAX)
     tags: list[str] = Field(default_factory=list, max_length=32)
     pinned: bool = False
     stability: Stability = "volatile"
@@ -59,7 +72,9 @@ class Item(_Strict):
     device_scope: str = Field(default="all", pattern=DEVICE_SCOPE_RE)
     valid_from: str | None = None
     valid_to: str | None = None
-    links: list[LinkSpec] = Field(default_factory=list, max_length=32)
+    links: list[LinkSpec] = Field(default_factory=list, max_length=ITEM_LINKS_MAX)
+
+    _device_scope = field_validator("device_scope")(canonical_device_scope)
 
     @field_validator("project_ids", mode="before")
     @classmethod
@@ -90,6 +105,8 @@ class LessonSpec(_Strict):
     tags: list[str] = Field(default_factory=list, max_length=32)
     device_scope: str = Field(default="all", pattern=DEVICE_SCOPE_RE)
 
+    _device_scope = field_validator("device_scope")(canonical_device_scope)
+
 
 class CardUpdate(_Strict):
     body: str = Field(min_length=1, max_length=64000)
@@ -119,6 +136,34 @@ class CloseRequest(_Strict):
     def _uuid(cls, v: str) -> str:
         return str(uuid.UUID(v))
 
+    @model_validator(mode="after")
+    def _derived_items_fit(self) -> CloseRequest:
+        """F12: the close is expanded into ordinary write items (session note, lessons, card);
+        each derived item must satisfy the ``memory.write`` item limits, checked here so that an
+        oversized close is ``E_INVALID_ARG`` naming the limit, never an internal error."""
+        n = len(session_note_body(self.notes, self.decisions))
+        if n > ITEM_BODY_MAX:
+            raise ValueError(
+                f"session note body (notes + decisions) is {n} characters; the item body limit is "
+                f"{ITEM_BODY_MAX}"
+            )
+        if self.card_update is not None and 1 + len(self.expected_versions) > ITEM_LINKS_MAX:
+            raise ValueError(
+                f"card_update with {len(self.expected_versions)} expected_versions needs "
+                f"{1 + len(self.expected_versions)} links; the item link limit is {ITEM_LINKS_MAX} "
+                f"(at most {ITEM_LINKS_MAX - 1} expected_versions with a card_update)"
+            )
+        return self
+
+
+def session_note_body(notes: str, decisions: list[str]) -> str:
+    """The session-note body ``call_the_day`` writes (§3): notes, then a ``## Decisions`` list.
+    Must stay identical to ``write_service._close_items`` (pinned by a unit test)."""
+    body = notes
+    if decisions:
+        body += "\n\n## Decisions\n" + "\n".join(f"- {d}" for d in decisions)
+    return body
+
 
 class VersionAck(BaseModel):
     index: int
@@ -145,23 +190,55 @@ class CloseResult(WriteResult):
     session_note_clue: str
 
 
+MAX_ERRORS = 20  # validation errors echoed in ``details.errors`` (F06: the envelope stays bounded)
+MAX_ERROR_TEXT = 300  # chars per echoed message / loc / ctx value
+
+
+def _clip(text: str) -> str:
+    return text if len(text) <= MAX_ERROR_TEXT else text[: MAX_ERROR_TEXT - 1] + "…"
+
+
+def bounded_validation_errors(exc: ValidationError) -> tuple[list[dict[str, Any]], int]:
+    """Pydantic errors without ``input``/``url`` (F06: never echo the request back), at most
+    ``MAX_ERRORS`` of them, every string clipped; returns ``(errors, total_count)``."""
+    raw = exc.errors(include_input=False, include_url=False)
+    out: list[dict[str, Any]] = []
+    for err in raw[:MAX_ERRORS]:
+        item: dict[str, Any] = {
+            "type": _clip(str(err.get("type", ""))),
+            "loc": [p if isinstance(p, int) else _clip(str(p)) for p in err.get("loc", ())],
+            "msg": _clip(str(err.get("msg", ""))),
+        }
+        ctx = err.get("ctx")
+        if isinstance(ctx, dict):
+            item["ctx"] = {
+                _clip(str(k)): (v if isinstance(v, int | float | bool) or v is None else _clip(str(v)))
+                for k, v in list(ctx.items())[:8]
+            }
+        out.append(item)
+    return out, len(raw)
+
+
 def _format_validation_error(exc: ValidationError) -> str:
     parts = []
-    for err in exc.errors()[:5]:
+    for err in exc.errors(include_input=False, include_url=False)[:5]:
         loc = ".".join(str(p) for p in err.get("loc", ()))
-        parts.append(f"{loc}: {err.get('msg')}" if loc else str(err.get("msg")))
+        msg = str(err.get("msg"))
+        parts.append(_clip(f"{loc}: {msg}" if loc else msg))
     return "; ".join(parts)
 
 
 def parse_request[T: BaseModel](model: type[T], raw: T | dict[str, Any]) -> T:
-    """Validate ``raw`` as ``model``; a Pydantic error becomes ``E_INVALID_ARG``."""
+    """Validate ``raw`` as ``model``; a Pydantic error becomes ``E_INVALID_ARG`` with a bounded
+    ``details.errors`` list (no input echo) and ``details.error_count`` (the full count)."""
     if isinstance(raw, model):
         return raw
     try:
         return model.model_validate(raw)
     except ValidationError as exc:
+        errors, total = bounded_validation_errors(exc)
         raise ToolError(
-            "E_INVALID_ARG", _format_validation_error(exc), errors=exc.errors(include_url=False)
+            "E_INVALID_ARG", _format_validation_error(exc), errors=errors, error_count=total
         ) from exc
 
 
@@ -179,5 +256,7 @@ __all__ = [
     "VersionAck",
     "WriteRequest",
     "WriteResult",
+    "bounded_validation_errors",
     "parse_request",
+    "session_note_body",
 ]

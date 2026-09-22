@@ -50,3 +50,6 @@ hlm.log
 hlm.toml
 # judge harness logs + generated secret env files (docs/bakeoff/r2/judge)
 docs/bakeoff/r2/judge/logs/
+
+# local tool artefacts
+.playwright-mcp/

@@ -47,7 +47,12 @@ import psycopg
 from psycopg import AsyncConnection
 
 from hlmemo.core import MODEL_ID, MODEL_REVISION
-from hlmemo.core.embedder import Embedder, default_model_dir
+from hlmemo.core.embedder import (
+    EmbedConfigMismatch,
+    Embedder,
+    default_model_dir,
+    require_pinned_embed_config,
+)
 from hlmemo.db.read_queries import vector_literal
 
 log = logging.getLogger("hlmemo.worker")
@@ -561,10 +566,27 @@ async def run_forever(
 
 
 # --------------------------------------------------------------------------- entrypoint
+_DSN_LOG_KEYS = ("host", "hostaddr", "port", "dbname", "user")
+
+
+def redact_dsn(dsn: str) -> str:
+    """A loggable description of ``dsn``: host/port/dbname/user only, never the password or any
+    other parameter (F09: the old ``split("@")`` leaked ``password=`` in key=value DSNs)."""
+    try:
+        from psycopg.conninfo import conninfo_to_dict
+
+        parts = conninfo_to_dict(dsn)
+    except Exception:  # noqa: BLE001 - an unparsable DSN is never echoed
+        return "<unparsable dsn>"
+    return " ".join(f"{k}={parts[k]}" for k in _DSN_LOG_KEYS if parts.get(k)) or "<default dsn>"
+
+
 async def _amain() -> int:
     from hlmemo.config import get_settings
 
     settings = get_settings()
+    # F04: the embedder is pinned by models.lock; a different HLM_EMBED_MODEL/REVISION is fatal.
+    require_pinned_embed_config(settings.embed_model, settings.embed_revision)
     model_dir = default_model_dir()
     log.info("worker: model %s@%s from %s", MODEL_ID, MODEL_REVISION[:8], model_dir)
     embedder = Embedder(model_dir)
@@ -584,7 +606,7 @@ async def _amain() -> int:
             pass
     log.info(
         "worker: polling %s (lease %ss, batch %s chunks)",
-        settings.db_dsn.split("@")[-1],
+        redact_dsn(settings.db_dsn),
         LEASE_SECONDS,
         BATCH_CHUNKS,
     )
@@ -595,7 +617,11 @@ async def _amain() -> int:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    return asyncio.run(_amain())
+    try:
+        return asyncio.run(_amain())
+    except EmbedConfigMismatch as exc:
+        log.error("worker: refusing to start: %s", exc)
+        return 2
 
 
 if __name__ == "__main__":
@@ -616,6 +642,7 @@ __all__ = [
     "lease_jobs",
     "main",
     "process_jobs",
+    "redact_dsn",
     "run_forever",
     "run_once",
 ]
