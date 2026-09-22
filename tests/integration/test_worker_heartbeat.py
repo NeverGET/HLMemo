@@ -1,9 +1,10 @@
 """O2 heartbeat (codex review 09 §4): the worker must make progress observable.
 
 ``worker/main.heartbeat`` emits, at most every ``HEARTBEAT_SECONDS``, the last *committed* job id
-and timestamp, the number of ready jobs and the age of the oldest ready one. That is exactly the
-signal that separates "idle" (``ready_jobs=0``) from "stalled" (ready jobs whose age keeps growing
-while ``last_done_job`` stands still) — the failure mode a crashed worker leaves behind.
+and timestamp, the ready-job count and the age of the oldest ready job, plus the in-flight (leased)
+count and age. Together they separate "idle" (``ready_jobs=0 in_flight_jobs=0``) from "stalled":
+a ready backlog nobody picks up, or — the shape a crashed worker leaves behind — a job held under a
+live lease that will never be committed, which the ready counters alone report as idle.
 
 The live-container half of this (a restarted worker really logs the line) is asserted by
 ``test_worker_restart.py``.

@@ -419,9 +419,11 @@ def test_worker_sigkill_after_vector_inserts_restarts_and_reclaims(o2_stack: Sta
         # ... and no second worker was spawned to do it
         assert _replicas(o2_stack.env) == 1
 
-    # 7. the restarted worker publishes the O2 heartbeat.
+    # 7. the restarted worker publishes the O2 heartbeat, and it showed the stall: for the whole
+    #    lease window the crashed worker's job was held in flight with nothing being committed.
     logs = _compose(o2_stack.env, "logs", "--no-color", "worker", check=False)
     assert "worker heartbeat:" in logs, "no heartbeat line in the worker log"
+    assert "in_flight_jobs=1" in logs, "the heartbeat never reported the job stranded by the crash"
     assert "TEST BARRIER" in logs
 
 
