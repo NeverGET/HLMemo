@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Calendar rotation excludes deployment snapshots; those require explicit pruning."""
+
 import argparse
-from datetime import datetime
 import os
-from pathlib import Path
 import re
 import shutil
 import sys
+from datetime import datetime
+from pathlib import Path
 
 
 def rotate(dump: Path, root: Path) -> Path:
@@ -28,7 +29,10 @@ def rotate(dump: Path, root: Path) -> Path:
     snapshots = sorted(
         (root / "daily").glob("hlmemo-*.dump"),
         key=lambda path: (
-            path.name.partition("Z")[0], path.name == dump.name, path.stat().st_mtime_ns, path.name
+            path.name.partition("Z")[0],
+            path.name == dump.name,
+            path.stat().st_mtime_ns,
+            path.name,
         ),
         reverse=True,
     )
@@ -48,7 +52,8 @@ def prune(root: Path, keep: int) -> int:
         raise ValueError("pre-upgrade retention must keep at least one dump")
     snapshots = sorted(
         (root / "pre-upgrade").glob("*.dump"),
-        key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True,
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
     )
     for path in snapshots[keep:]:
         path.unlink()

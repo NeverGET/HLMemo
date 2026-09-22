@@ -27,7 +27,12 @@ elif args[0] == "show":
     assert args[1] == "b" * 40 + ":deploy/scripts/remote-deploy.sh"
     if os.environ["MODE"] == "missing-runner":
         sys.exit(128)
-    print(Path(os.environ["TARGET_RUNNER"]).read_text())
+    runner = Path(os.environ["TARGET_RUNNER"]).read_text()
+    if os.environ["MODE"] == "old-runner":
+        runner = runner.replace("HLM_RUNNER_PROTOCOL=3\n", "")
+    elif os.environ["MODE"] == "older-protocol":
+        runner = runner.replace("HLM_RUNNER_PROTOCOL=3", "HLM_RUNNER_PROTOCOL=2")
+    print(runner)
 """
 
 SSH = r"""#!/usr/bin/env bash
@@ -41,10 +46,11 @@ exec bash -c "${@: -1}"
 """
 
 RUNNER = r"""#!/usr/bin/env bash
+HLM_RUNNER_PROTOCOL=3
 set -Eeuo pipefail
 run_dir=$5
 [[ $1 == bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ]]
-[[ $HLM_DEPLOY_PREPARED_REVISION == "$1" && $HLM_DEPLOY_LOCK_HELD == 0 ]]
+[[ $HLM_DEPLOY_PREPARED_REVISION == "$1" && $HLM_DEPLOY_LOCK_HELD == 1 ]]
 [[ -z $(cat) ]]
 printf 'TARGET-REF-RUNNER\n'
 if [[ $MODE == sigkill ]]; then
@@ -148,6 +154,19 @@ class DeployTransportTest(unittest.TestCase):
         self.assertFalse((root / ".deploy-managed").exists())
         self.assertEqual("1\n", next(root.glob(".deploy-runs/*/status")).read_text())
 
+    def test_old_runner_protocol_refused_before_checkout_or_deploy_mutation(self):
+        for mode in ("old-runner", "older-protocol"):
+            with self.subTest(mode=mode):
+                root, result, _ = self.deploy(mode)
+                self.assertEqual(1, result.returncode, result.stderr + result.stdout)
+                self.assertIn("protocol 3 is required", result.stdout)
+                events = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+                self.assertFalse(any(row[0] == "checkout" for row in events))
+                self.assertNotIn("TARGET-REF-RUNNER", result.stdout)
+                self.assertFalse((root / "current-ref").exists())
+                self.assertFalse((root / ".deploy-managed").exists())
+                self.assertEqual("1\n", next(root.glob(".deploy-runs/*/status")).read_text())
+
     def test_sigkill_runner_is_detected_without_final_status(self):
         root, result, elapsed = self.deploy("sigkill")
         self.assertEqual(1, result.returncode, result.stderr + result.stdout)
@@ -161,12 +180,12 @@ class DeployTransportTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 root, result, elapsed = self.deploy(mode)
                 self.assertEqual(124, result.returncode, result.stderr + result.stdout)
-                self.assertIn("timed out after 2s", result.stderr)
+                self.assertIn("\n\nDeployment observation timed out after 2s", result.stderr)
                 self.assertLess(elapsed, 6)
                 pid = int(next(root.glob(".deploy-runs/*/pid")).read_text())
                 os.kill(pid, 0)  # Timing out the client must leave the remote job alive.
 
-    def test_real_git_initial_clone_runs_legacy_runner_with_its_own_lock(self):
+    def test_real_git_initial_clone_inherits_exclusive_lock(self):
         root, env = self.prepare()
         (root / "bin/git").unlink()
         shutil.rmtree(root / "app")
@@ -174,16 +193,17 @@ class DeployTransportTest(unittest.TestCase):
         runner = source / "deploy/scripts/remote-deploy.sh"
         runner.parent.mkdir(parents=True)
         runner.write_text(
-            "#!/usr/bin/env bash\nset -Eeuo pipefail\n"
-            'exec 9>"$(dirname "$3")/.deploy.lock"\n'
-            "flock -n 9 || { echo legacy-lock-conflict; exit 9; }\n"
+            "#!/usr/bin/env bash\nHLM_RUNNER_PROTOCOL=3\nset -Eeuo pipefail\n"
+            "[[ $HLM_DEPLOY_LOCK_HELD == 1 ]]\n"
+            "flock -n 9 || { echo inherited-lock-missing; exit 9; }\n"
+            'if flock -n "$(dirname "$3")/.deploy.lock" true; then exit 9; fi\n'
             'cd "$3"\n'
             "[[ -z $(git status --porcelain --untracked-files=no) ]]\n"
             'test -f "$(dirname "$3")/.deploy-managed"\n'
             'git fetch origin "$1" </dev/null\n'
             'git checkout --detach "$1" </dev/null\n'
             'printf "0\\n" > "$5/status"\n'
-            'echo "Deployment ready: legacy target runner"\n'
+            'echo "Deployment ready: protocol 3 target runner"\n'
         )
         identity = dict(
             os.environ,
@@ -216,7 +236,7 @@ class DeployTransportTest(unittest.TestCase):
             timeout=15,
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn("Deployment ready: legacy target runner", result.stdout)
+        self.assertIn("Deployment ready: protocol 3 target runner", result.stdout)
         self.assertEqual(runner.read_text(), next(root.glob(".deploy-runs/*/deploy.sh")).read_text())
         self.assertFalse((root / "current-ref").exists())
 

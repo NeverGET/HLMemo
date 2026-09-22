@@ -23,19 +23,22 @@
 		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
 		-Server
 	}
-	request_body {
-		max_size 2MB
-	}
 
 	@mcp path /mcp
 	handle @mcp {
-		reverse_proxy api:8765 {
+		request_body {
+			max_size 64MiB
+		}
+		reverse_proxy api-frontend:8765 {
 			flush_interval -1
 		}
 	}
 	@rest path /health /ready /devices/* /admin/*
 	handle @rest {
-		reverse_proxy api:8765
+		request_body {
+			max_size 64KiB
+		}
+		reverse_proxy api-frontend:8765
 	}
 	handle {
 		respond "Not found" 404
@@ -46,7 +49,7 @@
 http://127.0.0.1:8081 {
 	bind 127.0.0.1
 	handle /ready {
-		reverse_proxy api:8765
+		reverse_proxy api-frontend:8765
 	}
 	handle {
 		respond "Not found" 404

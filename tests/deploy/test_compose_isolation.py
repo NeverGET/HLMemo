@@ -54,6 +54,28 @@ class ComposeIsolationTests(unittest.TestCase):
         )
         self.assertIn("HLM_ADMIN_TOKEN", services["api"]["environment"])
 
+    def test_proxy_trust_matches_frontend_only_route(self):
+        config = self.render()
+        subnet = config["networks"]["frontend"]["ipam"]["config"][0]["subnet"]
+        api = config["services"]["api"]
+        self.assertEqual(subnet, "172.30.39.0/24")
+        self.assertEqual(api["environment"]["HLM_TRUSTED_PROXY_IPS"], subnet)
+        self.assertNotIn("FORWARDED_ALLOW_IPS", api["environment"])
+        self.assertIn("api-frontend", api["networks"]["frontend"]["aliases"])
+        for network in ("backend", "outbound"):
+            self.assertNotIn("api-frontend", (api["networks"][network] or {}).get("aliases", []))
+        self.assertIn("reverse_proxy api-frontend:8765", (ROOT / "deploy/Caddyfile").read_text())
+
+    def test_eight_gib_host_keeps_two_gib_headroom(self):
+        services = self.render()["services"]
+        self.assertLessEqual(sum(int(s["mem_limit"]) for s in services.values()), 6 * 1024**3)
+        self.assertEqual(int(services["db"]["mem_limit"]), 2 * 1024**3)
+        for setting in ("shared_buffers=512MB", "work_mem=4MB", "max_connections=50"):
+            self.assertIn(setting, services["db"]["command"])
+        for name in ("api", "worker"):
+            self.assertGreaterEqual(int(services[name]["mem_limit"]), 1536 * 1024**2)
+            self.assertLessEqual(float(services[name]["cpus"]), 2)
+
     def test_production_all_interfaces_and_http3_local_loopback(self):
         for local in (False, True):
             services = self.render(local)["services"]

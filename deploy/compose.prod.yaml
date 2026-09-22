@@ -18,6 +18,8 @@ x-app: &app
     context: ..
     dockerfile: Dockerfile
     target: runtime
+    labels:
+      org.opencontainers.image.revision: ${HLM_IMAGE_REVISION:-local}
     args:
       BAKE_MODELS: "1"
   env_file: *app-env
@@ -44,15 +46,15 @@ services:
         required: true
     environment:
       POSTGRES_INITDB_ARGS: --data-checksums
-    command: ["postgres", "-c", "timezone=UTC", "-c", "shared_buffers=1GB", "-c", "max_connections=100"]
+    command: ["postgres", "-c", "timezone=UTC", "-c", "shared_buffers=512MB", "-c", "work_mem=4MB", "-c", "maintenance_work_mem=128MB", "-c", "max_connections=50"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     # No ports, even on loopback. Only the private backend network reaches Postgres.
     networks: [backend]
     restart: unless-stopped
     logging: *logging
-    mem_limit: 4g
-    cpus: 2.0
-    shm_size: 1g
+    mem_limit: 2g
+    cpus: 1.0
+    shm_size: 512m
     pids_limit: 256
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
@@ -65,7 +67,7 @@ services:
     <<: *app
     command: ["alembic", "upgrade", "phase0@head"]
     restart: "no" # Successful completion IS the one-shot migration's health signal.
-    mem_limit: 1g
+    mem_limit: 768m
     cpus: 1.0
     depends_on:
       db:
@@ -79,9 +81,13 @@ services:
       - path: ${HLM_API_ENV_FILE:-./api.env}
         required: true
     command: ["python", "-m", "hlmemo.server.app"]
-    mem_limit: 3g
-    cpus: 2.0
-    networks: [backend, frontend, outbound]
+    mem_limit: 1536m
+    cpus: 1.0
+    networks:
+      backend: {}
+      frontend:
+        aliases: [api-frontend]
+      outbound: {}
     depends_on:
       db:
         condition: service_healthy
@@ -100,8 +106,8 @@ services:
     volumes:
       - ./scripts/worker_entrypoint.py:/opt/hlmemo/worker_entrypoint.py:ro
       - ./scripts/worker_health.py:/opt/hlmemo/worker_health.py:ro
-    mem_limit: 4g
-    cpus: 3.0
+    mem_limit: 1536m
+    cpus: 1.0
     stop_grace_period: 150s
     depends_on:
       db:
@@ -150,6 +156,9 @@ networks:
     internal: true
   frontend:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.30.39.0/24
   outbound: {}
 
 volumes:

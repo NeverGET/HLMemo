@@ -1,4 +1,5 @@
 """Record successful existing worker heartbeats without changing application sources."""
+
 import logging
 from pathlib import Path
 
