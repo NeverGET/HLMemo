@@ -12,8 +12,8 @@ every dependency a write or query needs — DB reachable, migration at `phase0@h
 model files present under `HLM_MODELS_DIR` with sha256 matching `models.lock`, and the tokenizer
 loading — and answers 503 `not_ready` with the failing checks otherwise. The compose healthcheck
 probes `/ready`, so `api` is never "healthy" while `memory.write` / `memory.query` would fail.
-The expensive parts (hashing 470 MB, parsing the tokenizer) run once per process and are re-done
-only when a model file's size/mtime changes.
+The lifespan loads one model/tokenizer session shared by readiness and all queries. Expensive
+file checks (hashing 470 MB) are cached until a model file's size/mtime changes.
 
 `python -m hlmemo.server.app` runs uvicorn with settings from HLM_* / hlm.toml.
 The MCP endpoint (`server/mcp_server.py`, five tools of §3) is a plain `Route("/mcp", <ASGI>)` so
@@ -53,6 +53,7 @@ from hlmemo.core.embedder import (
     repo_root,
     require_pinned_embed_config,
 )
+from hlmemo.core.read_service import ReadDeps
 from hlmemo.db import auth_queries as q
 from hlmemo.db.pool import create_pool
 from hlmemo.server import admin, devices
@@ -130,10 +131,19 @@ def _files_signature(model_dir: Path) -> tuple[tuple[str, int, int], ...]:
     return tuple(out)
 
 
-def _verify_models_blocking(model_dir: Path, lock: Path | None, cache: dict[str, Any]) -> dict[str, Any]:
+def _verify_models_blocking(
+    model_dir: Path,
+    lock: Path | None,
+    cache: dict[str, Any],
+    embedder: Embedder | None,
+    meter: Meter | None,
+) -> dict[str, Any]:
     """Model files present + sha256 == models.lock + tokenizer parses. Hashes are cached per
     (size, mtime) signature so a healthcheck every few seconds does not re-read 470 MB."""
     result: dict[str, Any] = {"dir": str(model_dir)}
+    if embedder is None or meter is None:
+        result.update(ok=False, error="embedding dependencies not initialized by lifespan")
+        return result
     missing = [rel for rel in MODEL_FILES if not (model_dir / rel).is_file()]
     if missing:
         result.update(ok=False, error="model files missing; run `make models`", missing=missing)
@@ -153,8 +163,8 @@ def _verify_models_blocking(model_dir: Path, lock: Path | None, cache: dict[str,
         return result
     if cache.get("sig") != sig:
         # Exercise inference and budget accounting, including the separate o200k cache.
-        Embedder(model_dir).embed_query("readiness")
-        Meter().count_text("readiness")
+        embedder.embed_query("readiness")
+        meter.count_text("readiness")
         cache["sig"] = sig
     result.update(ok=True, lock=str(lock), tokenizer=True, inference=True, meter=True)
     return result
@@ -236,7 +246,12 @@ async def _check_readiness(
     async def verify_models() -> dict[str, Any]:
         async with model_check_lock:
             return await asyncio.to_thread(
-                _verify_models_blocking, model_dir, _project_file(MODELS_LOCK), cache
+                _verify_models_blocking,
+                model_dir,
+                _project_file(MODELS_LOCK),
+                cache,
+                getattr(app.state, "embedder", None),
+                getattr(getattr(app.state, "read_deps", None), "meter", None),
             )
 
     try:
@@ -333,6 +348,16 @@ def create_app(
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         require_pinned_embed_config(settings.embed_model, settings.embed_revision)
+        model_dir = default_model_dir()
+        app.state.embedder = await asyncio.to_thread(
+            Embedder, model_dir, threads=settings.embed_intra_op_num_threads
+        )
+        app.state.read_deps = ReadDeps(
+            meter=Meter(),
+            model_dir=model_dir,
+            cursor_secret=app.state.cursor_secret,
+            _embedder=app.state.embedder,
+        )
         # Binding runs (and commits) before the pool used for traffic is opened and before uvicorn
         # starts accepting connections — no request can observe a half-bound device 1.
         app.state.admin_generation = await bind_admin_device(settings)
@@ -351,6 +376,8 @@ def create_app(
                 await asyncio.shield(probe.task)
             await admin_pool.close()
             await pool.close()
+            app.state.read_deps = None
+            app.state.embedder = None
 
     app = Starlette(
         routes=build_routes(mcp),

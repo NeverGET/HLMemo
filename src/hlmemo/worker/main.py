@@ -589,7 +589,7 @@ async def _amain() -> int:
     require_pinned_embed_config(settings.embed_model, settings.embed_revision)
     model_dir = default_model_dir()
     log.info("worker: model %s@%s from %s", MODEL_ID, MODEL_REVISION[:8], model_dir)
-    embedder = Embedder(model_dir)
+    embedder = Embedder(model_dir, threads=settings.embed_intra_op_num_threads)
 
     async def factory() -> AsyncConnection:
         c = await AsyncConnection.connect(settings.db_dsn, autocommit=False)

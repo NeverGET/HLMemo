@@ -66,10 +66,17 @@ class ComposeIsolationTests(unittest.TestCase):
             self.assertNotIn("api-frontend", (api["networks"][network] or {}).get("aliases", []))
         self.assertIn("reverse_proxy api-frontend:8765", (ROOT / "deploy/Caddyfile").read_text())
 
-    def test_eight_gib_host_keeps_two_gib_headroom(self):
+    def test_eight_gb_host_fits_measured_api_peak_and_spool(self):
         services = self.render()["services"]
-        self.assertLessEqual(sum(int(s["mem_limit"]) for s in services.values()), 6 * 1024**3)
+        total = sum(int(s["mem_limit"]) for s in services.values())
+        self.assertLessEqual(total, 7 * 1024**3)
+        self.assertLess(total, 8_000_000_000)  # Fits even a decimal 8 GB host.
         self.assertEqual(int(services["db"]["mem_limit"]), 2 * 1024**3)
+        api = services["api"]
+        self.assertEqual(api["environment"]["HLM_REQUEST_SPOOL_DIR"], "/var/spool/hlmemo")
+        self.assertIn("/var/spool/hlmemo:size=320m,uid=10001,gid=10001,mode=0700", api["tmpfs"])
+        self.assertIn("/tmp:size=64m,mode=1777", api["tmpfs"])
+        self.assertGreaterEqual(int(api["mem_limit"]), (1536 + 320 + 64) * 1024**2 * 1.25)
         for setting in ("shared_buffers=512MB", "work_mem=4MB", "max_connections=50"):
             self.assertIn(setting, services["db"]["command"])
         for name in ("api", "worker"):

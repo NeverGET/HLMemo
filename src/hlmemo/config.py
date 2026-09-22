@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     db_dsn: str = "postgresql://hlm:hlm@127.0.0.1:5432/hlm"
     embed_model: str = "intfloat/multilingual-e5-small"
     embed_revision: str = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+    embed_intra_op_num_threads: int = Field(default=2, gt=0)
     hosting_target: str = "compose"
 
     # --- librarian LLM: parsed and validated in Phase 0, never called (D-017/D-019) ---

@@ -157,7 +157,7 @@ class Embedder:
         *,
         max_tokens: int = MAX_TOKENS,
         batch_size: int = DEFAULT_BATCH,
-        threads: int | None = None,
+        threads: int = 2,
         expected_hashes: dict[str, str] | None = None,
     ) -> None:
         import onnxruntime as ort
@@ -183,8 +183,9 @@ class Embedder:
         self._pad_id = pad if pad is not None else 1
 
         opts = ort.SessionOptions()
-        if threads:
-            opts.intra_op_num_threads = threads
+        # Do not retain the largest inference allocation in a growing CPU arena.
+        opts.enable_cpu_mem_arena = False
+        opts.intra_op_num_threads = threads
         self._sess = ort.InferenceSession(
             str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
         )

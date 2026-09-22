@@ -101,7 +101,7 @@ async def test_readiness_checks_dependencies_and_reuses_starlette_state(monkeypa
     app.state.model_check_cache = {"existing": True}
     caches = []
 
-    def verify(model_dir, lock, cache):
+    def verify(model_dir, lock, cache, embedder, meter):
         caches.append(cache)
         return {"ok": dependency != "models"}
 
@@ -122,27 +122,25 @@ def test_readiness_requires_complete_hashes_and_working_inference_and_meter(tmp_
     lock = tmp_path / "models.lock"
     lock.write_text("")
     hashes = server.model_hashes(tmp_path)
-    assert not server._verify_models_blocking(tmp_path, lock, {})["ok"]
+    assert not server._verify_models_blocking(tmp_path, lock, {}, Mock(), Mock())["ok"]
     lock.write_text("\n".join(f"{rel}: sha256:{digest}" for rel, digest in hashes.items()))
     embedder = Mock()
     meter = Mock()
-    monkeypatch.setattr(server, "Embedder", embedder)
-    monkeypatch.setattr(server, "Meter", meter)
     cache = {}
-    assert server._verify_models_blocking(tmp_path, lock, cache)["ok"]
-    assert server._verify_models_blocking(tmp_path, lock, cache)["ok"]
-    embedder.return_value.embed_query.assert_called_once_with("readiness")
-    meter.return_value.count_text.assert_called_once_with("readiness")
-    meter.side_effect = RuntimeError("budget tokenizer unavailable offline")
+    assert server._verify_models_blocking(tmp_path, lock, cache, embedder, meter)["ok"]
+    assert server._verify_models_blocking(tmp_path, lock, cache, embedder, meter)["ok"]
+    embedder.embed_query.assert_called_once_with("readiness")
+    meter.count_text.assert_called_once_with("readiness")
+    meter.count_text.side_effect = RuntimeError("budget tokenizer unavailable offline")
     with pytest.raises(RuntimeError, match="tokenizer"):
-        server._verify_models_blocking(tmp_path, lock, {})
+        server._verify_models_blocking(tmp_path, lock, {}, embedder, meter)
     (tmp_path / server.HASHED_FILES[0]).write_text("corrupt asset")
-    assert not server._verify_models_blocking(tmp_path, lock, cache)["ok"]
+    assert not server._verify_models_blocking(tmp_path, lock, cache, embedder, meter)["ok"]
 
 
-def test_readiness_real_pinned_assets(model_dir):
+def test_readiness_real_pinned_assets(model_dir, embedder):
     lock = Path(__file__).resolve().parents[2] / "models.lock"
-    checks = server._verify_models_blocking(model_dir, lock, {})
+    checks = server._verify_models_blocking(model_dir, lock, {}, embedder, server.Meter())
     assert checks["ok"] and checks["inference"] and checks["meter"]
 
 

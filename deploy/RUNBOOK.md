@@ -121,21 +121,52 @@ Scripts supply these paths automatically. Missing service files fail closed.
 | Service | Memory ceiling | CPU ceiling |
 |---|---:|---:|
 | PostgreSQL | 2 GiB | 1 |
-| API (local e5-small) | 1.5 GiB | 1 |
+| API (local e5-small, including tmpfs) | 2.5 GiB (2560 MiB) | 1 |
 | Worker (local e5-small) | 1.5 GiB | 1 |
 | Migration (one-shot) | 768 MiB | 1 |
 | Caddy | 256 MiB | 0.5 |
 
-Steady ceilings total **5.25 GiB**; including migration, **6 GiB**, leaving about 2 GiB on an
-8 GiB host for Linux, Docker and other host services. Decimal 8 GB hosts have about 1.45 GiB
-headroom at the full combined ceiling. Limits are not reservations; CPU limits share the two
-physical vCPUs. e5-small is roughly 0.5 GB per process (D-042); the API/worker ceilings allow
-runtime/query overhead. PostgreSQL uses `shared_buffers=512MB`, `work_mem=4MB`,
+Steady ceilings total **6.25 GiB** (`2 + 2.5 + 1.5 + 0.25`); adding the one-shot migration's
+0.75 GiB gives a conservative **7 GiB** combined ceiling. An 8 GiB host retains 1.75 GiB
+steady / 1 GiB combined headroom; a decimal 8 GB host retains about **1.20 GiB steady /
+0.45 GiB combined**. Migration completes before API/worker startup. Limits are not reservations;
+CPU limits share the two physical vCPUs. PostgreSQL uses `shared_buffers=512MB`, `work_mem=4MB`,
 `maintenance_work_mem=128MB`, `max_connections=50`, and 512 MiB shared memory. `work_mem` applies
 per sort/hash operation, not once per connection; avoid increasing concurrency without measuring.
 The example API/worker pools each max at 8 connections. Monitor container RSS, OOM events and
 query latency on the actual VPS; these limits are capacity planning, not a production load test.
 Migration is intentionally one-shot, `restart: no`, and must exit zero.
+
+API sizing evidence (2026-09-23, local Docker arm64, one CPU, 1536 MiB cgroup with swap disabled):
+the isolated `oom-check` smoke built this worktree's runtime image, mounted pinned models
+read-only, passed `/ready` and 20 real MCP `memory.query` calls, and finished with
+`OOMKilled=false`, `RestartCount=0`. **Docker stats sampled peak: 956.2 MiB** (5 samples);
+**cgroup `memory.peak`: 1536 MiB**. Docker stats excludes inactive file cache and can miss short
+spikes, so sizing uses the larger cgroup high-water mark, which includes startup/cache pressure
+under the test limit. This is not an unconstrained peak or a maximum-concurrency load test.
+
+The API uses one lifespan-owned ONNX session shared by readiness and every query. Both API and
+worker disable the CPU memory arena and use `HLM_EMBED_INTRA_OP_NUM_THREADS=2` by default.
+`HLM_REQUEST_SPOOL_DIR=/var/spool/hlmemo` is backed by a **320 MiB tmpfs** owned by UID/GID 10001;
+`/tmp` retains its separate 64 MiB tmpfs. Both tmpfs allocations count against the API cgroup.
+Required budget: `(1536 + 320) × 1.25 = 2320 MiB`; also reserving all of `/tmp` gives
+`(1536 + 320 + 64) × 1.25 = 2400 MiB`, rounded up to **2560 MiB**. Do not add these tmpfs
+ceilings again to the host table: they are already included in the API limit.
+
+Repeat the isolated memory smoke against an already migrated disposable `hlm_body` database
+(never run concurrently with tests using that DB):
+
+```sh
+HLM_TEST_DSN=postgresql://hlm:hlm@127.0.0.1:5432/hlm_body \
+python3 tests/deploy/oom_smoke.py --image hlmemo:oom-check --build \
+  --models-dir "$HLM_MODELS_DIR"
+```
+
+Set `HLM_MODELS_DIR` to the local directory containing the pinned model first. Omit
+`--models-dir` to bake models instead. The script binds a fresh test admin token, adds a uniquely
+named test project, publishes only an ephemeral loopback port, reports stats and inspect results,
+and removes its `oom-check` API container in `finally`; it does not alter an existing stack.
+
 Logs rotate at 5 × 10 MiB per container. Worker health checks observe successful poll-loop log
 heartbeats; missing heartbeats for 180 seconds fail health. Docker does not automatically restart
 an unhealthy but running process: alert on unhealthy state and aging job backlog. Caddy's container

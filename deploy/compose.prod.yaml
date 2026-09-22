@@ -23,7 +23,7 @@ x-app: &app
     args:
       BAKE_MODELS: "1"
   env_file: *app-env
-  environment:
+  environment: &app-environment
     HLM_PROFILES_DIR: /app/profiles
     HLM_MODELS_DIR: /app/models
     HLM_API_HOST: 0.0.0.0
@@ -75,13 +75,20 @@ services:
 
   api:
     <<: *app
+    environment:
+      <<: *app-environment
+      HLM_REQUEST_SPOOL_DIR: /var/spool/hlmemo
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/spool/hlmemo:size=320m,uid=10001,gid=10001,mode=0700
     env_file:
       - path: ${HLM_APP_ENV_FILE:-./app.env}
         required: true
       - path: ${HLM_API_ENV_FILE:-./api.env}
         required: true
     command: ["python", "-m", "hlmemo.server.app"]
-    mem_limit: 1536m
+    # Cold cgroup peak 1536 MiB + spool 320 MiB + /tmp 64 MiB, with 25% headroom.
+    mem_limit: 2560m
     cpus: 1.0
     networks:
       backend: {}
