@@ -14,6 +14,9 @@ async "librarian" LLM for placement/contradiction/consolidation.
 - **Source of truth for design:** `docs/research/00-deep-research-report.md` (deep-research report, Turkish).
   Deviations from it must be logged as a decision with rationale.
 
+## Product principle (D-017): provider-agnostic
+Librarian model, embedding model, DB and hosting are configuration, never code. Never hard-code a vendor, model id or model-specific prompt quirk outside a provider profile. `bench/` is a user-facing tool for choosing a model.
+
 ## Layout
 - `docs/research/`   — research inputs (deep-research report, model/VPS analyses)
 - `docs/consults/`   — codex ⇄ claude design exchanges (numbered)
