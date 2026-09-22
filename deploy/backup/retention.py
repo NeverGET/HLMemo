@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 
@@ -11,7 +12,10 @@ import sys
 def rotate(dump: Path, root: Path) -> Path:
     if dump.parent.resolve() != (root / "daily").resolve():
         raise ValueError("Calendar rotation accepts only daily snapshots")
-    timestamp = datetime.strptime(dump.stem.removeprefix("hlmemo-"), "%Y-%m-%dT%H%M%SZ")
+    match = re.fullmatch(r"hlmemo-(\d{4}-\d{2}-\d{2}T\d{6}Z)(?:-[A-Za-z0-9]+)?", dump.stem)
+    if match is None:
+        raise ValueError("Invalid daily snapshot filename")
+    timestamp = datetime.strptime(match[1], "%Y-%m-%dT%H%M%SZ")
     year, week, _ = timestamp.isocalendar()
     weekly = root / "weekly" / f"hlmemo-{year}-W{week:02d}.dump"
     temp = weekly.with_suffix(".partial")
@@ -19,7 +23,16 @@ def rotate(dump: Path, root: Path) -> Path:
     os.chmod(temp, 0o600)
     os.replace(temp, weekly)
     days = set()
-    for path in sorted((root / "daily").glob("hlmemo-*.dump"), reverse=True):
+    # Random suffixes must not decide which same-second snapshot survives.
+    # The snapshot completing this rotation is newest among timestamp ties.
+    snapshots = sorted(
+        (root / "daily").glob("hlmemo-*.dump"),
+        key=lambda path: (
+            path.name.partition("Z")[0], path.name == dump.name, path.stat().st_mtime_ns, path.name
+        ),
+        reverse=True,
+    )
+    for path in snapshots:
         day = path.name[7:17]
         if day in days or len(days) >= 7:
             path.unlink()

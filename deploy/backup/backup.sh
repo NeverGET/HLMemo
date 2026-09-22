@@ -39,7 +39,7 @@ if [[ $mode == pre-upgrade ]]; then
     # The random suffix also preserves two deploy attempts within the same second.
     dump="$BACKUP_DIR/pre-upgrade/$revision-$stamp-${temporary##*.}.dump"
 else
-    dump="$BACKUP_DIR/daily/hlmemo-$stamp.dump"
+    dump="$BACKUP_DIR/daily/hlmemo-$stamp-${temporary##*.}.dump"
 fi
 dc exec -T db sh -eu -c 'pg_dump --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --format=custom --no-owner --no-acl' </dev/null > "$temporary"
 dc exec -T db pg_restore --list < "$temporary" > /dev/null

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uploaded as a file and run detached; never execute this runner through bash -s.
+# Extracted from the fetched release and run detached; never run through bash -s.
 # All non-interactive children deliberately receive EOF.
 # shellcheck disable=SC2217
 set -Eeuo pipefail
@@ -27,13 +27,16 @@ app_dir=$3
 export HLM_ENV_FILE=$4
 parent_dir=$(dirname "$app_dir")
 test -r "$HLM_ENV_FILE" || { echo "Missing readable env file: $HLM_ENV_FILE" >&2; exit 1; }
+test -w "$(dirname "$HLM_ENV_FILE")" || { echo 'Env directory must be writable by the deploy user for atomic release publication (see RUNBOOK).' >&2; exit 1; }
 mkdir -p "$parent_dir"
-exec 9>"$parent_dir/.deploy.lock"
-flock -n 9 </dev/null || { echo 'Another deployment is running' >&2; exit 1; }
+if [[ ${HLM_DEPLOY_LOCK_HELD:-0} != 1 ]]; then
+  exec 9>"$parent_dir/.deploy.lock"
+  flock -n 9 </dev/null || { echo 'Another deployment is running' >&2; exit 1; }
+fi
 # A previous uncatchable SIGKILL/reboot can leave a private snapshot; only the
 # exclusive deployment owner may sweep it. Normal exits always remove it.
 rm -f -- "$parent_dir"/.rollback-compose.* </dev/null
-new_checkout=0
+new_checkout=${HLM_DEPLOY_NEW_CHECKOUT:-0}
 if [[ ! -d $app_dir/.git ]]; then
   git clone --no-checkout -- "$repository" "$app_dir" </dev/null
   new_checkout=1
@@ -55,8 +58,13 @@ elif [[ $new_checkout == 0 && ! -e $parent_dir/.deploy-managed ]]; then
   printf '%s\n' "$previous" > "$parent_dir/current-ref"
 fi
 touch "$parent_dir/.deploy-managed"
-git fetch --prune origin "$ref" </dev/null
-revision=$(git </dev/null rev-parse --verify 'FETCH_HEAD^{commit}')
+if [[ -n ${HLM_DEPLOY_PREPARED_REVISION:-} ]]; then
+  revision=$HLM_DEPLOY_PREPARED_REVISION
+  [[ $revision == "$ref" ]] || { echo 'Prepared runner/ref mismatch' >&2; exit 1; }
+else
+  git fetch --prune origin "$ref" </dev/null
+  revision=$(git </dev/null rev-parse --verify 'FETCH_HEAD^{commit}')
+fi
 writers_stopped=0
 migration_started=0
 pre_upgrade_dump=
@@ -110,16 +118,18 @@ deployment_failed() {
 trap deployment_failed ERR
 trap 'deployment_failed 130' INT
 trap 'deployment_failed 143' TERM
+if [[ -n $previous ]] && ! git diff --quiet "$previous" "$revision" -- deploy/compose.prod.yaml </dev/null; then
+  echo 'Compose model changed between releases; refusing automatic deployment before build/stop. Follow RUNBOOK staged Compose upgrade procedure.' >&2
+  false
+fi
 git checkout --detach "$revision" </dev/null
 test -f deploy/compose.prod.yaml || { echo 'Requested ref has no production compose file' >&2; false; }
 
 # shellcheck source=deploy/scripts/common.sh
 source deploy/scripts/common.sh
 dc config -q </dev/null
-# Use the target's split env layout even when upgrading a pre-D-034 checkout.
-# Running image IDs preserve old code; reject incomplete baselines before stop.
-# Capture the running image IDs before build. Pin image IDs: builds may replace
-# the production tag, and rollback must never run migrations from either revision.
+# The guard above proves this is also the previous release's Compose model.
+# Resolve it with current split env files, then pin the running images.
 rollback_config=$(mktemp "$parent_dir/.rollback-compose.XXXXXX")
 chmod 600 "$rollback_config"
 if [[ -n $previous ]]; then
@@ -143,11 +153,39 @@ with open(path, "w") as stream:
     json.dump(config, stream)
 PYCONFIG
 fi
+# Use a separate immutable tag for each release, shared by migrate/api/worker.
+# The persistent env stays on the baseline until the internal cutover succeeds.
+configured_image=$(env_value HLM_IMAGE)
+configured_image=${configured_image:-hlmemo:prod}
+image_repository=${configured_image%%@*}
+if [[ ${image_repository##*/} == *:* ]]; then image_repository=${image_repository%:*}; fi
+if [[ -n $previous ]]; then
+  previous_image="$image_repository:$previous"
+  previous_id=$(python3 - "$rollback_config" <<'PYIMAGE'
+import json, sys
+with open(sys.argv[1]) as stream:
+    services = json.load(stream)["services"]
+image = services["api"]["image"]
+if services["worker"]["image"] != image:
+    sys.exit("Cannot adopt baseline: api and worker run different images")
+print(image)
+PYIMAGE
+)
+  if existing_id=$(docker image inspect --format '{{.Id}}' "$previous_image" 2>/dev/null </dev/null); then
+    [[ $existing_id == "$previous_id" ]] || { echo 'Previous release tag differs from running image; refusing to retag immutable release' >&2; false; }
+  else
+    docker image tag "$previous_id" "$previous_image" </dev/null
+  fi
+  python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "$previous_image" </dev/null
+fi
+export HLM_IMAGE="$image_repository:$revision"
 # Use Compose's dotenv parser; never source a secrets file as executable shell.
 domain=$(env_value HLM_DOMAIN)
 [[ $domain =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'HLM_DOMAIN must be a DNS hostname' >&2; exit 1; }
 dc pull db caddy </dev/null
-dc build --pull api worker migrate </dev/null
+if ! docker image inspect "$HLM_IMAGE" >/dev/null 2>&1 </dev/null; then
+  dc build --pull api worker migrate </dev/null
+fi
 # Compilation/model download and the snapshot both happen while writers are live.
 if [[ -n $(dc ps </dev/null -q --status running db) ]]; then
   pre_upgrade_dump=$(bash deploy/backup/backup.sh --pre-upgrade "${previous:-$revision}" </dev/null)
@@ -172,6 +210,9 @@ dc up -d --no-deps --wait --wait-timeout 300 db api worker caddy </dev/null
 # failures before this boundary may restore the snapshot automatically.
 dc exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()" </dev/null
 dc exec -T caddy wget -q -O /dev/null http://127.0.0.1:8081/ready </dev/null
+# Publishing the image is part of cutover: if it fails, restore the baseline
+# rather than leaving a healthy new checkout with an old image selection.
+python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "$HLM_IMAGE" </dev/null
 trap - ERR
 trap 'exit 130' INT
 trap 'exit 143' TERM

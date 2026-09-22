@@ -1,22 +1,41 @@
 """Regression tests for independent pre-upgrade and calendar backup retention."""
+
 import importlib.util
 import os
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
-spec = importlib.util.spec_from_file_location("retention", Path(__file__).resolve().parents[2] / "deploy/backup/retention.py")
+spec = importlib.util.spec_from_file_location(
+    "retention", Path(__file__).resolve().parents[2] / "deploy/backup/retention.py"
+)
 retention = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(retention)
 
 
 class RetentionTest(unittest.TestCase):
+    def test_same_second_rotation_keeps_current_dump_over_random_suffix_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for tier in ("daily", "weekly"):
+                (root / tier).mkdir()
+            previous = root / "daily/hlmemo-2026-09-22T100000Z-zzzzzz.dump"
+            latest = root / "daily/hlmemo-2026-09-22T100000Z-aaaaaa.dump"
+            previous.write_text("first")
+            latest.write_text("second")
+            weekly = retention.rotate(latest, root)
+            self.assertEqual(list((root / "daily").glob("*.dump")), [latest])
+            self.assertEqual(latest.read_text(), "second")
+            self.assertEqual(weekly.read_text(), "second")
+
     def test_calendar_rotation_never_touches_same_day_deploys(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for tier in ("daily", "weekly", "pre-upgrade"):
                 (root / tier).mkdir()
-            upgrades = [root / "pre-upgrade" / f"abc1234-2026-09-22T{hour}0000Z.dump" for hour in ("09", "10")]
+            upgrades = [
+                root / "pre-upgrade" / f"abc1234-2026-09-22T{hour}0000Z.dump" for hour in ("09", "10")
+            ]
             for path in upgrades:
                 path.write_text(path.name)
             for week in range(1, 7):
@@ -43,7 +62,10 @@ class RetentionTest(unittest.TestCase):
                 path.write_text(name)
                 os.utime(path, (index + 1, index + 1))
             self.assertEqual(3, retention.prune(root, 5))
-            self.assertEqual({"w.dump", "v.dump", "u.dump", "t.dump", "s.dump"}, {p.name for p in (root / "pre-upgrade").glob("*.dump")})
+            self.assertEqual(
+                {"w.dump", "v.dump", "u.dump", "t.dump", "s.dump"},
+                {p.name for p in (root / "pre-upgrade").glob("*.dump")},
+            )
             self.assertEqual(3, retention.prune(root, 2))
             with self.assertRaises(ValueError):
                 retention.prune(root, 0)

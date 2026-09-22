@@ -1,10 +1,11 @@
 """Restore ordering, fail-closed migrations, and repository backup path guards."""
+
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -23,7 +24,7 @@ class RestoreTests(unittest.TestCase):
         self.dump.write_text("schema=old\n")
         self.schema.write_text("head")
         docker = self.bin / "docker"
-        docker.write_text('''#!/usr/bin/env python3
+        docker.write_text("""#!/usr/bin/env python3
 import os, pathlib, sys
 args = " ".join(sys.argv[1:])
 data = sys.stdin.read()  # Every fake child reads stdin, including migrate and config.
@@ -45,22 +46,35 @@ elif "run --rm --no-deps migrate" in args:
     pathlib.Path(os.environ["TEST_SCHEMA"]).write_text("head")
 elif "up -d" in args:
     assert pathlib.Path(os.environ["TEST_SCHEMA"]).read_text() == "head"
-''')
+""")
         docker.chmod(0o755)
-        self.env = {key: value for key, value in os.environ.items()
-                    if not key.startswith(("HLM_", "BAKE_"))}
-        self.env.update(PATH=f"{self.bin}:{os.environ['PATH']}",
-                        BAKE_PROJECT="bake-astra", HLM_BACKUP_DIR=str(self.base / "backups"),
-                        TEST_CALLS=str(self.log), TEST_SCHEMA=str(self.schema))
+        self.env = {key: value for key, value in os.environ.items() if not key.startswith(("HLM_", "BAKE_"))}
+        self.env.update(
+            PATH=f"{self.bin}:{os.environ['PATH']}",
+            BAKE_PROJECT="bake-astra",
+            HLM_BACKUP_DIR=str(self.base / "backups"),
+            TEST_CALLS=str(self.log),
+            TEST_SCHEMA=str(self.schema),
+        )
         empty = self.base / "empty.env"
         empty.touch()
-        for name in ("HLM_ENV_FILE", "HLM_APP_ENV_FILE", "HLM_API_ENV_FILE", "HLM_DB_ENV_FILE",
-                     "HLM_BACKUP_ENV_FILE"):
+        for name in (
+            "HLM_ENV_FILE",
+            "HLM_APP_ENV_FILE",
+            "HLM_API_ENV_FILE",
+            "HLM_DB_ENV_FILE",
+            "HLM_BACKUP_ENV_FILE",
+        ):
             self.env[name] = str(empty)
 
     def restore(self):
-        return subprocess.run(["bash", str(ROOT / "deploy/backup/restore.sh"), str(self.dump), "--yes"],
-                              env=self.env, capture_output=True, text=True, timeout=15)
+        return subprocess.run(
+            ["bash", str(ROOT / "deploy/backup/restore.sh"), str(self.dump), "--yes"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
 
     def test_restored_older_schema_migrates_before_starting_writers(self):
         result = self.restore()
@@ -90,7 +104,11 @@ elif "up -d" in args:
                 self.env["HLM_BACKUP_DIR"] = str(destination)
                 result = subprocess.run(
                     ["bash", str(ROOT / "deploy/backup/backup.sh"), "--pre-upgrade", "abcdef1234567"],
-                    env=self.env, capture_output=True, text=True, timeout=15)
+                    env=self.env,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
                 self.assertEqual(result.returncode, 64, result.stderr)
                 self.assertIn("Refusing backup directory inside repository", result.stderr)
                 self.assertNotIn("pg_dump", self.log.read_text())
@@ -101,7 +119,11 @@ elif "up -d" in args:
         (backup / "pre-upgrade").symlink_to(ROOT / "deploy", target_is_directory=True)
         result = subprocess.run(
             ["bash", str(ROOT / "deploy/backup/backup.sh"), "--pre-upgrade", "abcdef1234567"],
-            env=self.env, capture_output=True, text=True, timeout=15)
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
         self.assertEqual(result.returncode, 64, result.stderr)
         self.assertIn("Refusing backup directory inside repository", result.stderr)
         self.assertNotIn("pg_dump", self.log.read_text())

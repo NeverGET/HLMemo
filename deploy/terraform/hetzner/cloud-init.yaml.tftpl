@@ -52,7 +52,7 @@ write_files:
       set -euo pipefail
       # cloud-init creates deploy_user before runcmd. Prepare durable paths first.
       install -d -m 0750 -o ${deploy_user} -g ${deploy_user} /opt/hlmemo /var/backups/hlmemo
-      install -d -m 0750 -o root -g ${deploy_user} /etc/hlmemo
+      install -d -m 0750 -o ${deploy_user} -g ${deploy_user} /etc/hlmemo
       install -m 0755 -d /etc/apt/keyrings
       curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
       chmod a+r /etc/apt/keyrings/docker.asc

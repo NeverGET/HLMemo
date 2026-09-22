@@ -1,13 +1,12 @@
 """Deployment-only regressions; no application imports or live services required."""
 
 import importlib.util
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest import mock
 import urllib.error
-
+from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("deploy_probe", ROOT / "deploy/scripts/probe.py")
@@ -52,10 +51,12 @@ class FakeProbe(probe.Probe):
 
 class SmokeLifecycleTests(unittest.TestCase):
     def test_compose_dollar_escaping_is_removed_from_http_credentials_once(self):
-        config = {"services": {
-            "api": {"environment": {"HLM_ADMIN_TOKEN": "x$$VAR", "HLM_REGISTRATION_SECRET": "y$$$$VAR"}},
-            "caddy": {"environment": {"HLM_DOMAIN": "localhost", "HLM_TLS_MODE": "internal"}},
-        }}
+        config = {
+            "services": {
+                "api": {"environment": {"HLM_ADMIN_TOKEN": "x$$VAR", "HLM_REGISTRATION_SECRET": "y$$$$VAR"}},
+                "caddy": {"environment": {"HLM_DOMAIN": "localhost", "HLM_TLS_MODE": "internal"}},
+            }
+        }
         with mock.patch.dict(probe.os.environ, {}, clear=True):
             client = probe.Probe(config)
         response = mock.MagicMock()
@@ -65,7 +66,11 @@ class SmokeLifecycleTests(unittest.TestCase):
         with mock.patch.object(probe.urllib.request, "urlopen", return_value=response) as opened:
             client.request("/admin/projects", token=client.admin)
             self.assertEqual(opened.call_args.args[0].get_header("Authorization"), "Bearer x$VAR")
-            client.request("/devices/register", {}, extra={"X-HLM-Registration-Secret": client.settings["HLM_REGISTRATION_SECRET"]})
+            client.request(
+                "/devices/register",
+                {},
+                extra={"X-HLM-Registration-Secret": client.settings["HLM_REGISTRATION_SECRET"]},
+            )
             self.assertEqual(opened.call_args.args[0].get_header("X-hlm-registration-secret"), "y$$VAR")
         self.assertEqual(config["services"]["api"]["environment"]["HLM_ADMIN_TOKEN"], "x$$VAR")
 
@@ -117,8 +122,14 @@ class CloudProvisioningTests(unittest.TestCase):
                     for name in ("mkdir", "sshd", "systemctl")
                 )
                 result = subprocess.run(
-                    ["bash", "-c", f"set -euo pipefail\n{stubs}\n{safe_hardening}\nprintf 'provisioning continued\\n'"],
-                    text=True, capture_output=True, check=True,
+                    [
+                        "bash",
+                        "-c",
+                        f"set -euo pipefail\n{stubs}\n{safe_hardening}\nprintf 'provisioning continued\\n'",
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=True,
                 )
                 self.assertEqual(result.stdout.splitlines()[-1], "provisioning continued")
                 self.assertIn("mkdir -p /run/sshd", result.stdout)
@@ -127,7 +138,9 @@ class CloudProvisioningTests(unittest.TestCase):
                 else:
                     self.assertIn("WARNING: SSH hardening", result.stderr)
                 if failed_command in ("mkdir", "sshd"):
-                    self.assertFalse(drop_in.exists(), "rejected configuration must not survive for ssh.socket")
+                    self.assertFalse(
+                        drop_in.exists(), "rejected configuration must not survive for ssh.socket"
+                    )
                     self.assertNotIn("systemctl", result.stdout)
                     self.assertIn("removed HLMemo drop-in", result.stderr)
                 else:

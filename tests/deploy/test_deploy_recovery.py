@@ -1,25 +1,48 @@
 """Exercise real deploy/backup shell control flow with isolated transport/runtime doubles."""
+
 import json
 import os
-import signal
-import time
-from pathlib import Path
-from unittest.mock import patch
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 PREVIOUS = "a" * 40
 NEXT = "b" * 40
 
-DOCKER = r'''#!/usr/bin/env python3
+DOCKER = r"""#!/usr/bin/env python3
 import json, os, signal, sys, time
 from pathlib import Path
 args=sys.argv[1:]
 with open(os.environ["EVENTS"], "a") as f: f.write(json.dumps(["docker", *args])+"\n")
 fail=os.environ.get("FAIL", "")
+state_path=Path(os.environ["EVENTS"]+".images")
+images=json.loads(state_path.read_text()) if state_path.exists() else {}
+env_file=Path(os.environ["HLM_REMOTE_ENV"])
+settings={}
+if env_file.exists():
+    settings=dict(line.split("=", 1) for line in env_file.read_text().splitlines() if "=" in line)
+selected=os.environ.get("HLM_IMAGE") or settings.get("HLM_IMAGE", "hlmemo:prod")
+if args[:2] == ["image", "inspect"]:
+    if args[-1] not in images: sys.exit(1)
+    print(images[args[-1]])
+    sys.exit()
+if args[:2] == ["image", "tag"]:
+    images[args[-1]]=args[-2]
+    state_path.write_text(json.dumps(images))
+    sys.exit()
+if "build" in args:
+    images[selected]="sha256:new-image"
+    state_path.write_text(json.dumps(images))
+if "run" in args and "migrate" in args:
+    Path(os.environ["EVENTS"]+".migration-image").write_text(images.get(selected, selected))
+if "up" in args and "api" in args:
+    Path(os.environ["EVENTS"]+".running-image").write_text(images.get(selected, selected))
 if "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
     captured=json.loads(Path(args[args.index("-f")+1]).read_text())
     assert captured["services"]["api"]["environment"]["TOKEN"] == "literal$$VAR"
@@ -27,7 +50,9 @@ if args[0] == "ps":
     if fail != "missing-baseline": print("old-container")
 elif args[0] == "inspect": print("sha256:old-image")
 elif "config" in args:
-    print(json.dumps({"name":"bake-astra", "services":{s:{"image":"mutable:prod", "environment":{"TOKEN":"literal$$VAR"}} for s in ("api","worker","db","caddy")}}))
+    print(json.dumps({"name":"bake-astra", "services":{
+        s:{"image":"mutable:prod", "environment":{"TOKEN":"literal$$VAR"}}
+        for s in ("api","worker","db","caddy")}}))
 elif "ps" in args:
     if os.environ.get("INITIAL") != "1": print("db-container")
 elif "exec" in args:
@@ -36,7 +61,7 @@ elif "exec" in args:
         if fail == "dump": sys.exit(7)
         print("valid-snapshot")
     elif "dropdb" in args[-1]:
-        assert sys.stdin.read() == "valid-snapshot\n"
+        assert sys.stdin.read() in ("", "valid-snapshot\n")
     elif "pg_restore" in args: sys.stdin.read()
     elif fail == "internal-api" and "api" in args: sys.exit(12)
     elif fail == "internal-caddy" and "caddy" in args: sys.exit(13)
@@ -56,32 +81,37 @@ elif "run" in args:
         time.sleep(2)
     if fail == "term-migration": os.kill(os.getppid(), signal.SIGTERM)
     if fail == "migration": sys.exit(9)
-elif "up" in args and "api" in args and fail == "health" and ".rollback-compose." not in " ".join(args): sys.exit(10)
-'''
+elif "up" in args and "api" in args and fail == "health" and ".rollback-compose." not in " ".join(args):
+    sys.exit(10)
+"""
 
-GIT = r'''#!/usr/bin/env python3
+GIT = r"""#!/usr/bin/env python3
 import json, os, sys
 args=sys.argv[1:]
 with open(os.environ["EVENTS"], "a") as f: f.write(json.dumps(["git", *args])+"\n")
+if args[0] == "show":
+    print((__import__("pathlib").Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
+    sys.exit()
+if args[0] == "diff" and os.environ.get("FAIL") == "compose-change": sys.exit(1)
 if args[:2] == ["checkout", "--detach"] and args[-1] == "b"*40 and os.environ.get("FAIL") == "legacy":
     from pathlib import Path
     import shutil
     shutil.copyfile(os.environ["NEW_COMMON"], Path.cwd()/"deploy/scripts/common.sh")
 if args[:2] == ["remote", "get-url"]: print("https://example.invalid/repo.git")
 elif args[0] == "rev-parse": print("b"*40 if "FETCH_HEAD^{commit}" in args else "a"*40)
-'''
+"""
 
-COMMON = r'''set -euo pipefail
+COMMON = r"""set -euo pipefail
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 backup_dir() { echo "$HLM_BACKUP_DIR"; }
 backup_path() { echo "$1"; }
 COMPOSE_PROJECT=bake-astra
 export COMPOSE_PROJECT
 dc() { docker compose -p "$COMPOSE_PROJECT" -f "$DEPLOY_DIR/compose.prod.yaml" "$@"; }
-env_value() { [[ $1 != HLM_DOMAIN ]] || echo localhost; }
+env_value() { if [[ $1 == HLM_DOMAIN ]]; then echo localhost; fi; }
 backup_value() { echo ""; }
 backup_env() { [[ ${FAIL:-} != upload ]] || echo S3_BUCKET=simulated-upload; }
-'''
+"""
 
 
 class DeployRecoveryTest(unittest.TestCase):
@@ -100,20 +130,37 @@ class DeployRecoveryTest(unittest.TestCase):
         (root / "prod.env").write_text("HLM_DOMAIN=localhost\n")
         binary = root / "bin"
         binary.mkdir()
-        programs = {"docker": DOCKER, "git": GIT,
-                    "ssh": '#!/usr/bin/env bash\nif [[ $FAIL == observer && -f $EVENTS.migrating ]]; then exit 255; fi\nexec bash -c "${@: -1}"\n',
-                    "curl": '#!/usr/bin/env bash\n[[ $FAIL != external ]] || exit 22\necho ready\n',
-                    "setsid": '#!/usr/bin/env python3\nimport os,sys\nos.setsid()\nos.execvp(sys.argv[1],sys.argv[1:])\n',
-                    "aws": '#!/usr/bin/env bash\necho simulated-upload-failure >&2\nexit 42\n'}
+        programs = {
+            "docker": DOCKER,
+            "git": GIT,
+            "ssh": (
+                "#!/usr/bin/env bash\n"
+                "if [[ $FAIL == observer && -f $EVENTS.migrating ]]; then exit 255; fi\n"
+                'exec bash -c "${@: -1}"\n'
+            ),
+            "curl": "#!/usr/bin/env bash\n[[ $FAIL != external ]] || exit 22\necho ready\n",
+            "setsid": (
+                "#!/usr/bin/env python3\nimport os,sys\nos.setsid()\nos.execvp(sys.argv[1],sys.argv[1:])\n"
+            ),
+            "aws": "#!/usr/bin/env bash\necho simulated-upload-failure >&2\nexit 42\n",
+        }
         for name, content in programs.items():
             path = binary / name
             path.write_text(content)
             path.chmod(0o700)
         events = root / "events"
-        env = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}", FAIL=failure,
-                   EVENTS=str(events), HLM_REMOTE_DIR=str(app), HLM_REMOTE_ENV=str(root / "prod.env"),
-                   HLM_BACKUP_DIR=str(root / "backups"), INITIAL="1" if initial else "0",
-                   HLM_DEPLOY_POLL_SECONDS="0.05", NEW_COMMON=str(root / "new-common.sh"))
+        env = dict(
+            os.environ,
+            PATH=f"{binary}:{os.environ['PATH']}",
+            FAIL=failure,
+            EVENTS=str(events),
+            HLM_REMOTE_DIR=str(app),
+            HLM_REMOTE_ENV=str(root / "prod.env"),
+            HLM_BACKUP_DIR=str(root / "backups"),
+            INITIAL="1" if initial else "0",
+            HLM_DEPLOY_POLL_SECONDS="0.05",
+            NEW_COMMON=str(root / "new-common.sh"),
+        )
         if failure == "legacy":
             (root / "new-common.sh").write_text(COMMON)
             (app / "deploy/scripts/common.sh").write_text("echo legacy-layout-cannot-render >&2; exit 99\n")
@@ -124,11 +171,139 @@ class DeployRecoveryTest(unittest.TestCase):
     def run_deploy(self, failure, initial=False):
         root, env = self.prepare_deploy(failure, initial)
         events = root / "events"
-        result = subprocess.run(["bash", str(ROOT / "deploy/scripts/deploy.sh"), "local", "next",
-                                 "https://example.invalid/repo.git"], env=env, text=True, capture_output=True, timeout=30)
+        result = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "deploy/scripts/deploy.sh"),
+                "local",
+                "next",
+                "https://example.invalid/repo.git",
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
         result.stderr += result.stdout
         rows = [json.loads(line) for line in events.read_text().splitlines()]
         return root, result, rows
+
+    def test_failed_build_release_then_restore_uses_previous_image_and_alembic(self):
+        for failure in ("dump", "migration", "health"):
+            with self.subTest(failure=failure):
+                root, env = self.prepare_deploy(failure)
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(ROOT / "deploy/scripts/deploy.sh"),
+                        "local",
+                        "next",
+                        "https://example.invalid/repo.git",
+                    ],
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertNotEqual(0, result.returncode, result.stdout)
+                images = json.loads((root / "events.images").read_text())
+                self.assertEqual("sha256:new-image", images[f"hlmemo:{NEXT}"])
+                self.assertEqual("sha256:old-image", images[f"hlmemo:{PREVIOUS}"])
+                self.assertIn(f"HLM_IMAGE=hlmemo:{PREVIOUS}\n", (root / "prod.env").read_text())
+                dump = root / "restore.dump"
+                dump.write_text("valid-snapshot\n")
+                env.update(FAIL="", HLM_ENV_FILE=str(root / "prod.env"))
+                restored = subprocess.run(
+                    ["bash", str(root / "app/deploy/backup/restore.sh"), str(dump), "--yes"],
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                )
+                self.assertEqual(0, restored.returncode, restored.stderr)
+                self.assertEqual("sha256:old-image", (root / "events.migration-image").read_text())
+                self.assertEqual("sha256:old-image", (root / "events.running-image").read_text())
+
+    def test_compose_change_refused_before_build_backup_or_stop(self):
+        root, result, rows = self.run_deploy("compose-change")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Compose model changed", result.stdout)
+        self.assertFalse(any("build" in row or "stop" in row or "pg_dump" in row[-1] for row in rows))
+        self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
+
+    def test_existing_release_image_is_reused_without_rebuild(self):
+        root, env = self.prepare_deploy("")
+        (root / "events.images").write_text(json.dumps({f"hlmemo:{NEXT}": "sha256:built-release"}))
+        result = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "deploy/scripts/deploy.sh"),
+                "local",
+                "next",
+                "https://example.invalid/repo.git",
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(0, result.returncode, result.stdout)
+        rows = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+        self.assertFalse(any("build" in row for row in rows))
+        self.assertEqual("sha256:built-release", (root / "events.running-image").read_text())
+
+    def test_conflicting_previous_release_tag_fails_without_retag_or_build(self):
+        root, env = self.prepare_deploy("")
+        (root / "events.images").write_text(json.dumps({f"hlmemo:{PREVIOUS}": "sha256:conflict"}))
+        result = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "deploy/scripts/deploy.sh"),
+                "local",
+                "next",
+                "https://example.invalid/repo.git",
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("refusing to retag immutable release", result.stdout)
+        rows = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+        self.assertFalse(any("build" in row or "stop" in row or "tag" in row for row in rows))
+        self.assertEqual(
+            "sha256:conflict", json.loads((root / "events.images").read_text())[f"hlmemo:{PREVIOUS}"]
+        )
+
+    def test_image_publication_failure_recovers_previous_release(self):
+        root, env = self.prepare_deploy("")
+        helper = root / "app/deploy/scripts/release_env.py"
+        helper.write_text(
+            f"import sys\nif sys.argv[2].endswith({NEXT!r}): sys.exit(17)\n" + helper.read_text()
+        )
+        result = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "deploy/scripts/deploy.sh"),
+                "local",
+                "next",
+                "https://example.invalid/repo.git",
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(17, result.returncode, result.stdout)
+        self.assertIn("Previous stack restored", result.stdout)
+        self.assertIn(f"HLM_IMAGE=hlmemo:{PREVIOUS}\n", (root / "prod.env").read_text())
+        self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
+
+    def test_success_publishes_immutable_image(self):
+        root, result, _ = self.run_deploy("")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"HLM_IMAGE=hlmemo:{NEXT}\n", (root / "prod.env").read_text())
 
     def test_stdin_reading_children_reach_deployment_ready(self):
         for initial in (True, False):
@@ -176,9 +351,19 @@ class DeployRecoveryTest(unittest.TestCase):
                     dump = snapshots / f"old-{index}.dump"
                     dump.write_text("old")
                     os.utime(dump, (index + 1, index + 1))
-                result = subprocess.run(["bash", str(ROOT / "deploy/scripts/deploy.sh"), "local", "next",
-                                         "https://example.invalid/repo.git"], env=env, text=True,
-                                        capture_output=True, timeout=30)
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(ROOT / "deploy/scripts/deploy.sh"),
+                        "local",
+                        "next",
+                        "https://example.invalid/repo.git",
+                    ],
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
                 self.assertEqual(keep, len(list(snapshots.glob("*.dump"))), result.stdout)
                 if not failure:
                     self.assertEqual(0, result.returncode, result.stdout)
@@ -199,9 +384,19 @@ class DeployRecoveryTest(unittest.TestCase):
     def test_early_setup_failure_still_publishes_final_status(self):
         root, env = self.prepare_deploy("")
         (root / "prod.env").unlink()
-        result = subprocess.run(["bash", str(ROOT / "deploy/scripts/deploy.sh"), "local", "next",
-                                 "https://example.invalid/repo.git"], env=env, text=True,
-                                capture_output=True, timeout=15)
+        result = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "deploy/scripts/deploy.sh"),
+                "local",
+                "next",
+                "https://example.invalid/repo.git",
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
         self.assertEqual(1, result.returncode, result.stdout)
         self.assertIn("Missing readable env file", result.stdout)
         self.assertEqual("1", next(root.glob(".deploy-runs/*/status")).read_text().strip())
@@ -209,9 +404,21 @@ class DeployRecoveryTest(unittest.TestCase):
 
     def test_killing_client_process_group_does_not_stop_remote_migration(self):
         root, env = self.prepare_deploy("slow")
-        command = ["bash", str(ROOT / "deploy/scripts/deploy.sh"), "local", "next", "https://example.invalid/repo.git"]
-        client = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  text=True, start_new_session=True)
+        command = [
+            "bash",
+            str(ROOT / "deploy/scripts/deploy.sh"),
+            "local",
+            "next",
+            "https://example.invalid/repo.git",
+        ]
+        client = subprocess.Popen(
+            command,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
         try:
             deadline = time.monotonic() + 15
             while not (root / "events.migrating").exists() and time.monotonic() < deadline:
@@ -237,12 +444,21 @@ class DeployRecoveryTest(unittest.TestCase):
             env_file = root / "service.env"
             env_file.write_text("TOKEN='x$FOO'\n")
             compose_file = root / "compose.json"
-            compose_file.write_text(json.dumps({
-                "name": "bake-astra",
-                "services": {name: {"image": "busybox", "env_file": [str(env_file)],
-                    "healthcheck": {"test": ["CMD-SHELL", "echo $$HOME"]}}
-                    for name in ("db", "api", "worker", "caddy")},
-            }))
+            compose_file.write_text(
+                json.dumps(
+                    {
+                        "name": "bake-astra",
+                        "services": {
+                            name: {
+                                "image": "busybox",
+                                "env_file": [str(env_file)],
+                                "healthcheck": {"test": ["CMD-SHELL", "echo $$HOME"]},
+                            }
+                            for name in ("db", "api", "worker", "caddy")
+                        },
+                    }
+                )
+            )
             command = ["docker", "compose", "-f", str(compose_file), "config", "--format", "json"]
             first = json.loads(subprocess.check_output(command))
             self.assertEqual("x$$FOO", first["services"]["db"]["environment"]["TOKEN"])
@@ -252,7 +468,10 @@ class DeployRecoveryTest(unittest.TestCase):
             # running-container lookup; Compose parsing above/below is real.
             script = (ROOT / "deploy/scripts/remote-deploy.sh").read_text()
             transform = script.split("<<'PYCONFIG'\n", 1)[1].split("\nPYCONFIG", 1)[0]
-            with patch("sys.argv", ["snapshot", str(compose_file)]), patch("subprocess.check_output", return_value="old-image"):
+            with (
+                patch("sys.argv", ["snapshot", str(compose_file)]),
+                patch("subprocess.check_output", return_value="old-image"),
+            ):
                 exec(compile(transform, "deploy-rollback-snapshot", "exec"), {})
             second = json.loads(subprocess.check_output(command))
             for service in second["services"].values():
@@ -290,7 +509,14 @@ class DeployRecoveryTest(unittest.TestCase):
                 self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
                 restores = [i for i, row in enumerate(rows) if "dropdb" in row[-1]]
                 self.assertEqual(1, len(restores))
-                restarts = [i for i, row in enumerate(rows) if "up" in row and "--no-deps" in row and "api" in row and ".rollback-compose." in " ".join(row)]
+                restarts = [
+                    i
+                    for i, row in enumerate(rows)
+                    if "up" in row
+                    and "--no-deps" in row
+                    and "api" in row
+                    and ".rollback-compose." in " ".join(row)
+                ]
                 self.assertEqual(1, len(restarts))
                 self.assertLess(restores[0], restarts[0])
                 self.assertEqual(1, sum("run" in row and "migrate" in row for row in rows))

@@ -189,6 +189,11 @@ ssh hlmdeploy@SERVER 'for file in prod app api db backup; do sudo install -o hlm
 bash deploy/scripts/deploy.sh hlmdeploy@SERVER RELEASE_REF
 ```
 
+The deploy user must own the env directory as well as `prod.env`: successful releases replace
+that file atomically. Cloud-init configures this for new hosts. On an existing host created by
+older tooling, run `sudo chown hlmdeploy:hlmdeploy /etc/hlmemo` and
+`sudo chmod 0750 /etc/hlmemo` once (substitute your configured deploy user).
+
 `RELEASE_REF` must include the deploy tooling in the remote repository. An optional third argument
 selects another repository URL; private repositories need read credentials installed separately on
 the server. Do not embed credentials into the URL. Defaults: `/opt/hlmemo/app`, `/etc/hlmemo/prod.env`;
@@ -196,7 +201,15 @@ override with `HLM_REMOTE_DIR` / `HLM_REMOTE_ENV`. The script fetches the reques
 immutable commit, builds including model assets, takes a snapshot-consistent pre-upgrade dump while
 the DB and writers are live, then stops writers and runs `alembic upgrade phase0@head`, starts with
 `up -d --wait`, verifies API readiness and local Caddy routing, then checks public HTTPS readiness
-with certificate validation. A first uncached model build can take several minutes.
+with certificate validation. The runner itself is extracted on the server with `git show` from
+that same fetched commit. A ref without `deploy/scripts/remote-deploy.sh` is rejected before any
+checkout, build, backup or restore. A first uncached model build can take several minutes.
+Application images use `repository:<commit-sha>`; an existing release image is reused without
+retagging/rebuilding. Before an upgrade, the actual running baseline is frozen under its previous
+SHA (API and worker must agree). `prod.env` retains this previous `HLM_IMAGE` until internal
+readiness succeeds, when it is atomically switched to the new image. Failed builds/upgrades
+therefore leave later `restore.sh` and `stack.sh up` on the previous release, including Alembic.
+Do not override `HLM_IMAGE` in your shell when restoring, or rebuild/retag a published SHA.
 Repeated deployment of the same ref is supported. This is a single-node maintenance-window deploy,
 not zero downtime. Internal failures after writers stop trigger recovery of the previous pinned images and, if migration began,
 the recorded pre-upgrade database snapshot. Inspect recovery output and verify readiness. A failed
@@ -214,10 +227,18 @@ deployment while the first is active:
 ```sh
 ssh hlmdeploy@SERVER 'tail -n 100 /opt/hlmemo/.deploy-runs/RUN_ID/log'
 ssh hlmdeploy@SERVER 'cat /opt/hlmemo/.deploy-runs/RUN_ID/status'
+ssh hlmdeploy@SERVER 'cat /opt/hlmemo/.deploy-runs/RUN_ID/pid /opt/hlmemo/.deploy-runs/RUN_ID/heartbeat'
 ```
 
-A missing `status` means no completion has been recorded; investigate the running process before
-retrying. Keep run directories private (0700). Secret-bearing rollback Compose files are removed
+A missing `status` means no completion has been recorded. The observer detects a missing/dead
+runner PID (including SIGKILL/OOM), reports the log/heartbeat paths and exits nonzero.
+`heartbeat` records a timestamp every second while the runner process is alive; it is a liveness
+signal, not proof that a migration is progressing. Observation has an overall 30-minute deadline,
+including SSH calls; set `HLM_DEPLOY_TIMEOUT_SECONDS` to another positive integer if needed.
+Timeout/disconnect does not kill remote work. Investigate the PID and status before retrying.
+The workstation observer requires Python 3; remote preflight checks `nohup`, `setsid`, `bash`,
+`git`, `flock` and `ps` individually before launching work.
+Keep run directories private (0700). Secret-bearing rollback Compose files are removed
 on script exit; an SSH disconnect cannot interrupt this cleanup. A host power loss or SIGKILL
 cannot execute shell traps: inspect/remove stale `.rollback-compose.*` files during host recovery.
 
@@ -270,7 +291,8 @@ journalctl -u hlmemo-backup.service --since today
 ```
 
 The timer runs daily; backup uses `pg_dump --format=custom`, validates its table of contents and
-atomically publishes it. Local retention keeps the latest snapshot on each of 7 distinct UTC days
+atomically publishes it. Daily names include a random suffix, so same-second runs have different
+filenames and remote object keys. Local retention keeps the latest snapshot on each of 7 distinct UTC days
 and the latest snapshot in each of 4 distinct ISO weeks. Missed days cannot be reconstructed.
 For S3-compatible upload install the AWS CLI, set `S3_BUCKET`, `S3_PREFIX`, `S3_ENDPOINT_URL` and
 AWS credential/region fields only in `backup.env`. Use least-privilege bucket access and server-side
@@ -304,6 +326,24 @@ payload through MCP with the restored device bearer. It is intended for disposab
 
 ## Upgrade and rollback
 
+### Staged Compose upgrade
+
+Automatic deployment requires `deploy/compose.prod.yaml` to be byte-identical between the previous
+and requested release. A change to commands, healthchecks, mounts or any other Compose model field
+is rejected **before build, backup or writer shutdown**. There is no bypass flag: automatic
+recovery must never run previous images with a different release's Compose model. The supported
+guard intentionally also rejects formatting-only changes.
+
+For an intentional Compose change, stage and validate the target in a disposable local stack
+first. Schedule a maintenance window, retain the previous checkout, rendered Compose model,
+immutable images and verified dump, and stop writers with the previous model. Switch checkout
+and configuration together, build a new immutable image, migrate and validate internal readiness
+before publishing its image/ref. On failure restore the previous checkout/model and dump together.
+Treat PostgreSQL major-version or volume-layout changes as a separate migration. This manual
+procedure needs a release-specific plan; `deploy.sh` does not automate it.
+
+### Application releases
+
 Before an upgrade, verify recent off-host backup and disk headroom. Deploy a reviewed immutable
 release ref using `deploy.sh`. `/opt/hlmemo/current-ref` names the last successful deployment;
 `previous-ref` and `previous-dump` record the exact rollback pair. Every deploy snapshot lives at
@@ -330,11 +370,17 @@ export HLM_ENV_FILE=/etc/hlmemo/prod.env
 previous=$(cat /opt/hlmemo/previous-ref)
 dump=$(cat /opt/hlmemo/previous-dump)
 test -f "$dump"
+helper=$(mktemp /opt/hlmemo/release-env.XXXXXX.py)
+cp deploy/scripts/release_env.py "$helper"
 bash deploy/scripts/stack.sh stop caddy api worker
 # Save the failed/new database before replacing it:
 bash deploy/backup/backup.sh
 git checkout --detach "$previous"
-bash deploy/scripts/stack.sh build api worker migrate
+# Select the retained image from the same repository, never rebuild a release tag.
+old_image="hlmemo:$previous" # substitute your configured image repository
+docker image inspect "$old_image" >/dev/null
+python3 "$helper" "$HLM_ENV_FILE" "$old_image"
+rm "$helper"
 bash deploy/backup/restore.sh "$dump" --yes
 curl --fail https://YOUR_DOMAIN/ready
 bash deploy/scripts/smoke_mcp.sh
