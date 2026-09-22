@@ -145,7 +145,9 @@ read-only, passed `/ready` and 20 real MCP `memory.query` calls, and finished wi
 spikes, so sizing uses the larger cgroup high-water mark, which includes startup/cache pressure
 under the test limit. This is not an unconstrained peak or a maximum-concurrency load test.
 
-The API uses one lifespan-owned ONNX session shared by readiness and every query. Both API and
+The API uses one ONNX session shared by readiness and every query. Missing model files leave
+the API running with `/ready` returning 503 `not_ready` and the missing file list; after the
+files are restored, the next readiness probe initializes the shared session once. Both API and
 worker disable the CPU memory arena and use `HLM_EMBED_INTRA_OP_NUM_THREADS=2` by default.
 `HLM_REQUEST_SPOOL_DIR=/var/spool/hlmemo` is backed by a **320 MiB tmpfs** owned by UID/GID 10001;
 `/tmp` retains its separate 64 MiB tmpfs. Both tmpfs allocations count against the API cgroup.
@@ -166,6 +168,17 @@ Set `HLM_MODELS_DIR` to the local directory containing the pinned model first. O
 `--models-dir` to bake models instead. The script binds a fresh test admin token, adds a uniquely
 named test project, publishes only an ephemeral loopback port, reports stats and inspect results,
 and removes its `oom-check` API container in `finally`; it does not alter an existing stack.
+
+Protected requests authenticate before body receipt using one unlocked device SELECT with a
+250 ms statement timeout and at most 250 ms normal-pool wait. The connection is returned before
+reading bytes; the authoritative transaction resolves the bearer again after receipt. Unknown
+or revoked tokens return 401, pending devices 403, and pool pressure retryable 503. Only
+gate-verified trusted devices get 64 MiB and rate-based upload time; registration stays at
+16 KiB, and public routes/reserved-admin bypass requests at 64 KiB with a fixed base deadline.
+The 16 per-client slots cover authentication and body receipt. Admin-token requests on reserved
+routes retain separate pool capacity and 16 separate body slots per client, sharing byte budgets;
+normal auth waiters cannot obstruct that path even from the same IP. Caddy upstream transport uses `keepalive 4s`, below the
+API's 5-second idle timeout, to prevent reuse of stale connections for POST requests.
 
 Logs rotate at 5 × 10 MiB per container. Worker health checks observe successful poll-loop log
 heartbeats; missing heartbeats for 180 seconds fail health. Docker does not automatically restart
@@ -214,11 +227,11 @@ Create DNS A → output IPv4 and AAAA → output IPv6 after verifying routing, e
 hard-coded. Cloud-init creates `/etc/hlmemo`, `/opt/hlmemo` and `/var/backups/hlmemo`. Docker group
 and passwordless sudo membership make `hlmdeploy` a privileged operator despite being non-root.
 
-### IPv6 client addresses and registration limits
+### IPv6 client addresses and request limits
 
 The shipped Compose bridges are IPv4-only. Docker's default userland proxy can translate incoming
-IPv6 connections to IPv4, making Caddy see the bridge gateway; registration limits then share one
-bucket across IPv6 clients. Publishing `::` alone does not fix this. Before advertising AAAA,
+IPv6 connections to IPv4, making Caddy see the bridge gateway; registration limits and the 16 concurrent auth/body slots then share one
+bucket across IPv6 clients. Slow bodies can therefore deny other IPv6 clients admission. Publishing `::` alone does not fix this. Before advertising AAAA,
 configure native IPv6 on the production Linux host. This procedure requires Docker Engine 27+
 and a maintenance window; it has not been validated against a live VPS. See Docker's
 [port publishing behavior](https://docs.docker.com/engine/network/port-publishing/),
@@ -270,7 +283,7 @@ sudo nsenter -t "$pid" -n tcpdump -n -i any 'ip6 and (tcp dst port 443 or udp ds
 
 The two observed sources must match the clients' distinct public IPv6 addresses. Caddy forwards
 these to the API; do not trust client-supplied forwarding headers as a workaround. Until this is
-verified, withhold AAAA and treat the IPv6 registration limiter as a shared bucket.
+verified, withhold AAAA and treat IPv6 registration and auth/body admission as shared buckets.
 
 ## First deploy and admin bootstrap
 

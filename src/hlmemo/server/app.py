@@ -12,7 +12,8 @@ every dependency a write or query needs — DB reachable, migration at `phase0@h
 model files present under `HLM_MODELS_DIR` with sha256 matching `models.lock`, and the tokenizer
 loading — and answers 503 `not_ready` with the failing checks otherwise. The compose healthcheck
 probes `/ready`, so `api` is never "healthy" while `memory.write` / `memory.query` would fail.
-The lifespan loads one model/tokenizer session shared by readiness and all queries. Expensive
+The lifespan loads one model/tokenizer session shared by readiness and all queries; missing
+files defer that load to readiness after the assets become available. Expensive
 file checks (hashing 470 MB) are cached until a model file's size/mtime changes.
 
 `python -m hlmemo.server.app` runs uvicorn with settings from HLM_* / hlm.toml.
@@ -141,12 +142,12 @@ def _verify_models_blocking(
     """Model files present + sha256 == models.lock + tokenizer parses. Hashes are cached per
     (size, mtime) signature so a healthcheck every few seconds does not re-read 470 MB."""
     result: dict[str, Any] = {"dir": str(model_dir)}
-    if embedder is None or meter is None:
-        result.update(ok=False, error="embedding dependencies not initialized by lifespan")
-        return result
     missing = [rel for rel in MODEL_FILES if not (model_dir / rel).is_file()]
     if missing:
         result.update(ok=False, error="model files missing; run `make models`", missing=missing)
+        return result
+    if embedder is None or meter is None:
+        result.update(ok=False, error="embedding dependencies not initialized")
         return result
     if lock is None:
         result.update(ok=False, error=f"{MODELS_LOCK} not found")
@@ -245,6 +246,10 @@ async def _check_readiness(
 
     async def verify_models() -> dict[str, Any]:
         async with model_check_lock:
+            if getattr(app.state, "embedding_deferred", False) and all(
+                (model_dir / rel).is_file() for rel in MODEL_FILES
+            ):
+                await _load_shared_embedder(app, settings, model_dir)
             return await asyncio.to_thread(
                 _verify_models_blocking,
                 model_dir,
@@ -316,6 +321,20 @@ def route_table(app: Starlette) -> list[tuple[str, str]]:
 # --------------------------------------------------------------------------- lifespan
 
 
+async def _load_shared_embedder(app: Starlette, settings: Settings, model_dir: Path) -> None:
+    """Publish one complete dependency bundle; readiness's shielded lock serializes recovery."""
+    embedder = await asyncio.to_thread(Embedder, model_dir, threads=settings.embed_intra_op_num_threads)
+    deps = ReadDeps(
+        meter=Meter(),
+        model_dir=model_dir,
+        cursor_secret=app.state.cursor_secret,
+        _embedder=embedder,
+    )
+    app.state.embedder = embedder
+    app.state.read_deps = deps
+    app.state.embedding_deferred = False
+
+
 async def bind_admin_device(settings: Settings) -> int:
     """§2 start-up binding, one transaction; returns device 1's new token_generation."""
     pool = create_pool(settings)
@@ -349,15 +368,16 @@ def create_app(
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         require_pinned_embed_config(settings.embed_model, settings.embed_revision)
         model_dir = default_model_dir()
-        app.state.embedder = await asyncio.to_thread(
-            Embedder, model_dir, threads=settings.embed_intra_op_num_threads
-        )
-        app.state.read_deps = ReadDeps(
-            meter=Meter(),
-            model_dir=model_dir,
-            cursor_secret=app.state.cursor_secret,
-            _embedder=app.state.embedder,
-        )
+        app.state.embedder = None
+        app.state.read_deps = None
+        app.state.embedding_deferred = True
+        try:
+            if all((model_dir / rel).is_file() for rel in MODEL_FILES):
+                await _load_shared_embedder(app, settings, model_dir)
+        except FileNotFoundError:
+            # Files can disappear between the presence check and loading. Keep liveness
+            # available; readiness reports the missing paths and retries after its TTL.
+            log.warning("model files disappeared during loading; initialization deferred to readiness")
         # Binding runs (and commits) before the pool used for traffic is opened and before uvicorn
         # starts accepting connections — no request can observe a half-bound device 1.
         app.state.admin_generation = await bind_admin_device(settings)

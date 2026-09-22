@@ -8,6 +8,7 @@ import json
 import threading
 import tracemalloc
 import weakref
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from types import SimpleNamespace
 
@@ -24,14 +25,46 @@ def _clean_tables():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _trusted_transport(monkeypatch):
+    """Stub authoritative auth only; the real admission gate still inspects a trusted row.
+
+    Real SELECT/lease/revocation behavior is covered by test_prebody_auth integration tests.
+    """
+
+    async def resolve(*args, **kwargs):
+        return None, {"status": "trusted"}
+
+    monkeypatch.setattr(middleware_module, "resolve", resolve)
+
+
+class _Pool:
+    @asynccontextmanager
+    async def connection(self, **kwargs):
+        yield self
+
+    async def execute(self, *args):
+        return self
+
+    async def fetchone(self):
+        return 2, "trusted", 1
+
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
+
 def _scope(settings, *, client="192.0.2.1", length=None):
     return {
         "type": "http",
-        "method": "GET",
-        "path": "/ready",
-        "headers": [] if length is None else [(b"content-length", str(length).encode())],
+        "method": "POST",
+        "path": "/mcp",
+        "headers": [(b"authorization", b"Bearer trusted-test-device")]
+        + ([] if length is None else [(b"content-length", str(length).encode())]),
         "client": (client, 1234),
-        "app": SimpleNamespace(state=SimpleNamespace(settings=settings)),
+        "app": SimpleNamespace(state=SimpleNamespace(settings=settings, pool=_Pool())),
     }
 
 
@@ -63,7 +96,7 @@ class _Clock:
 
     def __init__(self, loop):
         self.loop = loop
-        self.now = 100.0
+        self.now = self.started = loop.time()
         self.deadline = None
 
     def __getattr__(self, name):
@@ -238,14 +271,14 @@ async def test_total_cap_is_derived_from_declared_length(monkeypatch):
             # Even an inconsistent ASGI sender exceeding its declaration cannot
             # extend the declared-size cap with another chunk's rate allowance.
             return {"type": "http.request", "body": b"x", "more_body": True}
-        assert clock.deadline == 131
+        assert clock.deadline == clock.started + 31
         clock.advance(3)
         pytest.fail("the derived 31s total cap must interrupt the pending receive")
 
     middleware = AuthMiddleware(_drain)
     messages = await _request(middleware, _scope(settings, length=8192), receive)
     _retryable_timeout(messages)
-    assert clock.now == 131
+    assert clock.now == clock.started + 31
     assert middleware.body_budget.used == 0
 
 
@@ -442,8 +475,8 @@ async def test_under_grace_trickle_times_out_and_releases_before_error_send(monk
     try:
         await asyncio.wait_for(response_started.wait(), 2)
         # Two delivered trickle bytes earn only 244 microseconds beyond 61.875s.
-        assert clock.now - 100 <= settings.request_body_base_s + (initial_size + 2) / 8192
-        assert clock.now - 100 < 62
+        assert clock.now - clock.started <= settings.request_body_base_s + (initial_size + 2) / 8192
+        assert clock.now - clock.started < 62
         assert not task.done()
         release_send.set()
         await task
@@ -512,6 +545,46 @@ async def _empty_receive():
     return {"type": "http.request", "body": b"", "more_body": False}
 
 
+async def test_reserved_admin_body_slots_are_separately_bounded_and_released():
+    settings = get_settings(admin_token="admin-test-token")
+    middleware = AuthMiddleware(_drain)
+    entered = asyncio.Event()
+    blocked = asyncio.Event()
+    waiting = 0
+
+    def admin_scope():
+        scope = _scope(settings)
+        scope["path"] = "/admin/projects"
+        scope["headers"] = [(b"authorization", b"Bearer admin-test-token")]
+        return scope
+
+    async def receive():
+        nonlocal waiting
+        waiting += 1
+        if waiting == 16:
+            entered.set()
+        await blocked.wait()
+        return {"type": "http.disconnect"}
+
+    tasks = [asyncio.create_task(_request(middleware, admin_scope(), receive)) for _ in range(16)]
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        response = await _request(middleware, admin_scope(), _empty_receive)
+        assert response[0]["status"] == 429
+        assert sum(middleware.admin_body_readers.values()) == 16
+        assert middleware.body_readers == {}
+        # The reverse direction is isolated too; the normal bearer still uses its gate.
+        response = await _request(middleware, _scope(settings), _empty_receive)
+        assert response[0]["status"] == 200
+        assert middleware.body_budget.used == 0
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    assert middleware.admin_body_readers == {}
+    assert middleware.body_readers == {}
+
+
 async def test_1028_under_grace_connections_from_two_clients_cannot_hold_budget(monkeypatch):
     settings = get_settings()
     middleware = AuthMiddleware(_drain)
@@ -555,7 +628,7 @@ async def test_1028_under_grace_connections_from_two_clients_cannot_hold_budget(
                 rejected.set()
         else:
             _retryable_timeout(messages)
-            elapsed.append(clock.now - 100)
+            elapsed.append(clock.now - clock.started)
 
     tasks = [asyncio.create_task(request(i)) for i in range(1028)]
     try:
@@ -656,7 +729,7 @@ async def test_ontime_chunk_extends_deadline_before_spool_io(monkeypatch):
     async def delayed_io(operation, *args):
         operations.append(operation.__name__)
         # The on-time chunk already earned another second before rollover starts.
-        # Leaving the initial 100.1 deadline armed would reject this operation.
+        # Leaving the initial base deadline armed would reject this operation.
         clock.advance(0.05)
         return operation(*args)
 

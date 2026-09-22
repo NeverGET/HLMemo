@@ -164,7 +164,7 @@ class Settings(BaseSettings):
     request_max_body_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
     # Inactivity is independent of average throughput, including before the first byte.
     request_body_timeout_s: float = Field(default=30.0, gt=0)
-    # Every body gets base + received/rate seconds; total cap uses declared/max size.
+    # Gate-trusted bodies get base + received/rate seconds; total cap uses declared/max size.
     # At 8 KiB/s: 38,400,000 bytes get 4717.5 s; the full 64 MiB gets 8222 s.
     request_body_base_s: float = Field(default=30.0, gt=0)
     request_body_global_budget_bytes: int = Field(default=256 * 1024 * 1024, gt=0)

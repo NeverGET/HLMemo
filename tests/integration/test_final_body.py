@@ -94,8 +94,8 @@ def _auth_middleware(app: Starlette) -> AuthMiddleware:
     raise AssertionError("AuthMiddleware not found")
 
 
-async def _trickle(port: int, client: int, sent: list[int]) -> None:
-    _reader, writer = await asyncio.open_connection("127.0.0.1", port)
+async def _trickle(port: int, client: int) -> int:
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
     try:
         headers = (
             f"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
@@ -105,11 +105,13 @@ async def _trickle(port: int, client: int, sent: list[int]) -> None:
             f"Content-Length: {4 * 1024 * 1024}\r\n\r\n"
         )
         writer.write(headers.encode())
-        while True:
-            writer.write(b"a")
-            await writer.drain()
-            sent[client] += 1
-            await asyncio.sleep(5)
+        # Declare a large body, send one byte and leave the rest pending. The
+        # server must reject from the headers without waiting for the next byte.
+        writer.write(b"a")
+        await writer.drain()
+        async with asyncio.timeout(5):
+            status = await reader.readline()
+        return int(status.split()[1])
     finally:
         writer.close()
         with suppress(ConnectionError, OSError):
@@ -117,25 +119,18 @@ async def _trickle(port: int, client: int, sent: list[int]) -> None:
 
 
 async def test_declared_length_tricklers_do_not_block_real_38mb_write(db_dsn):
-    """70 × declared 4 MiB at 1 byte / 5 s leaves room for a valid 38.4 MB write."""
+    """70 invalid uploads get immediate 401s; a trusted 38.4 MB write still succeeds."""
     async with _real_server(db_dsn) as (app, port):
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=60) as client:
             token = await writer_on(client, "final-body", "final-body-writer")
             budget = _auth_middleware(app).body_budget
             assert budget is not None
             assert budget.used == 0
-            sent = [0] * 70
-            tasks = [asyncio.create_task(_trickle(port, i, sent)) for i in range(70)]
+            tasks = [asyncio.create_task(_trickle(port, i)) for i in range(70)]
             try:
-                # Observe two actual trickles per connection before starting the write.
-                async with asyncio.timeout(10):
-                    while min(sent) < 2 or budget.used != sum(sent):
-                        for task in tasks:
-                            if task.done():
-                                await task
-                        await asyncio.sleep(0.01)
-                assert all(not task.done() for task in tasks)
-                assert 140 <= budget.used <= 280, budget.used
+                assert await asyncio.gather(*tasks) == [401] * 70
+                assert budget.used == 0
+                assert budget.clients == {}
 
                 items = [{"kind": "fact", "title": f"Max {i}", "body": "😀" * 64000} for i in range(50)]
                 wire = json.dumps(
@@ -156,7 +151,6 @@ async def test_declared_length_tricklers_do_not_block_real_38mb_write(db_dsn):
                 result = response.json()["result"]
                 assert not result.get("isError"), result
                 assert len(json.loads(result["content"][0]["text"])["versions"]) == 50
-                assert all(not task.done() for task in tasks), "tricklers must stay active during the write"
             finally:
                 for task in tasks:
                     task.cancel()

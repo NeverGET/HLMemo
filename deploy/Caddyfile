@@ -31,6 +31,9 @@
 		}
 		reverse_proxy api-frontend:8765 {
 			flush_interval -1
+			transport http {
+				keepalive 4s
+			}
 		}
 	}
 	@rest path /health /ready /devices/* /admin/*
@@ -38,7 +41,11 @@
 		request_body {
 			max_size 64KiB
 		}
-		reverse_proxy api-frontend:8765
+		reverse_proxy api-frontend:8765 {
+			transport http {
+				keepalive 4s
+			}
+		}
 	}
 	handle {
 		respond "Not found" 404
@@ -49,7 +56,11 @@
 http://127.0.0.1:8081 {
 	bind 127.0.0.1
 	handle /ready {
-		reverse_proxy api-frontend:8765
+		reverse_proxy api-frontend:8765 {
+			transport http {
+				keepalive 4s
+			}
+		}
 	}
 	handle {
 		respond "Not found" 404

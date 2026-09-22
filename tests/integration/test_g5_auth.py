@@ -468,18 +468,25 @@ async def test_revocation_ordering_concurrent(db_dsn, connect) -> None:
 
         results: list[tuple[float, str, int, int | None]] = []  # (t_start, kind, status, target)
         revoke_done_at: list[float] = []
+        # This test isolates transaction ordering; admission overload has its own
+        # gate-cap regression. Keep live HTTP requests below the per-client cap.
+        permits = asyncio.Semaphore(8)
 
         async def read(i: int) -> None:
-            t0 = time.monotonic()
-            r = await c.get("/devices/whoami", headers=bearer(victim))
-            results.append((t0, "read", r.status_code, None))
+            async with permits:
+                t0 = time.monotonic()
+                r = await c.get("/devices/whoami", headers=bearer(victim))
+                results.append((t0, "read", r.status_code, None))
 
         async def write(tgt: int) -> None:
-            t0 = time.monotonic()
-            r = await c.post(
-                "/admin/projects/race/grants", json={"device": tgt, "role": "read"}, headers=bearer(victim)
-            )
-            results.append((t0, "write", r.status_code, tgt))
+            async with permits:
+                t0 = time.monotonic()
+                r = await c.post(
+                    "/admin/projects/race/grants",
+                    json={"device": tgt, "role": "read"},
+                    headers=bearer(victim),
+                )
+                results.append((t0, "write", r.status_code, tgt))
 
         async def revoke() -> None:
             r = await c.post(f"/admin/devices/{victim_id}/revoke", headers=bearer(ADMIN_TOKEN))
@@ -497,7 +504,11 @@ async def test_revocation_ordering_concurrent(db_dsn, connect) -> None:
                 pending.append(asyncio.create_task(coro))
                 await asyncio.sleep(0)
 
-        await launch(reqs[:120])
+        # Complete one real read and grant write before revocation so both
+        # successful and rejected outcomes are exercised regardless of scheduling.
+        await asyncio.gather(*reqs[:2])
+        assert all(status == 200 for _, _, status, _ in results)
+        await launch(reqs[2:120])
         rev = asyncio.create_task(revoke())
         await launch(reqs[120:160])
         await rev

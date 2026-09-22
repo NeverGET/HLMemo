@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
 
 import pytest
+from tests.unit.test_final_body import _scope, _trusted_transport  # noqa: F401 - pytest fixture
 
 from hlmemo.config import get_settings
 from hlmemo.server.middleware import AuthMiddleware
@@ -16,17 +16,6 @@ from hlmemo.server.middleware import AuthMiddleware
 def _clean_tables():
     """These transport-only tests do not need the global database cleanup fixture."""
     yield
-
-
-def _scope(settings, *, client="192.0.2.1", length=None):
-    return {
-        "type": "http",
-        "method": "GET",
-        "path": "/ready",
-        "headers": [] if length is None else [(b"content-length", str(length).encode())],
-        "client": (client, 1234),
-        "app": SimpleNamespace(state=SimpleNamespace(settings=settings)),
-    }
 
 
 async def _ok(scope, receive, send):
