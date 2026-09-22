@@ -127,7 +127,7 @@ Return structuredContent plus identical JSON text. Count the complete serialized
 
 3. **RETRIEVAL ALGORITHM**
 
-Authorize bearer/project before every lookup. Filter project, archive flag, `valid_from≤valid_at<valid_to`, `recorded_at≤known_at<superseded_at`. Lexical: NFKC/casefold, threshold .1, indexed `query <% lex`, top 100 by word_similarity. Vector: matching model/revision/preprocessing, normalized `query:` embedding, exact cosine top 100 over a materialized filtered relation.
+Authorize bearer/project before every lookup. Filter project, archive flag, `valid_from≤valid_at<valid_to`, `recorded_at≤known_at<superseded_at`. Lexical: NFKC/casefold, `pg_trgm.word_similarity_threshold=.1`, indexed `query <% lex`, top 100 by word_similarity. Vector: matching model/revision/preprocessing, normalized `query:` embedding, exact cosine top 100 over a materialized filtered relation.
 
 `score=1/(60+lexical_rank)+1/(60+vector_rank)`; ranks start at one, missing terms contribute zero. Keep maximum-score chunk per logical_id; order score descending, layer preference 3/2/1/4, UUID ascending. Clue IDs are chunk UUIDs; previews contain first 64 tokens. Pack current card preview, then ranked clues. Staleness compares source versions at requested times. Signed cursors reference ten-minute cached rankings; expiration/restart invalidates them. Chunk at 400 embedding tokens, overlap 32, prefix `passage:`. Lexical projections commit immediately; embeddings remain asynchronous.
 
