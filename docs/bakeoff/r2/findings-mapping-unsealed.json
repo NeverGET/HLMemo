@@ -1,0 +1,54 @@
+{
+ "D01": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "D02": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "D03": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "D04": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "D05": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "D06": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "D07": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "D08": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "D09": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "D10": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "D11": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ },
+ "D12": {
+  "reviewer": "astra",
+  "target_sub": "B"
+ },
+ "D13": {
+  "reviewer": "opus",
+  "target_sub": "A"
+ }
+}

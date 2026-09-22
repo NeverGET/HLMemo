@@ -1,0 +1,46 @@
+{
+ "gates": {
+  "opus": 7,
+  "astra": 7
+ },
+ "penalty": {
+  "opus": -16.0,
+  "astra": -7.5
+ },
+ "total": {
+  "opus": -9.0,
+  "astra": -0.5
+ },
+ "detail": {
+  "opus": [
+   "D03 C Med -2",
+   "D04 C Low -1",
+   "D06 C Med -2",
+   "D07 C Med -2",
+   "D08 C Med -2",
+   "D10 C High -3",
+   "D12 C High -3",
+   "JUDGE env dup-key semantics Low -1"
+  ],
+  "astra": [
+   "D01 P Med -0.5",
+   "D02 C Low -1",
+   "D05 C Low -1",
+   "D09 C Low -1",
+   "D11 C Med -2",
+   "D13 C Med -2"
+  ]
+ },
+ "reviewer": {
+  "opus": [
+   5,
+   1,
+   0
+  ],
+  "astra": [
+   7,
+   0,
+   0
+  ]
+ }
+}
