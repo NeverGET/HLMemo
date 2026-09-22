@@ -11,6 +11,7 @@ Group=hlmdeploy
 WorkingDirectory=/opt/hlmemo/app
 Environment=HLM_ENV_FILE=/etc/hlmemo/prod.env
 Environment=HLM_COMPOSE_PROJECT=hlmemo-prod
+Environment=HLM_BACKUP_DIR=/var/backups/hlmemo
 ExecStart=/opt/hlmemo/app/deploy/backup/backup.sh
 UMask=0077
 Nice=10

@@ -63,8 +63,11 @@ write_files:
       DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       systemctl enable --now docker fail2ban unattended-upgrades
       # Ubuntu 24.04 may use ssh.socket while ssh.service is inactive.
-      # A hardening/reload failure must not abort the remaining provisioning.
-      if ! (mkdir -p /run/sshd && sshd -t && systemctl try-reload-or-restart ssh.service); then
+      # Never leave a rejected drop-in for a later ssh.socket activation.
+      if ! mkdir -p /run/sshd || ! sshd -t; then
+        rm -f /etc/ssh/sshd_config.d/00-hlmemo.conf
+        printf '%s\n' 'WARNING: SSH hardening validation failed; removed HLMemo drop-in. Inspect sshd configuration.' >&2
+      elif ! systemctl try-reload-or-restart ssh.service; then
         printf '%s\n' 'WARNING: SSH hardening could not be activated; inspect ssh.service.' >&2
       fi
       docker compose version

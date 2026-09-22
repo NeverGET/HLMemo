@@ -26,6 +26,8 @@ class BackupLockTests(unittest.TestCase):
             (scripts / "common.sh").write_text(
                 'dc() { printf "%s\\n" "$*" >> "$TEST_DUMP_CALLS"; printf "fake dump\\n"; }\n'
                 'backup_env() { printf "S3_BUCKET=\\n"; }\n'
+                'backup_dir() { printf "%s\\n" "$HLM_BACKUP_DIR"; }\n'
+                'backup_path() { printf "%s\\n" "$1"; }\n'
             )
             # A legacy mkdir lock and leftover flock file are harmless without a holder.
             (data / ".operation.lock").mkdir()
@@ -83,6 +85,27 @@ class BackupEnvironmentTests(unittest.TestCase):
             )
             settings = dict(line.split("=", 1) for line in result.stdout.splitlines())
             self.assertEqual(settings, {"S3_BUCKET": "isolated-test", "AWS_ACCESS_KEY_ID": "backup-$literal"})
+
+    @unittest.skipUnless(shutil.which("docker"), "Docker Compose parser is required")
+    def test_empty_and_comment_only_backup_env_are_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backup_file = Path(directory) / "backup.env"
+            environment = {key: value for key, value in os.environ.items()
+                           if not key.startswith(("HLM_", "BAKE_"))}
+            environment.update(HLM_ENV_FILE=str(ROOT / "deploy/.env.prod.example"),
+                               HLM_BACKUP_ENV_FILE=str(backup_file), BAKE_PROJECT="bake-astra")
+            for name in ("APP", "API", "DB"):
+                environment[f"HLM_{name}_ENV_FILE"] = str(ROOT / "deploy" / f"{name.lower()}.env.example")
+            for content in ("", "# S3 uploads disabled\n"):
+                with self.subTest(content=content):
+                    backup_file.write_text(content)
+                    result = subprocess.run(
+                        ["bash", "-c", 'source "$1"; backup_env; backup_value S3_BUCKET; backup_dir',
+                         "backup-empty-test", str(ROOT / "deploy/scripts/common.sh")],
+                        env=environment, capture_output=True, text=True, timeout=30,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, f"\n{Path('/var/backups/hlmemo').resolve()}\n")
 
 
 if __name__ == "__main__":

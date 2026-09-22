@@ -17,38 +17,42 @@ case ${1:-} in
     --prune-pre-upgrade) [[ $# == 1 ]] || exit 64; mode=prune ;;
     *) echo 'Usage: backup.sh [--pre-upgrade GIT_SHA | --prune-pre-upgrade]' >&2; exit 64 ;;
 esac
-BACKUP_DIR=${HLM_BACKUP_DIR:-$(backup_value HLM_BACKUP_DIR)}
-BACKUP_DIR=${BACKUP_DIR:-$DEPLOY_DIR/backup/data}
-mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/pre-upgrade"
+BACKUP_DIR=$(backup_dir)
+for tier in daily weekly pre-upgrade; do
+    backup_path "$BACKUP_DIR/$tier" >/dev/null
+done
+mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/pre-upgrade" </dev/null
 BACKUP_DIR=$(cd "$BACKUP_DIR" && pwd)
 # Advisory fd locks are released by the kernel, including after SIGKILL/reboot.
 # A different filename also ignores legacy stale .operation.lock directories.
 exec 8>"$BACKUP_DIR/.operation.flock"
-flock -n 8 || { echo 'Another backup/restore is active; stack remains running.' >&2; exit 1; }
+flock -n 8 </dev/null || { echo 'Another backup/restore is active; stack remains running.' >&2; exit 1; }
 if [[ $mode == prune ]]; then
     keep=${HLM_PRE_UPGRADE_KEEP:-$(backup_value HLM_PRE_UPGRADE_KEEP)}
-    python3 "$SCRIPT_DIR/retention.py" --prune-pre-upgrade "$BACKUP_DIR" --keep "${keep:-5}"
+    python3 "$SCRIPT_DIR/retention.py" --prune-pre-upgrade "$BACKUP_DIR" --keep "${keep:-5}" </dev/null
     exit
 fi
-temporary=$(mktemp "$BACKUP_DIR/.dump.XXXXXX")
-trap 'rm -f "$temporary"' EXIT
-stamp=$(date -u +%Y-%m-%dT%H%M%SZ)
+temporary=$(mktemp "$BACKUP_DIR/.dump.XXXXXX" </dev/null)
+trap 'rm -f "$temporary" </dev/null' EXIT
+stamp=$(date -u +%Y-%m-%dT%H%M%SZ </dev/null)
 if [[ $mode == pre-upgrade ]]; then
     # The random suffix also preserves two deploy attempts within the same second.
     dump="$BACKUP_DIR/pre-upgrade/$revision-$stamp-${temporary##*.}.dump"
 else
     dump="$BACKUP_DIR/daily/hlmemo-$stamp.dump"
 fi
-dc exec -T db sh -eu -c 'pg_dump --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --format=custom --no-owner --no-acl' > "$temporary"
+dc exec -T db sh -eu -c 'pg_dump --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --format=custom --no-owner --no-acl' </dev/null > "$temporary"
 dc exec -T db pg_restore --list < "$temporary" > /dev/null
-mv "$temporary" "$dump"
+# Keep every non-interactive child isolated from an invoking script stream.
+# shellcheck disable=SC2217
+mv "$temporary" "$dump" </dev/null
 if [[ $mode == pre-upgrade ]]; then
     if ! backup_env | python3 "$SCRIPT_DIR/upload.py" "$dump"; then
         echo "WARNING: pre-upgrade S3 upload failed; local dump retained: $dump" >&2
     fi
     echo "Pre-upgrade backup completed: $dump (retained until explicit prune)" >&2
 else
-    weekly=$(python3 "$SCRIPT_DIR/retention.py" "$dump" "$BACKUP_DIR")
+    weekly=$(python3 "$SCRIPT_DIR/retention.py" "$dump" "$BACKUP_DIR" </dev/null)
     backup_env | python3 "$SCRIPT_DIR/upload.py" "$dump" "$weekly"
     echo "Backup completed: $dump (7 daily / 4 weekly retention)" >&2
 fi

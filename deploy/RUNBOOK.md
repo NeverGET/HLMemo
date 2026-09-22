@@ -25,7 +25,9 @@ of every service file. Env files use Compose dotenv syntax, never shell `source`
 Docker administrators can inspect container environments; Docker membership is privileged.
 `HLM_ENV_FILE` selects `prod.env`; scripts resolve the other four files alongside it. Explicit
 `HLM_APP_ENV_FILE`, `HLM_API_ENV_FILE`, `HLM_DB_ENV_FILE`, `HLM_BACKUP_ENV_FILE` overrides select
-other absolute paths. All five files must exist, even when S3 upload is disabled.
+other absolute paths. All five files must exist, even when S3 upload is disabled; `backup.env`
+may be empty or contain only comments. The backup directory defaults to `/var/backups/hlmemo`.
+An explicit directory inside the repository (including a symlink resolving there) is rejected.
 
 For local validation, use a private file directory such as `/private/tmp/hlmemo-local/`; copy all five templates there and set in `prod.env` and set:
 
@@ -103,6 +105,9 @@ CIDRs, TCP 80/443 and UDP 443 (HTTP/3) globally over IPv4/IPv6. No other inbound
 Host snapshots default off and do not replace logical dumps. Cloud-init installs the official
 Docker repository, Engine and Compose plugin, key-only SSH, fail2ban and unattended upgrades.
 Automatic reboots are disabled; schedule maintenance for pending kernel/security reboots.
+If SSH configuration validation fails, provisioning removes its `00-hlmemo.conf` drop-in before
+continuing, so a later socket activation cannot load that rejected file. Investigate the warning
+through the provider console; cloud-init's `ssh_pwauth: false` remains in effect.
 
 Verify the SSH host key fingerprint through the provider console before adding it to known_hosts;
 the deploy script requires `StrictHostKeyChecking=yes`. Then:
@@ -112,9 +117,67 @@ ssh hlmdeploy@SERVER 'sudo cloud-init status --wait && docker compose version'
 ssh hlmdeploy@SERVER 'sudo systemctl is-active docker fail2ban unattended-upgrades'
 ```
 
-Create DNS A → output IPv4 and AAAA → output IPv6 after verifying routing and external IPv6 HTTPS reachability (`curl -6 https://YOUR_DOMAIN/ready`). Production port declarations omit the host IP so Docker can publish both families; confirm the host Docker/network IPv6 configuration. Local tests bind only 127.0.0.1. UDP 443 exposes Caddy HTTP/3. No DNS provider is
+Create DNS A → output IPv4 and AAAA → output IPv6 after verifying routing, external IPv6 HTTPS reachability (`curl -6 https://YOUR_DOMAIN/ready`), and the source-IP check below. Production port declarations omit the host IP so Docker can publish both families. Local tests bind only 127.0.0.1. UDP 443 exposes Caddy HTTP/3. No DNS provider is
 hard-coded. Cloud-init creates `/etc/hlmemo`, `/opt/hlmemo` and `/var/backups/hlmemo`. Docker group
 and passwordless sudo membership make `hlmdeploy` a privileged operator despite being non-root.
+
+### IPv6 client addresses and registration limits
+
+The shipped Compose bridges are IPv4-only. Docker's default userland proxy can translate incoming
+IPv6 connections to IPv4, making Caddy see the bridge gateway; registration limits then share one
+bucket across IPv6 clients. Publishing `::` alone does not fix this. Before advertising AAAA,
+configure native IPv6 on the production Linux host. This procedure requires Docker Engine 27+
+and a maintenance window; it has not been validated against a live VPS. See Docker's
+[port publishing behavior](https://docs.docker.com/engine/network/port-publishing/),
+[IPv6 networking](https://docs.docker.com/engine/daemon/ipv6/) and
+[Engine 27 network defaults](https://docs.docker.com/engine/release-notes/27/).
+
+Merge these exact keys into `/etc/docker/daemon.json`, preserving unrelated settings:
+
+```json
+{
+  "ip6tables": true,
+  "userland-proxy": false,
+  "default-network-opts": {
+    "bridge": { "com.docker.network.enable_ipv6": "true" }
+  }
+}
+```
+
+This daemon default gives **new** user-defined bridges native IPv6 with automatically allocated
+ULA subnets. It also applies to other new bridge networks on this host. The equivalent Compose
+network setting is `enable_ipv6: true` on both `frontend` and `outbound`; daemon configuration
+keeps the deployment checkout unchanged across upgrades. Enabling only the default `docker0`
+bridge with `"ipv6": true` does not configure these Compose networks.
+
+For an existing production stack, back up first, stop containers and remove their old networks
+without deleting volumes, then restart Docker and recreate the stack:
+
+```sh
+cd /opt/hlmemo/app
+export HLM_ENV_FILE=/etc/hlmemo/prod.env
+bash deploy/backup/backup.sh
+sudo dockerd --validate --config-file=/etc/docker/daemon.json
+bash deploy/scripts/stack.sh down       # NEVER add -v on a production host
+sudo systemctl restart docker
+bash deploy/scripts/stack.sh up -d --wait
+docker network inspect hlmemo-prod_frontend hlmemo-prod_outbound --format '{{.Name}} IPv6={{.EnableIPv6}}'
+```
+
+Adjust network names if `HLM_COMPOSE_PROJECT` differs. Both must report `IPv6=true`. Verify host
+IPv6 routing and Docker's IPv6 firewall rules, then issue `curl -6 https://YOUR_DOMAIN/ready`
+from two external IPv6 clients. With host `tcpdump` installed, inspect addresses **inside Caddy's
+network namespace**, not merely the host's public interface:
+
+```sh
+container=$(bash deploy/scripts/stack.sh ps -q caddy)
+pid=$(docker inspect --format '{{.State.Pid}}' "$container")
+sudo nsenter -t "$pid" -n tcpdump -n -i any 'ip6 and (tcp dst port 443 or udp dst port 443)'
+```
+
+The two observed sources must match the clients' distinct public IPv6 addresses. Caddy forwards
+these to the API; do not trust client-supplied forwarding headers as a workaround. Until this is
+verified, withhold AAAA and treat the IPv6 registration limiter as a shared bucket.
 
 ## First deploy and admin bootstrap
 
@@ -131,12 +194,32 @@ selects another repository URL; private repositories need read credentials insta
 the server. Do not embed credentials into the URL. Defaults: `/opt/hlmemo/app`, `/etc/hlmemo/prod.env`;
 override with `HLM_REMOTE_DIR` / `HLM_REMOTE_ENV`. The script fetches the requested ref, resolves an
 immutable commit, builds including model assets, takes a snapshot-consistent pre-upgrade dump while
-the DB and writers are live, then stops writers and runs `alembic upgrade phase0@head`, starts with `up -d --wait`, then checks public HTTPS
-readiness with certificate validation. A first uncached model build can take several minutes.
+the DB and writers are live, then stops writers and runs `alembic upgrade phase0@head`, starts with
+`up -d --wait`, verifies API readiness and local Caddy routing, then checks public HTTPS readiness
+with certificate validation. A first uncached model build can take several minutes.
 Repeated deployment of the same ref is supported. This is a single-node maintenance-window deploy,
-not zero downtime. Failures after writers stop trigger recovery of the previous pinned images and, if migration began,
+not zero downtime. Internal failures after writers stop trigger recovery of the previous pinned images and, if migration began,
 the recorded pre-upgrade database snapshot. Inspect recovery output and verify readiness. A failed
-first deployment has no previous stack to restore.
+first deployment has no previous stack to restore. An external-only readiness failure leaves the
+new, internally healthy stack running and returns nonzero: fix DNS, A/AAAA routing, firewall or
+ACME issuance before retrying the public check. It does not restore an older database over new writes.
+
+The remote script runs from a file, detached from SSH, with stdin closed and output redirected to
+`/opt/hlmemo/.deploy-runs/<run-id>/log`. The client prints the run directory and follows that log;
+its disconnect does not cancel a migration or recovery. The remote `status` file is written after
+completion and contains its exit code. With a custom `HLM_REMOTE_DIR`, `.deploy-runs` is in that
+checkout's parent directory. Reconnect to inspect the reported run rather than launching another
+deployment while the first is active:
+
+```sh
+ssh hlmdeploy@SERVER 'tail -n 100 /opt/hlmemo/.deploy-runs/RUN_ID/log'
+ssh hlmdeploy@SERVER 'cat /opt/hlmemo/.deploy-runs/RUN_ID/status'
+```
+
+A missing `status` means no completion has been recorded; investigate the running process before
+retrying. Keep run directories private (0700). Secret-bearing rollback Compose files are removed
+on script exit; an SSH disconnect cannot interrupt this cleanup. A host power loss or SIGKILL
+cannot execute shell traps: inspect/remove stale `.rollback-compose.*` files during host recovery.
 
 At every API startup, `HLM_ADMIN_TOKEN` binds reserved device 1; there is no separate SQL bootstrap.
 Use the **same** token on your workstation, loaded from a secret manager into `HLM_ADMIN_TOKEN`.
@@ -203,7 +286,9 @@ bash deploy/scripts/smoke_mcp.sh
 ```
 
 Restore validates the dump before stopping Caddy/API/worker, saves and validates a safety dump,
-recreates the configured database and restores in one transaction. All writers stay stopped on
+recreates the configured database and restores in one transaction, then runs the selected checkout's
+migration before starting API/worker/Caddy. Older dumps are therefore upgraded to that code's schema.
+Migration must succeed before writers restart. All writers stay stopped on
 failure; use the reported safety dump to recover. Safety dumps are not auto-pruned: remove them
 only after confirming recovery. Do not restore a dump with untrusted SQL. Backup and restore share
 an fd-based `flock` lock (`.operation.flock`), released automatically on process exit or reboot.
@@ -223,16 +308,18 @@ Before an upgrade, verify recent off-host backup and disk headroom. Deploy a rev
 release ref using `deploy.sh`. `/opt/hlmemo/current-ref` names the last successful deployment;
 `previous-ref` and `previous-dump` record the exact rollback pair. Every deploy snapshot lives at
 `$HLM_BACKUP_DIR/pre-upgrade/<previous-sha>-<UTC-stamp>-<unique>.dump`, outside daily/weekly rotation.
-Two deployments on the same day retain both snapshots. They are kept until explicitly pruned:
+Two deployments on the same day create separate snapshots. After a successful deployment,
+retention keeps the last `HLM_PRE_UPGRADE_KEEP` snapshots (default 5, set in `backup.env`),
+including the recorded rollback dump. Failed/recovered deployments preserve the prior
+`previous-ref`/`previous-dump` pair and do not prune. Manual pruning remains available:
 
 ```sh
 # Inspect rollback markers and preserve any required older snapshots first.
 bash deploy/backup/backup.sh --prune-pre-upgrade
 ```
 
-Explicit pruning keeps the last `HLM_PRE_UPGRADE_KEEP` snapshots (default 5, set in `backup.env`);
-it never runs during a deploy or daily backup. Prune only after verifying the recorded dump is
-among those kept. Keep old images and refs too. Do not change major PostgreSQL versions by simply
+Daily backup rotation does not touch pre-upgrade snapshots. Before manual pruning, verify the
+recorded rollback dump is among those kept. Keep old images and refs too. Do not change major PostgreSQL versions by simply
 changing the image; plan a dump/restore or pg_upgrade.
 
 For a manual rollback, copy the matching markers before changing the checkout. On the server:
@@ -255,10 +342,12 @@ printf '%s\n' "$previous" > /opt/hlmemo/current-ref
 ```
 
 Use a ref supporting the split env layout; for older tooling retain its compatible private config.
-Restore starts the selected checkout's services with `--no-deps`, skipping migrations; select the
-matching old code **before** restoring. Automatic deployment recovery pins the old running image IDs and skips
+Restore migrates to the selected checkout's head before starting its services with `--no-deps`;
+select the matching old code **before** restoring for a rollback. Automatic deployment recovery
+pins the old running image IDs and skips
 migration entirely. Restoring the pre-upgrade dump discards writes after its snapshot, including
-writes between the live snapshot and writer shutdown. The dump path is recorded before downtime.
+writes between the live snapshot and writer shutdown. The in-progress dump is captured before downtime;
+the rollback markers are promoted only after successful internal deployment checks.
 Do not run blind `alembic downgrade`. This package has no point-in-time recovery/WAL archive.
 
 ## TLS, routing and operational diagnosis

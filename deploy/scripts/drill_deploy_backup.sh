@@ -8,6 +8,8 @@ source "$SCRIPT_DIR/common.sh"
 [[ $COMPOSE_PROJECT == bake-astra ]] || { echo 'D13 drill requires bake-astra' >&2; exit 64; }
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
+# backup.sh returns canonical paths; macOS /var and /tmp are symlink aliases.
+temporary=$(cd "$temporary" && pwd -P)
 mkdir -p "$temporary/bin" "$temporary/backups/.operation.lock"
 cat > "$temporary/bin/aws" <<'AWS'
 #!/usr/bin/env bash

@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest import mock
 import urllib.error
@@ -101,19 +102,22 @@ class CloudProvisioningTests(unittest.TestCase):
         template = (ROOT / "deploy/terraform/hetzner/cloud-init.yaml.tftpl").read_text()
         self.assertLess(template.index("/opt/hlmemo /var/backups/hlmemo"), template.index("sshd -t"))
         self.assertLess(template.index("/etc/hlmemo\n"), template.index("sshd -t"))
-        start = template.index("      if ! (mkdir -p /run/sshd")
+        start = template.index("      if ! mkdir -p /run/sshd")
         end = template.index("      docker compose version", start)
         hardening = "\n".join(line[6:] for line in template[start:end].splitlines())
         # Exercise both missing runtime dir and socket-activated/inactive service
         # paths with shell stubs. No host directories or system services touched.
         for failed_command in ("mkdir", "sshd", "systemctl", "none"):
-            with self.subTest(failed_command=failed_command):
+            with self.subTest(failed_command=failed_command), tempfile.TemporaryDirectory() as directory:
+                drop_in = Path(directory) / "00-hlmemo.conf"
+                drop_in.write_text("PasswordAuthentication no\n")
+                safe_hardening = hardening.replace("/etc/ssh/sshd_config.d/00-hlmemo.conf", str(drop_in))
                 stubs = "\n".join(
                     f'{name}() {{ printf "%s\\n" "{name} $*"; return {int(name == failed_command)}; }}'
                     for name in ("mkdir", "sshd", "systemctl")
                 )
                 result = subprocess.run(
-                    ["bash", "-c", f"set -euo pipefail\n{stubs}\n{hardening}\nprintf 'provisioning continued\\n'"],
+                    ["bash", "-c", f"set -euo pipefail\n{stubs}\n{safe_hardening}\nprintf 'provisioning continued\\n'"],
                     text=True, capture_output=True, check=True,
                 )
                 self.assertEqual(result.stdout.splitlines()[-1], "provisioning continued")
@@ -122,6 +126,12 @@ class CloudProvisioningTests(unittest.TestCase):
                     self.assertIn("systemctl try-reload-or-restart ssh.service", result.stdout)
                 else:
                     self.assertIn("WARNING: SSH hardening", result.stderr)
+                if failed_command in ("mkdir", "sshd"):
+                    self.assertFalse(drop_in.exists(), "rejected configuration must not survive for ssh.socket")
+                    self.assertNotIn("systemctl", result.stdout)
+                    self.assertIn("removed HLMemo drop-in", result.stderr)
+                else:
+                    self.assertTrue(drop_in.exists(), "valid configuration must survive reload failure")
 
 
 if __name__ == "__main__":

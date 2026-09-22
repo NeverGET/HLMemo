@@ -41,3 +41,14 @@
 		respond "Not found" 404
 	}
 }
+
+# Unpublished loopback route proves Caddy -> API independently of DNS and ACME.
+http://127.0.0.1:8081 {
+	bind 127.0.0.1
+	handle /ready {
+		reverse_proxy api:8765
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
