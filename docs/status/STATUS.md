@@ -21,7 +21,7 @@ worker progress monitoring not demonstrated. No new contract question. G7 was no
 | G4 latency | PASS p95 263-290 ms (improved from 371 ms after the C4 repair) |
 | G5 auth/isolation | PASS (device×project, pending/revoked/restart) |
 | G6 durability | PASS (idempotency, conflicts, backdated segments, replay rebuild) |
-| G7 clients | PASS with real CLIs (claude 2.1.278, codex 0.155.1, agy 1.2.8): write→query→drilldown→raw + preflight injection verified; see PHASE0-GATE-REPORT.md |
+| G7 clients | PASS re-run 2026-09-22 (claude 2.1.280, codex 0.155.1, agy 1.2.8): write→query→drilldown→raw + preflight injection verified; see PHASE0-GATE-REPORT.md |
 | G8 secrets | PASS (gitleaks over history, untracked secrets/models) |
 Tests (after D-027/D-029 fixes, re-run by the orchestrator): 199 unit+fixture, 99 integration (1 skipped), 8 gate = 306 green. Lint clean.
 
