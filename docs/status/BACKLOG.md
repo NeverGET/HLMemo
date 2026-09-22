@@ -1,0 +1,27 @@
+# Backlog (Phase 1+) — items deliberately NOT blocking the first deploy (D-041)
+Updated 2026-09-23. Source of each item in parentheses.
+
+## Security / availability (authenticated or low impact)
+- A revoked device's in-flight upload keeps its body budget until the body deadline (≤ 8222 s); abort in-flight reads on revoke (consults/28).
+- A trusted device can hold 64 MiB per request for ~2 h 17 min with a slow chunked upload (two requests → per-client 128 MiB; two client keys → global 256 MiB). Owner-only lever; consider per-device body budget and shorter total cap for chunked bodies (consults/28).
+- Gate pool wait capped at 250 ms → 503 under >8 concurrent legitimate requests (previously queued up to 5 s); tune pool size / wait (consults/28).
+- Self-revoke under pool saturation loses its longer wait at the gate (admin revoke unaffected) (consults/28).
+- Gate lookup has no client-side timeout on a TCP-level DB stall → can hold a per-client slot (consults/28).
+- Readiness: model loaded before hash check; a bad-but-loadable file is never rebuilt (consults/28).
+- IPv6 through docker userland proxy: all IPv6 clients share one limiter key; withhold AAAA or enable IPv6 on the compose network (consults/26, RUNBOOK).
+- Caddy keeps the client socket open until the next body write after the API's 408 (API budget is freed on time) (closing/recheck 4a).
+- `::ffff:a.b.c.d` mapped addresses collapse to one /64 bucket (consults/26, Low).
+- XFF junk entry makes the limiter fall back to the proxy IP (consults/20, Low).
+- No uvicorn-level protection beyond limit_concurrency 512 against pure slowloris (consults/23, Low-Med).
+## Correctness / ops
+- Marker write failure after cutover leaves current-ref behind → later deploys refuse (consults/20, D5 Low).
+- Card survivor-link load still grows with links overlapping the interval (N5 residual, consults/20).
+- Writes accepted between the live pre-upgrade dump and `dc stop` are lost if that snapshot is restored (documented in RUNBOOK).
+- bootstrap.sh re-run with a changed --admin-cidr may stop before 80/443 under set -e; provider "allow 22" rules make --admin-cidr ineffective (consults/23, Low).
+- middleware.py docstring says register is "gated" (it is checked only post-body).
+## Retrieval / embeddings (D-042)
+- Embedder provider interface + async query embedding; gemini-embedding-2 / pplx-embed-v1-4b as opt-in profiles after RRF re-tuning and latency measured from the VPS.
+- int8-quantized e5 ONNX to cut RAM/CPU.
+- memory.raw paging instead of E_BUDGET_TOO_SMALL for oversized payload_item (D-026).
+## Process
+- Test suite wall time regressed to ~52 min in the auth-gate round (under investigation in the closing verification).
