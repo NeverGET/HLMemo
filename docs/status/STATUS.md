@@ -16,6 +16,10 @@ Updated: 2026-09-22 12:05
 - NotebookLM migration for this project (global protocol asks to confirm)
 - Language: Python vs TypeScript for MCP server (Claude leans Python)
 
+## Tracks (D-018)
+- PUBLIC: NeverGET/HLMemo (generic product)
+- PRIVATE: NeverGET/hlmemo-ops (our deployment; create at first deploy artifact)
+
 ## Next
 - Owner answers pending: NotebookLM migration, Hetzner CX43 confirm (D-005). Privacy tier RESOLVED (D-016: OpenRouter, cloud OK for now).
 - Full bench run on shortlist (qwen3.8-flash, gpt-5.6-luna, mistral-small-2603 + deepseek-flash as control)

@@ -13,6 +13,8 @@ Outputs bench/results/<timestamp>.json (raw, per call) and .md (summary table).
 from __future__ import annotations
 
 import argparse
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 import json
 import os
@@ -207,6 +209,7 @@ class Client:
                 self.pricing[m["id"]] = {
                     "prompt": float(p.get("prompt") or 0),
                     "completion": float(p.get("completion") or 0),
+                    "cache_read": float(p["input_cache_read"]) if p.get("input_cache_read") else None,
                     "supports_response_format": "response_format" in (m.get("supported_parameters") or []),
                 }
         except Exception:
@@ -327,6 +330,61 @@ def load_tasks(only: set[str] | None) -> list[tuple[str, dict]]:
     return out
 
 
+class SpendGuard:
+    def __init__(self, cap: float):
+        self.cap, self.total, self.lock, self.stop = cap, 0.0, threading.Lock(), False
+
+    def add(self, usd: float) -> bool:
+        with self.lock:
+            self.total += usd
+            if self.cap and self.total > self.cap and not self.stop:
+                self.stop = True
+                print(f"!! max spend ${self.cap} exceeded (${self.total:.4f}); stopping all models.", flush=True)
+            return self.stop
+
+
+def run_model(name: str, args, models_json: dict, client: "Client", tasks, guard: SpendGuard) -> list[dict]:
+    model_id, meta = resolve_model(name, models_json)
+    p = client.price_for(model_id) or {}
+    use_rf = p.get("supports_response_format", True)
+    print(f"== {name} -> {model_id}  (response_format={'on' if use_rf else 'off'}, reasoning={args.reasoning})", flush=True)
+    calls: list[dict] = []
+    for task, cfg in tasks:
+        cases = cfg["cases"][: args.limit] if args.limit else cfg["cases"]
+        for run_i in range(args.runs):
+            for case in cases:
+                if guard.stop:
+                    return calls
+                user_msg = build_user_message(task, case)
+                rec = {"model": name, "model_id": model_id, "task": task, "case_id": case["id"], "run": run_i,
+                       "prompt_chars": len(SYSTEM_PROMPT) + len(user_msg)}
+                if args.dry_run:
+                    rec.update({"dry_run": True, "parse_ok": None, "score": None})
+                    calls.append(rec)
+                    continue
+                resp = client.chat(model_id, user_msg, use_rf)
+                rec.update(resp)
+                obj, perr = parse_json(resp.get("content")) if not resp.get("error") else (None, resp["error"])
+                verr = validate(task, obj, case) if obj is not None else None
+                rec["parse_ok"] = obj is not None
+                rec["schema_ok"] = obj is not None and verr is None
+                rec["json_fail"] = not (rec["parse_ok"] and rec["schema_ok"])
+                rec["fail_reason"] = perr or verr
+                rec["parsed"] = obj
+                if rec["json_fail"]:
+                    rec["score"], rec["detail"] = 0.0, {}
+                else:
+                    rec["score"], rec["detail"] = score(task, obj, case, cfg)
+                calls.append(rec)
+                flag = "OK " if not rec["json_fail"] else "BAD"
+                print(f"  [{name}] {flag} {TASK_COLS[task]} {case['id']} run{run_i} score={rec['score']:.2f} "
+                      f"{rec.get('latency_ms', '?')}ms tok={rec.get('prompt_tokens')}/{rec.get('completion_tokens')}"
+                      f"{' r=' + str(rec['reasoning_tokens']) if rec.get('reasoning_tokens') else ''} "
+                      f"${(rec.get('cost_usd') or 0):.5f}" + (f"  <- {rec['fail_reason']}" if rec["json_fail"] else ""), flush=True)
+                guard.add(rec.get("cost_usd") or 0.0)
+    return calls
+
+
 def run(args) -> Path:
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key and not args.dry_run:
@@ -336,6 +394,7 @@ def run(args) -> Path:
         v["id"]: {
             "prompt": (v.get("prompt_usd_per_m") or 0) / 1e6,
             "completion": (v.get("completion_usd_per_m") or 0) / 1e6,
+            "cache_read": (v["cache_read_usd_per_m"] / 1e6) if v.get("cache_read_usd_per_m") is not None else None,
             "supports_response_format": v.get("supports_response_format", True),
         }
         for v in models_json.values() if v.get("found")
@@ -343,48 +402,11 @@ def run(args) -> Path:
     client = Client(key or "", pricing, args.reasoning, args.timeout)
     tasks = load_tasks(set(args.tasks.split(",")) if args.tasks else None)
     models = [m.strip() for m in args.models.split(",") if m.strip()]
+    guard = SpendGuard(args.max_spend)
 
-    calls: list[dict] = []
-    total_cost = 0.0
-    for name in models:
-        model_id, meta = resolve_model(name, models_json)
-        p = client.price_for(model_id) or {}
-        use_rf = p.get("supports_response_format", True)
-        print(f"\n== {name} -> {model_id}  (response_format={'on' if use_rf else 'off'}, reasoning={args.reasoning})", flush=True)
-        for task, cfg in tasks:
-            cases = cfg["cases"][: args.limit] if args.limit else cfg["cases"]
-            for run_i in range(args.runs):
-                for case in cases:
-                    user_msg = build_user_message(task, case)
-                    rec = {"model": name, "model_id": model_id, "task": task, "case_id": case["id"], "run": run_i,
-                           "prompt_chars": len(SYSTEM_PROMPT) + len(user_msg)}
-                    if args.dry_run:
-                        rec.update({"dry_run": True, "parse_ok": None, "score": None})
-                        calls.append(rec)
-                        continue
-                    resp = client.chat(model_id, user_msg, use_rf)
-                    rec.update(resp)
-                    obj, perr = parse_json(resp.get("content")) if not resp.get("error") else (None, resp["error"])
-                    verr = validate(task, obj, case) if obj is not None else None
-                    rec["parse_ok"] = obj is not None
-                    rec["schema_ok"] = obj is not None and verr is None
-                    rec["json_fail"] = not (rec["parse_ok"] and rec["schema_ok"])
-                    rec["fail_reason"] = perr or verr
-                    rec["parsed"] = obj
-                    if rec["json_fail"]:
-                        rec["score"], rec["detail"] = 0.0, {}
-                    else:
-                        rec["score"], rec["detail"] = score(task, obj, case, cfg)
-                    total_cost += rec.get("cost_usd") or 0.0
-                    calls.append(rec)
-                    flag = "OK " if not rec["json_fail"] else "BAD"
-                    print(f"  {flag} {TASK_COLS[task]} {case['id']} run{run_i} score={rec['score']:.2f} "
-                          f"{rec.get('latency_ms', '?')}ms tok={rec.get('prompt_tokens')}/{rec.get('completion_tokens')}"
-                          f"{' r=' + str(rec['reasoning_tokens']) if rec.get('reasoning_tokens') else ''} "
-                          f"${(rec.get('cost_usd') or 0):.5f}" + (f"  <- {rec['fail_reason']}" if rec["json_fail"] else ""), flush=True)
-                    if args.max_spend and total_cost > args.max_spend:
-                        print(f"!! max spend ${args.max_spend} exceeded (${total_cost:.4f}); stopping.", flush=True)
-                        return finish(args, models, models_json, client, calls)
+    with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:
+        per_model = list(ex.map(lambda n: run_model(n, args, models_json, client, tasks, guard), models))
+    calls = [c for lst in per_model for c in lst]
     return finish(args, models, models_json, client, calls)
 
 
@@ -415,27 +437,52 @@ def summarize(models, models_json, client, calls) -> list[dict]:
         for task, col in TASK_COLS.items():
             tc = [c for c in mc if c["task"] == task]
             row[col] = round(sum(c["score"] for c in tc) / len(tc), 4) if tc else None
+        # variance: |run0 score - run1 score| per case, averaged per task, then over tasks
+        task_vars = []
+        for task in TASK_COLS:
+            by_case: dict[str, dict[int, float]] = {}
+            for c in mc:
+                if c["task"] == task:
+                    by_case.setdefault(c["case_id"], {})[c["run"]] = c["score"]
+            diffs = [abs(r[0] - r[1]) for r in by_case.values() if 0 in r and 1 in r]
+            if diffs:
+                task_vars.append(sum(diffs) / len(diffs))
+        row["variance"] = round(sum(task_vars) / len(task_vars), 4) if task_vars else None
         row["json_fail"] = sum(1 for c in mc if c["json_fail"])
         row["json_fail_rate"] = round(row["json_fail"] / len(mc), 4) if mc else None
+        fails = [c for c in mc if c["json_fail"]]
+        row["json_fail_examples"] = [
+            {"case": f"{TASK_COLS[c['task']]}/{c['case_id']}/run{c['run']}", "reason": c.get("fail_reason"),
+             "raw": (c.get("content") or "")[:200]} for c in fails[:2]
+        ]
         lat = [c["latency_ms"] for c in mc if c.get("latency_ms") is not None]
         row["avg_latency_ms"] = round(sum(lat) / len(lat)) if lat else None
         row["total_cost_usd"] = round(sum(c.get("cost_usd") or 0 for c in mc), 6)
         row["prompt_tokens"] = sum(c.get("prompt_tokens") or 0 for c in mc)
         row["completion_tokens"] = sum(c.get("completion_tokens") or 0 for c in mc)
         row["reasoning_tokens"] = sum(c.get("reasoning_tokens") or 0 for c in mc)
+        row["cached_tokens"] = sum(c.get("cached_tokens") or 0 for c in mc)
+        row["avg_completion_tokens"] = round(row["completion_tokens"] / len(mc)) if mc else None
+        row["cache_hit_ratio"] = round(row["cached_tokens"] / row["prompt_tokens"], 4) if row["prompt_tokens"] else 0.0
         row["reasoning_honored"] = (
             "n/a" if not mc or mc[0].get("reasoning_param") is None
-            else ("yes(no reasoning tokens)" if row["reasoning_tokens"] == 0 else f"partial({row['reasoning_tokens']} reasoning tok)")
+            else ("yes(0 reasoning tok)" if row["reasoning_tokens"] == 0 else f"partial({row['reasoning_tokens']} reasoning tok)")
         )
         row["response_format_used"] = all(c.get("used_response_format") for c in mc) if mc else None
         row["provider_errors_retried"] = sum(c.get("provider_errors") or 0 for c in mc)
         p = client.price_for(model_id) or {}
         if p:
-            month_tokens_in = JOBS_PER_DAY * DAYS * JOB_IN_TOKENS
-            month_tokens_out = JOBS_PER_DAY * DAYS * JOB_OUT_TOKENS
-            row["est_monthly_usd"] = round(month_tokens_in * p["prompt"] + month_tokens_out * p["completion"], 2)
+            m_in = JOBS_PER_DAY * DAYS * JOB_IN_TOKENS
+            m_out = JOBS_PER_DAY * DAYS * JOB_OUT_TOKENS
+            row["est_monthly_usd"] = round(m_in * p["prompt"] + m_out * p["completion"], 2)
+            if p.get("cache_read") is not None and row["cache_hit_ratio"] > 0:
+                hit = row["cache_hit_ratio"]
+                row["est_monthly_usd_cached"] = round(
+                    m_in * (1 - hit) * p["prompt"] + m_in * hit * p["cache_read"] + m_out * p["completion"], 2)
+            else:
+                row["est_monthly_usd_cached"] = None  # no cache hits observed / no cache pricing
         else:
-            row["est_monthly_usd"] = None
+            row["est_monthly_usd"] = row["est_monthly_usd_cached"] = None
         rows.append(row)
     return rows
 
@@ -451,20 +498,33 @@ def render_md(ts, args, summary) -> str:
         f"# Librarian bench {ts}", "",
         f"models=`{args.models}` runs={args.runs} reasoning={args.reasoning} tasks={args.tasks or 'all'}"
         + (f" limit={args.limit}" if args.limit else ""), "",
-        f"Monthly estimate = {JOBS_PER_DAY} jobs/day x {DAYS} days x ({JOB_IN_TOKENS} in + {JOB_OUT_TOKENS} out tokens) at catalogue list price, no cache discount.", "",
-        "| model | id | T1 | T2 | T3 | T4 | JSON-fail rate | avg latency | total cost USD | est. monthly USD | reasoning |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        f"Monthly estimate = {JOBS_PER_DAY} jobs/day x {DAYS} days x ({JOB_IN_TOKENS} in + {JOB_OUT_TOKENS} out tokens). "
+        "'list' = catalogue price; 'cached' = same, with the OpenRouter-observed cache-hit ratio of this run billed at the model's cache-read price ('-' = no cache hits observed).", "",
+        "| model | id | T1 | T2 | T3 | T4 | variance | JSON-fail | avg latency | avg out tok (reasoning) | cache hit | total cost USD | monthly list | monthly cached | reasoning param |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in summary:
         lines.append(
             f"| {r['model']} | `{r['model_id']}` | {fmt(r['T1'], True)} | {fmt(r['T2'], True)} | {fmt(r['T3'], True)} | {fmt(r['T4'], True)} "
-            f"| {r['json_fail']}/{r['calls']} ({fmt(r['json_fail_rate'], True)}) | {fmt(r['avg_latency_ms'])} ms "
-            f"| {r['total_cost_usd']:.4f} | {fmt(r['est_monthly_usd'])} | {r['reasoning_honored']} |"
+            f"| {fmt(r['variance'], True)} | {r['json_fail']}/{r['calls']} ({fmt(r['json_fail_rate'], True)}) | {fmt(r['avg_latency_ms'])} ms "
+            f"| {fmt(r['avg_completion_tokens'])} ({r['reasoning_tokens']}) | {fmt(r['cache_hit_ratio'], True)} "
+            f"| {r['total_cost_usd']:.4f} | {fmt(r['est_monthly_usd'])} | {fmt(r['est_monthly_usd_cached'])} | {r['reasoning_honored']} |"
         )
-    lines.append("")
-    lines.append("T1 = exact layer+topic_id and |importance diff|<=2. T2 = exact contradicts+supersedes. "
-                 "T3 = 0.7*Jaccard(clue_ids) + 0.3*length<=120w. T4 = 0.5*warn exact + 0.5*Jaccard(ids). "
-                 "JSON-fail = unparseable after fence strip OR schema violation (scored 0).")
+    lines += ["",
+              "T1 = exact layer+topic_id and |importance diff|<=2. T2 = exact contradicts+supersedes. "
+              "T3 = 0.7*Jaccard(clue_ids) + 0.3*length<=120w. T4 = 0.5*warn exact + 0.5*Jaccard(ids). "
+              "variance = |run1 - run2| per case, averaged per task then over T1-T4 (needs --runs 2). "
+              "JSON-fail = unparseable after fence strip OR schema violation (scored 0). "
+              "avg out tok = completion tokens per call incl. reasoning; (n) = total reasoning tokens reported by usage.",
+              "", "## JSON-fail examples", ""]
+    any_fail = False
+    for r in summary:
+        for ex in r["json_fail_examples"][:1]:
+            any_fail = True
+            raw = ex["raw"].replace("\n", "\\n").replace("|", "\\|")
+            lines.append(f"- **{r['model']}** ({ex['case']}, {ex['reason']}): `{raw or '<empty>'}`")
+    if not any_fail:
+        lines.append("- none")
     return "\n".join(lines) + "\n"
 
 
@@ -478,6 +538,7 @@ def main():
                     help="reasoning param sent to OpenRouter (low -> {effort:low}, off -> {enabled:false}, default -> none)")
     ap.add_argument("--max-spend", type=float, default=0.5, help="abort when accumulated cost exceeds this (USD); 0 = no cap")
     ap.add_argument("--timeout", type=int, default=120)
+    ap.add_argument("--parallel", type=int, default=4, help="models evaluated concurrently (calls within a model stay sequential)")
     ap.add_argument("--dry-run", action="store_true", help="build prompts, no API calls")
     args = ap.parse_args()
     run(args)
