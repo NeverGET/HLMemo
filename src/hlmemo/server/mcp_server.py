@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -151,9 +152,17 @@ async def request_binding(
 # --------------------------------------------------------------------------- handlers
 
 
+def _client_of(ctx: ServerRequestContext[Any, Any]) -> str:
+    request = ctx.request
+    if isinstance(request, Request):
+        return request.headers.get("x-hlm-client") or request.headers.get("user-agent") or "unknown/0"
+    return "unknown/0"
+
+
 async def on_list_tools(
     ctx: ServerRequestContext[Any, Any], params: types.PaginatedRequestParams | None
 ) -> types.ListToolsResult:
+    log.info("mcp tools/list client=%s", _client_of(ctx))
     return types.ListToolsResult(
         tools=[types.Tool(name=t.name, description=t.description, inputSchema=t.input_schema) for t in TOOLS]
     )
@@ -170,20 +179,38 @@ async def on_call_tool(
         arguments = {}
     if not isinstance(arguments, dict):
         return error_result(ToolError("E_INVALID_ARG", "arguments must be a JSON object"))
+    # One INFO line per call (tool, device, client, outcome, ms): the G7 smoke scripts and the
+    # gate report read tool names from the api log. Never log arguments (they may hold secrets).
+    t0 = time.perf_counter()
+    device_id: int | None = None
+    outcome = "ok"
     try:
         async with request_binding(ctx) as (conn, auth):
+            device_id = auth.device_id
             # Savepoint inside the request transaction: a failing tool leaves the connection
             # usable and the middleware still commits the (read-only) outer transaction.
             async with conn.transaction():
                 result = await spec.handler(conn, auth, dict(arguments))
     except (ToolError, HlmError, BudgetError) as err:
+        outcome = getattr(err, "code", type(err).__name__)
         return error_result(err)
     except pgerrors.Error as err:
+        outcome = "E_UNAVAILABLE"
         log.warning("tool %s: database error %s", params.name, getattr(err, "sqlstate", None))
         return error_result(err)
     except Exception as err:  # noqa: BLE001 - every failure must become an isError result
+        outcome = "crash"
         log.exception("tool %s crashed", params.name)
         return error_result(err)
+    finally:
+        log.info(
+            "mcp tools/call %s device=%s client=%s outcome=%s ms=%d",
+            params.name,
+            device_id if device_id is not None else "-",
+            _client_of(ctx),
+            outcome,
+            int((time.perf_counter() - t0) * 1000),
+        )
     return text_result(canonical(result))
 
 

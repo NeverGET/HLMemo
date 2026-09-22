@@ -14,7 +14,6 @@ credentials*.json
 .codex/
 *-run.log
 *.log
-
 # python
 __pycache__/
 *.pyc
@@ -26,35 +25,26 @@ venv/
 dist/
 build/
 *.egg-info/
-
 # node
 node_modules/
-
 # data / runtime
 data/
 pgdata/
 *.sqlite
 *.db
 bench/results/*.json
-
 # os / editor
 .DS_Store
 .idea/
 .vscode/
-
 # codex scratch state
 .fable/
-
 # private (owner's estate details, belongs to hlmemo-ops)
 docs/private/
-
 # embedding model cache (downloaded at build, pinned by models.lock)
 models/
 hlm.log
-
 # local dev secrets for the compose stack (admin token)
 .hlm-dev.env
-
 # this machine's private dev config (D-018); public template is hlm.example.toml
 hlm.toml
-.hlm-dev.env

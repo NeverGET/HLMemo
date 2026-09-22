@@ -33,6 +33,10 @@ def claude_command(server_url: str, token: str, *, scope: str | None = None) -> 
     return argv
 
 
+def claude_remove_command(*, scope: str | None = None) -> list[str]:
+    return ["claude", "mcp", "remove", SERVER_NAME, "--scope", scope or "local"]
+
+
 def codex_command(server_url: str) -> list[str]:
     return [
         "codex",
@@ -115,6 +119,11 @@ def register(
         raise CliError(f"unknown CLI {cli!r}; expected claude, codex or agy", 64)
     try:
         proc = run(argv)
+        exists = "already exists" in (proc.stderr or proc.stdout or "")
+        if cli == "claude" and proc.returncode != 0 and exists:
+            # `claude mcp add` refuses to overwrite (2.1.278); rotation = remove + add (USAGE.md).
+            run(claude_remove_command(scope=scope))
+            proc = run(argv)
     except FileNotFoundError as exc:
         raise CliError(f"{cli} not found on PATH", EX_UNAVAILABLE) from exc
     if proc.returncode != 0:

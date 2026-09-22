@@ -74,23 +74,30 @@ smoke_prompt() {
   cat <<PROMPT
 You are running a non-interactive smoke test of the MCP server named "hlm". Do exactly this, using only the MCP tools, then stop:
 1. Call the tool memory.write with arguments: {"project":"$HLM_PROJECT","request_id":"$req","client":"smoke-$CLI","items":[{"kind":"fact","title":"$marker","body":"Smoke test write from $CLI at $marker.","tags":["smoke"]}]}
+   Note the integer version_id of the written item in the result; call it V below.
 2. Call the tool memory.query with arguments: {"project":"$HLM_PROJECT","query":"$marker","token_budget":512}
-3. Print, verbatim and on separate lines: "CALLED memory.write", "CALLED memory.query", the raw JSON result of step 2, and finally "MARKER $marker".
+3. Call the tool memory.drilldown with arguments: {"project":"$HLM_PROJECT","clue_ids":["vV"],"token_budget":512} where vV is the letter v followed by V, e.g. "v42".
+4. Call the tool memory.raw with arguments: {"project":"$HLM_PROJECT","version_id":V,"token_budget":512}
+5. Print, verbatim and on separate lines: "CALLED memory.write", "CALLED memory.query", "CALLED memory.drilldown", "CALLED memory.raw", the raw JSON result of step 2, and finally "MARKER $marker".
 Do not edit any files. Do not run shell commands.
 PROMPT
 }
 
+SMOKE_TOOLS="memory.write memory.query memory.drilldown memory.raw"
+
 # verify_output <output-file> <marker>
 verify_output() {
-  local out="$1" marker="$2" ok=1
-  grep -q 'memory.write' "$out" || { log "output lacks 'memory.write'"; ok=0; }
-  grep -q 'memory.query' "$out" || { log "output lacks 'memory.query'"; ok=0; }
-  grep -q "$marker" "$out"      || { log "output lacks the marker $marker"; ok=0; }
-  [[ $ok == 1 ]] || { log "----- $CLI output -----"; cat "$out" >&2; fail "one-shot output did not show both tool calls"; }
-  log "output: both tool names + marker present"
+  local out="$1" marker="$2" ok=1 t
+  for t in $SMOKE_TOOLS; do
+    grep -q "$t" "$out" || { log "output lacks '$t'"; ok=0; }
+  done
+  grep -q "$marker" "$out" || { log "output lacks the marker $marker"; ok=0; }
+  [[ $ok == 1 ]] || { log "----- $CLI output -----"; cat "$out" >&2; fail "one-shot output did not show all four tool calls"; }
+  log "output: all four tool names + marker present"
 }
 
 # verify_server_log <since-iso8601>
+# The api logs one INFO line per call: "mcp tools/call <tool> device=<id> client=<ua> outcome=<ok|E_*> ms=<n>".
 verify_server_log() {
   local since="$1" logtxt
   if [[ -n "${HLM_SERVER_LOG:-}" ]]; then
@@ -101,11 +108,13 @@ verify_server_log() {
     log "WARN: no server log source (set HLM_SERVER_LOG or run the compose stack); skipping log check"
     return 0
   fi
-  local ok=1
-  grep -q 'memory.write' <<<"$logtxt" || { log "server log lacks 'memory.write'"; ok=0; }
-  grep -q 'memory.query' <<<"$logtxt" || { log "server log lacks 'memory.query'"; ok=0; }
-  [[ $ok == 1 ]] || fail "server log did not record both tool calls since $since"
-  log "server log: both tool names present"
+  local ok=1 t
+  for t in $SMOKE_TOOLS; do
+    grep -q "tools/call $t .*outcome=ok" <<<"$logtxt" || { log "server log lacks a successful '$t' call"; ok=0; }
+  done
+  [[ $ok == 1 ]] || fail "server log did not record all four successful tool calls since $since"
+  log "server log: all four tool calls present (outcome=ok)"
+  grep -E "tools/call (memory\.[a-z_]+) .*outcome=ok" <<<"$logtxt" | sed -E 's/^.*\| //' | tail -n 8 >&2
 }
 
 new_uuid() {

@@ -20,7 +20,7 @@ log "headless one-shot (marker $MARKER)"
 # Spec launch form `claude -p "$P"`; MCP tools must be pre-allowed in -p mode.
 run_with_timeout "$SMOKE_TIMEOUT_S" \
   claude -p "$(smoke_prompt "$MARKER" "$REQ")" \
-    --allowedTools "mcp__hlm__memory.write,mcp__hlm__memory.query" \
+    --allowedTools "mcp__hlm__memory.write,mcp__hlm__memory.query,mcp__hlm__memory.drilldown,mcp__hlm__memory.raw" \
     ${CLAUDE_EXTRA_ARGS:-} \
   >"$OUT" 2>&1 || { cat "$OUT" >&2; fail "claude exited non-zero"; }
 

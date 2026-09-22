@@ -1,5 +1,5 @@
 # HLMemo developer targets. Requires uv (https://docs.astral.sh/uv/) and Docker.
-.PHONY: up down migrate test lint sync db
+.PHONY: up down down-v migrate test test-g7 test-g8 smoke lint sync db
 
 COMPOSE ?= docker compose
 UV ?= uv
@@ -24,6 +24,20 @@ migrate: db      ## apply phase0 migrations from the host against the compose db
 
 test:            ## integration tests (starts compose db if needed)
 	$(UV) run pytest -q tests/integration
+
+# G7: real coding CLIs against the running stack. Needs HLM_DEVICE_TOKEN (trusted device, write on
+# HLM_PROJECT, default g7-smoke) — see tests/smoke/README.md. `smoke` runs the scripts directly.
+test-g7:
+	HLM_PROJECT=$${HLM_PROJECT:-g7-smoke} $(UV) run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_g7_clients.py
+
+smoke:
+	HLM_PROJECT=$${HLM_PROJECT:-g7-smoke} bash tests/smoke/claude.sh
+	HLM_PROJECT=$${HLM_PROJECT:-g7-smoke} bash tests/smoke/codex.sh
+	HLM_PROJECT=$${HLM_PROJECT:-g7-smoke} bash tests/smoke/agy.sh
+
+# G8: gitleaks over the history + secret paths untracked (host only, no DB)
+test-g8:
+	$(UV) run --frozen pytest -q -p no:cacheprovider tests/integration/test_g8_secrets.py
 
 lint:
 	$(UV) run ruff check src tests alembic

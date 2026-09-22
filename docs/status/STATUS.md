@@ -13,21 +13,22 @@ Repo: https://github.com/NeverGET/HLMemo (public, main). Private ops repo not ye
 | G4 latency | PASS p95 371 ms (3 callers, 300 q) |
 | G5 auth/isolation | PASS (device×project, pending/revoked/restart) |
 | G6 durability | PASS (idempotency, conflicts, backdated segments, replay rebuild) |
-| G7 clients | server-side PASS; real-CLI run: see PHASE0-GATE-REPORT.md (may be PENDING) |
-| G8 secrets | test added; gitleaks clean on tree |
+| G7 clients | PASS with real CLIs (claude 2.1.278, codex 0.155.1, agy 1.2.8): write→query→drilldown→raw + preflight injection verified; see PHASE0-GATE-REPORT.md |
+| G8 secrets | PASS (gitleaks over history, untracked secrets/models) |
 Tests: 231 (fresh DB) + 8 (cached embeddings, `hlm_retr`) = 239 green.
 
 ## Resume — do in this order
 1. Read docs/decisions/DECISIONS.md D-025..D-027 and docs/consults/07-codex-code-review.md.
 2. Fix D-027 backlog top-3 first (S1 raw provenance leak, C1 commit-before-ack, C2 two-pass replay), each with a regression test; then the rest (S2, S3, S4, C3..C6, O1..O3). Use parallel agents on disjoint paths, own DB per agent (`CREATE DATABASE hlm_<name>`, `HLM_TEST_DSN`).
 3. Codex round 8 re-review (`docs/consults/08-*`) → GO.
-4. Complete G7 with real CLIs (claude 2.1.278 / codex 0.155.1 / agy 1.1.4): `docker compose up -d --wait db migrate api worker`, then follow docs/USAGE.md; evidence into docs/decisions/PHASE0-GATE-REPORT.md.
+4. (G7 already PASS) Re-run G1–G6 per PHASE0-GATE-REPORT.md resume block after fixes; agy pin: VERSIONS says 1.1.4 but agy self-updated to 1.2.8 (1.1.4 timed out) → re-pin to 1.2.8 (claude 2.1.278 / codex 0.155.1 / agy 1.1.4): `docker compose up -d --wait db migrate api worker`, then follow docs/USAGE.md; evidence into docs/decisions/PHASE0-GATE-REPORT.md.
 5. D-021: create project `hlmemo` inside HLMemo, import docs/ + auto-memory, open the next dev session with `hlm claude`.
 6. Sync PHASE0-SPEC.md text with D-026 deviations.
 
 ## Local environment facts
 - Stack: `compose.yaml` (db/migrate/api/worker); models mounted from `./models` (470 MB, gitignored, `models.lock` has hashes). Dev admin token in `.hlm-dev.env` (gitignored). This machine's config in `hlm.toml` (gitignored).
 - Test DBs on the compose Postgres: `hlm` (default), `hlm_retr` (G3 fixture with embeddings cached — do NOT drop, re-embed takes 12 min), `hlm_mcp`, `hlm_full`.
+- NEVER run pytest without `HLM_TEST_DSN` (conftest truncates the live `hlm` db; use `hlm_test`).
 - Alembic: always `alembic upgrade phase0@head` (D-026).
 
 ## Open (owner)

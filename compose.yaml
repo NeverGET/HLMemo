@@ -3,10 +3,21 @@ name: hlmemo
 
 x-app-env: &app-env
   HLM_DB_DSN: postgresql://hlm:hlm@db:5432/hlm
-  HLM_ADMIN_TOKEN: ${HLM_ADMIN_TOKEN:-}
-  HLM_REGISTRATION_SECRET: ${HLM_REGISTRATION_SECRET:-}
+  # HLM_ADMIN_TOKEN / HLM_REGISTRATION_SECRET come from .hlm-dev.env (x-env-file below), never
+  # from this file: a key listed under `environment` overrides env_file even when unset.
   HLM_PROFILES_DIR: /app/profiles
+  # Phase 0: the pinned e5 model (models.lock) is bind-mounted, not baked (see x-models-volume).
+  HLM_MODELS_DIR: /app/models
   PYTHONUNBUFFERED: "1"
+
+# Local dev secrets (HLM_ADMIN_TOKEN, ...). Gitignored; optional so `docker compose config` works without it.
+x-env-file: &env-file
+  - path: .hlm-dev.env
+    required: false
+
+# Read-only bind mount of ./models (multilingual-e5-small, verified against models.lock).
+x-models-volume: &models-volume
+  - ./models:/app/models:ro
 
 services:
   db:
@@ -44,6 +55,8 @@ services:
     build: .
     image: hlmemo:dev
     environment: *app-env
+    env_file: *env-file
+    volumes: *models-volume
     command: ["python", "-m", "hlmemo.server.app"]
     ports:
       - "${HLM_API_PORT:-8765}:8765"
@@ -64,6 +77,8 @@ services:
     build: .
     image: hlmemo:dev
     environment: *app-env
+    env_file: *env-file
+    volumes: *models-volume
     command: ["python", "-m", "hlmemo.worker.main"]
     depends_on:
       db:
@@ -79,6 +94,8 @@ services:
     environment:
       <<: *app-env
       HLM_TEST_DSN: postgresql://hlm:hlm@db:5432/hlm
+    env_file: *env-file
+    volumes: *models-volume
     command: ["pytest", "-q", "tests/integration"]
     depends_on:
       db:

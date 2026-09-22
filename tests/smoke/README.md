@@ -1,8 +1,9 @@
 # Smoke tests — real coding CLIs against a running HLMemo stack
 
 These scripts are the D-014 end-to-end check: register the MCP server with each pinned CLI, run one
-headless turn that must call `memory.write` and then `memory.query`, and verify both tool names in
-the CLI output and in the server log. They are **not** run by pytest and need a live stack.
+headless turn that must call `memory.write`, `memory.query`, `memory.drilldown` and `memory.raw` (G7: write → query → drilldown → raw), and verify all four tool names in
+the CLI output and in the server log. They need a live stack; `tests/integration/test_g7_clients.py` wraps them for pytest (skips when
+`HLM_DEVICE_TOKEN`, the stack or a CLI binary is missing).
 
 Pinned versions: `tests/smoke/VERSIONS` (`claude 2.1.278`, `codex 0.155.1`, `agy 1.1.4`).
 `hlm doctor` reports drift against the same file.
