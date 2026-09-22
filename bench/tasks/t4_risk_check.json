@@ -1,0 +1,110 @@
+{
+  "task": "risk_check",
+  "description": "Given a task description and 6 past lessons, decide whether to warn, which lessons apply, and give a short message.",
+  "cases": [
+    {
+      "id": "r01",
+      "task": "Reset the production stack on the VPS with `docker compose down -v` and bring it back up.",
+      "lessons": [
+        {"id": "L1", "text": "Never run `docker compose down -v` against production: it deletes the Postgres volumes. Happened 2026-08-12, restore took 3h."},
+        {"id": "L2", "text": "Never commit .env; the OpenRouter key leaked once in March 2026."},
+        {"id": "L3", "text": "Gemini Flash sometimes wraps JSON in ```json fences; strip before parsing."},
+        {"id": "L4", "text": "Freitags nicht deployen: die letzten zwei Freitag-Deploys haben Wochenend-Ausfälle verursacht."},
+        {"id": "L5", "text": "OpenRouter anahtarı değiştirildikten sonra librarian worker'ı yeniden başlatmayı unutma."},
+        {"id": "L6", "text": "nginx proxy_read_timeout must be >= 3600 for the MCP SSE stream or clients stall."}
+      ],
+      "gold": {"warn": true, "matched_lesson_ids": ["L1"]}
+    },
+    {
+      "id": "r02",
+      "task": "Add a CI status badge to the top of README.md.",
+      "lessons": [
+        {"id": "L1", "text": "Never run `docker compose down -v` against production: it deletes the Postgres volumes."},
+        {"id": "L2", "text": "Never commit .env; the OpenRouter key leaked once in March 2026."},
+        {"id": "L3", "text": "Gemini Flash sometimes wraps JSON in ```json fences; strip before parsing."},
+        {"id": "L4", "text": "Freitags nicht deployen: die letzten zwei Freitag-Deploys haben Wochenend-Ausfälle verursacht."},
+        {"id": "L5", "text": "OpenRouter anahtarı değiştirildikten sonra librarian worker'ı yeniden başlatmayı unutma."},
+        {"id": "L6", "text": "nginx proxy_read_timeout must be >= 3600 for the MCP SSE stream or clients stall."}
+      ],
+      "gold": {"warn": false, "matched_lesson_ids": []}
+    },
+    {
+      "id": "r03",
+      "task": "Gemini Flash ile yeni bir librarian job (consolidation) ekle; model çıktısını doğrudan json.loads ile parse et, ek temizlik yapma.",
+      "lessons": [
+        {"id": "L1", "text": "Never run `docker compose down -v` against production: it deletes the Postgres volumes."},
+        {"id": "L2", "text": "Never commit .env; the OpenRouter key leaked once in March 2026."},
+        {"id": "L3", "text": "Gemini Flash bazen response_format=json_object verilse bile çıktıyı ```json çitiyle sarıyor; json.loads'tan önce çitleri temizle."},
+        {"id": "L4", "text": "Freitags nicht deployen: die letzten zwei Freitag-Deploys haben Wochenend-Ausfälle verursacht."},
+        {"id": "L5", "text": "After rotating the OpenRouter key, restart the librarian worker."},
+        {"id": "L6", "text": "nginx proxy_read_timeout must be >= 3600 for the MCP SSE stream or clients stall."}
+      ],
+      "gold": {"warn": true, "matched_lesson_ids": ["L3"]}
+    },
+    {
+      "id": "r04",
+      "task": "Die nginx-Konfiguration für den MCP-Server neu schreiben und dabei die nginx-Standard-Timeouts (60s) beibehalten, um die Config kurz zu halten.",
+      "lessons": [
+        {"id": "L1", "text": "Never run `docker compose down -v` against production: it deletes the Postgres volumes."},
+        {"id": "L2", "text": "Never commit .env; the OpenRouter key leaked once in March 2026."},
+        {"id": "L3", "text": "Gemini Flash sometimes wraps JSON in ```json fences; strip before parsing."},
+        {"id": "L4", "text": "Freitags nicht deployen: die letzten zwei Freitag-Deploys haben Wochenend-Ausfälle verursacht."},
+        {"id": "L5", "text": "After rotating the OpenRouter key, restart the librarian worker."},
+        {"id": "L6", "text": "Für den MCP-SSE-Stream muss nginx proxy_read_timeout >= 3600 und proxy_buffering off sein, sonst hängen die Clients nach 60s."}
+      ],
+      "gold": {"warn": true, "matched_lesson_ids": ["L6"]}
+    },
+    {
+      "id": "r05",
+      "task": "Rotate the OpenRouter API key: put the new key in .env, then commit .env so the VPS gets it on the next pull.",
+      "lessons": [
+        {"id": "L1", "text": "Never run `docker compose down -v` against production: it deletes the Postgres volumes."},
+        {"id": "L2", "text": "Never commit .env to git; the OpenRouter key leaked once in March 2026 and had to be revoked."},
+        {"id": "L3", "text": "Gemini Flash sometimes wraps JSON in ```json fences; strip before parsing."},
+        {"id": "L4", "text": "Freitags nicht deployen: die letzten zwei Freitag-Deploys haben Wochenend-Ausfälle verursacht."},
+        {"id": "L5", "text": "OpenRouter anahtarı değiştirildikten sonra librarian worker'ı yeniden başlatmayı unutma; eski anahtar bellekte kalıyor."},
+        {"id": "L6", "text": "nginx proxy_read_timeout must be >= 3600 for the MCP SSE stream or clients stall."}
+      ],
+      "gold": {"warn": true, "matched_lesson_ids": ["L2", "L5"]}
+    },
+    {
+      "id": "r06",
+      "task": "Bench sonuçlarını results/ klasörüne markdown tablo olarak yaz.",
+      "lessons": [
+        {"id": "L1", "text": "Never run `docker compose down -v` against production: it deletes the Postgres volumes."},
+        {"id": "L2", "text": "Never commit .env; the OpenRouter key leaked once in March 2026."},
+        {"id": "L3", "text": "Gemini Flash sometimes wraps JSON in ```json fences; strip before parsing."},
+        {"id": "L4", "text": "Freitags nicht deployen: die letzten zwei Freitag-Deploys haben Wochenend-Ausfälle verursacht."},
+        {"id": "L5", "text": "After rotating the OpenRouter key, restart the librarian worker."},
+        {"id": "L6", "text": "nginx proxy_read_timeout must be >= 3600 for the MCP SSE stream or clients stall."}
+      ],
+      "gold": {"warn": false, "matched_lesson_ids": []}
+    },
+    {
+      "id": "r07",
+      "task": "Upgrade Postgres 16 -> 17 on the production VPS this Friday evening after work.",
+      "lessons": [
+        {"id": "L1", "text": "Never run `docker compose down -v` against production: it deletes the Postgres volumes."},
+        {"id": "L2", "text": "Never commit .env; the OpenRouter key leaked once in March 2026."},
+        {"id": "L3", "text": "Gemini Flash sometimes wraps JSON in ```json fences; strip before parsing."},
+        {"id": "L4", "text": "Freitags nicht deployen: die letzten zwei Freitag-Deploys haben Wochenend-Ausfälle verursacht, niemand war erreichbar."},
+        {"id": "L5", "text": "Nach einem Postgres-Major-Upgrade muss die pgvector-Extension neu gebaut/installiert werden, sonst startet HLMemo nicht."},
+        {"id": "L6", "text": "nginx proxy_read_timeout must be >= 3600 for the MCP SSE stream or clients stall."}
+      ],
+      "gold": {"warn": true, "matched_lesson_ids": ["L4", "L5"]}
+    },
+    {
+      "id": "r08",
+      "task": "Neue Test-Fixtures für T3 in bench/tasks/ anlegen (nur JSON-Dateien, kein Deploy).",
+      "lessons": [
+        {"id": "L1", "text": "Never run `docker compose down -v` against production: it deletes the Postgres volumes."},
+        {"id": "L2", "text": "Never commit .env; the OpenRouter key leaked once in March 2026."},
+        {"id": "L3", "text": "Gemini Flash sometimes wraps JSON in ```json fences; strip before parsing."},
+        {"id": "L4", "text": "Freitags nicht deployen: die letzten zwei Freitag-Deploys haben Wochenend-Ausfälle verursacht."},
+        {"id": "L5", "text": "After rotating the OpenRouter key, restart the librarian worker."},
+        {"id": "L6", "text": "nginx proxy_read_timeout must be >= 3600 for the MCP SSE stream or clients stall."}
+      ],
+      "gold": {"warn": false, "matched_lesson_ids": []}
+    }
+  ]
+}

@@ -1,0 +1,189 @@
+{
+  "task": "placement",
+  "description": "Given a new memory text and 5 candidate topics, choose layer, topic_id, importance (1-10) and stability.",
+  "topics": {
+    "user-prefs": "Cemal's coding style, tooling and workflow preferences (linters, formatters, editors, shortcuts).",
+    "user-profile": "Who Cemal is: languages spoken, where he lives, job, roles. Identity facts, not family.",
+    "family-personal": "Family members, birthdays, wishes, personal life events and appointments.",
+    "infra-docker": "Local docker compose stack: Postgres/pgvector versions, volumes, restart and reset procedures.",
+    "infra-vps": "Production VPS: the docker compose stack running there, deploys, nginx, TLS certificates, outages, server sizing.",
+    "hlmemo-design": "HLMemo architecture decisions: memory layers, clue-based disclosure, token budgets, ADR log.",
+    "codex-consults": "Design consults between the codex CLI and claude: how they are run, logged and what went wrong.",
+    "librarian-llm": "The background librarian LLM: model choice, prompts, JSON parsing, OpenRouter usage and keys.",
+    "mcp-server": "The MCP streamable-HTTP server: transport, nginx proxying, client configuration.",
+    "travel": "Trips, flights, hotels, itineraries.",
+    "health": "Health, sport, doctor appointments, lab results."
+  },
+  "cases": [
+    {
+      "id": "p01",
+      "memory": "Cemal prefers ruff as the only linter+formatter for Python and wants 4-space indentation everywhere; no black, no flake8.",
+      "candidates": [
+        "user-prefs",
+        "infra-docker",
+        "hlmemo-design",
+        "travel",
+        "health"
+      ],
+      "gold": {
+        "layer": "fact",
+        "topic_id": "user-prefs",
+        "importance": 6,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p02",
+      "memory": "20 Eylül 2026: VPS'e ilk deploy yapıldı. TLS sertifikası yenilenmemişti, site yaklaşık 2 saat erişilemez kaldı, sertifika elle yenilenince düzeldi.",
+      "candidates": [
+        "infra-vps",
+        "infra-docker",
+        "mcp-server",
+        "family-personal",
+        "user-prefs"
+      ],
+      "gold": {
+        "layer": "episode",
+        "topic_id": "infra-vps",
+        "importance": 7,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p03",
+      "memory": "Merke: NIEMALS `docker compose down -v` gegen den Produktions-Stack ausführen. Das löscht die Postgres-Volumes unwiderruflich. Ist am 12.08. passiert, Restore aus Backup dauerte 3 Stunden.",
+      "candidates": [
+        "infra-docker",
+        "infra-vps",
+        "hlmemo-design",
+        "codex-consults",
+        "travel"
+      ],
+      "gold": {
+        "layer": "lesson",
+        "topic_id": "infra-vps",
+        "importance": 9,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p04",
+      "memory": "How-to that worked for rotating the OpenRouter key: 1) edit OPENROUTER_API_KEY in .env, 2) `docker compose restart librarian`, 3) run `bench/run.py --models deepseek-v4-flash --limit 1` to verify the new key is live.",
+      "candidates": [
+        "librarian-llm",
+        "infra-docker",
+        "user-prefs",
+        "mcp-server",
+        "health"
+      ],
+      "gold": {
+        "layer": "experience",
+        "topic_id": "librarian-llm",
+        "importance": 5,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p05",
+      "memory": "Cemal'in ana dili Türkçe; Almanya'da (Münih) yaşıyor; iş yazışmalarında Almanca, kodda ve dokümantasyonda İngilizce kullanıyor.",
+      "candidates": [
+        "user-profile",
+        "user-prefs",
+        "family-personal",
+        "travel",
+        "librarian-llm"
+      ],
+      "gold": {
+        "layer": "fact",
+        "topic_id": "user-profile",
+        "importance": 8,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p06",
+      "memory": "During yesterday's design consult (#04, 2026-09-18) codex crashed twice with model_reasoning_effort=xhigh and we had to rerun the same prompt with effort=high; the answer arrived after 14 minutes.",
+      "candidates": [
+        "codex-consults",
+        "hlmemo-design",
+        "librarian-llm",
+        "infra-vps",
+        "user-prefs"
+      ],
+      "gold": {
+        "layer": "episode",
+        "topic_id": "codex-consults",
+        "importance": 4,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p07",
+      "memory": "Tochter Elif hat am 3. Oktober Geburtstag.",
+      "candidates": [
+        "family-personal",
+        "user-profile",
+        "travel",
+        "health",
+        "user-prefs"
+      ],
+      "gold": {
+        "layer": "fact",
+        "topic_id": "family-personal",
+        "importance": 7,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p08",
+      "memory": "Ders: Gemini Flash'a response_format=json_object verilse bile bazen çıktıyı ```json çitiyle sarıyor. json.loads'tan önce çitleri temizle, yoksa job sessizce düşüyor. 3 kez bu yüzden placement job'u başarısız oldu.",
+      "candidates": [
+        "librarian-llm",
+        "hlmemo-design",
+        "mcp-server",
+        "codex-consults",
+        "infra-docker"
+      ],
+      "gold": {
+        "layer": "lesson",
+        "topic_id": "librarian-llm",
+        "importance": 8,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p09",
+      "memory": "Procedure that finally got the MCP streamable-HTTP server working behind nginx: in the /mcp location block set `proxy_buffering off;`, `proxy_http_version 1.1;` and `proxy_read_timeout 3600;`, then reload nginx and reconnect the client.",
+      "candidates": [
+        "mcp-server",
+        "infra-vps",
+        "infra-docker",
+        "librarian-llm",
+        "travel"
+      ],
+      "gold": {
+        "layer": "experience",
+        "topic_id": "mcp-server",
+        "importance": 7,
+        "stability": "stable"
+      }
+    },
+    {
+      "id": "p10",
+      "memory": "Aktueller Stand (heute): Der lokale docker-compose-Stack läuft mit Postgres 17 und pgvector 0.8.1; der Umstieg auf Postgres 18 ist für nächsten Monat geplant.",
+      "candidates": [
+        "infra-docker",
+        "infra-vps",
+        "hlmemo-design",
+        "user-prefs",
+        "health"
+      ],
+      "gold": {
+        "layer": "fact",
+        "topic_id": "infra-docker",
+        "importance": 6,
+        "stability": "volatile"
+      }
+    }
+  ]
+}

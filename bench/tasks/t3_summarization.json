@@ -1,0 +1,76 @@
+{
+  "task": "summarization",
+  "description": "Given 6-10 memory items, write a summary (<=120 words) and return the ids of the 3 most important items as clue_ids.",
+  "max_words": 120,
+  "cases": [
+    {
+      "id": "s01",
+      "items": [
+        {"id": "m1", "text": "2026-09-20: production was down for ~2 hours because the TLS certificate had expired."},
+        {"id": "m2", "text": "Renamed a local variable in utils.py from tmp to buffer."},
+        {"id": "m3", "text": "Root cause: the certbot renewal cron job was never installed on the VPS."},
+        {"id": "m4", "text": "Added a one-line comment to the README about the bench folder."},
+        {"id": "m5", "text": "Decision ADR-009: switch to Caddy for automatic TLS renewal; nginx stays only as a fallback."},
+        {"id": "m6", "text": "Lunch at the Thai place was good."},
+        {"id": "m7", "text": "Updated .gitignore to exclude .venv."},
+        {"id": "m8", "text": "Fixed a typo in docs/status/STATUS.md."}
+      ],
+      "gold": {"clue_ids": ["m1", "m3", "m5"]}
+    },
+    {
+      "id": "s02",
+      "items": [
+        {"id": "m1", "text": "Elif'in doğum günü 3 Ekim; hediye olarak bisiklet istiyor."},
+        {"id": "m2", "text": "Market alışverişi yapıldı, süt ve ekmek alındı."},
+        {"id": "m3", "text": "Annemin ameliyatı 15 Ekim'de Ankara'da; o hafta izin almam gerekiyor."},
+        {"id": "m4", "text": "Bugün hava yağmurluydu."},
+        {"id": "m5", "text": "Yeni ev: kira 1.450 EUR, sözleşme 1 Kasım'da başlıyor, depozito 3 kira."},
+        {"id": "m6", "text": "Sabah kahve içildi."},
+        {"id": "m7", "text": "Otobüs 10 dakika geç geldi."}
+      ],
+      "gold": {"clue_ids": ["m1", "m3", "m5"]}
+    },
+    {
+      "id": "s03",
+      "items": [
+        {"id": "m1", "text": "Entscheidung ADR-004: Die Memory-Layer heißen verbindlich fact / episode / lesson / experience."},
+        {"id": "m2", "text": "Codex-Consult #3: Empfehlung Token-Budget 4k pro MCP-Antwort; angenommen und in ADR-005 festgehalten."},
+        {"id": "m3", "text": "Kaffeemaschine im Büro repariert."},
+        {"id": "m4", "text": "Whitespace-Fix in run.py."},
+        {"id": "m5", "text": "Librarian-Modell: DeepSeek V4 Flash gewählt, weil ca. 10x günstiger als Gemini Flash bei gleicher JSON-Zuverlässigkeit im Bench."},
+        {"id": "m6", "text": "Logo-Farbe wurde diskutiert, noch offen."},
+        {"id": "m7", "text": "Meeting um 10 Minuten verschoben."},
+        {"id": "m8", "text": "Fußnote in der Doku korrigiert."},
+        {"id": "m9", "text": "Tab-Breite im Editor auf 4 gesetzt."}
+      ],
+      "gold": {"clue_ids": ["m1", "m2", "m5"]}
+    },
+    {
+      "id": "s04",
+      "items": [
+        {"id": "m1", "text": "Bench finding: Gemini Flash wrapped its output in ```json fences in 3 of 10 placement calls despite response_format=json_object."},
+        {"id": "m2", "text": "The smoke bench run cost $0.12 in total."},
+        {"id": "m3", "text": "Bench finding: DeepSeek V4 Flash returned parseable JSON in 33 of 33 calls."},
+        {"id": "m4", "text": "Weather was nice, worked from the balcony."},
+        {"id": "m5", "text": "Decision: every librarian job strips code fences before json.loads and retries once on parse failure."},
+        {"id": "m6", "text": "Renamed bench/out to bench/results."},
+        {"id": "m7", "text": "Slack notifications were noisy today, muted the channel."}
+      ],
+      "gold": {"clue_ids": ["m1", "m3", "m5"]}
+    },
+    {
+      "id": "s05",
+      "items": [
+        {"id": "m1", "text": "Doktor randevusu: 12 Ekim 09:00, Dr. Weber (Hausarzt), Schwabing."},
+        {"id": "m2", "text": "Yeni kulaklık alındı."},
+        {"id": "m3", "text": "Flug nach Istanbul am 20.12., TK1634, Abflug 07:15 ab MUC, Rückflug 03.01."},
+        {"id": "m4", "text": "Yolda podcast dinlendi."},
+        {"id": "m5", "text": "Kan tahlili sonucu: D vitamini düşük (18 ng/ml); doktor günlük 2000 IU önerdi."},
+        {"id": "m6", "text": "Evde çay bitti, alınacak."},
+        {"id": "m7", "text": "Yeni kalem alındı."},
+        {"id": "m8", "text": "Ofis önünde park yeri bulundu."}
+      ],
+      "gold": {"clue_ids": ["m1", "m3", "m5"]}
+    }
+  ]
+}

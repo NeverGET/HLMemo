@@ -1,0 +1,16 @@
+{
+  "task": "contradiction",
+  "description": "Given fact A and fact B (each with t_valid), decide whether they contradict and which one supersedes the other.",
+  "cases": [
+    {"id": "c01", "a": {"text": "Cemal lives in Berlin.", "t_valid": "2024-03-01"}, "b": {"text": "Cemal moved to Munich and now lives there.", "t_valid": "2026-01-15"}, "gold": {"contradicts": true, "supersedes": "B"}},
+    {"id": "c02", "a": {"text": "HLMemo's local stack runs Postgres 16.", "t_valid": "2026-05-02"}, "b": {"text": "HLMemo's local stack runs Postgres 17.", "t_valid": "2026-08-20"}, "gold": {"contradicts": true, "supersedes": "B"}},
+    {"id": "c03", "a": {"text": "Cemal trinkt seinen Kaffee schwarz, ohne Zucker.", "t_valid": "2025-11-10"}, "b": {"text": "Cemal trinkt abends gerne Tee.", "t_valid": "2026-02-03"}, "gold": {"contradicts": false, "supersedes": "none"}},
+    {"id": "c04", "a": {"text": "Haftalık ekip toplantısı her Pazartesi 10:00'da yapılıyor.", "t_valid": "2026-02-01"}, "b": {"text": "Haftalık ekip toplantısı Salı 09:00'a taşındı.", "t_valid": "2026-06-10"}, "gold": {"contradicts": true, "supersedes": "B"}},
+    {"id": "c05", "a": {"text": "The OpenRouter API key is rotated monthly, on the 1st.", "t_valid": "2026-09-01"}, "b": {"text": "The OpenRouter API key is rotated every week on Friday.", "t_valid": "2026-03-01"}, "gold": {"contradicts": true, "supersedes": "A"}},
+    {"id": "c06", "a": {"text": "Die Tochter heißt Elif.", "t_valid": "2025-01-01"}, "b": {"text": "Der Sohn heißt Kerem.", "t_valid": "2025-01-01"}, "gold": {"contradicts": false, "supersedes": "none"}},
+    {"id": "c07", "a": {"text": "Production deploy target is a Hetzner CX22 (2 vCPU, 4 GB).", "t_valid": "2026-04-12"}, "b": {"text": "Production was upgraded to a Hetzner CX32 (4 vCPU, 8 GB).", "t_valid": "2026-07-30"}, "gold": {"contradicts": true, "supersedes": "B"}},
+    {"id": "c08", "a": {"text": "Cemal vejetaryen, et ve balık yemiyor.", "t_valid": "2025-01-20"}, "b": {"text": "Cemal artık pesketaryen; balık yiyor ama et yemiyor.", "t_valid": "2026-09-15"}, "gold": {"contradicts": true, "supersedes": "B"}},
+    {"id": "c09", "a": {"text": "HLMemo stores embeddings in Postgres via pgvector.", "t_valid": "2026-06-01"}, "b": {"text": "HLMemo's pgvector embeddings use an HNSW index.", "t_valid": "2026-07-05"}, "gold": {"contradicts": false, "supersedes": "none"}},
+    {"id": "c10", "a": {"text": "Das tägliche Standup ist um 09:30.", "t_valid": "2026-09-10"}, "b": {"text": "Das tägliche Standup ist um 08:30.", "t_valid": "2026-01-05"}, "gold": {"contradicts": true, "supersedes": "A"}}
+  ]
+}
