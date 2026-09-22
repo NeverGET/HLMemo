@@ -41,6 +41,7 @@ import time
 from collections import OrderedDict, deque
 from functools import lru_cache
 from ipaddress import ip_address, ip_network
+from tempfile import SpooledTemporaryFile
 from typing import Any
 
 from psycopg import Error as DatabaseError
@@ -205,14 +206,17 @@ class AuthMiddleware:
             )
         reservation = BodyReservation(self.body_budget, trusted_client_ip(scope, settings.trusted_proxy_ips))
         try:
-            await self._request(scope, receive, send, reservation)
+            # No allocation is based on untrusted Content-Length. Large uploads roll
+            # to disk; the byte budget also bounds disk use until the request ends.
+            with SpooledTemporaryFile(max_size=settings.request_body_spool_threshold_bytes) as body:
+                await self._request(scope, receive, send, reservation, body)
         finally:
             # Keep accounting through authentication, route execution and slow responses.
             # Cancellation and every early return also release the entire reservation.
             reservation.release(reservation.size)
 
     async def _request(
-        self, scope: Scope, receive: Receive, send: Send, reservation: BodyReservation
+        self, scope: Scope, receive: Receive, send: Send, reservation: BodyReservation, body: Any
     ) -> None:
         state: dict[str, Any] = scope.setdefault("state", {})
         state.setdefault("auth", None)
@@ -253,7 +257,8 @@ class AuthMiddleware:
             async with asyncio.timeout_at(
                 min(total_deadline, loop.time() + settings.request_body_timeout_s)
             ) as body_deadline:
-                body = bytearray()
+                size = 0
+                on_disk = False
                 length = headers.get("content-length")
                 if length is not None:
                     try:
@@ -268,36 +273,40 @@ class AuthMiddleware:
                     if declared > body_cap:
                         await self._body_error(scope, receive, send, 413, "request body too large")
                         return
-                    if not reservation.grow(declared):
-                        await self._body_error(scope, receive, send, 503, "request body budget exhausted")
-                        return
                 while True:
                     message = await receive()
                     if message["type"] == "http.disconnect":
                         del message
                         return
                     chunk = message.get("body", b"")
-                    if len(body) + len(chunk) > body_cap:
+                    if size + len(chunk) > body_cap:
                         del message, chunk
                         await self._body_error(scope, receive, send, 413, "request body too large")
                         return
-                    missing = max(0, len(body) + len(chunk) - reservation.size)
-                    if not reservation.grow(missing):
+                    if not reservation.grow(len(chunk)):
                         del message, chunk
                         await self._body_error(scope, receive, send, 503, "request body budget exhausted")
                         return
-                    body.extend(chunk)
+                    # Roll BEFORE the write to avoid copying an arbitrarily large
+                    # ASGI chunk into BytesIO on its way to disk.
+                    if not on_disk and size + len(chunk) > settings.request_body_spool_threshold_bytes:
+                        await _body_io(body.rollover)
+                        on_disk = True
+                    if on_disk:
+                        await _body_io(body.write, chunk)
+                    else:
+                        body.write(chunk)
+                    size += len(chunk)
                     if chunk:
                         next_deadline = min(total_deadline, loop.time() + settings.request_body_timeout_s)
-                        if len(body) >= settings.request_body_rate_grace_bytes:
-                            rate_deadline = started + len(body) / settings.request_body_min_rate_bytes_s
+                        if size >= settings.request_body_rate_grace_bytes:
+                            rate_deadline = started + size / settings.request_body_min_rate_bytes_s
                             if loop.time() > rate_deadline:
                                 del message, chunk
                                 await self._body_error(
                                     scope, receive, send, 408, "request body transfer rate too low"
                                 )
                                 return
-                            next_deadline = min(next_deadline, rate_deadline)
                         body_deadline.reschedule(next_deadline)
                     more_body = message.get("more_body", False)
                     # The ASGI message owns its chunk: do not pin a second copy
@@ -308,24 +317,22 @@ class AuthMiddleware:
         except TimeoutError:
             await self._body_error(scope, receive, send, 408, "request body read timed out")
             return
-
-        # Charge the temporary conversion copy too, so replay cannot double the
-        # bounded body memory when many requests finish uploading together.
-        if not reservation.grow(len(body)):
-            await self._body_error(scope, receive, send, 503, "request body budget exhausted")
+        except OSError:
+            await self._body_error(scope, receive, send, 503, "request body storage unavailable")
             return
-        body_bytes = bytes(body)
-        size = len(body)
-        body.clear()
-        reservation.release(size)
+
+        body.seek(0)
         original_receive = receive
         body_delivered = False
+        remaining = size
 
         async def replay_receive() -> Message:
-            nonlocal body_delivered
+            nonlocal body_delivered, remaining
             if not body_delivered:
-                body_delivered = True
-                return {"type": "http.request", "body": body_bytes, "more_body": False}
+                chunk = await _body_io(body.read, 64 * 1024) if on_disk else body.read(64 * 1024)
+                remaining -= len(chunk)
+                body_delivered = remaining == 0
+                return {"type": "http.request", "body": chunk, "more_body": not body_delivered}
             return await original_receive()
 
         receive = replay_receive
@@ -454,7 +461,18 @@ class AuthMiddleware:
                         )
                         caller = await identity.fetchone()
                         if caller is not None:
-                            target = _revoke_target(route[1], body_bytes)
+                            if route[1] == "/devices/revoke":
+                                if not reservation.grow(size):
+                                    raise HlmError("E_UNAVAILABLE", "request body budget exhausted")
+                                try:
+                                    payload = await _body_io(body.read) if on_disk else body.read()
+                                    target = _revoke_target(route[1], payload)
+                                    del payload
+                                finally:
+                                    reservation.release(size)
+                                    body.seek(0)
+                            else:
+                                target = _revoke_target(route[1], b"")
                             exclusive_auth = target is not None and int(caller[0]) == target
                     ctx, row = await resolve(
                         conn,
@@ -515,6 +533,25 @@ class AuthMiddleware:
         )
         response.status_code = status
         await response(scope, receive, send)
+
+
+async def _body_io(operation: Any, *args: Any) -> Any:
+    """Keep disk I/O off the event loop; finish it before cancellation closes the spool."""
+    task = asyncio.create_task(asyncio.to_thread(operation, *args))
+    cancelled = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            cancelled = exc
+        except Exception:
+            break  # Re-raise the I/O failure below, unless cancellation already won.
+    if cancelled is not None:
+        # Retrieve any I/O failure, but preserve the caller's cancellation/deadline.
+        if not task.cancelled():
+            task.exception()
+        raise cancelled
+    return task.result()
 
 
 def _revoke_target(path: str, body: bytes) -> int | None:

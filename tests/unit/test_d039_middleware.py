@@ -178,7 +178,11 @@ async def test_normal_link_accepts_38mb_body_with_default_budgets():
 
     async def route(scope, receive, send):
         nonlocal received
-        received = len((await receive())["body"])
+        while True:
+            message = await receive()
+            received += len(message["body"])
+            if not message.get("more_body", False):
+                break
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
 
