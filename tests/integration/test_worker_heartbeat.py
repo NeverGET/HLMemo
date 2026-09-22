@@ -52,6 +52,8 @@ async def test_heartbeat_reports_stalled_queue_then_last_committed_job(connect, 
             "last_done_at": None,
             "ready_jobs": 0,
             "oldest_ready_age_s": None,
+            "in_flight_jobs": 0,
+            "oldest_in_flight_age_s": None,
             "jobs_done": 0,
         }
 
@@ -60,7 +62,7 @@ async def test_heartbeat_reports_stalled_queue_then_last_committed_job(connect, 
         assert await heartbeat(conn, stats) is None
 
         # --- stalled: ready jobs pile up and age, last_done_job never moves -------------------
-        await _queue_stale_job(conn, age_seconds=45)
+        stale_job = await _queue_stale_job(conn, age_seconds=45)
         await conn.commit()
         stalled = await heartbeat(conn, stats, force=True)
         assert stalled["ready_jobs"] == 1
@@ -74,6 +76,20 @@ async def test_heartbeat_reports_stalled_queue_then_last_committed_job(connect, 
         # The queue is stalled, not idle: the backlog and its age grow, nothing gets committed.
         assert worse["oldest_ready_age_s"] > stalled["oldest_ready_age_s"]
         assert worse["last_done_job"] is None and worse["jobs_done"] == 0
+
+        # --- crashed-worker stall: a live lease nobody will ever commit is NOT "idle" -----------
+        await conn.execute(
+            "UPDATE jobs SET status = 'running', lease_token = gen_random_uuid(),"
+            " lease_until = now() + interval '30 seconds' WHERE job_id = %s",
+            (stale_job,),
+        )
+        await conn.commit()
+        crashed = await heartbeat(conn, stats, force=True)
+        assert crashed["ready_jobs"] == 1  # the other one
+        assert crashed["in_flight_jobs"] == 1
+        # leased_at = lease_until - LEASE_SECONDS, so the in-flight job has already been held ~90 s
+        assert crashed["oldest_in_flight_age_s"] > 0
+        assert crashed["last_done_job"] is None
 
         # --- progress: a committed job moves last_done_job / last_done_at --------------------
         world = await seed_world(conn)
@@ -96,9 +112,11 @@ async def test_heartbeat_reports_stalled_queue_then_last_committed_job(connect, 
         assert done["last_done_job"] == jobs[0].job_id
         assert done["last_done_at"] is not None
         assert done["ready_jobs"] == 0 and done["oldest_ready_age_s"] is None
+        assert done["in_flight_jobs"] == 0 and done["oldest_in_flight_age_s"] is None
 
         line = next(r.getMessage() for r in caplog.records if "worker heartbeat:" in r.getMessage())
         assert f"last_done_job={jobs[0].job_id}" in line
         assert "ready_jobs=0" in line
+        assert "in_flight_jobs=0" in line
         assert "oldest_ready_age_s=" in line
         assert "last_done_at=" in line

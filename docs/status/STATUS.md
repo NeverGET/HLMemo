@@ -18,12 +18,12 @@ worker progress monitoring not demonstrated. No new contract question. G7 was no
 | G1 boot/migrate | PASS |
 | G2 budget | PASS (1000 random budgets, 0 overflow; raw paging TODO D-026) |
 | G3 Recall@5 | PASS 0.930 (TR .971 / DE .909 / EN .909; identifier 25/25) |
-| G4 latency | PASS p95 371 ms (3 callers, 300 q) |
+| G4 latency | PASS p95 263-290 ms (improved from 371 ms after the C4 repair) |
 | G5 auth/isolation | PASS (device×project, pending/revoked/restart) |
 | G6 durability | PASS (idempotency, conflicts, backdated segments, replay rebuild) |
 | G7 clients | PASS with real CLIs (claude 2.1.278, codex 0.155.1, agy 1.2.8): write→query→drilldown→raw + preflight injection verified; see PHASE0-GATE-REPORT.md |
 | G8 secrets | PASS (gitleaks over history, untracked secrets/models) |
-Tests: 231 (fresh DB) + 8 (cached embeddings, `hlm_retr`) = 239 green.
+Tests (after D-027/D-029 fixes, re-run by the orchestrator): 199 unit+fixture, 99 integration (1 skipped), 8 gate = 306 green. Lint clean.
 
 ## Resume — do in this order
 1. Read docs/decisions/DECISIONS.md D-025..D-027 and docs/consults/07-codex-code-review.md.
