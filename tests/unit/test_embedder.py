@@ -21,7 +21,12 @@ def cos(a, b):
 def test_version_constant():
     assert EMBEDDER_VERSION == f"{MODEL_ID}@{MODEL_REVISION}"
     assert EMBEDDER_VERSION == "intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3"
-    assert set(MODEL_FILES) == {"onnx/model.onnx", "onnx/tokenizer.json", "tokenizer_config.json", "config.json"}
+    assert set(MODEL_FILES) == {
+        "onnx/model.onnx",
+        "onnx/tokenizer.json",
+        "tokenizer_config.json",
+        "config.json",
+    }
 
 
 def test_model_files_present(model_dir):
@@ -79,13 +84,16 @@ def test_truncation_at_512_tokens(embedder):
 
 
 def test_latency_32_passages(embedder):
-    passages = [f"Chunk {i}: " + ("The docker compose stack failed because APP_DB_DSN was unset. " * 12) for i in range(32)]
+    passages = [
+        f"Chunk {i}: " + ("The docker compose stack failed because APP_DB_DSN was unset. " * 12)
+        for i in range(32)
+    ]
     embedder.embed_passages(passages[:2])  # warm-up
     t0 = time.perf_counter()
     vecs = embedder.embed_passages(passages)
     dt = time.perf_counter() - t0
     assert vecs.shape == (32, EMBEDDING_DIMS)
-    print(f"\nembed 32 passages (~{embedder._tok.encode(passages[0]).ids.__len__()} tok each): {dt*1000:.0f} ms")
+    print(f"\nembed 32 passages (~{len(embedder._tok.encode(passages[0]).ids)} tok each): {dt * 1000:.0f} ms")
     assert dt < 60
 
 

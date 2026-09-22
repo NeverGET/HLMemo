@@ -7,9 +7,12 @@ import pytest
 from hlmemo.core.embedder import default_model_dir
 
 MODEL_DIR = default_model_dir()
-_HAVE_MODEL = (MODEL_DIR / "onnx" / "model.onnx").is_file() and (MODEL_DIR / "onnx" / "tokenizer.json").is_file()
+_HAVE_MODEL = (MODEL_DIR / "onnx" / "model.onnx").is_file() and (
+    MODEL_DIR / "onnx" / "tokenizer.json"
+).is_file()
 requires_model = pytest.mark.skipif(
-    not _HAVE_MODEL, reason=f"E5 model not downloaded at {MODEL_DIR}; run hlmemo.core.embedder.download_model()"
+    not _HAVE_MODEL,
+    reason=f"E5 model not downloaded at {MODEL_DIR}; run hlmemo.core.embedder.download_model()",
 )
 
 

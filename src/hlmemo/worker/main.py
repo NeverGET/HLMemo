@@ -10,6 +10,13 @@ permanently after ``MAX_ATTEMPTS``.
 §1.1 (5): a chunk whose ``text_norm`` already has a vector under the same ``model@revision/preproc``
 on the version it supersedes / was split from gets that vector copied instead of re-inferred.
 
+Fencing (codex review C6): *every* embedding row a job produces — copied from the predecessor or
+freshly inferred — is inserted in the one final transaction that also runs the lease-fenced
+``UPDATE jobs … WHERE lease_token = :ours``. That UPDATE row-locks the job until commit, so a
+takeover either happened before it (rowcount 0 → the whole transaction, copies included, rolls
+back) or waits behind it and then finds the job ``done``. Before that transaction the worker only
+*reads* (which chunks lack a vector, which of them have a copyable predecessor vector) and infers.
+
 ``drain(conn_factory, embedder)`` runs the same loop until the queue is empty (tests / one-shot).
 """
 
@@ -117,26 +124,54 @@ async def _pending_chunks(conn: AsyncConnection, job: Job) -> list[tuple[int, st
     return [(r[0], r[1]) for r in await cur.fetchall()]
 
 
+_PREDECESSOR_MATCH = """
+      FROM chunks c
+      JOIN memory_versions mv ON mv.version_id = c.version_id
+      JOIN chunks prev ON prev.version_id = mv.supersedes_version_id AND prev.text_norm = c.text_norm
+      JOIN embeddings e ON e.chunk_id = prev.chunk_id AND e.model = %(model)s
+           AND e.model_revision = %(rev)s AND e.preproc_version = %(preproc)s
+     WHERE c.chunk_id = ANY(%(ids)s)
+"""
+
+
+def _predecessor_params(job: Job, chunk_ids: list[int]) -> dict[str, Any]:
+    p = job.payload
+    return {
+        "ids": chunk_ids,
+        "model": p["model"],
+        "rev": p["model_revision"],
+        "preproc": p["preproc_version"],
+    }
+
+
+async def _copyable_chunks(conn: AsyncConnection, job: Job, chunk_ids: list[int]) -> set[int]:
+    """§1.1 (5), read-only: the pending chunks whose ``text_norm`` already has a vector on the
+    superseded / split-from version (they are copied in the final transaction, not inferred)."""
+    if not chunk_ids:
+        return set()
+    cur = await conn.execute(
+        "SELECT DISTINCT c.chunk_id" + _PREDECESSOR_MATCH, _predecessor_params(job, chunk_ids)
+    )
+    return {r[0] for r in await cur.fetchall()}
+
+
 async def _copy_from_predecessor(conn: AsyncConnection, job: Job, chunk_ids: list[int]) -> int:
-    """§1.1 (5): copy vectors of identical ``text_norm`` from the superseded / split-from version."""
+    """§1.1 (5): copy the predecessor vectors of ``chunk_ids`` (must run inside the final, fenced
+    transaction — see the module docstring). Returns the number of rows inserted."""
     if not chunk_ids:
         return 0
-    p = job.payload
     cur = await conn.execute(
         """
         INSERT INTO embeddings (chunk_id, model, model_revision, preproc_version, dims, vec)
         SELECT DISTINCT ON (c.chunk_id)
                c.chunk_id, e.model, e.model_revision, e.preproc_version, e.dims, e.vec
-          FROM chunks c
-          JOIN memory_versions mv ON mv.version_id = c.version_id
-          JOIN chunks prev ON prev.version_id = mv.supersedes_version_id AND prev.text_norm = c.text_norm
-          JOIN embeddings e ON e.chunk_id = prev.chunk_id AND e.model = %(model)s
-               AND e.model_revision = %(rev)s AND e.preproc_version = %(preproc)s
-         WHERE c.chunk_id = ANY(%(ids)s)
+        """
+        + _PREDECESSOR_MATCH
+        + """
          ORDER BY c.chunk_id, prev.chunk_id
         ON CONFLICT DO NOTHING
         """,
-        {"ids": chunk_ids, "model": p["model"], "rev": p["model_revision"], "preproc": p["preproc_version"]},
+        _predecessor_params(job, chunk_ids),
     )
     return cur.rowcount
 
@@ -207,27 +242,34 @@ def _check_job_model(job: Job) -> None:
         )
 
 
+@dataclass(slots=True)
+class _Plan:
+    """What one leased job needs: chunks to copy from the predecessor and chunks to infer."""
+
+    copy_ids: list[int]
+    infer: list[tuple[int, str]]
+
+
 async def process_jobs(conn: AsyncConnection, embedder: Embedder, jobs: list[Job], stats: DrainStats) -> None:
     """Embed the pending chunks of every leased job (one model call per ≤ ``BATCH_CHUNKS`` chunks)
-    and commit each job's vectors + ``done`` under its lease fence."""
-    pending: dict[int, list[tuple[int, str]]] = {}
+    and commit each job's vectors (copied + inferred) and ``done`` in ONE transaction under its
+    lease fence. Losing the lease rolls back everything the loser produced."""
+    plans: dict[int, _Plan] = {}
     for job in jobs:
         try:
             _check_job_model(job)
-            async with conn.transaction():
+            async with conn.transaction():  # read-only
                 chunks = await _pending_chunks(conn, job)
-                copied = await _copy_from_predecessor(conn, job, [cid for cid, _ in chunks])
+                copyable = await _copyable_chunks(conn, job, [cid for cid, _ in chunks])
             await conn.commit()
-            if copied:
-                stats.chunks_copied += copied
-                async with conn.transaction():
-                    chunks = await _pending_chunks(conn, job)
-                await conn.commit()
-            pending[job.job_id] = chunks
+            plans[job.job_id] = _Plan(
+                copy_ids=[cid for cid, _ in chunks if cid in copyable],
+                infer=[(cid, text) for cid, text in chunks if cid not in copyable],
+            )
         except Exception as exc:  # noqa: BLE001 - a job failure must not stop the loop
             await _handle_failure(conn, job, exc, stats)
 
-    todo = [(job, cid, text) for job in jobs if job.job_id in pending for cid, text in pending[job.job_id]]
+    todo = [(job, cid, text) for job in jobs if job.job_id in plans for cid, text in plans[job.job_id].infer]
     vectors: dict[int, Any] = {}
     for start in range(0, len(todo), BATCH_CHUNKS):
         batch = todo[start : start + BATCH_CHUNKS]
@@ -236,27 +278,32 @@ async def process_jobs(conn: AsyncConnection, embedder: Embedder, jobs: list[Job
         except Exception as exc:  # noqa: BLE001
             failed_jobs = {job.job_id: job for job, _, _ in batch}
             for job in failed_jobs.values():
-                pending.pop(job.job_id, None)
+                plans.pop(job.job_id, None)
                 await _handle_failure(conn, job, exc, stats)
             continue
         for (_, cid, _), vec in zip(batch, embedded, strict=True):
             vectors[cid] = vec
 
     for job in jobs:
-        if job.job_id not in pending:
+        plan = plans.get(job.job_id)
+        if plan is None:
             continue
-        rows = [(cid, vectors[cid]) for cid, _ in pending[job.job_id] if cid in vectors]
+        rows = [(cid, vectors[cid]) for cid, _ in plan.infer if cid in vectors]
         try:
             async with conn.transaction():
+                copied = await _copy_from_predecessor(conn, job, plan.copy_ids)
                 await _insert_embeddings(conn, job, rows)
                 if not await _mark_done(conn, job):
                     raise _LeaseLost(job.job_id)
             await conn.commit()
             stats.jobs_done += 1
+            stats.chunks_copied += copied
             stats.chunks_embedded += len(rows)
         except _LeaseLost:
             await conn.rollback()
-            log.warning("job %s: lease lost before commit; leaving it to the new owner", job.job_id)
+            log.warning(
+                "job %s: lease lost before commit; nothing written, left to the new owner", job.job_id
+            )
         except Exception as exc:  # noqa: BLE001
             await _handle_failure(conn, job, exc, stats)
 

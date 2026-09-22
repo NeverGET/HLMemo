@@ -12,7 +12,9 @@ def test_encode_item_and_chunk():
     assert str(Clue(3, 1)) == "v3.1"
 
 
-@pytest.mark.parametrize("raw, vid, ordinal", [("v1", 1, None), ("v1.0", 1, 0), ("v99.12", 99, 12), ("v10", 10, None)])
+@pytest.mark.parametrize(
+    "raw, vid, ordinal", [("v1", 1, None), ("v1.0", 1, 0), ("v99.12", 99, 12), ("v10", 10, None)]
+)
 def test_decode_roundtrip(raw, vid, ordinal):
     c = decode_clue(raw)
     assert (c.version_id, c.ordinal) == (vid, ordinal)
@@ -23,7 +25,30 @@ def test_decode_roundtrip(raw, vid, ordinal):
 
 @pytest.mark.parametrize(
     "raw",
-    ["", "v", "1", "V1", "v1.", "v.1", "v1.2.3", "v01", "v1.01", "v0", "v-1", "v1.-1", " v1", "v1 ", "v1\n", "vx", "v1.x", "v1,2", None, 1, 1.5, b"v1"],
+    [
+        "",
+        "v",
+        "1",
+        "V1",
+        "v1.",
+        "v.1",
+        "v1.2.3",
+        "v01",
+        "v1.01",
+        "v0",
+        "v-1",
+        "v1.-1",
+        " v1",
+        "v1 ",
+        "v1\n",
+        "vx",
+        "v1.x",
+        "v1,2",
+        None,
+        1,
+        1.5,
+        b"v1",
+    ],
 )
 def test_decode_rejects_malformed(raw):
     with pytest.raises(InvalidClue) as ei:

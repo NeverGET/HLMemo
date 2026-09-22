@@ -6,9 +6,14 @@ Two predicate layers, never merged (§4.4):
   authorization rule for every read; it has no temporal or kind term.
 * ``temporal_live`` — (b) ``valid_from <= valid_at < valid_to AND recorded_at <= known_at < superseded_at``.
 
-``chunks.project_ids``/``device_scope`` are used ONLY as a GIN prefilter before the join; the
-version row decides. Open ends come back as ``None`` (``nullif(..., 'infinity')``) because psycopg
-cannot load an infinite ``timestamptz``.
+``chunks.project_ids``/``device_scope`` are denormalised copies and are NOT consulted by any read
+predicate: the version row decides (§4.4 "(a) on memory_versions is authoritative", both
+directions). A copied-scope prefilter could only narrow the candidate set for performance, and a
+stale restrictive copy would then hide a version (a) allows — C4 of the Codex review. The candidate
+plans use the tsv/trigram GIN indexes and join ``memory_versions`` by primary key. Trigram matches
+are materialized before that join so scope selectivity cannot induce a full chunk scan for
+multi-identifier queries (G4). Open ends come back as
+``None`` (``nullif(..., 'infinity')``) because psycopg cannot load an infinite ``timestamptz``.
 """
 
 from __future__ import annotations
@@ -26,7 +31,6 @@ from hlmemo.db.write_queries import ProjectRef
 # --------------------------------------------------------------------------- predicate fragments
 AUTHZ_MV = "(%(pid)s = ANY(mv.project_ids) AND mv.device_scope = ANY(%(scopes)s))"
 AUTHZ_L = "(%(pid)s = ANY(l.project_ids) AND l.device_scope = ANY(%(scopes)s))"
-PREFILTER_C = "(%(pid)s = ANY(c.project_ids) AND c.device_scope = ANY(%(scopes)s))"
 TEMPORAL_MV = (
     "(mv.valid_from <= %(valid_at)s AND mv.valid_to > %(valid_at)s"
     " AND mv.recorded_at <= %(known_at)s AND mv.superseded_at > %(known_at)s)"
@@ -153,7 +157,9 @@ class QueryFilters:
         }
 
     def hit_where(self) -> str:
-        where = f"{PREFILTER_C} AND {AUTHZ_MV} AND {TEMPORAL_MV} AND mv.status = ANY(%(statuses)s)"
+        # (a) on the version row only — never on the chunk's copied scope (C4: a stale restrictive
+        # copy must not hide what version scope allows; a stale permissive copy must not leak).
+        where = f"{AUTHZ_MV} AND {TEMPORAL_MV} AND mv.status = ANY(%(statuses)s)"
         where += " AND mv.kind <> 'project_card'"
         if self.kinds is not None:
             where += " AND mv.kind = ANY(%(kinds)s)"
@@ -222,18 +228,22 @@ async def trigram_candidates(
 ) -> list[Candidate]:
     """§4.6: per identifier term ``term <% text_norm``, merged by best ``word_similarity``.
 
-    The per-(term, chunk) similarity is materialised first so the aggregate/sort work on
-    ``(chunk_id, sim)`` rows, not on the 2 KB ``text_norm`` (an external sort otherwise).
+    Materialize trigram matches before the version join: otherwise scope selectivity can make
+    PostgreSQL scan authorized chunks once per identifier instead of using the trigram GIN.
+    Authorization still precedes ranking/limit; copied chunk scopes are never consulted.
     """
     if not ident_terms:
         return []
     cur = await conn.execute(
         f"""
-        WITH s AS MATERIALIZED (
-            SELECT c.chunk_id, c.version_id, mv.logical_id, mv.device_scope,
+        WITH matches AS MATERIALIZED (
+            SELECT c.chunk_id, c.version_id,
                    word_similarity(t.term, c.text_norm) AS sim
             FROM unnest(%(terms)s::text[]) AS t(term)
             JOIN chunks c ON t.term <%% c.text_norm
+        ), s AS MATERIALIZED (
+            SELECT c.chunk_id, c.version_id, mv.logical_id, mv.device_scope, c.sim
+            FROM matches c
             JOIN memory_versions mv ON mv.version_id = c.version_id
             WHERE {f.hit_where()}
         )
@@ -485,6 +495,32 @@ async def raw_links(conn: AsyncConnection, src_logical_id: int, pid: int, scopes
     return [RawLink(*r) for r in await cur.fetchall()]
 
 
+async def endpoint_authz(
+    conn: AsyncConnection, pid: int, scopes: list[str], *, logical_ids: list[int], version_ids: list[int]
+) -> tuple[set[int], set[int]]:
+    """§4.4 (a) on far endpoints, the predicate ``raw_links``/``drilldown_links`` apply in SQL,
+    for references embedded elsewhere (the verbatim ``payload_item.links`` of ``memory.raw``):
+    returns the logical ids with at least one version passing (a) and the version ids passing
+    (a). A reference to anything else is omitted, never named."""
+    lids: set[int] = set()
+    vids: set[int] = set()
+    if logical_ids:
+        cur = await conn.execute(
+            f"SELECT DISTINCT mv.logical_id FROM memory_versions mv"
+            f" WHERE mv.logical_id = ANY(%(lids)s) AND {AUTHZ_MV}",
+            {"lids": sorted(set(logical_ids)), "pid": pid, "scopes": scopes},
+        )
+        lids = {r[0] for r in await cur.fetchall()}
+    if version_ids:
+        cur = await conn.execute(
+            f"SELECT mv.version_id FROM memory_versions mv"
+            f" WHERE mv.version_id = ANY(%(vids)s) AND {AUTHZ_MV}",
+            {"vids": sorted(set(version_ids)), "pid": pid, "scopes": scopes},
+        )
+        vids = {r[0] for r in await cur.fetchall()}
+    return lids, vids
+
+
 async def project_slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[int, str]:
     if not project_ids:
         return {}
@@ -559,6 +595,7 @@ __all__ = [
     "chunk_spans",
     "clock_now",
     "drilldown_links",
+    "endpoint_authz",
     "hit_rows",
     "indexing_pending",
     "lexical_candidates",

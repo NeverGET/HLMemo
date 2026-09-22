@@ -82,7 +82,12 @@ def _envelope():
 
 
 def _hit(i, size_words):
-    return {"clue": f"v{i}.0", "kind": "fact", "title": f"t{i}", "preview": " ".join(f"w{i}x{j}" for j in range(size_words))}
+    return {
+        "clue": f"v{i}.0",
+        "kind": "fact",
+        "title": f"t{i}",
+        "preview": " ".join(f"w{i}x{j}" for j in range(size_words)),
+    }
 
 
 def test_pack_basic_shape(meter):
@@ -130,7 +135,18 @@ def test_pack_render_is_applied(meter):
 
 def test_pack_1000_seeded_random_cases_never_exceed(meter):
     rng = random.Random(20260922)
-    words = ["kedi", "docker", "Straße", "İstanbul", "APP_DB_DSN", "E4193", "compose", "yağmur", "über", "path/to/file.py"]
+    words = [
+        "kedi",
+        "docker",
+        "Straße",
+        "İstanbul",
+        "APP_DB_DSN",
+        "E4193",
+        "compose",
+        "yağmur",
+        "über",
+        "path/to/file.py",
+    ]
     for case in range(1000):
         budget = rng.randint(BUDGET_MIN, 8000)
         n = rng.randint(0, 40)
@@ -138,14 +154,23 @@ def test_pack_1000_seeded_random_cases_never_exceed(meter):
         for i in range(n):
             size = rng.choice([1, 3, 8, 20, 60, 150, 400])
             preview = " ".join(rng.choice(words) for _ in range(size))
-            cands.append({"clue": f"v{rng.randint(1, 10**6)}.{rng.randint(0, 9)}", "kind": "fact", "title": f"t{i}", "preview": preview})
+            cands.append(
+                {
+                    "clue": f"v{rng.randint(1, 10**6)}.{rng.randint(0, 9)}",
+                    "kind": "fact",
+                    "title": f"t{i}",
+                    "preview": preview,
+                }
+            )
         env = _envelope()
         res = meter.pack(env, cands, budget, render=lambda h: h)
         wire = canonical(env)
         measured = meter.count_text(wire)
         assert measured <= budget, f"case {case}: {measured} > {budget}"
         assert res.used <= budget
-        assert measured <= res.used <= measured + 1  # used is exact, or an overestimate by 1 at a digit boundary
+        assert (
+            measured <= res.used <= measured + 1
+        )  # used is exact, or an overestimate by 1 at a digit boundary
         assert len(res.packed) + res.omitted == n
         assert env["hits"] == cands[: len(res.packed)]
         assert env["budget"]["limit"] == budget and env["budget"]["tokenizer"] == "o200k_base"

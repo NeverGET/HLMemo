@@ -382,24 +382,102 @@ async def drilldown(
 
 
 # --------------------------------------------------------------------------- memory.raw
-def _payload_item(payload: dict[str, Any], version_id: int) -> dict[str, Any]:
-    """The verbatim request item behind ``version_id`` (a survivor segment maps to the item of
-    the version it was split from)."""
-    resolved = payload.get("resolved") or {}
-    request = payload.get("request") or {}
-    index: int | None = None
-    for it in resolved.get("items", []):
-        if it.get("version_id") == version_id or any(
-            s.get("version_id") == version_id for s in it.get("survivors", [])
-        ):
-            index = it.get("index")
-            break
-    if index is None:
-        return {}
-    items = request.get("items")
+def _locate(payload: dict[str, Any], version_id: int) -> tuple[int | None, int | None]:
+    """``(index, from_version_id)`` of ``version_id`` in an event's ``payload.resolved.items``:
+    ``index`` when the version is an item's own row, ``from_version_id`` when it is a surviving
+    segment (§1.1 (3)) copied unchanged from that version by this (correcting) event."""
+    for it in (payload.get("resolved") or {}).get("items", []):
+        if it.get("version_id") == version_id:
+            return it.get("index"), None
+        for s in it.get("survivors", []):
+            if s.get("version_id") == version_id:
+                return None, s.get("from_version_id")
+    return None, None
+
+
+def _request_items(payload: dict[str, Any]) -> list[Any]:
+    items = (payload.get("request") or {}).get("items")
     if not isinstance(items, list):  # call_the_day: the derived write batch is recorded in resolved.write
-        items = (resolved.get("write") or {}).get("items", [])
-    return items[index] if 0 <= index < len(items) else {}
+        items = ((payload.get("resolved") or {}).get("write") or {}).get("items", [])
+    return items if isinstance(items, list) else []
+
+
+def _resolved_links(payload: dict[str, Any], index: int) -> list[Any]:
+    for it in (payload.get("resolved") or {}).get("items", []):
+        if it.get("index") == index:
+            links = it.get("links")
+            return links if isinstance(links, list) else []
+    return []
+
+
+async def _filter_item_links(
+    conn: AsyncConnection, item: dict[str, Any], resolved_links: list[Any], pid: int, scopes: list[str]
+) -> dict[str, Any]:
+    """S1b: every link target named in the verbatim item is authorized with the endpoint rule of
+    ``raw_links`` (§4.4 (a): the pinned ``dst_version_id`` when the write pinned one, else any
+    version of ``dst_logical_id``); unauthorized targets are omitted, never named."""
+    links = item.get("links")
+    if not isinstance(links, list) or not links:
+        return item
+    targets: list[tuple[int | None, int | None]] = []
+    for j, ln in enumerate(links):
+        r = resolved_links[j] if j < len(resolved_links) and isinstance(resolved_links[j], dict) else {}
+        vid, lid = r.get("dst_version_id"), r.get("dst_logical_id")
+        if vid is None and lid is None and isinstance(ln, dict):  # no resolved record: the request's ids
+            tv, t = ln.get("target_version_id"), ln.get("target")
+            if isinstance(tv, int) and not isinstance(tv, bool):
+                vid = tv
+            elif isinstance(t, int) and not isinstance(t, bool):
+                lid = t
+        targets.append((vid if isinstance(vid, int) else None, lid if isinstance(lid, int) else None))
+    lids_ok, vids_ok = await q.endpoint_authz(
+        conn,
+        pid,
+        scopes,
+        logical_ids=[lid for vid, lid in targets if vid is None and lid is not None],
+        version_ids=[vid for vid, _ in targets if vid is not None],
+    )
+    kept = [
+        ln
+        for ln, (vid, lid) in zip(links, targets, strict=True)
+        if ((vid in vids_ok) if vid is not None else (lid is not None and lid in lids_ok))
+    ]
+    return {**item, "links": kept}
+
+
+async def _provenance(
+    conn: AsyncConnection, v: q.ReadVersion, pid: int, scopes: list[str]
+) -> tuple[q.SourceEvent | None, dict[str, Any]]:
+    """The content provenance of ``v``: the event that wrote its content and that event's verbatim
+    request item (S1).
+
+    A surviving segment (§1.1 (3)) is stored under the *correcting* event, whose request item is
+    the replacement content — possibly under a narrower ``device_scope``/``project_ids`` than the
+    survivor keeps. Returning that item through a readable survivor would leak it, so the walk
+    follows ``survivors[].from_version_id`` to the version the content was actually written as,
+    authorizing every hop with (a) exactly like the addressed row; a hop failing (a) is
+    ``E_NOT_FOUND`` (uniform, no distinction from an unknown version)."""
+    cur = v
+    visited: set[int] = set()
+    while cur.version_id not in visited:
+        visited.add(cur.version_id)
+        ev = await q.source_event(conn, cur.source_event_id)
+        if ev is None:
+            return None, {}
+        index, origin_vid = _locate(ev.payload, cur.version_id)
+        if index is not None:
+            items = _request_items(ev.payload)
+            item = items[index] if 0 <= index < len(items) else {}
+            if not isinstance(item, dict):
+                item = {}
+            return ev, await _filter_item_links(conn, item, _resolved_links(ev.payload, index), pid, scopes)
+        if origin_vid is None:  # not recorded by its own event: nothing verbatim to show
+            return ev, {}
+        origin = await q.version_authz(conn, origin_vid, pid, scopes)
+        if origin is None:
+            raise _not_found("version")
+        cur = origin
+    raise _not_found("version")
 
 
 async def raw(
@@ -426,7 +504,7 @@ async def raw(
             resume = int(p.get("ordinal", 0))
         links = await q.raw_links(conn, v.logical_id, project.project_id, scopes)
         slugs = await q.project_slugs(conn, v.project_ids)
-        ev = await q.source_event(conn, v.source_event_id)
+        ev, payload_item = await _provenance(conn, v, project.project_id, scopes)
         spans = await q.chunk_spans(conn, v.version_id, resume)
 
         envelope: dict[str, Any] = {
@@ -450,7 +528,7 @@ async def raw(
                 "occurred_at": fmt_ts(ev.occurred_at),
                 "recorded_at": fmt_ts(ev.recorded_at),
             },
-            "payload_item": _payload_item(ev.payload, v.version_id) if ev is not None else {},
+            "payload_item": payload_item,
             "links": [
                 {
                     "rel": ln.rel,

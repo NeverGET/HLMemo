@@ -39,7 +39,13 @@ def test_turkish_dotted_dotless_i_collapse():
 
 @pytest.mark.parametrize(
     "raw",
-    ["İstanbul'da ıslak yol", "Straße Über Äpfel", "APP_DB_DSN path/to/file.py E4193", "ﬁle Ｆｕｌｌ á", "ŞÇĞÜÖ ßẞ"],
+    [
+        "İstanbul'da ıslak yol",
+        "Straße Über Äpfel",
+        "APP_DB_DSN path/to/file.py E4193",
+        "ﬁle Ｆｕｌｌ á",
+        "ŞÇĞÜÖ ßẞ",
+    ],
 )
 def test_normalize_idempotent(raw):
     once = normalize(raw)

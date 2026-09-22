@@ -7,7 +7,9 @@ from hlmemo.core.chunker import CHUNK_OVERLAP, CHUNK_TOK, Chunk, Chunker
 
 TR = "İstanbul'da dün gece yağmur yağdı; ıslak yollarda trafik çok yavaştı. Şoförler dikkatli sürdü. "
 DE = "Die Straße über den Fluss war gestern wegen Bauarbeiten gesperrt; Über Nacht wurde sie geräumt. "
-EN = "The docker compose stack failed to boot because APP_DB_DSN pointed at path/to/file.py with error E4193. "
+EN = (
+    "The docker compose stack failed to boot because APP_DB_DSN pointed at path/to/file.py with error E4193. "
+)
 
 
 def _check_offsets(text: str, chunks: list[Chunk]) -> None:
@@ -16,7 +18,7 @@ def _check_offsets(text: str, chunks: list[Chunk]) -> None:
         assert text[c.char_start : c.char_end] == c.text
         assert c.text == c.text.strip()
         assert 1 <= c.e5_tokens <= CHUNK_TOK
-    for a, b in zip(chunks, chunks[1:]):
+    for a, b in zip(chunks, chunks[1:], strict=False):
         assert a.char_start < b.char_start
         assert a.char_end < b.char_end
 
@@ -52,7 +54,7 @@ def test_long_text_windows_and_overlap(chunker, unit, reps):
     assert len(chunks) == expected
     assert all(c.e5_tokens == CHUNK_TOK for c in chunks[:-1])
     # consecutive chunks share text (overlap), and the union covers the doc
-    for a, b in zip(chunks, chunks[1:]):
+    for a, b in zip(chunks, chunks[1:], strict=False):
         assert b.char_start < a.char_end
     assert chunks[0].char_start == 0 and chunks[-1].char_end == len(text.rstrip())
 

@@ -6,14 +6,24 @@ Order inside the transaction (§3 *Authorization order* / *Transaction*):
 2. authorization (1) home project write grant, (2) every listed project, (3) revisions: home is
    immutable and equals ``project`` (else ``E_NOT_FOUND``), write on old ∪ new project sets;
 3. idempotency: same ``(project, device, request_id)`` → stored result (``replayed:true``, after the
-   re-authorization above) or ``E_REQUEST_ID_CONFLICT``;
+   re-authorization above) or ``E_REQUEST_ID_CONFLICT``. The key is ``events.payload_sha256`` =
+   sha256 of the canonical JSON of the arguments **as received** (``raw``), never of the
+   validated model — omitted vs explicit defaults (``device_scope:"all"``) or ``null`` vs absent
+   are different requests. ``payload.request`` preserves those arguments; ``resolved.write``
+   records validated items, including defaults and coercions, for deterministic replay;
 4. ``events_one_close`` guard (call_the_day), head comparison (``E_VERSION_CONFLICT``), content
-   rules (card size, temporal, device scope, link targets), ack-size budget check;
+   rules (card size, temporal, device scope, link targets), ack-size budget check. A link target
+   is authorized with §4.4 (a) on the *selected* endpoint (home-project membership + read grant +
+   ``device_scope``) before any existence / membership distinction — a hidden, foreign or unknown
+   target is one uniform ``E_NOT_FOUND``;
 5. resolve ``T``, pre-allocate every id, build ``payload.resolved``, insert the event with its
-   stored ``result``, supersede, insert versions / chunks / links / embed jobs.
+   stored ``result``, supersede (every version *and every link segment* overlapping the new
+   interval), insert versions / chunks / links / embed jobs.
 
 The caller passes an *idle* connection; the service opens the transaction and commits it (an
-outer transaction, if any, turns it into a savepoint and the caller commits).
+outer transaction, if any, turns it into a savepoint and the caller commits). The MCP handler
+passes the verbatim tool arguments as ``req`` (a dict is used as-is for hashing) or explicitly as
+``raw=``; a model instance without ``raw`` is hashed from ``model_dump(exclude_unset=True)``.
 """
 
 from __future__ import annotations
@@ -129,6 +139,17 @@ def payload_sha256(request: dict[str, Any]) -> str:
     return hashlib.sha256(canonical(request).encode("utf-8")).hexdigest()
 
 
+def verbatim_args(req: Any, raw: dict[str, Any] | None) -> dict[str, Any]:
+    """The tool arguments as received, for the idempotency hash (codex C5). ``raw`` wins; a dict
+    ``req`` *is* the verbatim payload; a model instance falls back to ``exclude_unset`` (the
+    closest reconstruction — callers holding the original dict should pass it)."""
+    if raw is not None:
+        return raw
+    if isinstance(req, dict):
+        return req
+    return req.model_dump(mode="json", exclude_unset=True)
+
+
 # --------------------------------------------------------------------------- per-item plan
 @dataclass(slots=True)
 class _Plan:
@@ -156,7 +177,7 @@ class _Batch:
     request_id: str
     client: str
     session_id: str | None
-    request_payload: dict[str, Any]
+    request_payload: dict[str, Any]  # verbatim arguments; the hash and provenance use this copy
     items: list[Item]
     budget: int
     occurred_at_raw: str | None
@@ -171,7 +192,9 @@ async def write(
     req: WriteRequest | dict[str, Any],
     *,
     deps: WriteDeps | None = None,
+    raw: dict[str, Any] | None = None,
 ) -> WriteResult:
+    request_payload = verbatim_args(req, raw)
     request = parse_request(WriteRequest, req)
     deps = deps or default_deps()
     try:
@@ -189,12 +212,16 @@ async def write(
                 request_id=request.request_id,
                 client=request.client,
                 session_id=None,
-                request_payload=request.model_dump(mode="json", exclude_none=True),
+                request_payload=request_payload,
                 items=list(request.items),
                 budget=budget,
                 occurred_at_raw=request.occurred_at,
                 expected_versions=[],
-                resolved_extra={},
+                resolved_extra={
+                    "write": {
+                        "items": [it.model_dump(mode="json", exclude_none=True) for it in request.items]
+                    }
+                },
             ),
         )
     return WriteResult.model_validate(result)
@@ -206,7 +233,9 @@ async def call_the_day(
     req: CloseRequest | dict[str, Any],
     *,
     deps: WriteDeps | None = None,
+    raw: dict[str, Any] | None = None,
 ) -> CloseResult:
+    request_payload = verbatim_args(req, raw)
     request = parse_request(CloseRequest, req)
     deps = deps or default_deps()
     try:
@@ -225,7 +254,7 @@ async def call_the_day(
                 request_id=request.request_id,
                 client=request.client,
                 session_id=request.session_id,
-                request_payload=request.model_dump(mode="json", exclude_none=True),
+                request_payload=request_payload,
                 items=items,
                 budget=budget,
                 occurred_at_raw=request.occurred_at,
@@ -405,38 +434,68 @@ async def _authorize_revisions(
 
 
 # --------------------------------------------------------------------------- content rules
+def _endpoint_visible(ctx: AuthContext, home_id: int, row: q.VersionRow) -> bool:
+    """§4.4 (a) on a link endpoint, evaluated for the batch's home project: membership in
+    ``project_ids``, a read grant on it, and a ``device_scope`` the calling device matches."""
+    return (
+        home_id in row.project_ids and ctx.has(home_id, Role.READ) and row.device_scope in ctx.scope_values()
+    )
+
+
 async def _resolve_link_targets(
-    conn: AsyncConnection, ctx: AuthContext, plans: list[_Plan], cache: dict[int, list[q.VersionRow]]
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    home: q.ProjectRef,
+    plans: list[_Plan],
+    cache: dict[int, list[q.VersionRow]],
 ) -> None:
     """Link targets: ``$<index>`` → the new version of that item (resolved after id allocation);
-    integer → an existing logical item the device may read (else ``E_NOT_FOUND``);
-    ``target_version_id`` must belong to that logical id (else ``E_INVALID_ARG``).
-    ``dst_version_id`` = ``target_version_id`` if given, else head for ``derived_from``, else NULL."""
+    integer → an existing logical item. ``dst_version_id`` = ``target_version_id`` if given, else
+    head for ``derived_from``, else NULL.
+
+    Authorization (codex S2): the *selected* endpoint — the pinned version, the head for an
+    unpinned ``derived_from``, any current segment otherwise — must pass §4.4 (a) for the home
+    project *before* anything else is decided. A target that fails (a), does not exist, or whose
+    pinned version is not visible is one uniform ``E_NOT_FOUND``; only when both the logical
+    target and the pinned version are visible may "not a version of the target" be reported
+    (``E_INVALID_ARG``), so success/validation errors never reveal hidden relationships."""
+    home_id = home.project_id
     for p in plans:
         for ln in p.item.links:
             spec: dict[str, Any] = {"rel": ln.rel}
             if isinstance(ln.target, str):
                 spec["target_index"] = int(ln.target[1:])
+                p.links.append(spec)
+                continue
+            lid = ln.target
+            if lid not in cache:
+                cache[lid] = await q.current_versions(conn, lid)
+            rows = cache[lid]
+            hidden = ToolError("E_NOT_FOUND", f"items[{p.index}].links: unknown target", index=p.index)
+            if ln.target_version_id is not None:
+                v = await q.get_version(conn, ln.target_version_id)
+                if v is None or not _endpoint_visible(ctx, home_id, v):
+                    raise hidden
+                if v.logical_id != lid:
+                    if not any(_endpoint_visible(ctx, home_id, r) for r in rows):
+                        raise hidden
+                    raise invalid_arg(
+                        f"items[{p.index}].links: target_version_id is not a version of the target",
+                        index=p.index,
+                    )
+                dst_version: int | None = ln.target_version_id
             else:
-                lid = ln.target
-                if lid not in cache:
-                    cache[lid] = await q.current_versions(conn, lid)
-                rows = cache[lid]
-                if not rows or not ctx.has(rows[0].project_id, Role.READ):
-                    raise ToolError("E_NOT_FOUND", f"items[{p.index}].links: unknown target", index=p.index)
-                spec["dst_logical_id"] = lid
-                if ln.target_version_id is not None:
-                    v = await q.get_version(conn, ln.target_version_id)
-                    if v is None or v.logical_id != lid:
-                        raise invalid_arg(
-                            f"items[{p.index}].links: target_version_id is not a version of the target",
-                            index=p.index,
-                        )
-                    spec["dst_version_id"] = ln.target_version_id
-                elif ln.rel == "derived_from":
-                    spec["dst_version_id"] = max(r.version_id for r in rows)
+                if not any(_endpoint_visible(ctx, home_id, r) for r in rows):
+                    raise hidden
+                if ln.rel == "derived_from":
+                    head = max(rows, key=lambda r: r.version_id)
+                    if not _endpoint_visible(ctx, home_id, head):
+                        raise hidden
+                    dst_version = head.version_id
                 else:
-                    spec["dst_version_id"] = None
+                    dst_version = None
+            spec["dst_logical_id"] = lid
+            spec["dst_version_id"] = dst_version
             p.links.append(spec)
 
 
@@ -504,7 +563,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
 
     cache = await _authorize_revisions(conn, ctx, batch, plans)  # §3 (3)
 
-    # Idempotency (after re-authorization, §3).
+    # Idempotency (after re-authorization, §3): the key is the hash of the *verbatim* arguments.
     sha = payload_sha256(batch.request_payload)
     prior = await q.find_event(conn, home.project_id, ctx.device_id, batch.request_id)
     if prior is not None:
@@ -544,7 +603,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                 current_version_id=head,
             )
 
-    await _resolve_link_targets(conn, ctx, plans, cache)
+    await _resolve_link_targets(conn, ctx, home, plans, cache)
     await _check_content(conn, deps, plans)
     _pessimistic_ack(batch, deps)
 
@@ -552,7 +611,9 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     now = await q.clock_now(conn)
     occurred_at = parse_opt_ts(batch.occurred_at_raw, field="occurred_at") or now
     superseded_recorded: list[datetime] = []
-    link_supersedes: dict[tuple[int, int, str], q.LinkRow] = {}
+    # (src, dst, rel) → every current link segment overlapping the new interval (codex C3: an
+    # edge may be split into adjacent segments; a spanning correction supersedes all of them).
+    link_supersedes: dict[tuple[int, int, str], list[q.LinkRow]] = {}
     for p in plans:
         it = p.item
         vf = parse_opt_ts(it.valid_from, field=f"items[{p.index}].valid_from")
@@ -578,7 +639,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                     if (old.dst_logical_id, old.rel) == (dst, spec["rel"]) and overlaps(
                         old.valid_from, old.valid_to, p.interval.start, p.interval.end
                     ):
-                        link_supersedes[(p.logical_id, dst, spec["rel"])] = old
+                        link_supersedes.setdefault((p.logical_id, dst, spec["rel"]), []).append(old)
                         superseded_recorded.append(old.recorded_at)
     T = select_T(now, *superseded_recorded)
 
@@ -615,7 +676,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     links: list[q.LinkRow] = []
     jobs: list[dict[str, Any]] = []
     resolved_items: list[dict[str, Any]] = []
-    superseded_link_ids = sorted({old.link_id for old in link_supersedes.values()})
+    superseded_link_ids = sorted({old.link_id for olds in link_supersedes.values() for old in olds})
     embedder = embedder_descriptor()
 
     for p in plans:
@@ -742,7 +803,9 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
             else:
                 dst_logical, dst_version = spec["dst_logical_id"], spec["dst_version_id"]
             assert dst_logical is not None
-            old = link_supersedes.get((p.logical_id, dst_logical, spec["rel"]))
+            # supersedes_link_id names the latest superseded segment; all of them are closed at T
+            olds = link_supersedes.get((p.logical_id, dst_logical, spec["rel"]), [])
+            old = max(olds, key=lambda o: o.link_id) if olds else None
             links.append(
                 q.LinkRow(
                     link_id=lid,
@@ -834,7 +897,10 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         session_id=batch.session_id,
         kind=batch.kind,
         projection_version=PROJECTION_VERSION,
-        payload={"request": batch.request_payload, "resolved": resolved},
+        payload={
+            "request": batch.request_payload,
+            "resolved": resolved,
+        },
         payload_sha256=sha,
         occurred_at=occurred_at,
         result=ack,
@@ -878,5 +944,6 @@ __all__ = [
     "embed_job_payload",
     "embedder_descriptor",
     "payload_sha256",
+    "verbatim_args",
     "write",
 ]

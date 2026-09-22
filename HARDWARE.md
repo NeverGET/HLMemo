@@ -2,7 +2,7 @@
 
 Written by `tests/integration/test_g4_latency.py::test_warm_p95_le_500ms_3_callers` (PHASE0-SPEC §7, VALIDATION-GATES G4). Regenerated on every run.
 
-- Date: 2026-09-22 12:26 UTC
+- Date: 2026-09-22 17:28 UTC
 - Machine: Apple M3 Pro, 12 (6 performance + 6 efficiency) cores, 36 GB RAM, Darwin 25.6.0 (arm64)
 - Python: 3.12.12; onnxruntime 1.30.0; psycopg 3.3.6
 - Postgres: 17.11 (Debian 17.11-1.pgdg12+2); pgvector 0.8.6 (docker compose `db`, exact `<=>` scan, no HNSW)
@@ -18,10 +18,10 @@ Written by `tests/integration/test_g4_latency.py::test_warm_p95_le_500ms_3_calle
 
 | metric | ms |
 |---|---|
-| p50 | 250.0 |
-| p95 | 370.6 |
-| p99 | 551.6 |
-| mean | 264.3 |
-| max | 615.7 |
+| p50 | 181.6 |
+| p95 | 262.8 |
+| p99 | 452.4 |
+| mean | 195.2 |
+| max | 504.9 |
 
-Wall time 26.6 s (11.3 queries/s aggregate). Gate: p95 ≤ 500 ms → **PASS**.
+Wall time 19.6 s (15.3 queries/s aggregate). Gate: p95 ≤ 500 ms → **PASS**.

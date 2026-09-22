@@ -127,7 +127,9 @@ class Embedder:
         opts = ort.SessionOptions()
         if threads:
             opts.intra_op_num_threads = threads
-        self._sess = ort.InferenceSession(str(model_path), sess_options=opts, providers=["CPUExecutionProvider"])
+        self._sess = ort.InferenceSession(
+            str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
         self._input_names = {i.name for i in self._sess.get_inputs()}
         self._output_name = self._sess.get_outputs()[0].name
 

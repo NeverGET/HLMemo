@@ -74,6 +74,44 @@ async def _write_one(client, token: str, title: str = "Wire fact") -> dict[str, 
 # --------------------------------------------------------------------------- tools/list
 
 
+@pytest.mark.parametrize("tool", ["memory.write", "memory.call_the_day"])
+async def test_verbatim_idempotency_over_mcp(db_dsn, connect, tool: str) -> None:
+    """Defaults and nulls stay distinguishable across transport, hashing and persisted evidence."""
+    async with wired(db_dsn) as (client, token):
+        if tool == "memory.write":
+            args = write_args(PROJECT, [fact("Verbatim", "Exact request evidence.")])
+        else:
+            args = {
+                "project": PROJECT,
+                "request_id": str(uuid.uuid4()),
+                "session_id": str(uuid.uuid4()),
+                "client": "pytest/0",
+                "notes": "Exact close request evidence.",
+            }
+        original = await call_tool_raw(client, token, tool, args)
+        assert not original.get("isError"), original
+        replay = await call_tool_raw(client, token, tool, args)
+        assert _single_text(replay)["replayed"] is True
+        changed = {**args, "token_budget": 2000}
+        conflict = await call_tool_raw(client, token, tool, changed)
+        assert conflict.get("isError") is True
+        assert _single_text(conflict)["code"] == "E_REQUEST_ID_CONFLICT"
+        if tool == "memory.write":
+            changed = {**args, "items": [{**args["items"][0], "valid_to": None}]}
+            conflict = await call_tool_raw(client, token, tool, changed)
+            assert _single_text(conflict)["code"] == "E_REQUEST_ID_CONFLICT"
+        async with await connect() as conn:
+            cur = await conn.execute(
+                "SELECT payload->'request', payload_sha256 FROM events WHERE request_id = %s",
+                (args["request_id"],),
+            )
+            request, digest = await cur.fetchone()
+            from hlmemo.core.write_service import payload_sha256
+
+            assert request == args
+            assert digest == payload_sha256(args)
+
+
 async def test_tools_list_has_five_tools_no_output_schema(db_dsn) -> None:
     async with wired(db_dsn) as (client, token):
         r = await mcp_rpc(client, token, "tools/list")

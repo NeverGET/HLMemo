@@ -84,8 +84,11 @@ async def test_initial_create_persists_event_versions_chunks_links_jobs(connect,
         kind, payload, sha, result, pv = await cur.fetchone()
         assert kind == "write" and pv == 1
         assert set(payload) == {"request", "resolved"}
-        canon = json.dumps(payload["request"], ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        # The persisted request is verbatim; resolved.write stores validated values for replay.
+        canon = json.dumps(req, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         assert sha == hashlib.sha256(canon.encode()).hexdigest()
+        assert payload["request"] == req
+        assert payload["resolved"]["write"]["items"][0]["device_scope"] == "all"
         r = payload["resolved"]
         assert {
             "recorded_at",
@@ -437,7 +440,7 @@ async def test_rebuild_projections_from_events_identical(connect, world, deps) -
                         "B",
                         "kurz",
                         project_ids=[MAIN, OTHER],
-                        device_scope="class:work",
+                        device_scope="class:personal",  # visible to ctx_a: a later item links to it
                         links=[
                             {"rel": "derived_from", "target": "$0"},
                             {"rel": "depends_on", "target": "$0"},
@@ -609,3 +612,229 @@ async def test_call_the_day_one_batch_and_one_close(connect, world, deps) -> Non
             )
         await conn.rollback()
         assert _err(ei2).code == "E_VERSION_CONFLICT" and _err(ei2).details["current_version_id"] == vid
+
+
+# --------------------------------------------------------------------------- codex review C3 / S2 / C5
+async def test_spanning_correction_supersedes_all_overlapping_links(connect, world, deps) -> None:
+    """C3: an edge kept as two adjacent current segments; a correction spanning both re-declares
+    it → every overlapping link is superseded (one left current, no exclusion violation)."""
+    async with await connect() as conn:
+        tgt = await write(conn, world.ctx_a, write_req(MAIN, [item("Ziel", "Zielobjekt")]), deps=deps)
+        await conn.commit()
+        link = [{"rel": "depends_on", "target": tgt.versions[0].logical_id}]
+        r1 = await write(
+            conn,
+            world.ctx_a,
+            write_req(
+                MAIN,
+                [
+                    item(
+                        "Q",
+                        "eins",
+                        valid_from=D0.isoformat(),
+                        valid_to=(D0 + 7 * DAY).isoformat(),
+                        links=link,
+                    )
+                ],
+            ),
+            deps=deps,
+        )
+        await conn.commit()
+        lid, v1 = r1.versions[0].logical_id, r1.versions[0].version_id
+        r2 = await write(
+            conn,
+            world.ctx_a,
+            write_req(
+                MAIN,
+                [
+                    item(
+                        "Q",
+                        "zwei",
+                        logical_id=lid,
+                        expected_version_id=v1,
+                        valid_from=(D0 + 7 * DAY).isoformat(),
+                        links=link,
+                    )
+                ],
+            ),
+            deps=deps,
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT link_id FROM links WHERE src_logical_id = %s"
+            " AND superseded_at = 'infinity' ORDER BY link_id",
+            (lid,),
+        )
+        old_ids = [r[0] for r in await cur.fetchall()]
+        assert len(old_ids) == 2
+
+        fix = write_req(
+            MAIN,
+            [
+                item(
+                    "Q",
+                    "korrigiert",
+                    logical_id=lid,
+                    expected_version_id=r2.versions[0].version_id,
+                    valid_from=(D0 + 5 * DAY).isoformat(),
+                    valid_to=(D0 + 10 * DAY).isoformat(),
+                    links=link,
+                )
+            ],
+        )
+        await write(conn, world.ctx_a, fix, deps=deps)
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT link_id, superseded_at = 'infinity', supersedes_link_id FROM links"
+            " WHERE src_logical_id = %s ORDER BY link_id",
+            (lid,),
+        )
+        rows = await cur.fetchall()
+        assert [r[0] for r in rows[:2]] == old_ids and [r[1] for r in rows] == [False, False, True]
+        assert rows[2][2] in old_ids
+        p = await event_payload(conn, fix["request_id"])
+        assert p["resolved"]["superseded_links"] == old_ids
+        assert await count(conn, "links", "src_logical_id = %s AND superseded_at = 'infinity'", (lid,)) == 1
+
+
+async def test_link_to_hidden_target_uniform_not_found(connect, world, deps) -> None:
+    """S2: link targets are authorized with §4.4 (a) on the *selected* endpoint (device_scope and
+    home-project membership included) before any existence / membership distinction."""
+    async with await connect() as conn:
+        # visible item, a second visible item, an item hidden by device_scope (ctx_a is 'personal'),
+        # and an item whose home is OTHER (ctx_a may read it there, but it is not in MAIN)
+        vis = await write(
+            conn, world.ctx_a, write_req(MAIN, [item("Sichtbar", "s"), item("Auch", "a")]), deps=deps
+        )
+        await conn.commit()
+        hid = await write(
+            conn, world.ctx_a, write_req(MAIN, [item("Versteckt", "h", device_scope="class:work")]), deps=deps
+        )
+        await conn.commit()
+        foreign = await write(conn, world.ctx_a, write_req(OTHER, [item("Fremd", "f")]), deps=deps)
+        await conn.commit()
+        v0, v1 = vis.versions
+        h = hid.versions[0]
+        f = foreign.versions[0]
+        events_before = await count(conn, "events")
+
+        async def attempt(links: list[dict]) -> ToolError:
+            with pytest.raises(ToolError) as ei:
+                await write(conn, world.ctx_a, write_req(MAIN, [item("Neu", "n", links=links)]), deps=deps)
+            await conn.rollback()
+            return ei.value
+
+        baseline = await attempt([{"rel": "relates_to", "target": h.logical_id + 10_000}])  # nonexistent
+        assert baseline.code == "E_NOT_FOUND"
+        probes = [
+            [{"rel": "relates_to", "target": h.logical_id}],  # hidden by device_scope, unpinned
+            [{"rel": "derived_from", "target": h.logical_id}],  # hidden head selected as endpoint
+            [{"rel": "derived_from", "target": h.logical_id, "target_version_id": h.version_id}],
+            [{"rel": "relates_to", "target": h.logical_id, "target_version_id": h.version_id + 10_000}],
+            [{"rel": "derived_from", "target": f.logical_id, "target_version_id": f.version_id}],  # foreign
+            [{"rel": "relates_to", "target": f.logical_id}],
+            # visible logical id but a pinned version that belongs to a hidden / foreign item: no
+            # E_INVALID_ARG "not a version of the target" oracle
+            [{"rel": "derived_from", "target": v0.logical_id, "target_version_id": h.version_id}],
+            [{"rel": "derived_from", "target": v0.logical_id, "target_version_id": f.version_id}],
+            [{"rel": "derived_from", "target": v0.logical_id, "target_version_id": h.version_id + 10_000}],
+        ]
+        for links in probes:
+            err = await attempt(links)
+            assert (err.code, err.message, err.details) == (
+                baseline.code,
+                baseline.message,
+                baseline.details,
+            ), links
+        # both endpoints authorized → the membership distinction may be made
+        err = await attempt(
+            [{"rel": "derived_from", "target": v0.logical_id, "target_version_id": v1.version_id}]
+        )
+        assert err.code == "E_INVALID_ARG"
+        assert await count(conn, "events") == events_before and await count(conn, "links") == 0
+
+        # a visible target still links, pinned and unpinned
+        ok = await write(
+            conn,
+            world.ctx_a,
+            write_req(
+                MAIN,
+                [
+                    item(
+                        "Neu",
+                        "n",
+                        links=[
+                            {
+                                "rel": "derived_from",
+                                "target": v0.logical_id,
+                                "target_version_id": v0.version_id,
+                            },
+                            {"rel": "relates_to", "target": v1.logical_id},
+                        ],
+                    )
+                ],
+            ),
+            deps=deps,
+        )
+        await conn.commit()
+        assert len(ok.versions) == 1 and await count(conn, "links") == 2
+
+
+async def test_idempotency_hash_is_verbatim_not_normalized(connect, world, deps) -> None:
+    """C5: the idempotency key hashes the arguments as received; omitted vs explicit defaults are
+    different payloads (E_REQUEST_ID_CONFLICT), a byte-identical resend replays."""
+    req = write_req(MAIN, [item("Idem", "verbatim")])
+    assert "device_scope" not in req["items"][0]
+    async with await connect() as conn:
+        first = await write(conn, world.ctx_a, req, deps=deps)
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT payload, payload_sha256 FROM events WHERE request_id = %s", (req["request_id"],)
+        )
+        payload, sha = await cur.fetchone()
+        canon = json.dumps(req, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        assert sha == hashlib.sha256(canon.encode()).hexdigest()
+        assert payload["request"] == req
+        assert "device_scope" not in payload["request"]["items"][0]
+        assert payload["resolved"]["write"]["items"][0]["device_scope"] == "all"
+
+        explicit = dict(req, items=[dict(req["items"][0], device_scope="all")])
+        with pytest.raises(ToolError) as ei:
+            await write(conn, world.ctx_a, explicit, deps=deps)
+        await conn.rollback()
+        assert _err(ei).code == "E_REQUEST_ID_CONFLICT"
+        with_null = dict(req, occurred_at=None)  # explicit null vs omitted key: also different bytes
+        with pytest.raises(ToolError) as ei2:
+            await write(conn, world.ctx_a, with_null, deps=deps)
+        await conn.rollback()
+        assert _err(ei2).code == "E_REQUEST_ID_CONFLICT"
+
+        again = await write(conn, world.ctx_a, json.loads(json.dumps(req)), deps=deps)
+        await conn.commit()
+        assert again.replayed is True and again.versions == first.versions
+        assert await count(conn, "events") == 1 and await count(conn, "memory_versions") == 1
+
+        # call_the_day: same rule
+        close = {
+            "project": MAIN,
+            "request_id": str(uuid.uuid4()),
+            "session_id": str(uuid.uuid4()),
+            "client": "pytest/0",
+            "notes": "Tag beendet.",
+        }
+        res = await call_the_day(conn, world.ctx_a, close, deps=deps)
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT payload, payload_sha256 FROM events WHERE request_id = %s", (close["request_id"],)
+        )
+        canon = json.dumps(close, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        payload, sha = await cur.fetchone()
+        assert payload["request"] == close
+        assert sha == hashlib.sha256(canon.encode()).hexdigest()
+        with pytest.raises(ToolError) as ei3:
+            await call_the_day(conn, world.ctx_a, dict(close, decisions=[]), deps=deps)
+        await conn.rollback()
+        assert _err(ei3).code == "E_REQUEST_ID_CONFLICT"
+        again = await call_the_day(conn, world.ctx_a, dict(close), deps=deps)
+        await conn.commit()
+        assert again.replayed is True and again.versions == res.versions

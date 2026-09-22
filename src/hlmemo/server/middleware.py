@@ -14,6 +14,17 @@ under `FOR SHARE`, exposes `request.state.conn` / `request.state.auth` / `reques
 to the route, commits when the route finished (or rolls back on an `HlmError`, which it maps to
 the JSON envelope), and only then refreshes `last_seen_at` (≤ once per 60 s) outside the request
 transaction so that it never deadlocks with concurrent share holders.
+
+Commit before acknowledgement (codex review C1). Tool handlers and routes run inside savepoints of
+the request transaction; nothing they produce is durable until the outer ``COMMIT`` here. The
+response the route produced is therefore *buffered* and only released to the client after that
+commit succeeded — a client that sees a success envelope holds a durable write. If the commit
+fails, the buffered response is discarded and the client receives the ``E_UNAVAILABLE`` (503,
+retryable) envelope instead. The configured MCP transport uses finite JSON responses; all body
+chunks are buffered, including responses split across several ASGI messages.
+
+`GET /health` (liveness) and `GET /ready` (readiness) need no bearer; with one they are gated
+like every other route except that `/health` also resolves pending/revoked devices (§2 poll).
 """
 
 from __future__ import annotations
@@ -35,7 +46,12 @@ from hlmemo.server.errors import ERROR_TYPES, error_response
 log = logging.getLogger("hlmemo.server.auth")
 
 HEALTH = ("GET", "/health")
+READY = ("GET", "/ready")
 REGISTER = ("POST", "/devices/register")
+NO_BEARER_OK = (HEALTH, READY)
+COMMIT_FAILED = HlmError(
+    "E_UNAVAILABLE", "request commit could not be confirmed; retry with the same request_id", {}
+)
 
 
 class RateLimiter:
@@ -61,6 +77,10 @@ class AuthMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
+    async def commit_request(self, conn: Any) -> None:
+        """The outer ``COMMIT`` of the request transaction (seam for the G6 commit-failure test)."""
+        await conn.commit()
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -77,7 +97,7 @@ class AuthMiddleware:
         is_health = route == HEALTH
         is_register = route == REGISTER
 
-        if bearer is None and is_health:
+        if bearer is None and route in NO_BEARER_OK:
             await self.app(scope, receive, send)
             return
         if bearer is None and not is_register:
@@ -85,13 +105,17 @@ class AuthMiddleware:
             return
 
         pool = scope["app"].state.pool
-        response_started = False
+        buffered: list[Message] = []  # response messages held back until the outer commit
+        sent_any = False  # at least one message reached the client
+
+        async def flush() -> None:
+            nonlocal sent_any
+            while buffered:
+                sent_any = True
+                await send(buffered.pop(0))
 
         async def send_wrapper(message: Message) -> None:
-            nonlocal response_started
-            if message["type"] == "http.response.start":
-                response_started = True
-            await send(message)
+            buffered.append(message)
 
         async with pool.connection() as conn:
             ctx = None
@@ -111,14 +135,20 @@ class AuthMiddleware:
                 await self.app(scope, receive, send_wrapper)
             except ERROR_TYPES as err:
                 await conn.rollback()
-                if response_started:
+                if sent_any:
                     raise
+                buffered.clear()
                 await error_response(err)(scope, receive, send)
                 return
             except BaseException:
-                await conn.rollback()
-                raise
-            await conn.commit()
+                await _rollback_quietly(conn)
+                raise  # Starlette's ServerErrorMiddleware answers 500; nothing buffered was sent
+            try:
+                await self.commit_request(conn)
+            except Exception as exc:
+                await self._commit_failed(conn, exc, sent_any, scope, receive, send)
+                return
+            await flush()
             if ctx is not None and state["device"] is not None and state["device"]["status"] == "trusted":
                 try:
                     await q.touch_last_seen(conn, ctx.device_id)
@@ -126,3 +156,20 @@ class AuthMiddleware:
                 except Exception:  # best effort, never fails the request
                     log.debug("last_seen_at refresh failed", exc_info=True)
                     await conn.rollback()
+
+    async def _commit_failed(
+        self, conn: Any, exc: BaseException | None, sent_any: bool, scope: Scope, receive: Receive, send: Send
+    ) -> None:
+        """Discard success when the outer commit fails or its outcome cannot be confirmed."""
+        await _rollback_quietly(conn)
+        log.error("request %s %s: commit failed, response discarded: %s", scope["method"], scope["path"], exc)
+        if sent_any:  # a stream already flushed bytes; the client sees the broken response
+            raise RuntimeError("commit failed after response bytes were sent") from exc
+        await error_response(COMMIT_FAILED)(scope, receive, send)
+
+
+async def _rollback_quietly(conn: Any) -> None:
+    try:
+        await conn.rollback()
+    except Exception:  # noqa: BLE001 - the connection may already be gone
+        log.debug("rollback after failed request failed", exc_info=True)

@@ -3,10 +3,15 @@
 Truncates ``memory_versions``, ``chunks``, ``embeddings``, ``links``, ``jobs`` (``events``,
 ``devices``, ``projects``, ``device_project_grants`` are kept) and re-applies every event in
 ``event_id`` order using **only** ``payload.resolved`` — recorded ids, ``recorded_at`` = T,
-chunk offsets, resolved link targets — plus the item bodies (``payload.request.items`` for
-``write``, ``payload.resolved.write.items`` for the synthesized ``call_the_day`` batch) sliced by
-the recorded ``char_start/char_end``. Never calls ``clock_timestamp()``, ``nextval()`` or the
+chunk offsets, resolved link targets — plus validated items in ``payload.resolved.write.items``
+(falling back to ``payload.request.items`` for older write events), with bodies sliced by the
+recorded ``char_start/char_end``. Never calls ``clock_timestamp()``, ``nextval()`` or the
 chunker; identity sequences and ``logical_id_seq`` are ``setval``'d to their maxima at the end.
+
+Each event is applied in two passes, exactly like the live path: every version and chunk row of
+the batch first, then every link. A batch may pin ``derived_from "$1"`` from item 0 (forward
+reference) or link items 0 ↔ 1 cyclically; inserting item 0's links before item 1's version would
+violate ``links.dst_version_id → memory_versions`` (codex C2).
 """
 
 from __future__ import annotations
@@ -159,6 +164,9 @@ async def _replay_write(
             _chunk_rows(it["chunks"], it["version_id"], body, list(it["project_ids"]), it["device_scope"]),
         )
         stats.chunks += len(it["chunks"])
+
+    # pass 2: links — every target version of the batch now exists (forward / cyclic refs)
+    for it in res["items"]:
         for ln in it.get("links", []):
             await q.insert_link(
                 conn,

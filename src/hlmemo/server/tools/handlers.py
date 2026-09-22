@@ -52,13 +52,13 @@ def as_result_dict(result: Any) -> dict[str, Any]:
 
 
 async def memory_write(conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]) -> dict[str, Any]:
-    return as_result_dict(await write_service.write(conn, ctx, args))
+    return as_result_dict(await write_service.write(conn, ctx, args, raw=args))
 
 
 async def memory_call_the_day(
     conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]
 ) -> dict[str, Any]:
-    return as_result_dict(await write_service.call_the_day(conn, ctx, args))
+    return as_result_dict(await write_service.call_the_day(conn, ctx, args, raw=args))
 
 
 # --------------------------------------------------------------------------- read side

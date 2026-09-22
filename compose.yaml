@@ -6,7 +6,6 @@ x-app-env: &app-env
   # HLM_ADMIN_TOKEN / HLM_REGISTRATION_SECRET come from .hlm-dev.env (x-env-file below), never
   # from this file: a key listed under `environment` overrides env_file even when unset.
   HLM_PROFILES_DIR: /app/profiles
-  # Phase 0: the pinned e5 model (models.lock) is bind-mounted, not baked (see x-models-volume).
   HLM_MODELS_DIR: /app/models
   PYTHONUNBUFFERED: "1"
 
@@ -15,9 +14,16 @@ x-env-file: &env-file
   - path: .hlm-dev.env
     required: false
 
-# Read-only bind mount of ./models (multilingual-e5-small, verified against models.lock).
-x-models-volume: &models-volume
-  - ./models:/app/models:ro
+# Model assets are baked and hash-verified by default: a fresh checkout needs no host models.
+# Optional development shortcut: `make models`, set HLM_BAKE_MODELS=0, and explicitly add
+# `volumes: ["./models:/app/models:ro"]` to api, worker and test in a Compose override file.
+# `/ready` verifies presence + sha256 against models.lock before the api is healthy.
+
+x-build: &build
+  context: .
+  target: runtime
+  args:
+    BAKE_MODELS: "${HLM_BAKE_MODELS:-1}"
 
 services:
   db:
@@ -29,7 +35,9 @@ services:
       POSTGRES_INITDB_ARGS: "--data-checksums"
     command: ["postgres", "-c", "timezone=UTC", "-c", "log_min_duration_statement=250ms"]
     ports:
-      - "${HLM_DB_PORT:-5432}:5432"
+      # loopback only (codex review S4): the dev credentials must never be reachable from the LAN —
+      # every peer that can open this port bypasses the api's scope checks entirely.
+      - "127.0.0.1:${HLM_DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -40,7 +48,7 @@ services:
       start_period: 5s
 
   migrate:
-    build: .
+    build: *build
     image: hlmemo:dev
     environment: *app-env
     # `phase0@head` (not bare `head`): the deferred `hnsw` branch is a second head by design
@@ -52,11 +60,10 @@ services:
     restart: "no"
 
   api:
-    build: .
+    build: *build
     image: hlmemo:dev
     environment: *app-env
     env_file: *env-file
-    volumes: *models-volume
     command: ["python", "-m", "hlmemo.server.app"]
     ports:
       - "${HLM_API_PORT:-8765}:8765"
@@ -65,37 +72,39 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    # Readiness, not liveness: /ready is 200 only when the DB is reachable, the migration is at
+    # phase0@head and the model files hash to models.lock (server/app.py). /health stays liveness.
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3).status == 200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).status == 200 else 1)"]
       interval: 5s
-      timeout: 5s
+      timeout: 10s
       retries: 12
-      start_period: 5s
+      start_period: 20s
     restart: unless-stopped
 
   worker:
-    build: .
+    build: *build
     image: hlmemo:dev
     environment: *app-env
     env_file: *env-file
-    volumes: *models-volume
     command: ["python", "-m", "hlmemo.worker.main"]
     depends_on:
       db:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    restart: "no"   # placeholder exits 0 until the outbox loop lands; switch to unless-stopped then
+    restart: unless-stopped
 
   test:
     profiles: ["test"]
-    build: .
-    image: hlmemo:dev
+    build:
+      <<: *build
+      target: test   # runtime image + locked dev deps (pytest) + tests/, see Dockerfile
+    image: hlmemo:test
     environment:
       <<: *app-env
-      HLM_TEST_DSN: postgresql://hlm:hlm@db:5432/hlm
+      HLM_TEST_DSN: postgresql://hlm:hlm@db:5432/hlm_verify
     env_file: *env-file
-    volumes: *models-volume
     command: ["pytest", "-q", "tests/integration"]
     depends_on:
       db:

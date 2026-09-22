@@ -1,5 +1,5 @@
 # HLMemo developer targets. Requires uv (https://docs.astral.sh/uv/) and Docker.
-.PHONY: up down down-v migrate test test-g7 test-g8 smoke lint sync db
+.PHONY: up down down-v migrate models test test-compose test-g7 test-g8 smoke lint sync db
 
 COMPOSE ?= docker compose
 UV ?= uv
@@ -9,6 +9,12 @@ sync:            ## install locked deps into .venv
 
 db:              ## start only Postgres
 	$(COMPOSE) up -d --wait db
+
+# Optional host model download. Compose bakes assets by default; HLM_BAKE_MODELS=0 requires
+# an explicit development bind-mount override (see compose.yaml).
+models:          ## download the pinned embedding model into ./models and verify it against models.lock
+	$(UV) run --frozen python -c "from hlmemo.core.embedder import download_model; print(download_model())"
+	$(UV) run --frozen hlm doctor --models
 
 up:              ## full local stack (db -> migrate -> api, worker)
 	$(COMPOSE) up -d --build --wait db migrate api worker
@@ -24,6 +30,9 @@ migrate: db      ## apply phase0 migrations from the host against the compose db
 
 test:            ## integration tests (starts compose db if needed)
 	$(UV) run pytest -q tests/integration
+
+test-compose:    ## integration tests inside the `test` image against the compose stack
+	$(COMPOSE) --profile test run --rm --build test
 
 # G7: real coding CLIs against the running stack. Needs HLM_DEVICE_TOKEN (trusted device, write on
 # HLM_PROJECT, default g7-smoke) — see tests/smoke/README.md. `smoke` runs the scripts directly.

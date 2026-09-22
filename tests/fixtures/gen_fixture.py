@@ -20,6 +20,7 @@ random decision, so output is byte-identical across runs and Python versions >= 
 Regenerate:  python3 tests/fixtures/gen_fixture.py [--out DIR]
 Changing anything that alters the output requires a docs/decisions/DECISIONS.md entry.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -59,31 +60,142 @@ STABLE_KINDS = {"fact", "lesson", "doc_chunk"}
 # --------------------------------------------------------------------------- entities
 ENV_PREFIX = ["APP", "HLM", "SVC", "API", "DB", "CACHE", "QUEUE", "AUTH", "MAIL", "LOG"]
 ENV_MID = ["DB", "REDIS", "HTTP", "GRPC", "S3", "SMTP", "JWT", "OTEL", "PG", "KAFKA"]
-ENV_SUFFIX = ["DSN", "URL", "HOST", "PORT", "TIMEOUT_MS", "POOL_SIZE", "SECRET", "TOKEN",
-              "BUCKET", "REGION", "MAX_RETRIES", "TTL"]
-PATH_DIRS = ["src/hlmemo/server", "src/hlmemo/worker", "src/hlmemo/retrieval", "src/hlmemo/auth",
-             "src/hlmemo/storage", "migrations/versions", "deploy/compose", "tests/gates",
-             "scripts/ops", "config"]
-PATH_FILES = ["app.py", "routes.py", "settings.py", "pool.py", "embed.py", "rank.py", "tokens.py",
-              "outbox.py", "healthz.py", "cursor.py", "0001_init.py", "0002_hnsw.py",
-              "docker-compose.yml", "worker.env", "nginx.conf", "backup.sh", "rotate_keys.sh",
-              "conftest.py", "test_budget.py", "limits.yaml", "librarian.toml", "providers.json"]
-PEOPLE = ["Ayşe Demir", "Mehmet Kaya", "Elif Şahin", "Burak Yıldız", "Zeynep Çelik", "Can Aydın",
-          "Selin Koç", "Emre Arslan", "Lukas Weber", "Anna Schmidt", "Jonas Becker", "Lena Fischer",
-          "Felix Wagner", "Mia Hoffmann", "Paul Richter", "Sophie Krüger", "Alice Turner", "Bob Marsh",
-          "Priya Nair", "Tom Reed", "Grace Liu", "Omar Haddad", "Nadia Petrova", "Sam O'Neill"]
+ENV_SUFFIX = [
+    "DSN",
+    "URL",
+    "HOST",
+    "PORT",
+    "TIMEOUT_MS",
+    "POOL_SIZE",
+    "SECRET",
+    "TOKEN",
+    "BUCKET",
+    "REGION",
+    "MAX_RETRIES",
+    "TTL",
+]
+PATH_DIRS = [
+    "src/hlmemo/server",
+    "src/hlmemo/worker",
+    "src/hlmemo/retrieval",
+    "src/hlmemo/auth",
+    "src/hlmemo/storage",
+    "migrations/versions",
+    "deploy/compose",
+    "tests/gates",
+    "scripts/ops",
+    "config",
+]
+PATH_FILES = [
+    "app.py",
+    "routes.py",
+    "settings.py",
+    "pool.py",
+    "embed.py",
+    "rank.py",
+    "tokens.py",
+    "outbox.py",
+    "healthz.py",
+    "cursor.py",
+    "0001_init.py",
+    "0002_hnsw.py",
+    "docker-compose.yml",
+    "worker.env",
+    "nginx.conf",
+    "backup.sh",
+    "rotate_keys.sh",
+    "conftest.py",
+    "test_budget.py",
+    "limits.yaml",
+    "librarian.toml",
+    "providers.json",
+]
+PEOPLE = [
+    "Ayşe Demir",
+    "Mehmet Kaya",
+    "Elif Şahin",
+    "Burak Yıldız",
+    "Zeynep Çelik",
+    "Can Aydın",
+    "Selin Koç",
+    "Emre Arslan",
+    "Lukas Weber",
+    "Anna Schmidt",
+    "Jonas Becker",
+    "Lena Fischer",
+    "Felix Wagner",
+    "Mia Hoffmann",
+    "Paul Richter",
+    "Sophie Krüger",
+    "Alice Turner",
+    "Bob Marsh",
+    "Priya Nair",
+    "Tom Reed",
+    "Grace Liu",
+    "Omar Haddad",
+    "Nadia Petrova",
+    "Sam O'Neill",
+]
 PORTS = [8080, 8443, 9090, 5432, 6379, 50051, 4317, 5000]
 ADJ_TR = ["geçici", "kalıcı", "kırılgan", "idempotent", "asenkron", "kademeli", "tutarlı", "beklenmedik"]
-ADJ_DE = ["vorübergehende", "dauerhafte", "fragile", "idempotente", "asynchrone", "schrittweise", "konsistente", "unerwartete"]
-ADJ_EN = ["transient", "persistent", "brittle", "idempotent", "asynchronous", "gradual", "consistent", "unexpected"]
+ADJ_DE = [
+    "vorübergehende",
+    "dauerhafte",
+    "fragile",
+    "idempotente",
+    "asynchrone",
+    "schrittweise",
+    "konsistente",
+    "unerwartete",
+]
+ADJ_EN = [
+    "transient",
+    "persistent",
+    "brittle",
+    "idempotent",
+    "asynchronous",
+    "gradual",
+    "consistent",
+    "unexpected",
+]
 COMP = {
-    "tr": ["bağlantı havuzu", "önbellek katmanı", "kuyruk tüketicisi", "kimlik doğrulama ara katmanı",
-           "zamanlayıcı", "göç betiği", "sağlık kontrolü", "oran sınırlayıcı", "olay günlüğü", "gömme işçisi"],
+    "tr": [
+        "bağlantı havuzu",
+        "önbellek katmanı",
+        "kuyruk tüketicisi",
+        "kimlik doğrulama ara katmanı",
+        "zamanlayıcı",
+        "göç betiği",
+        "sağlık kontrolü",
+        "oran sınırlayıcı",
+        "olay günlüğü",
+        "gömme işçisi",
+    ],
     # all masculine so that "der/den/des {comp}" in the DE sentence pools stays grammatical
-    "de": ["Verbindungspool", "Cache-Layer", "Queue-Consumer", "Auth-Filter", "Scheduler",
-           "Migrationslauf", "Healthcheck", "Rate-Limiter", "Ereignisstrom", "Embedding-Worker"],
-    "en": ["connection pool", "cache layer", "queue consumer", "auth middleware", "scheduler",
-           "migration script", "health check", "rate limiter", "event log", "embedding worker"],
+    "de": [
+        "Verbindungspool",
+        "Cache-Layer",
+        "Queue-Consumer",
+        "Auth-Filter",
+        "Scheduler",
+        "Migrationslauf",
+        "Healthcheck",
+        "Rate-Limiter",
+        "Ereignisstrom",
+        "Embedding-Worker",
+    ],
+    "en": [
+        "connection pool",
+        "cache layer",
+        "queue consumer",
+        "auth middleware",
+        "scheduler",
+        "migration script",
+        "health check",
+        "rate limiter",
+        "event log",
+        "embedding worker",
+    ],
 }
 HEADINGS = {
     "tr": ["Bağlam", "Belirtiler", "Analiz", "Çözüm", "Sonraki adımlar"],
@@ -108,7 +220,12 @@ SYN = {
     },
     "de": {
         "error": ["Fehler", "Störung", "Panne", "Fehlfunktion"],
-        "config": ["Umgebungskonfiguration", "Einstellungen", "Umgebungsvariablen", "Konfigurationsschlüssel"],
+        "config": [
+            "Umgebungskonfiguration",
+            "Einstellungen",
+            "Umgebungsvariablen",
+            "Konfigurationsschlüssel",
+        ],
         "arch": ["Architekturnotiz", "Aufbau", "Entwurf", "Bauplan"],
         "decision": ["Entscheidung", "Beschluss", "Ansatz", "Entschluss"],
         "incident": ["Ausfall", "Vorfall", "Zusammenbruch", "Stillstand"],
@@ -172,7 +289,10 @@ GEN = {
         "Loglarda {err} kodu {num} kez tekrarlanıyordu ve her seferinde {comp} zaman aşımına uğruyordu.",
         "{svc2} servisi aynı {comp_alt} bileşenini paylaştığı için etkisi oraya da yansıdı.",
         "Ekip olarak {adj} bir geçici çözüm yerine kök nedeni bulmayı tercih ettik.",
-        "Yeniden üretim adımları: {env} değerini boş bırak, {svc} servisini başlat ve {port} portuna istek gönder.",
+        (
+            "Yeniden üretim adımları: {env} değerini boş bırak, {svc} servisini "
+            "başlat ve {port} portuna istek gönder."
+        ),
         "{path} içindeki {comp} başlatma sırası {ver} sürümünden beri değişmişti.",
         "Düzeltme, {env} için güvenli bir varsayılan eklemek ve {err} durumunu açıkça loglamak oldu.",
         "Testler {date} gecesi CI üzerinde yeşile döndü; incelemeyi {person} tamamladı.",
@@ -182,13 +302,19 @@ GEN = {
         "{person} bu kararı {date} toplantısında önerdi ve itiraz gelmedi.",
         "Üretim ortamında {svc} ile {svc2} arasındaki trafik {port} portu üzerinden gRPC ile akar.",
         "{err} kodu gördüğünüzde önce {env} değerini, sonra {path} dosyasındaki {comp} ayarını kontrol edin.",
-        "{comp_alt} bileşeninin {adj} olması, yeniden başlatmalarda {num} milisaniyelik bir gecikmeye yol açıyor.",
+        (
+            "{comp_alt} bileşeninin {adj} olması, yeniden başlatmalarda {num} "
+            "milisaniyelik bir gecikmeye yol açıyor."
+        ),
         "Bu davranış {num} kullanıcıyı etkiledi ve {date} tarihine kadar fark edilmedi.",
         "Alternatif olarak {comp} bileşenini {svc2} tarafına taşımayı değerlendirdik ama vazgeçtik.",
         "{path} dosyasına eklenen {num2} satırlık yama, {err} hatasının tekrarını engelledi.",
         "Ölçümler {comp} gecikmesinin {num} ms'den {num2} ms'ye düştüğünü gösterdi.",
         "{svc} servisinin sağlık kontrolü artık {env} eksikse başlangıçta hata veriyor.",
-        "Yapılandırma dosyası {path} sürüm kontrolünde tutulur; gizli değerler yalnızca {env} üzerinden gelir.",
+        (
+            "Yapılandırma dosyası {path} sürüm kontrolünde tutulur; gizli değerler "
+            "yalnızca {env} üzerinden gelir."
+        ),
         "{person} ile yaptığımız eşli programlama oturumunda {comp} için birim testleri yazdık.",
         "Bilinen kısıt: {svc} servisi {comp} olmadan {adj} modda çalışamaz.",
         "Bir sonraki sürümde {err} kodunu daha açıklayıcı bir mesajla değiştirmeyi planlıyoruz.",
@@ -198,7 +324,10 @@ GEN = {
         "Bu kayıt {svc} servisinin {comp} bileşeni hakkında {adj} bir bilgi içerir; güncel tutulmalıdır.",
         "Dağıtım {date} günü {person} tarafından {ver} etiketiyle yapıldı ve geri alma planı hazırdı.",
         "{comp_alt} için yazılan entegrasyon testi {path} yanına eklendi ve {num2} saniyede tamamlanıyor.",
-        "Nöbetçi mühendis {err} gördüğünde {svc} servisini yeniden başlatmadan önce {env} değerini doğrulamalı.",
+        (
+            "Nöbetçi mühendis {err} gördüğünde {svc} servisini yeniden başlatmadan "
+            "önce {env} değerini doğrulamalı."
+        ),
     ],
     "de": [
         "{person} bemerkte am {date} ein {adj}s Verhalten im {comp} des Dienstes {svc}.",
@@ -210,7 +339,10 @@ GEN = {
         "Die Startreihenfolge des {comp} in {path} hatte sich seit Version {ver} geändert.",
         "Die Korrektur: ein sicherer Default für {env} und explizites Logging des Zustands {err}.",
         "Die Tests wurden in der Nacht zum {date} in der CI grün; {person} hat das Review abgeschlossen.",
-        "Diese Notiz fasst das Verhalten des {comp} im Dienst {svc} für alle zusammen, die denselben Fall sehen.",
+        (
+            "Diese Notiz fasst das Verhalten des {comp} im Dienst {svc} für alle "
+            "zusammen, die denselben Fall sehen."
+        ),
         "Der Dienst {svc} nutzt in Version {ver} ein Timeout von {num} Sekunden für den {comp}.",
         "{env} wird ausschließlich von {path} gelesen und darf nirgendwo sonst definiert werden.",
         "{person} hat diese Entscheidung im Meeting am {date} vorgeschlagen; es gab keinen Einwand.",
@@ -272,95 +404,158 @@ GEN = {
 
 OPEN = {
     "tr": {
-        "arch": ["{svc} servisinin mimarisi {comp} etrafında şekillenir ve {svc2} ile {port} portu üzerinden konuşur.",
-                 "Bu doküman {svc} servisinin bileşenlerini ve {path} altındaki modül düzenini açıklar.",
-                 "{svc} için tasarım hedefi, {comp} bileşenini {adj} tutmak ve {env} üzerinden yapılandırmaktı."],
-        "bugfix": ["{svc} servisinde {err} hatası {date} tarihinde {person} tarafından bildirildi.",
-                   "Hata: {comp} bileşeni {env} boşken {err} ile çöküyordu.",
-                   "Bu kayıt {svc} servisindeki {err} hatasının düzeltilmesini anlatır."],
-        "envconfig": ["{svc} servisinin ortam yapılandırması {env} değişkeni ve {path} dosyası ile belirlenir.",
-                      "{env} anahtarı {svc} servisinin {comp} bileşenini yapılandırır; yanlış değer {err} üretir.",
-                      "Bu not {svc} için gerekli ortam değişkenlerini ve varsayılanlarını listeler."],
-        "decision": ["Karar: {svc} servisinde {comp} için {adj} yaklaşımı benimsiyoruz.",
-                     "{date} tarihinde {person} ile {svc} servisinin {comp} stratejisine karar verdik.",
-                     "Bu karar kaydı {svc} ve {svc2} arasındaki {comp} sorumluluğunu netleştirir."],
-        "incident": ["Olay: {date} günü {svc} servisi {err} koduyla {num} dakika boyunca yanıt vermedi.",
-                     "{person} nöbetteyken {svc} servisinde {comp} kaynaklı bir kesinti yaşandı.",
-                     "Bu olay raporu {svc} servisindeki {err} kesintisinin zaman çizelgesini içerir."],
-        "session": ["Oturum notu ({date}): {svc} servisinde {comp} üzerinde çalışıldı.",
-                    "Bugün {person} ile {svc} servisinin {path} modülünü ele aldık.",
-                    "Bu oturumda {svc} için {env} ve {err} etrafındaki açık işler tartışıldı."],
-        "perf": ["{svc} servisinin {comp} bileşeninde performans ölçümleri {date} tarihinde yapıldı.",
-                 "Performans notu: {svc} servisi {comp} altında saniyede {num} istekle sınırlanıyordu.",
-                 "Bu deney {svc} servisindeki {comp} gecikmesini {adj} bir yöntemle azaltmayı hedefledi."],
-        "deploy": ["{svc} servisinin dağıtım süreci {path} altındaki compose tanımıyla yürütülür.",
-                   "Dağıtım rehberi: {svc} servisini {ver} sürümüne {env} ayarıyla yükseltme.",
-                   "Bu doküman {svc} servisinin {date} tarihli {ver} dağıtımını belgeler."],
+        "arch": [
+            (
+                "{svc} servisinin mimarisi {comp} etrafında şekillenir ve {svc2} ile "
+                "{port} portu üzerinden konuşur."
+            ),
+            "Bu doküman {svc} servisinin bileşenlerini ve {path} altındaki modül düzenini açıklar.",
+            "{svc} için tasarım hedefi, {comp} bileşenini {adj} tutmak ve {env} üzerinden yapılandırmaktı.",
+        ],
+        "bugfix": [
+            "{svc} servisinde {err} hatası {date} tarihinde {person} tarafından bildirildi.",
+            "Hata: {comp} bileşeni {env} boşken {err} ile çöküyordu.",
+            "Bu kayıt {svc} servisindeki {err} hatasının düzeltilmesini anlatır.",
+        ],
+        "envconfig": [
+            "{svc} servisinin ortam yapılandırması {env} değişkeni ve {path} dosyası ile belirlenir.",
+            "{env} anahtarı {svc} servisinin {comp} bileşenini yapılandırır; yanlış değer {err} üretir.",
+            "Bu not {svc} için gerekli ortam değişkenlerini ve varsayılanlarını listeler.",
+        ],
+        "decision": [
+            "Karar: {svc} servisinde {comp} için {adj} yaklaşımı benimsiyoruz.",
+            "{date} tarihinde {person} ile {svc} servisinin {comp} stratejisine karar verdik.",
+            "Bu karar kaydı {svc} ve {svc2} arasındaki {comp} sorumluluğunu netleştirir.",
+        ],
+        "incident": [
+            "Olay: {date} günü {svc} servisi {err} koduyla {num} dakika boyunca yanıt vermedi.",
+            "{person} nöbetteyken {svc} servisinde {comp} kaynaklı bir kesinti yaşandı.",
+            "Bu olay raporu {svc} servisindeki {err} kesintisinin zaman çizelgesini içerir.",
+        ],
+        "session": [
+            "Oturum notu ({date}): {svc} servisinde {comp} üzerinde çalışıldı.",
+            "Bugün {person} ile {svc} servisinin {path} modülünü ele aldık.",
+            "Bu oturumda {svc} için {env} ve {err} etrafındaki açık işler tartışıldı.",
+        ],
+        "perf": [
+            "{svc} servisinin {comp} bileşeninde performans ölçümleri {date} tarihinde yapıldı.",
+            "Performans notu: {svc} servisi {comp} altında saniyede {num} istekle sınırlanıyordu.",
+            "Bu deney {svc} servisindeki {comp} gecikmesini {adj} bir yöntemle azaltmayı hedefledi.",
+        ],
+        "deploy": [
+            "{svc} servisinin dağıtım süreci {path} altındaki compose tanımıyla yürütülür.",
+            "Dağıtım rehberi: {svc} servisini {ver} sürümüne {env} ayarıyla yükseltme.",
+            "Bu doküman {svc} servisinin {date} tarihli {ver} dağıtımını belgeler.",
+        ],
     },
     "de": {
-        "arch": ["Die Architektur von {svc} ist um den {comp} herum gebaut und spricht mit {svc2} über Port {port}.",
-                 "Dieses Dokument beschreibt die Komponenten von {svc} und die Modulstruktur unter {path}.",
-                 "Designziel für {svc} war, den {comp} {adj} zu halten und über {env} zu konfigurieren."],
-        "bugfix": ["Der Fehler {err} im Dienst {svc} wurde am {date} von {person} gemeldet.",
-                   "Fehlerbild: der {comp} stürzte mit {err} ab, sobald {env} leer war.",
-                   "Dieser Eintrag beschreibt die Behebung von {err} im Dienst {svc}."],
-        "envconfig": ["Die Umgebungskonfiguration von {svc} wird durch {env} und die Datei {path} bestimmt.",
-                      "Der Schlüssel {env} konfiguriert den {comp} von {svc}; ein falscher Wert erzeugt {err}.",
-                      "Diese Notiz listet die nötigen Umgebungsvariablen für {svc} samt Defaults."],
-        "decision": ["Entscheidung: für den {comp} in {svc} wählen wir den {adj}n Ansatz.",
-                     "Am {date} haben wir mit {person} die {comp}-Strategie für {svc} festgelegt.",
-                     "Dieser Beschluss klärt die Zuständigkeit für den {comp} zwischen {svc} und {svc2}."],
-        "incident": ["Vorfall: am {date} antwortete {svc} {num} Minuten lang nur noch mit {err}.",
-                     "Während {person} Bereitschaft hatte, kam es in {svc} zu einem Ausfall durch den {comp}.",
-                     "Dieser Störungsbericht enthält die Zeitleiste des {err}-Ausfalls in {svc}."],
-        "session": ["Sitzungsnotiz ({date}): Arbeit am {comp} im Dienst {svc}.",
-                    "Heute haben wir mit {person} das Modul {path} von {svc} durchgesehen.",
-                    "In dieser Sitzung wurden die offenen Punkte rund um {env} und {err} für {svc} besprochen."],
-        "perf": ["Die Performance-Messungen am {comp} von {svc} fanden am {date} statt.",
-                 "Performance-Notiz: {svc} war durch den {comp} auf {num} Anfragen pro Sekunde begrenzt.",
-                 "Dieses Experiment sollte die {comp}-Latenz in {svc} mit einer {adj}n Methode senken."],
-        "deploy": ["Das Deployment von {svc} läuft über die Compose-Definition unter {path}.",
-                   "Deployment-Leitfaden: {svc} mit der Einstellung {env} auf {ver} heben.",
-                   "Dieses Dokument beschreibt das Deployment {ver} von {svc} vom {date}."],
+        "arch": [
+            (
+                "Die Architektur von {svc} ist um den {comp} herum gebaut und spricht "
+                "mit {svc2} über Port {port}."
+            ),
+            "Dieses Dokument beschreibt die Komponenten von {svc} und die Modulstruktur unter {path}.",
+            "Designziel für {svc} war, den {comp} {adj} zu halten und über {env} zu konfigurieren.",
+        ],
+        "bugfix": [
+            "Der Fehler {err} im Dienst {svc} wurde am {date} von {person} gemeldet.",
+            "Fehlerbild: der {comp} stürzte mit {err} ab, sobald {env} leer war.",
+            "Dieser Eintrag beschreibt die Behebung von {err} im Dienst {svc}.",
+        ],
+        "envconfig": [
+            "Die Umgebungskonfiguration von {svc} wird durch {env} und die Datei {path} bestimmt.",
+            "Der Schlüssel {env} konfiguriert den {comp} von {svc}; ein falscher Wert erzeugt {err}.",
+            "Diese Notiz listet die nötigen Umgebungsvariablen für {svc} samt Defaults.",
+        ],
+        "decision": [
+            "Entscheidung: für den {comp} in {svc} wählen wir den {adj}n Ansatz.",
+            "Am {date} haben wir mit {person} die {comp}-Strategie für {svc} festgelegt.",
+            "Dieser Beschluss klärt die Zuständigkeit für den {comp} zwischen {svc} und {svc2}.",
+        ],
+        "incident": [
+            "Vorfall: am {date} antwortete {svc} {num} Minuten lang nur noch mit {err}.",
+            "Während {person} Bereitschaft hatte, kam es in {svc} zu einem Ausfall durch den {comp}.",
+            "Dieser Störungsbericht enthält die Zeitleiste des {err}-Ausfalls in {svc}.",
+        ],
+        "session": [
+            "Sitzungsnotiz ({date}): Arbeit am {comp} im Dienst {svc}.",
+            "Heute haben wir mit {person} das Modul {path} von {svc} durchgesehen.",
+            "In dieser Sitzung wurden die offenen Punkte rund um {env} und {err} für {svc} besprochen.",
+        ],
+        "perf": [
+            "Die Performance-Messungen am {comp} von {svc} fanden am {date} statt.",
+            "Performance-Notiz: {svc} war durch den {comp} auf {num} Anfragen pro Sekunde begrenzt.",
+            "Dieses Experiment sollte die {comp}-Latenz in {svc} mit einer {adj}n Methode senken.",
+        ],
+        "deploy": [
+            "Das Deployment von {svc} läuft über die Compose-Definition unter {path}.",
+            "Deployment-Leitfaden: {svc} mit der Einstellung {env} auf {ver} heben.",
+            "Dieses Dokument beschreibt das Deployment {ver} von {svc} vom {date}.",
+        ],
     },
     "en": {
-        "arch": ["The {svc} architecture is built around the {comp} and talks to {svc2} over port {port}.",
-                 "This document describes the components of {svc} and the module layout under {path}.",
-                 "The design goal for {svc} was to keep the {comp} {adj} and configure it through {env}."],
-        "bugfix": ["The {err} error in the {svc} service was reported by {person} on {date}.",
-                   "Symptom: the {comp} crashed with {err} whenever {env} was empty.",
-                   "This record describes how {err} in the {svc} service was fixed."],
-        "envconfig": ["The environment configuration of {svc} is defined by {env} and the file {path}.",
-                      "The key {env} configures the {comp} of {svc}; a wrong value produces {err}.",
-                      "This note lists the environment variables {svc} needs along with their defaults."],
-        "decision": ["Decision: for the {comp} in {svc} we adopt the {adj} approach.",
-                     "On {date} we settled the {comp} strategy for {svc} together with {person}.",
-                     "This decision record clarifies who owns the {comp} between {svc} and {svc2}."],
-        "incident": ["Incident: on {date} the {svc} service answered only with {err} for {num} minutes.",
-                     "While {person} was on call, {svc} suffered an outage caused by the {comp}.",
-                     "This incident report holds the timeline of the {err} outage in {svc}."],
-        "session": ["Session note ({date}): worked on the {comp} in the {svc} service.",
-                    "Today we went through the {path} module of {svc} with {person}.",
-                    "This session covered the open items around {env} and {err} for {svc}."],
-        "perf": ["Performance measurements on the {comp} of {svc} were taken on {date}.",
-                 "Performance note: {svc} was capped at {num} requests per second by the {comp}.",
-                 "This experiment aimed to cut {comp} latency in {svc} with a {adj} method."],
-        "deploy": ["The deployment of {svc} runs through the compose definition under {path}.",
-                   "Deployment guide: upgrading {svc} to {ver} with the {env} setting.",
-                   "This document records the {ver} deployment of {svc} on {date}."],
+        "arch": [
+            "The {svc} architecture is built around the {comp} and talks to {svc2} over port {port}.",
+            "This document describes the components of {svc} and the module layout under {path}.",
+            "The design goal for {svc} was to keep the {comp} {adj} and configure it through {env}.",
+        ],
+        "bugfix": [
+            "The {err} error in the {svc} service was reported by {person} on {date}.",
+            "Symptom: the {comp} crashed with {err} whenever {env} was empty.",
+            "This record describes how {err} in the {svc} service was fixed.",
+        ],
+        "envconfig": [
+            "The environment configuration of {svc} is defined by {env} and the file {path}.",
+            "The key {env} configures the {comp} of {svc}; a wrong value produces {err}.",
+            "This note lists the environment variables {svc} needs along with their defaults.",
+        ],
+        "decision": [
+            "Decision: for the {comp} in {svc} we adopt the {adj} approach.",
+            "On {date} we settled the {comp} strategy for {svc} together with {person}.",
+            "This decision record clarifies who owns the {comp} between {svc} and {svc2}.",
+        ],
+        "incident": [
+            "Incident: on {date} the {svc} service answered only with {err} for {num} minutes.",
+            "While {person} was on call, {svc} suffered an outage caused by the {comp}.",
+            "This incident report holds the timeline of the {err} outage in {svc}.",
+        ],
+        "session": [
+            "Session note ({date}): worked on the {comp} in the {svc} service.",
+            "Today we went through the {path} module of {svc} with {person}.",
+            "This session covered the open items around {env} and {err} for {svc}.",
+        ],
+        "perf": [
+            "Performance measurements on the {comp} of {svc} were taken on {date}.",
+            "Performance note: {svc} was capped at {num} requests per second by the {comp}.",
+            "This experiment aimed to cut {comp} latency in {svc} with a {adj} method.",
+        ],
+        "deploy": [
+            "The deployment of {svc} runs through the compose definition under {path}.",
+            "Deployment guide: upgrading {svc} to {ver} with the {env} setting.",
+            "This document records the {ver} deployment of {svc} on {date}.",
+        ],
     },
 }
 
 CLOSE = {
-    "tr": ["Sonuç olarak {svc} servisi için {comp} artık {adj} kabul ediliyor.",
-           "Açık sorular {person} tarafından takip edilecek; hedef tarih {date}.",
-           "Bu kayıt {svc} servisi hakkında güncel bilgiyi yansıtır ve {err} görülürse ilk başvurulacak yerdir."],
-    "de": ["Unterm Strich gilt der {comp} von {svc} jetzt als {adj}.",
-           "Offene Fragen verfolgt {person}; Zieltermin ist der {date}.",
-           "Dieser Eintrag spiegelt den aktuellen Stand von {svc} wider und ist bei {err} die erste Anlaufstelle."],
-    "en": ["Bottom line: the {comp} of {svc} is now considered {adj}.",
-           "Open questions will be tracked by {person}; target date {date}.",
-           "This record reflects the current state of {svc} and is the first place to look when {err} appears."],
+    "tr": [
+        "Sonuç olarak {svc} servisi için {comp} artık {adj} kabul ediliyor.",
+        "Açık sorular {person} tarafından takip edilecek; hedef tarih {date}.",
+        "Bu kayıt {svc} servisi hakkında güncel bilgiyi yansıtır ve {err} görülürse ilk başvurulacak yerdir.",
+    ],
+    "de": [
+        "Unterm Strich gilt der {comp} von {svc} jetzt als {adj}.",
+        "Offene Fragen verfolgt {person}; Zieltermin ist der {date}.",
+        (
+            "Dieser Eintrag spiegelt den aktuellen Stand von {svc} wider und ist "
+            "bei {err} die erste Anlaufstelle."
+        ),
+    ],
+    "en": [
+        "Bottom line: the {comp} of {svc} is now considered {adj}.",
+        "Open questions will be tracked by {person}; target date {date}.",
+        "This record reflects the current state of {svc} and is the first place to look when {err} appears.",
+    ],
 }
 
 # --------------------------------------------------------------------------- query templates
@@ -369,93 +564,156 @@ CLOSE = {
 # Synonym slots {S_*} are filled from SYN[lang][*][1:] (never the title word).
 QLIGHT = {
     "tr": {
-        "arch": ["{svc_gen} {S_arch} nasıl kurgulanmış, hangi bileşenler var?",
-                 "{svc_loc} kullanılan {S_arch} ve modül düzenini anlat",
-                 "{svc_gen} {S_arch} ile {svc2} arasındaki iletişim nasıl işliyor?"],
-        "bugfix": ["{svc_loc} çıkan {err} kaynaklı {S_error} nasıl giderildi?",
-                   "{err} koduyla ilgili {svc_loc_adj} {S_error} neden oluşuyordu?",
-                   "{svc_gen} {err} ile ilgili {S_error} yaması neyi değiştirdi?"],
-        "envconfig": ["{svc_gen} {S_config} nelerdir, {env} ne işe yarar?",
-                      "{env} anahtarı {svc_loc} neyi belirliyor?",
-                      "{svc_gen} {S_config} arasında hangileri zorunlu?"],
-        "decision": ["{svc_loc} {comp} konusunda {S_decision} neydi ve gerekçesi ne?",
-                     "{svc_gen} {comp} stratejisiyle ilgili {S_decision}",
-                     "{comp} sorumluluğu {svc} ile {svc2} arasında nasıl paylaştırıldı?"],
-        "incident": ["{svc_loc_adj} {err} kaynaklı {S_incident} sırasında neler oldu?",
-                     "{svc_gen} yanıt vermediği {S_incident} için zaman çizelgesi",
-                     "{err} yüzünden {svc_loc} yaşanan {S_incident} için kök neden neydi?"],
-        "session": ["{svc} ile ilgili {S_session} nelerdi?",
-                    "{svc_gen} {path} modülüyle ilgili son {S_session}",
-                    "{svc_loc} açık kalan işler ve tartışılan konular"],
-        "perf": ["{svc_gen} {comp} için yapılan {S_perf} ne getirdi?",
-                 "{svc_loc} yapılan {S_perf} ölçümleri ne gösterdi?",
-                 "{comp} yüzünden {svc_loc} görülen yavaşlık nasıl çözüldü?"],
-        "deploy": ["{svc} servisini {ver} sürümüne taşıma: {S_deploy} nasıl yapıldı?",
-                   "{svc_gen} {S_deploy} ve geri alma planı nasıl?",
-                   "{svc_loc} compose ile {S_deploy} nasıl yapılıyor?"],
+        "arch": [
+            "{svc_gen} {S_arch} nasıl kurgulanmış, hangi bileşenler var?",
+            "{svc_loc} kullanılan {S_arch} ve modül düzenini anlat",
+            "{svc_gen} {S_arch} ile {svc2} arasındaki iletişim nasıl işliyor?",
+        ],
+        "bugfix": [
+            "{svc_loc} çıkan {err} kaynaklı {S_error} nasıl giderildi?",
+            "{err} koduyla ilgili {svc_loc_adj} {S_error} neden oluşuyordu?",
+            "{svc_gen} {err} ile ilgili {S_error} yaması neyi değiştirdi?",
+        ],
+        "envconfig": [
+            "{svc_gen} {S_config} nelerdir, {env} ne işe yarar?",
+            "{env} anahtarı {svc_loc} neyi belirliyor?",
+            "{svc_gen} {S_config} arasında hangileri zorunlu?",
+        ],
+        "decision": [
+            "{svc_loc} {comp} konusunda {S_decision} neydi ve gerekçesi ne?",
+            "{svc_gen} {comp} stratejisiyle ilgili {S_decision}",
+            "{comp} sorumluluğu {svc} ile {svc2} arasında nasıl paylaştırıldı?",
+        ],
+        "incident": [
+            "{svc_loc_adj} {err} kaynaklı {S_incident} sırasında neler oldu?",
+            "{svc_gen} yanıt vermediği {S_incident} için zaman çizelgesi",
+            "{err} yüzünden {svc_loc} yaşanan {S_incident} için kök neden neydi?",
+        ],
+        "session": [
+            "{svc} ile ilgili {S_session} nelerdi?",
+            "{svc_gen} {path} modülüyle ilgili son {S_session}",
+            "{svc_loc} açık kalan işler ve tartışılan konular",
+        ],
+        "perf": [
+            "{svc_gen} {comp} için yapılan {S_perf} ne getirdi?",
+            "{svc_loc} yapılan {S_perf} ölçümleri ne gösterdi?",
+            "{comp} yüzünden {svc_loc} görülen yavaşlık nasıl çözüldü?",
+        ],
+        "deploy": [
+            "{svc} servisini {ver} sürümüne taşıma: {S_deploy} nasıl yapıldı?",
+            "{svc_gen} {S_deploy} ve geri alma planı nasıl?",
+            "{svc_loc} compose ile {S_deploy} nasıl yapılıyor?",
+        ],
     },
     "de": {
-        "arch": ["Wie ist der {S_arch} {svc_gen} und welche Komponenten gibt es?",
-                 "Beschreibe den {S_arch} und die Modulstruktur {svc_gen}",
-                 "Wie kommunizieren die {svc_pl} im {S_arch} mit {svc2}?"],
-        "bugfix": ["Wie wurde die {err}-{S_error} {svc_dat} behoben?",
-                   "Warum trat die {S_error} mit Code {err} {svc_dat} auf?",
-                   "Was hat der Patch für die {err}-{S_error} {svc_gen} geändert?"],
-        "envconfig": ["Welche {S_config} braucht {svc_nom} und wofür ist {env}?",
-                      "Was legt der Schlüssel {env} {svc_dat} fest?",
-                      "Welche {S_config} sind {svc_dat} Pflicht?"],
-        "decision": ["Welcher {S_decision} gilt für den {comp} {svc_dat} und warum?",
-                     "Was war der {S_decision} zur {comp}-Strategie {svc_gen}?",
-                     "Wie wurde die Zuständigkeit für den {comp} zwischen {svc} und {svc2} aufgeteilt?"],
-        "incident": ["Was passierte beim {err}-{S_incident} {svc_dat}?",
-                     "Zeitleiste des {S_incident}s, bei dem {svc_nom} nicht antwortete",
-                     "Was war die Ursache des {S_incident}s von {svc} wegen {err}?"],
-        "session": ["Was wurde in den {S_session} zu {svc} erledigt?",
-                    "Letzte {S_session} zum Modul {path} {svc_gen}",
-                    "Offene Punkte und besprochene Themen {svc_dat}"],
-        "perf": ["Was hat die {S_perf} am {comp} {svc_gen} gebracht?",
-                 "Was zeigten die Messungen zur {S_perf} {svc_dat}?",
-                 "Wie wurde die Langsamkeit durch den {comp} {svc_dat} gelöst?"],
-        "deploy": ["{S_deploy} für die {svc_pl} auf Version {ver}",
-                   "Wie sehen {S_deploy} und Rollback-Plan {svc_gen} aus?",
-                   "Wie läuft die {S_deploy} {svc_dat} mit Compose?"],
+        "arch": [
+            "Wie ist der {S_arch} {svc_gen} und welche Komponenten gibt es?",
+            "Beschreibe den {S_arch} und die Modulstruktur {svc_gen}",
+            "Wie kommunizieren die {svc_pl} im {S_arch} mit {svc2}?",
+        ],
+        "bugfix": [
+            "Wie wurde die {err}-{S_error} {svc_dat} behoben?",
+            "Warum trat die {S_error} mit Code {err} {svc_dat} auf?",
+            "Was hat der Patch für die {err}-{S_error} {svc_gen} geändert?",
+        ],
+        "envconfig": [
+            "Welche {S_config} braucht {svc_nom} und wofür ist {env}?",
+            "Was legt der Schlüssel {env} {svc_dat} fest?",
+            "Welche {S_config} sind {svc_dat} Pflicht?",
+        ],
+        "decision": [
+            "Welcher {S_decision} gilt für den {comp} {svc_dat} und warum?",
+            "Was war der {S_decision} zur {comp}-Strategie {svc_gen}?",
+            "Wie wurde die Zuständigkeit für den {comp} zwischen {svc} und {svc2} aufgeteilt?",
+        ],
+        "incident": [
+            "Was passierte beim {err}-{S_incident} {svc_dat}?",
+            "Zeitleiste des {S_incident}s, bei dem {svc_nom} nicht antwortete",
+            "Was war die Ursache des {S_incident}s von {svc} wegen {err}?",
+        ],
+        "session": [
+            "Was wurde in den {S_session} zu {svc} erledigt?",
+            "Letzte {S_session} zum Modul {path} {svc_gen}",
+            "Offene Punkte und besprochene Themen {svc_dat}",
+        ],
+        "perf": [
+            "Was hat die {S_perf} am {comp} {svc_gen} gebracht?",
+            "Was zeigten die Messungen zur {S_perf} {svc_dat}?",
+            "Wie wurde die Langsamkeit durch den {comp} {svc_dat} gelöst?",
+        ],
+        "deploy": [
+            "{S_deploy} für die {svc_pl} auf Version {ver}",
+            "Wie sehen {S_deploy} und Rollback-Plan {svc_gen} aus?",
+            "Wie läuft die {S_deploy} {svc_dat} mit Compose?",
+        ],
     },
     "en": {
-        "arch": ["How is {svc_pos} {S_arch} organised and which components exist?",
-                 "Describe {svc_the}'s {S_arch} and module layout",
-                 "How does the {S_arch} of {svc} communicate with {svc2}?"],
-        "bugfix": ["How was the {err} {S_error} in {svc_the} resolved?",
-                   "Why was {svc_the} failing with the {err} {S_error}?",
-                   "What did the patch for {svc_pos} {err} {S_error} change?"],
-        "envconfig": ["What {S_config} does {svc_the} need and what is {env} for?",
-                      "What does the key {env} control in {svc_the}?",
-                      "Which of {svc_pos} {S_config} are mandatory?"],
-        "decision": ["What was the {S_decision} for the {comp} in {svc_the} and why?",
-                     "The {S_decision} about {svc_pos} {comp} strategy",
-                     "How was ownership of the {comp} split between {svc} and {svc2}?"],
-        "incident": ["What happened during the {err} {S_incident} in {svc_the}?",
-                     "Timeline of the {S_incident} where {svc_the} stopped responding",
-                     "What was the root cause of the {svc} {S_incident} caused by {err}?"],
-        "session": ["What got done in the {S_session} on {svc}?",
-                    "Latest {S_session} on {svc_pos} {path} module",
-                    "Open items and topics discussed in {svc_the}"],
-        "perf": ["What did the {S_perf} on {svc_pos} {comp} achieve?",
-                 "What did the {S_perf} measurements in {svc_the} show?",
-                 "How was the slowness caused by the {comp} in {svc_the} solved?"],
-        "deploy": ["{S_deploy} for moving {svc_the} to {ver}",
-                   "What are {svc_pos} {S_deploy} and rollback plan?",
-                   "How is the {S_deploy} of {svc_the} done with compose?"],
+        "arch": [
+            "How is {svc_pos} {S_arch} organised and which components exist?",
+            "Describe {svc_the}'s {S_arch} and module layout",
+            "How does the {S_arch} of {svc} communicate with {svc2}?",
+        ],
+        "bugfix": [
+            "How was the {err} {S_error} in {svc_the} resolved?",
+            "Why was {svc_the} failing with the {err} {S_error}?",
+            "What did the patch for {svc_pos} {err} {S_error} change?",
+        ],
+        "envconfig": [
+            "What {S_config} does {svc_the} need and what is {env} for?",
+            "What does the key {env} control in {svc_the}?",
+            "Which of {svc_pos} {S_config} are mandatory?",
+        ],
+        "decision": [
+            "What was the {S_decision} for the {comp} in {svc_the} and why?",
+            "The {S_decision} about {svc_pos} {comp} strategy",
+            "How was ownership of the {comp} split between {svc} and {svc2}?",
+        ],
+        "incident": [
+            "What happened during the {err} {S_incident} in {svc_the}?",
+            "Timeline of the {S_incident} where {svc_the} stopped responding",
+            "What was the root cause of the {svc} {S_incident} caused by {err}?",
+        ],
+        "session": [
+            "What got done in the {S_session} on {svc}?",
+            "Latest {S_session} on {svc_pos} {path} module",
+            "Open items and topics discussed in {svc_the}",
+        ],
+        "perf": [
+            "What did the {S_perf} on {svc_pos} {comp} achieve?",
+            "What did the {S_perf} measurements in {svc_the} show?",
+            "How was the slowness caused by the {comp} in {svc_the} solved?",
+        ],
+        "deploy": [
+            "{S_deploy} for moving {svc_the} to {ver}",
+            "What are {svc_pos} {S_deploy} and rollback plan?",
+            "How is the {S_deploy} of {svc_the} done with compose?",
+        ],
     },
 }
 
 # Identifier-heavy templates (>= 3 identifiers, minimal prose).
 QHEAVY = {
-    "tr": ["{err} {env} {path}", "{svc} {env} {err}", "{env} {path} {svc} {err} hatası",
-           "{path} {err} {env}", "{svc_loc} {port} {env} {err}"],
-    "de": ["{err} {env} {path}", "{svc} {env} {err}", "{env} {path} {svc} {err} Fehler",
-           "{path} {err} {env}", "{svc_dat} {port} {env} {err}"],
-    "en": ["{err} {env} {path}", "{svc} {env} {err}", "{env} {path} {svc} {err} error",
-           "{path} {err} {env}", "{svc_the} {port} {env} {err}"],
+    "tr": [
+        "{err} {env} {path}",
+        "{svc} {env} {err}",
+        "{env} {path} {svc} {err} hatası",
+        "{path} {err} {env}",
+        "{svc_loc} {port} {env} {err}",
+    ],
+    "de": [
+        "{err} {env} {path}",
+        "{svc} {env} {err}",
+        "{env} {path} {svc} {err} Fehler",
+        "{path} {err} {env}",
+        "{svc_dat} {port} {env} {err}",
+    ],
+    "en": [
+        "{err} {env} {path}",
+        "{svc} {env} {err}",
+        "{env} {path} {svc} {err} error",
+        "{path} {err} {env}",
+        "{svc_the} {port} {env} {err}",
+    ],
 }
 
 # --------------------------------------------------------------------------- morphology
@@ -471,17 +729,17 @@ def tr_last_vowel(word: str) -> str:
     return "e"
 
 
-def tr_plural(word: str) -> str:            # -ler / -lar
+def tr_plural(word: str) -> str:  # -ler / -lar
     return word + ("lar" if tr_last_vowel(word) in TR_BACK else "ler")
 
 
-def tr_locative(word: str) -> str:          # -de / -da / -te / -ta
+def tr_locative(word: str) -> str:  # -de / -da / -te / -ta
     v = tr_last_vowel(word)
     d = "t" if word[-1].lower() in TR_HARD else "d"
     return word + d + ("a" if v in TR_BACK else "e")
 
 
-def tr_genitive(word: str) -> str:          # -nin / -nın / -nun / -nün / -in / -ın / -un / -ün
+def tr_genitive(word: str) -> str:  # -nin / -nın / -nun / -nün / -in / -ın / -un / -ün
     v = tr_last_vowel(word)
     vowel = {"a": "ı", "ı": "ı", "o": "u", "u": "u", "e": "i", "i": "i", "ö": "ü", "ü": "ü"}[v]
     ends_vowel = word[-1].lower() in TR_BACK | TR_FRONT
@@ -492,11 +750,23 @@ def tr_genitive(word: str) -> str:          # -nin / -nın / -nun / -nün / -in 
 # digits by Turkish numeral (0 sıfır, 1 bir, 2 iki, 3 üç, 4 dört, 5 beş, 6 altı, 7 yedi, 8 sekiz,
 # 9 dokuz); letters by letter name (b "be", k "ke", x "iks", q "kü", w "çift ve" ...).
 TR_FINAL = {
-    "0": ("ı", False, False), "1": ("i", False, False), "2": ("i", True, False), "3": ("ü", False, True),
-    "4": ("ö", False, True), "5": ("e", False, True), "6": ("ı", True, False), "7": ("i", True, False),
-    "8": ("i", False, False), "9": ("u", False, False),
-    "a": ("a", True, False), "e": ("e", True, False), "i": ("i", True, False), "o": ("o", True, False),
-    "u": ("u", True, False), "x": ("i", False, True), "q": ("ü", True, False),
+    "0": ("ı", False, False),
+    "1": ("i", False, False),
+    "2": ("i", True, False),
+    "3": ("ü", False, True),
+    "4": ("ö", False, True),
+    "5": ("e", False, True),
+    "6": ("ı", True, False),
+    "7": ("i", True, False),
+    "8": ("i", False, False),
+    "9": ("u", False, False),
+    "a": ("a", True, False),
+    "e": ("e", True, False),
+    "i": ("i", True, False),
+    "o": ("o", True, False),
+    "u": ("u", True, False),
+    "x": ("i", False, True),
+    "q": ("ü", True, False),
 }
 TR_NARROW = {"a": "ı", "ı": "ı", "o": "u", "u": "u", "e": "i", "i": "i", "ö": "ü", "ü": "ü"}
 
@@ -521,12 +791,21 @@ def tr_ident(svc: str, case: str) -> str:
 
 def morph_slots(lang: str, svc: str) -> dict:
     if lang == "tr":
-        return {"svc_gen": tr_ident(svc, "gen"), "svc_loc": tr_ident(svc, "loc"),
-                "svc_loc_adj": tr_ident(svc, "loc_adj"), "svc_dat": tr_ident(svc, "dat"),
-                "svc_abl": tr_ident(svc, "abl"), "svc_pl": tr_ident(svc, "pl")}
+        return {
+            "svc_gen": tr_ident(svc, "gen"),
+            "svc_loc": tr_ident(svc, "loc"),
+            "svc_loc_adj": tr_ident(svc, "loc_adj"),
+            "svc_dat": tr_ident(svc, "dat"),
+            "svc_abl": tr_ident(svc, "abl"),
+            "svc_pl": tr_ident(svc, "pl"),
+        }
     if lang == "de":
-        return {"svc_gen": f"des {svc}-Dienstes", "svc_dat": f"im {svc}-Dienst",
-                "svc_nom": f"der {svc}-Dienst", "svc_pl": f"{svc}-Instanzen"}
+        return {
+            "svc_gen": f"des {svc}-Dienstes",
+            "svc_dat": f"im {svc}-Dienst",
+            "svc_nom": f"der {svc}-Dienst",
+            "svc_pl": f"{svc}-Instanzen",
+        }
     return {"svc_pos": f"{svc}'s", "svc_the": f"the {svc} service"}
 
 
@@ -558,8 +837,14 @@ def env_value(rng: random.Random, env: str) -> str:
     if suf in ("PORT",):
         return str(rng.choice(PORTS))
     if suf in ("DSN", "URL"):
-        return rng.choice(["postgresql://hlm@db:5432/hlm", "redis://cache:6379/0",
-                           "http://gateway:8080", "kafka://broker:9092"])
+        return rng.choice(
+            [
+                "postgresql://hlm@db:5432/hlm",
+                "redis://cache:6379/0",
+                "http://gateway:8080",
+                "kafka://broker:9092",
+            ]
+        )
     if suf in ("SECRET", "TOKEN"):
         return "<redacted>"
     if suf in ("POOL_SIZE", "MAX_RETRIES", "TTL"):
@@ -587,7 +872,7 @@ def make_pools(rng: random.Random) -> dict:
         while True:
             pos = rng.randrange(4, 7)
             ch = rng.choice(alphabet)
-            cand = base[:pos] + ch + base[pos + 1:]
+            cand = base[:pos] + ch + base[pos + 1 :]
             tail = cand[4:]
             if ch != base[pos] and tail not in seen and any(c.isalpha() for c in tail):
                 seen.add(tail)
@@ -602,13 +887,14 @@ def make_pools(rng: random.Random) -> dict:
 
 
 def rand_ts(rng: random.Random) -> dt.datetime:
-    start = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
-    span = int((dt.datetime(2026, 9, 21, tzinfo=dt.timezone.utc) - start).total_seconds())
+    start = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
+    span = int((dt.datetime(2026, 9, 21, tzinfo=dt.UTC) - start).total_seconds())
     return start + dt.timedelta(seconds=rng.randrange(span))
 
 
-def build_item(rng: random.Random, idx: int, project: str, lang: str, svc: str,
-               pools: dict, svc2_pool: list[str]) -> dict:
+def build_item(
+    rng: random.Random, idx: int, project: str, lang: str, svc: str, pools: dict, svc2_pool: list[str]
+) -> dict:
     topic = rng.choice(TOPICS)
     adj_pool = {"tr": ADJ_TR, "de": ADJ_DE, "en": ADJ_EN}[lang]
     ts = rand_ts(rng)
@@ -635,8 +921,12 @@ def build_item(rng: random.Random, idx: int, project: str, lang: str, svc: str,
     title = TITLE[lang][topic].format(**slots, **syn)
 
     def fill(t: str) -> str:
-        per = {"adj": rng.choice(adj_pool), "num": rng.randint(2, 500), "num2": rng.randint(1, 60),
-               "comp_alt": rng.choice(COMP[lang])}
+        per = {
+            "adj": rng.choice(adj_pool),
+            "num": rng.randint(2, 500),
+            "num2": rng.randint(1, 60),
+            "comp_alt": rng.choice(COMP[lang]),
+        }
         return t.format(**slots, **per)
 
     target = rng.randint(*WORD_TARGET)
@@ -654,14 +944,16 @@ def build_item(rng: random.Random, idx: int, project: str, lang: str, svc: str,
     closing = [fill(t) for t in CLOSE[lang]]
 
     heads = HEADINGS[lang]
-    env_block = (f"## {ENV_LABEL[lang]}\n- {slots['env']}={env_value(rng, slots['env'])}\n"
-                 f"- path: {slots['path']}\n- error: {slots['err']}\n- owner: {slots['person']}\n"
-                 f"- port: {slots['port']}\n- version: {slots['ver']}")
+    env_block = (
+        f"## {ENV_LABEL[lang]}\n- {slots['env']}={env_value(rng, slots['env'])}\n"
+        f"- path: {slots['path']}\n- error: {slots['err']}\n- owner: {slots['person']}\n"
+        f"- port: {slots['port']}\n- version: {slots['ver']}"
+    )
     n = len(body_sents)
     q = max(1, n // 4)
     parts = [f"## {heads[0]}", " ".join(sentences), env_block]
     for i in range(4):
-        chunk = body_sents[i * q:(i + 1) * q] if i < 3 else body_sents[3 * q:]
+        chunk = body_sents[i * q : (i + 1) * q] if i < 3 else body_sents[3 * q :]
         parts.append(f"## {heads[i + 1]}")
         parts.append(" ".join(chunk))
     parts.append(" ".join(closing))
@@ -716,8 +1008,11 @@ def build_query(rng: random.Random, item: dict, heavy: bool, qidx: int) -> dict:
 def shares_title_wording(query: str, title: str) -> bool:
     """True when >= 50% of the title's content words (len>=4, non-identifier) appear verbatim."""
     ids = set(identifiers(title))
-    words = [w.lower() for w in WORD_RE.findall(title)
-             if len(w) >= 4 and w not in ids and not re.fullmatch(r"[\d.-]+|v\d.*", w)]
+    words = [
+        w.lower()
+        for w in WORD_RE.findall(title)
+        if len(w) >= 4 and w not in ids and not re.fullmatch(r"[\d.-]+|v\d.*", w)
+    ]
     if not words:
         return False
     qwords = {w.lower() for w in WORD_RE.findall(query)}
@@ -733,13 +1028,25 @@ def generate(out_dir: Path) -> dict:
     langs_main = [LANGS[i % 3] for i in range(N_MAIN)]
     rng.shuffle(langs_main)
     for i in range(N_MAIN):
-        items.append(build_item(rng, i + 1, MAIN_PROJECT, langs_main[i], pools["services"][i],
-                                pools, pools["services"]))
+        items.append(
+            build_item(
+                rng, i + 1, MAIN_PROJECT, langs_main[i], pools["services"][i], pools, pools["services"]
+            )
+        )
     langs_other = [LANGS[i % 3] for i in range(N_OTHER)]
     rng.shuffle(langs_other)
     for i in range(N_OTHER):
-        items.append(build_item(rng, i + 1, OTHER_PROJECT, langs_other[i], pools["decoys"][i],
-                                pools, pools["services"] + pools["decoys"]))
+        items.append(
+            build_item(
+                rng,
+                i + 1,
+                OTHER_PROJECT,
+                langs_other[i],
+                pools["decoys"][i],
+                pools,
+                pools["services"] + pools["decoys"],
+            )
+        )
 
     # identifier triples must single out the gold item for heavy queries
     triple_count: dict[tuple, int] = {}
@@ -752,8 +1059,11 @@ def generate(out_dir: Path) -> dict:
     picked: list[tuple[dict, bool]] = []
     for lang in LANGS:
         cands = [it for it in main if it["lang"] == lang]
-        uniq = [it for it in cands
-                if triple_count[(it["_slots"]["err"], it["_slots"]["env"], it["_slots"]["path"])] == 1]
+        uniq = [
+            it
+            for it in cands
+            if triple_count[(it["_slots"]["err"], it["_slots"]["env"], it["_slots"]["path"])] == 1
+        ]
         heavy_items = rng.sample(uniq, N_HEAVY[lang])
         rest = [it for it in cands if it["logical_key"] not in {h["logical_key"] for h in heavy_items}]
         light_items = rng.sample(rest, N_QUERIES[lang] - N_HEAVY[lang])
@@ -766,8 +1076,18 @@ def generate(out_dir: Path) -> dict:
     stats = validate(items, queries)
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    public = ["logical_key", "project", "kind", "title", "body", "tags", "stability",
-              "importance", "valid_from", "lang"]
+    public = [
+        "logical_key",
+        "project",
+        "kind",
+        "title",
+        "body",
+        "tags",
+        "stability",
+        "importance",
+        "valid_from",
+        "lang",
+    ]
     with (out_dir / "items.jsonl").open("w", encoding="utf-8", newline="\n") as f:
         for it in items:
             f.write(json.dumps({k: it[k] for k in public}, ensure_ascii=False) + "\n")
@@ -796,7 +1116,7 @@ def validate(items: list[dict], queries: list[dict]) -> dict:
             assert tok in it["body"], (it["logical_key"], tok)
 
     assert len(queries) == sum(N_QUERIES.values()) == 100
-    per_lang = {l: 0 for l in LANGS}
+    per_lang = {lang: 0 for lang in LANGS}
     heavy = 0
     golds = set()
     not_shared = 0
@@ -824,14 +1144,22 @@ def validate(items: list[dict], queries: list[dict]) -> dict:
     assert ratio >= MIN_PARAPHRASE_RATIO, ratio
     total_words = sum(words)
     return {
-        "items_total": len(items), "items_main": n_main, "items_other": len(items) - n_main,
-        "items_by_lang": {l: sum(1 for it in items if it["lang"] == l) for l in LANGS},
-        "words_min": min(words), "words_max": max(words), "words_mean": round(total_words / len(words), 1),
-        "est_chunks_words_div_300_main": round(sum(w for it, w in zip(items, words)
-                                                   if it["project"] == MAIN_PROJECT) / 300),
-        "est_chunks_words_div_300_other": round(sum(w for it, w in zip(items, words)
-                                                    if it["project"] == OTHER_PROJECT) / 300),
-        "queries": len(queries), "queries_by_lang": per_lang, "identifier_heavy": heavy,
+        "items_total": len(items),
+        "items_main": n_main,
+        "items_other": len(items) - n_main,
+        "items_by_lang": {lang: sum(1 for it in items if it["lang"] == lang) for lang in LANGS},
+        "words_min": min(words),
+        "words_max": max(words),
+        "words_mean": round(total_words / len(words), 1),
+        "est_chunks_words_div_300_main": round(
+            sum(w for it, w in zip(items, words, strict=False) if it["project"] == MAIN_PROJECT) / 300
+        ),
+        "est_chunks_words_div_300_other": round(
+            sum(w for it, w in zip(items, words, strict=False) if it["project"] == OTHER_PROJECT) / 300
+        ),
+        "queries": len(queries),
+        "queries_by_lang": per_lang,
+        "identifier_heavy": heavy,
         "paraphrase_ratio": round(ratio, 2),
     }
 

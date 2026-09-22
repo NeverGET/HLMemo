@@ -6,6 +6,7 @@ SHA256 digests match tests/fixtures/g3/SHA256SUMS. If this fails, either the gen
 the committed files changed: a fixture change requires a docs/decisions/DECISIONS.md entry
 (D-025: PHASE0-SPEC.md is a frozen contract) and a regenerated SHA256SUMS.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -59,13 +60,13 @@ def test_fixture_frozen(tmp_path: Path) -> None:
 
 def test_fixture_contract() -> None:
     """Cheap shape checks on the committed files (counts and language split from §7)."""
-    items = [json.loads(l) for l in (G3 / "items.jsonl").read_text(encoding="utf-8").splitlines()]
-    queries = [json.loads(l) for l in (G3 / "queries.jsonl").read_text(encoding="utf-8").splitlines()]
+    items = [json.loads(line) for line in (G3 / "items.jsonl").read_text(encoding="utf-8").splitlines()]
+    queries = [json.loads(line) for line in (G3 / "queries.jsonl").read_text(encoding="utf-8").splitlines()]
     main = [it for it in items if it["project"] == "fx-main"]
     other = [it for it in items if it["project"] == "fx-other"]
     assert len(main) == 2000 and len(other) == 400
     assert len(queries) == 100
-    by_lang = {l: sum(1 for q in queries if q["lang"] == l) for l in ("tr", "de", "en")}
+    by_lang = {lang: sum(1 for q in queries if q["lang"] == lang) for lang in ("tr", "de", "en")}
     assert by_lang == {"tr": 34, "de": 33, "en": 33}
     assert sum(1 for q in queries if q["identifier_heavy"]) == 25
     keys = {it["logical_key"] for it in main}

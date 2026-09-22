@@ -4,7 +4,16 @@
     lifespan  : open the pool, bind device 1 from HLM_ADMIN_TOKEN in ONE transaction (§2) — before
                 uvicorn opens the listener — then serve; close the pool on shutdown.
     middleware: AuthMiddleware (bearer -> AuthContext on request.state, status gate before routing).
-    routes    : GET /health (no auth) · /devices/* · /admin/* · /mcp (MCP streamable HTTP, gated).
+    routes    : GET /health (liveness, no auth) · GET /ready (readiness, no auth) · /devices/* ·
+              /admin/* · /mcp (MCP streamable HTTP, gated).
+
+Liveness vs readiness (codex review O1): `/health` only says the process answers. `/ready` verifies
+every dependency a write or query needs — DB reachable, migration at `phase0@head`, the pinned
+model files present under `HLM_MODELS_DIR` with sha256 matching `models.lock`, and the tokenizer
+loading — and answers 503 `not_ready` with the failing checks otherwise. The compose healthcheck
+probes `/ready`, so `api` is never "healthy" while `memory.write` / `memory.query` would fail.
+The expensive parts (hashing 470 MB, parsing the tokenizer) run once per process and are re-done
+only when a model file's size/mtime changes.
 
 `python -m hlmemo.server.app` runs uvicorn with settings from HLM_* / hlm.toml.
 The MCP endpoint (`server/mcp_server.py`, five tools of §3) is a plain `Route("/mcp", <ASGI>)` so
@@ -14,9 +23,13 @@ session manager is started inside the app lifespan.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -27,6 +40,15 @@ from starlette.routing import Route
 from hlmemo.auth.cursors import load_cursor_secret
 from hlmemo.auth.tokens import hash_token
 from hlmemo.config import Settings, get_settings
+from hlmemo.core.budget import Meter
+from hlmemo.core.embedder import (
+    HASHED_FILES,
+    MODEL_FILES,
+    Embedder,
+    default_model_dir,
+    model_hashes,
+    repo_root,
+)
 from hlmemo.db import auth_queries as q
 from hlmemo.db.pool import create_pool
 from hlmemo.server import admin, devices
@@ -37,6 +59,9 @@ from hlmemo.server.middleware import AuthMiddleware, RateLimiter
 log = logging.getLogger("hlmemo.server")
 
 ADMIN_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_TOKEN not set"
+PHASE0_BRANCH = "phase0"
+PHASE0_HEAD_FALLBACK = "0001_phase0"  # used only when alembic/ is not on disk (never in the image)
+MODELS_LOCK = "models.lock"
 
 
 # --------------------------------------------------------------------------- routes
@@ -52,11 +77,125 @@ async def health(request: Request) -> JSONResponse:
     return JSONResponse(body)
 
 
+# --------------------------------------------------------------------------- readiness
+
+
+def _project_file(name: str) -> Path | None:
+    """`<repo root>/<name>` in a checkout, `./<name>` or `/app/<name>` in the image."""
+    root = repo_root()
+    candidates = [root / name if root else None, Path.cwd() / name, Path("/app") / name]
+    return next((c for c in candidates if c is not None and c.is_file()), None)
+
+
+def parse_models_lock(path: Path) -> dict[str, str]:
+    """`<file>: sha256:<hex> size:<n>` lines of models.lock -> {file: hex}."""
+    out: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if ": sha256:" in line:
+            name, rest = line.split(":", 1)
+            out[name.strip()] = rest.strip().split()[0].removeprefix("sha256:")
+    return out
+
+
+@lru_cache(maxsize=1)
+def phase0_head() -> str:
+    """The `phase0@head` revision id from the alembic script directory (never bare `head`: the
+    deferred `hnsw` branch is a second head by design)."""
+    ini = _project_file("alembic.ini")
+    if ini is None:
+        return PHASE0_HEAD_FALLBACK
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        cfg = Config(str(ini))
+        cfg.set_main_option("script_location", str(ini.parent / "alembic"))
+        (rev,) = ScriptDirectory.from_config(cfg).get_revisions(f"{PHASE0_BRANCH}@head")
+        return rev.revision
+    except Exception:  # noqa: BLE001 - readiness must answer, not crash
+        log.warning("could not resolve %s@head from %s; using %s", PHASE0_BRANCH, ini, PHASE0_HEAD_FALLBACK)
+        return PHASE0_HEAD_FALLBACK
+
+
+def _files_signature(model_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    out = []
+    for rel in HASHED_FILES:
+        st = (model_dir / rel).stat()
+        out.append((rel, st.st_size, st.st_mtime_ns))
+    return tuple(out)
+
+
+def _verify_models_blocking(model_dir: Path, lock: Path | None, cache: dict[str, Any]) -> dict[str, Any]:
+    """Model files present + sha256 == models.lock + tokenizer parses. Hashes are cached per
+    (size, mtime) signature so a healthcheck every few seconds does not re-read 470 MB."""
+    result: dict[str, Any] = {"dir": str(model_dir)}
+    missing = [rel for rel in MODEL_FILES if not (model_dir / rel).is_file()]
+    if missing:
+        result.update(ok=False, error="model files missing; run `make models`", missing=missing)
+        return result
+    if lock is None:
+        result.update(ok=False, error=f"{MODELS_LOCK} not found")
+        return result
+    expected = parse_models_lock(lock)
+    sig = _files_signature(model_dir)
+    if cache.get("sig") != sig:
+        cache.clear()
+        cache["hashes"] = model_hashes(model_dir)
+    hashes: dict[str, str] = cache["hashes"]
+    bad = [rel for rel in HASHED_FILES if expected.get(rel) != hashes[rel]]
+    if bad:
+        result.update(ok=False, error=f"model files differ from {MODELS_LOCK}", mismatch=bad)
+        return result
+    if cache.get("sig") != sig:
+        # Exercise inference and budget accounting, including the separate o200k cache.
+        Embedder(model_dir).embed_query("readiness")
+        Meter().count_text("readiness")
+        cache["sig"] = sig
+    result.update(ok=True, lock=str(lock), tokenizer=True, inference=True, meter=True)
+    return result
+
+
+async def readiness(app: Starlette) -> tuple[bool, dict[str, Any]]:
+    checks: dict[str, Any] = {}
+    head = phase0_head()
+    try:
+        async with app.state.pool.connection() as conn:
+            cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
+            applied = [r[0] for r in await cur.fetchall()]
+            await conn.rollback()
+        checks["db"] = {"ok": True}
+        checks["migration"] = {"ok": head in applied, "expected": head, "applied": applied}
+    except Exception as exc:  # noqa: BLE001 - report, never raise from a probe
+        checks["db"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc).strip()[:200]}"}
+        checks["migration"] = {"ok": False, "expected": head, "error": "database unavailable"}
+    cache: dict[str, Any] | None = getattr(app.state, "model_check_cache", None)
+    if cache is None:
+        cache = app.state.model_check_cache = {}
+    model_dir = default_model_dir()  # honours HLM_MODELS_DIR
+    try:
+        checks["models"] = await asyncio.to_thread(
+            _verify_models_blocking, model_dir, _project_file(MODELS_LOCK), cache
+        )
+    except Exception as exc:  # noqa: BLE001
+        checks["models"] = {"ok": False, "dir": str(model_dir), "error": f"{type(exc).__name__}: {exc}"}
+    return all(c.get("ok") for c in checks.values()), checks
+
+
+async def ready(request: Request) -> JSONResponse:
+    """Readiness: 200 `{"status":"ready"}` only when writes and queries can succeed; 503 otherwise."""
+    ok, checks = await readiness(request.app)
+    return JSONResponse(
+        {"status": "ready" if ok else "not_ready", "checks": checks}, status_code=200 if ok else 503
+    )
+
+
 def build_routes(mcp: McpEndpoint | None = None) -> list[Route]:
     """All routes; `/mcp` is the MCP ASGI handler (gated by the middleware like every other route)."""
     mcp = mcp or create_mcp_endpoint()
     return [
         Route("/health", health, methods=["GET"]),
+        Route("/ready", ready, methods=["GET"]),
         Route("/devices/register", devices.register, methods=["POST"]),
         Route("/devices/approve", devices.approve, methods=["POST"]),
         Route("/devices/revoke", devices.revoke, methods=["POST"]),
