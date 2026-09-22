@@ -13,9 +13,11 @@ import hashlib
 import json
 import uuid
 from datetime import UTC, datetime
+from itertools import count
 from typing import Any
 
 from psycopg import AsyncConnection
+from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 
 DEVICE_COLUMNS = """
@@ -92,6 +94,38 @@ async def insert_device(
         row = await cur.fetchone()
         assert row is not None
         return row
+
+
+async def release_revoked_device_name(conn: AsyncConnection, name: str, *, user_id: str = "owner") -> None:
+    """Free a revoked name in the registration transaction; preserve its identity and token.
+
+    The row lock serializes competing registrations. Active names remain protected by
+    UNIQUE (user_id, name). Archive names obey the existing 64-character slug CHECK;
+    a preoccupied archive name is skipped without changing its owner's row.
+    """
+    cur = await conn.execute(
+        "SELECT device_id FROM devices WHERE user_id = %s AND name = %s AND status = 'revoked' FOR UPDATE",
+        (user_id, name),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return
+    device_id = int(row[0])
+    for attempt in count():
+        suffix = f"-revoked-{device_id}" + (f"-{attempt}" if attempt else "")
+        archived_name = name[: 64 - len(suffix)] + suffix
+        if archived_name == name:
+            continue
+        try:
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE devices SET name = %s WHERE device_id = %s",
+                    (archived_name, device_id),
+                )
+            return
+        except UniqueViolation as exc:
+            if exc.diag.constraint_name != "devices_user_id_name_key":
+                raise
 
 
 async def set_device_trusted(

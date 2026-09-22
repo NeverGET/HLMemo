@@ -371,12 +371,14 @@ async def test_concurrent_cold_readiness_loads_models_once(
     probe_count = 8
     probes_started = 0
 
-    def model_dir():
+    original_readiness = server.readiness
+
+    async def observed_readiness(app):
         nonlocal probes_started
         probes_started += 1
         if probes_started == probe_count:
             all_probes_started.set()
-        return tmp_path
+        return await original_readiness(app)
 
     def gated_hashes(path):
         assert path == tmp_path
@@ -387,7 +389,10 @@ async def test_concurrent_cold_readiness_loads_models_once(
     hashes = Mock(side_effect=gated_hashes)
     embedder = Mock()
     meter = Mock()
-    monkeypatch.setattr(server, "default_model_dir", model_dir)
+    # Count callers at the public boundary: a single-flight dependency check now
+    # resolves the model directory only once, regardless of the number of waiters.
+    monkeypatch.setattr(server, "readiness", observed_readiness)
+    monkeypatch.setattr(server, "default_model_dir", lambda: tmp_path)
     monkeypatch.setattr(server, "model_hashes", hashes)
     monkeypatch.setattr(server, "Embedder", embedder)
     monkeypatch.setattr(server, "Meter", meter)

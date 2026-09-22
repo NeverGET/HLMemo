@@ -14,7 +14,10 @@ from datetime import datetime
 from typing import Any
 
 from psycopg import AsyncConnection
+from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
+
+from hlmemo.config import get_settings
 
 INF = "infinity"
 
@@ -95,22 +98,53 @@ class EventRef:
 
 
 # --------------------------------------------------------------------------- locks & lookups
+async def _advisory_lock(conn: AsyncConnection, query: str, params: tuple[Any, ...]) -> None:
+    """Let serialization waits use the request budget, then restore ordinary SQL limits.
+
+    The middleware supplies the remaining request deadline; direct service callers use the
+    configured request budget. Its enclosing deadline still bounds a sequence of lock waits.
+    ``set_config(..., true)`` is parameterized SET LOCAL and never changes pooled defaults.
+    """
+    cur = await conn.execute(
+        "SELECT current_setting('lock_timeout'), current_setting('statement_timeout'),"
+        " current_setting('hlmemo.request_db_timeout_ms', true)"
+    )
+    lock_timeout, statement_timeout, request_ms = await cur.fetchone()
+    wait_ms = max(1, int(float(request_ms or get_settings().request_db_timeout_s * 1000)))
+    await conn.execute(
+        "SELECT set_config('lock_timeout', %s, true), set_config('statement_timeout', %s, true)",
+        (f"{wait_ms}ms", f"{wait_ms}ms"),
+    )
+    try:
+        await conn.execute(query, params)
+    finally:
+        # An aborted transaction is rolled back by the caller; issuing SQL there masks the
+        # original timeout/cancellation and cannot restore anything before the rollback.
+        if not conn.closed and conn.info.transaction_status == TransactionStatus.INTRANS:
+            await conn.execute(
+                "SELECT set_config('lock_timeout', %s, true), set_config('statement_timeout', %s, true)",
+                (lock_timeout, statement_timeout),
+            )
+
+
 async def lock_request_key(conn: AsyncConnection, project_id: int, device_id: int, request_id: str) -> None:
     """Serialise concurrent requests with the same (project, device, request_id) for this tx."""
-    await conn.execute(
-        "SELECT pg_advisory_xact_lock(1, hashtext(%s))", (f"{project_id}:{device_id}:{request_id}",)
+    await _advisory_lock(
+        conn, "SELECT pg_advisory_xact_lock(1, hashtext(%s))", (f"{project_id}:{device_id}:{request_id}",)
     )
 
 
 async def lock_session_key(conn: AsyncConnection, project_id: int, session_id: str) -> None:
-    await conn.execute("SELECT pg_advisory_xact_lock(2, hashtext(%s))", (f"{project_id}:{session_id}",))
+    await _advisory_lock(
+        conn, "SELECT pg_advisory_xact_lock(2, hashtext(%s))", (f"{project_id}:{session_id}",)
+    )
 
 
 async def lock_logical_ids(conn: AsyncConnection, logical_ids: list[int]) -> None:
     """Per-logical-item transaction lock, taken in sorted order (deadlock-free), so that a
     concurrent revision of the same item waits and then sees the new head (§1.1, G6)."""
     for lid in sorted(set(logical_ids)):
-        await conn.execute("SELECT pg_advisory_xact_lock(%s::bigint)", (lid,))
+        await _advisory_lock(conn, "SELECT pg_advisory_xact_lock(%s::bigint)", (lid,))
 
 
 async def resolve_projects(conn: AsyncConnection, slugs: list[str]) -> dict[str, ProjectRef]:
@@ -173,17 +207,43 @@ async def get_version(conn: AsyncConnection, version_id: int) -> VersionRow | No
     return None if row is None else _version_row(row)
 
 
-async def current_links_from(conn: AsyncConnection, src_logical_id: int) -> list[LinkRow]:
+async def current_links_from(
+    conn: AsyncConnection,
+    src_logical_id: int,
+    *,
+    valid_from: datetime,
+    valid_to: datetime | None,
+) -> list[LinkRow]:
+    """Current edges affected by a revision's valid-time interval.
+
+    Historical card survivor segments remain available to as-of reads, but must not all be
+    materialized on each session close. The range predicate matches the existing exclusion
+    GiST index and also covers backdated corrections spanning several historical segments.
+    """
     cur = await conn.execute(
         """
         SELECT link_id, project_id, project_ids, device_scope, src_logical_id, dst_logical_id,
                dst_version_id, rel, props, valid_from, nullif(valid_to, 'infinity'), recorded_at,
                source_event_id, supersedes_link_id
-        FROM links WHERE src_logical_id = %s AND superseded_at = 'infinity' ORDER BY link_id
+        FROM links WHERE src_logical_id = %s AND superseded_at = 'infinity'
+          AND tstzrange(valid_from, valid_to, '[)')
+              && tstzrange(%s, COALESCE(%s, 'infinity'::timestamptz), '[)')
+        ORDER BY link_id
         """,
-        (src_logical_id,),
+        (src_logical_id, valid_from, valid_to),
     )
     return [LinkRow(*r) for r in await cur.fetchall()]
+
+
+async def get_link(conn: AsyncConnection, link_id: int) -> LinkRow | None:
+    cur = await conn.execute(
+        "SELECT link_id, project_id, project_ids, device_scope, src_logical_id, dst_logical_id,"
+        " dst_version_id, rel, props, valid_from, nullif(valid_to, 'infinity'), recorded_at,"
+        " source_event_id, supersedes_link_id FROM links WHERE link_id = %s",
+        (link_id,),
+    )
+    row = await cur.fetchone()
+    return None if row is None else LinkRow(*row)
 
 
 async def chunks_of_version(conn: AsyncConnection, version_id: int) -> list[ChunkRow]:
@@ -442,6 +502,7 @@ __all__ = [
     "current_versions",
     "device_scope_target_ok",
     "find_event",
+    "get_link",
     "get_version",
     "insert_chunks",
     "insert_event",

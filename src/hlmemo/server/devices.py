@@ -12,6 +12,7 @@ Routes (both spellings share one implementation):
 from __future__ import annotations
 
 from typing import Any, Literal
+from uuid import uuid4
 
 from psycopg import AsyncConnection
 from psycopg import errors as pgerrors
@@ -34,6 +35,7 @@ from hlmemo.server.common import (
     parse_body,
 )
 from hlmemo.server.errors import from_db_error, invalid_arg
+from hlmemo.server.middleware import trusted_client_ip
 
 DeviceClass = Literal["personal", "work", "server", "ci", "other"]
 RoleName = Literal["read", "write", "admin"]
@@ -90,7 +92,7 @@ async def register(request: Request) -> JSONResponse:
     app_state = request.app.state
     limiter = getattr(app_state, "register_limiter", None)
     if limiter is not None:
-        ip = request.client.host if request.client else "unknown"
+        ip = trusted_client_ip(request.scope, app_state.settings.trusted_proxy_ips)
         if not limiter.allow(ip):
             raise HlmError("E_RATE_LIMITED", "too many registrations from this address; retry in a minute")
     secret = app_state.settings.registration_secret
@@ -106,15 +108,32 @@ async def register(request: Request) -> JSONResponse:
     conn = conn_of(request)
     token = generate_token()
     try:
-        async with conn.transaction():  # savepoint: a unique violation must not poison the request tx
-            row = await q.insert_device(
-                conn,
-                name=body.name,
-                device_class=body.device_class,
-                fingerprint=body.fingerprint,
-                os=body.os,
-                token_hash=hash_token(token),
-            )
+        # Name reclamation and insertion are atomic, including the fingerprint fallback.
+        async with conn.transaction():
+            await q.release_revoked_device_name(conn, body.name)
+            try:
+                async with conn.transaction():  # recover from a fingerprint collision
+                    row = await q.insert_device(
+                        conn,
+                        name=body.name,
+                        device_class=body.device_class,
+                        fingerprint=body.fingerprint,
+                        os=body.os,
+                        token_hash=hash_token(token),
+                    )
+            except pgerrors.UniqueViolation as exc:
+                if exc.diag.constraint_name != "devices_fingerprint_key":
+                    raise
+                # §2 fallback: retain the historical identity and revoked token.
+                # The independent new identity still needs approval.
+                row = await q.insert_device(
+                    conn,
+                    name=body.name,
+                    device_class=body.device_class,
+                    fingerprint=f"random:{uuid4()}",
+                    os=body.os,
+                    token_hash=hash_token(token),
+                )
     except pgerrors.Error as exc:
         mapped = from_db_error(exc)
         if mapped is None:
@@ -127,7 +146,7 @@ async def register(request: Request) -> JSONResponse:
         device_id=int(row["device_id"]),
         client=body.client,
         request=request_dump,
-        resolved={"device_id": int(row["device_id"]), "status": "pending"},
+        resolved={"device_id": int(row["device_id"]), "status": "pending", "fingerprint": row["fingerprint"]},
     )
     return JSONResponse({"device": device_view(row), "token": token}, status_code=201)
 

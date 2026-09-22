@@ -157,9 +157,22 @@ class Settings(BaseSettings):
     server_url: str = "http://127.0.0.1:8765/mcp"
     api_host: str = "0.0.0.0"
     api_port: int = 8765
-    request_max_body_bytes: int = Field(default=4 * 1024 * 1024, gt=0)
-    request_body_timeout_s: float = Field(default=10.0, gt=0)
+    # 50 × 64,000 Unicode characters, including JSON surrogate-pair escaping.
+    request_max_body_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
+    # Inactivity is independent of average throughput, including before the first byte.
+    request_body_timeout_s: float = Field(default=30.0, gt=0)
+    # At 8 KiB/s: 38,400,000 bytes take 4687.5 s; the full 64 MiB takes 8192 s.
+    request_body_total_timeout_s: float = Field(default=9000.0, gt=0)
+    request_body_global_budget_bytes: int = Field(default=256 * 1024 * 1024, gt=0)
+    request_body_client_budget_bytes: int = Field(default=128 * 1024 * 1024, gt=0)
+    request_body_min_rate_bytes_s: int = Field(default=8 * 1024, gt=0)
+    request_body_rate_grace_bytes: int = Field(default=256 * 1024, gt=0)
+    request_body_spool_threshold_bytes: int = Field(default=1024 * 1024, gt=0)
     request_db_timeout_s: float = Field(default=15.0, gt=0)
+    readiness_timeout_s: float = Field(default=2.0, gt=0)
+    readiness_cache_ttl_s: float = Field(default=1.0, gt=0)
+    # No implicit trust, including loopback; configure the actual Caddy subnet explicitly.
+    trusted_proxy_ips: str = ""
 
     # --- pool ---
     pool_min_size: int = 1
@@ -168,6 +181,7 @@ class Settings(BaseSettings):
     db_lock_timeout_ms: int = Field(default=2000, gt=0)
     db_statement_timeout_ms: int = Field(default=10000, gt=0)
     db_idle_in_transaction_timeout_ms: int = Field(default=5000, gt=0)
+    db_transaction_timeout_ms: int = Field(default=20000, gt=0)
 
     # --- wrapper sections passed through from hlm.toml ---
     client: dict[str, Any] = Field(default_factory=dict)

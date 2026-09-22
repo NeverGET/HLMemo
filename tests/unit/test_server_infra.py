@@ -93,6 +93,11 @@ async def test_readiness_checks_dependencies_and_reuses_starlette_state(monkeypa
         yield SimpleNamespace(execute=execute, rollback=rollback)
 
     app.state.pool = SimpleNamespace(connection=connection)
+
+    async def connect(*args, **kwargs):
+        return connection()
+
+    monkeypatch.setattr(server.AsyncConnection, "connect", connect)
     app.state.model_check_cache = {"existing": True}
     caches = []
 

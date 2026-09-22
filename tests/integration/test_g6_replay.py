@@ -132,7 +132,7 @@ async def test_rebuild_preserves_verbatim_request_and_resolved_defaults(connect,
 
 async def test_rebuild_identical_after_spanning_correction(connect, world, deps) -> None:
     """Two adjacent current link segments [D0,D7) and [D7,∞); a correction of [D5,D10) that
-    re-declares the edge supersedes both and inserts one segment — live and after rebuild."""
+    re-declares the edge supersedes both and inserts the replacement plus two survivors."""
     async with await connect() as conn:
         tgt = await write(conn, world.ctx_a, write_req(MAIN, [item("Ziel", "Zielobjekt")]), deps=deps)
         await conn.commit()
@@ -200,13 +200,18 @@ async def test_rebuild_identical_after_spanning_correction(connect, world, deps)
             (lid,),
         )
         rows = await cur.fetchall()
-        assert len(rows) == 3
-        (l1, _, _, cur1, _), (l2, _, _, cur2, _), (l3, vf3, vt3, cur3, sup3) = rows
+        assert len(rows) == 5
+        (l1, _, _, cur1, _), (l2, _, _, cur2, _) = rows[:2]
+        l3, vf3, vt3, cur3, sup3 = rows[-1]
         assert (cur1, cur2, cur3) == (False, False, True)
         assert (vf3, vt3) == (D0 + 5 * DAY, D0 + 10 * DAY) and sup3 in (l1, l2)
+        assert [(r[1], r[2], r[3]) for r in rows[2:4]] == [
+            (D0, D0 + 5 * DAY, True),
+            (D0 + 10 * DAY, None, True),
+        ]
         payload = await event_payload(conn, fix["request_id"])
         assert payload["resolved"]["superseded_links"] == sorted([l1, l2])
         assert payload["resolved"]["items"][0]["links"][0]["supersedes_link_id"] == sup3
         assert r3.versions[0].version_id > r2.versions[0].version_id
 
-        await _assert_rebuild_identical(conn, expected_links=3)
+        await _assert_rebuild_identical(conn, expected_links=5)
