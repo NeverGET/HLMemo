@@ -1,0 +1,58 @@
+"""bearer -> AuthContext, inside the request transaction (PHASE0-SPEC §2).
+
+`resolve()` is the ONLY producer of `AuthContext`. It runs `SELECT ... FOR SHARE` on the device row
+so that it is serialised against revoke / grant removal / token rebinding (`FOR UPDATE`), loads the
+live grants in the same transaction and never caches anything across requests.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from psycopg import AsyncConnection
+
+from hlmemo.auth.context import AuthContext, Role
+from hlmemo.auth.errors import HlmError
+from hlmemo.auth.tokens import hash_token
+from hlmemo.db import auth_queries as q
+
+
+def context_from_row(row: dict[str, Any], grants: list[tuple[int, str]], client: str) -> AuthContext:
+    return AuthContext(
+        device_id=int(row["device_id"]),
+        device_class=str(row["class"]),
+        is_admin=bool(row["is_admin"]),
+        token_generation=int(row["token_generation"]),
+        grants={pid: Role(role) for pid, role in grants},
+        client=client,
+    )
+
+
+async def resolve(
+    conn: AsyncConnection,
+    bearer: str | None,
+    *,
+    client: str = "unknown/0",
+    allow_pending: bool = False,
+    allow_revoked: bool = False,
+) -> tuple[AuthContext, dict[str, Any]]:
+    """Resolve the calling device under FOR SHARE and load its grants.
+
+    Raises `E_AUTH` for a missing/unknown token and (unless `allow_revoked`) for a revoked device,
+    `E_DEVICE_PENDING` for a pending device unless `allow_pending` (only `GET /health` sets it).
+    Returns `(AuthContext, device_row)`; the row never contains the token hash. `last_seen_at` is
+    NOT touched here: an UPDATE while other requests hold FOR SHARE on the same row would deadlock,
+    so the server refreshes it after the request transaction commits.
+    """
+    if not bearer:
+        raise HlmError("E_AUTH", "missing bearer token")
+    row = await q.select_device_by_hash_for_share(conn, hash_token(bearer))
+    if row is None:
+        raise HlmError("E_AUTH", "unknown token")
+    status = row["status"]
+    if status == "revoked" and not allow_revoked:
+        raise HlmError("E_AUTH", "device revoked")
+    if status == "pending" and not allow_pending:
+        raise HlmError("E_DEVICE_PENDING", "device awaiting approval", {"device_id": int(row["device_id"])})
+    grants = await q.select_active_grants(conn, int(row["device_id"])) if status == "trusted" else []
+    return context_from_row(row, grants, client), row

@@ -3,6 +3,7 @@
 Derived ONLY from the bearer token inside the request transaction; never from client payload.
 Shared contract between server/auth (producer), core/write_service and core/retrieval (consumers).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

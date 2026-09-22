@@ -14,6 +14,9 @@ async def configure_connection(conn: AsyncConnection) -> None:
 
     await register_vector_async(conn)
     await conn.execute("SET TIME ZONE 'UTC'")
+    # the pool requires configure() to hand back an IDLE connection; with autocommit=False the
+    # statements above opened a transaction (SET TIME ZONE is session-scoped, so commit keeps it)
+    await conn.commit()
 
 
 def create_pool(settings: Settings | None = None, *, open: bool = False) -> AsyncConnectionPool:

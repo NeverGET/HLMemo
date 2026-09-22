@@ -105,8 +105,10 @@ async def test_migration_applies_and_device1_reserved(connect) -> None:
         device_id, user_id, name, cls, status, is_admin, token_sha256, gen, fp, approved_by, approved = row
         assert (device_id, user_id, name, cls, status) == (1, "owner", "admin", "server", "trusted")
         assert is_admin is True
-        assert token_sha256 == "reserved:admin"  # placeholder: can never equal sha256(<token>)
-        assert gen == 1 and fp == "reserved:admin" and approved_by == 1 and approved
+        # placeholder (fresh migration) or a sha256 hex bound by an API start (§2); device 1 survives
+        # table truncation, so the generation only ever grows across sessions.
+        assert token_sha256 == "reserved:admin" or (len(token_sha256) == 64 and int(token_sha256, 16) >= 0)
+        assert gen >= 1 and fp == "reserved:admin" and approved_by == 1 and approved
 
         cur = await conn.execute("SELECT count(*) FROM devices")
         assert (await cur.fetchone())[0] == 1
@@ -319,3 +321,19 @@ async def test_constraints_smoke(connect) -> None:
                     (logical_id + 9, project_id, [project_id + 100], T0, T0, event_id),
                 )
         await conn.commit()
+
+
+async def test_api_boots_and_health_ok(db_dsn) -> None:
+    """G1 precursor: the app factory's lifespan (pool + admin binding) runs and /health answers 200."""
+    import httpx
+
+    from hlmemo.config import get_settings
+    from hlmemo.server.app import create_app
+
+    app = create_app(get_settings(db_dsn=db_dsn, admin_token=None, registration_secret=None))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            r = await c.get("/health")
+            assert r.status_code == 200 and r.json() == {"status": "ok"}
+            r = await c.get("/mcp")
+            assert r.status_code == 401  # gated: no bearer
