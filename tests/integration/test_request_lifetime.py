@@ -99,8 +99,9 @@ async def test_actual_body_byte_limit_precedes_pool_checkout(db_dsn, monkeypatch
 
 @pytest.mark.parametrize("authenticated", [False, True])
 async def test_total_body_deadline_never_checks_out_connection(db_dsn, monkeypatch, authenticated):
-    """Progress within every per-read deadline must not extend the overall body deadline."""
-    monkeypatch.setenv("HLM_REQUEST_BODY_TIMEOUT_S", "0.06")
+    """Even ongoing progress cannot extend the separate generous overall body cap."""
+    monkeypatch.setenv("HLM_REQUEST_BODY_TIMEOUT_S", "0.1")
+    monkeypatch.setenv("HLM_REQUEST_BODY_TOTAL_TIMEOUT_S", "0.06")
     async with running_app(db_dsn) as client:
         messages = []
         reads = 0

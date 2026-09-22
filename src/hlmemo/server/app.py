@@ -31,6 +31,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from psycopg import AsyncConnection
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -46,8 +47,10 @@ from hlmemo.core.embedder import (
     MODEL_FILES,
     Embedder,
     default_model_dir,
+    embed_config_check,
     model_hashes,
     repo_root,
+    require_pinned_embed_config,
 )
 from hlmemo.db import auth_queries as q
 from hlmemo.db.pool import create_pool
@@ -157,13 +160,21 @@ def _verify_models_blocking(model_dir: Path, lock: Path | None, cache: dict[str,
 
 
 async def readiness(app: Starlette) -> tuple[bool, dict[str, Any]]:
-    checks: dict[str, Any] = {}
+    settings = getattr(app.state, "settings", None) or get_settings()
+    checks: dict[str, Any] = {
+        "embed_config": embed_config_check(settings.embed_model, settings.embed_revision)
+    }
     head = phase0_head()
     try:
-        async with app.state.pool.connection() as conn:
-            cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
-            applied = [r[0] for r in await cur.fetchall()]
-            await conn.rollback()
+        async with asyncio.timeout(settings.readiness_timeout_s):
+            async with await AsyncConnection.connect(
+                settings.db_dsn,
+                autocommit=True,
+                connect_timeout=2,
+                options=f"-c statement_timeout={int(settings.readiness_timeout_s * 1000)}",
+            ) as conn:
+                cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
+                applied = [r[0] for r in await cur.fetchall()]
         checks["db"] = {"ok": True}
         checks["migration"] = {"ok": head in applied, "expected": head, "applied": applied}
     except Exception as exc:  # noqa: BLE001 - report, never raise from a probe
@@ -271,20 +282,26 @@ def create_app(
     register_rate_limit: int | None = 5,
 ) -> Starlette:
     settings = settings or get_settings()
-    mcp = create_mcp_endpoint()
+    require_pinned_embed_config(settings.embed_model, settings.embed_revision)
+    mcp = create_mcp_endpoint(max_request_body_size=settings.request_max_body_bytes)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        require_pinned_embed_config(settings.embed_model, settings.embed_revision)
         # Binding runs (and commits) before the pool used for traffic is opened and before uvicorn
         # starts accepting connections — no request can observe a half-bound device 1.
         app.state.admin_generation = await bind_admin_device(settings)
         pool = create_pool(settings)
         await pool.open()
         app.state.pool = pool
+        admin_pool = create_pool(settings.model_copy(update={"pool_min_size": 1, "pool_max_size": 2}))
+        app.state.admin_pool = admin_pool
         try:
+            await admin_pool.open()
             async with mcp.run():  # MCP session manager lives exactly as long as the app
                 yield
         finally:
+            await admin_pool.close()
             await pool.close()
 
     app = Starlette(
@@ -307,7 +324,13 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     s = get_settings()
     log.info("hlmemo api: MCP streamable HTTP at /mcp (memory.query/drilldown/raw/write/call_the_day)")
-    uvicorn.run(create_app(s), host=s.api_host, port=s.api_port, log_level="info")
+    uvicorn.run(
+        create_app(s),
+        host=s.api_host,
+        port=s.api_port,
+        log_level="info",
+        proxy_headers=False,  # Registration validates forwarded addresses against trusted_proxy_ips.
+    )
 
 
 if __name__ == "__main__":

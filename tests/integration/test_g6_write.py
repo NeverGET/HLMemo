@@ -724,7 +724,7 @@ async def test_call_the_day_one_batch_and_one_close(connect, world, deps) -> Non
 # --------------------------------------------------------------------------- codex review C3 / S2 / C5
 async def test_spanning_correction_supersedes_all_overlapping_links(connect, world, deps) -> None:
     """C3: an edge kept as two adjacent current segments; a correction spanning both re-declares
-    it → every overlapping link is superseded (one left current, no exclusion violation)."""
+    it → overlapping links are superseded and their outside-window segments survive."""
     async with await connect() as conn:
         tgt = await write(conn, world.ctx_a, write_req(MAIN, [item("Ziel", "Zielobjekt")]), deps=deps)
         await conn.commit()
@@ -797,11 +797,12 @@ async def test_spanning_correction_supersedes_all_overlapping_links(connect, wor
             (lid,),
         )
         rows = await cur.fetchall()
-        assert [r[0] for r in rows[:2]] == old_ids and [r[1] for r in rows] == [False, False, True]
-        assert rows[2][2] in old_ids
+        assert [r[0] for r in rows[:2]] == old_ids
+        assert [r[1] for r in rows] == [False, False, True, True, True]
+        assert all(r[2] in old_ids for r in rows[2:])
         p = await event_payload(conn, fix["request_id"])
         assert p["resolved"]["superseded_links"] == old_ids
-        assert await count(conn, "links", "src_logical_id = %s AND superseded_at = 'infinity'", (lid,)) == 1
+        assert await count(conn, "links", "src_logical_id = %s AND superseded_at = 'infinity'", (lid,)) == 3
 
 
 async def test_link_to_hidden_target_uniform_not_found(connect, world, deps) -> None:

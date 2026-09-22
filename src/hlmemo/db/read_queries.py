@@ -474,15 +474,26 @@ async def drilldown_links(
     return out
 
 
-async def raw_links(conn: AsyncConnection, src_logical_id: int, pid: int, scopes: list[str]) -> list[RawLink]:
-    """§3 raw: the item's outgoing edges with full temporal columns, no temporal filter; the link
-    row and its far endpoint (pinned version, else any version of ``dst_logical_id``) pass (a)."""
+async def raw_links(
+    conn: AsyncConnection, version: ReadVersion, pid: int, scopes: list[str], known_at: datetime
+) -> list[RawLink]:
+    """Edges overlapping the addressed version on both temporal axes (D-037).
+
+    Historical versions retain their historical edges. Endpoint authorization remains (a)
+    only: a superseded pinned target is still evidence. The cursor's knowledge cutoff excludes
+    later insertions so continuation pages retain a stable order.
+    """
     cur = await conn.execute(
         f"""
         SELECT l.rel, l.dst_logical_id, l.dst_version_id, l.valid_from, nullif(l.valid_to, 'infinity'),
                l.recorded_at, nullif(l.superseded_at, 'infinity')
         FROM links l
         WHERE l.src_logical_id = %(lid)s AND {AUTHZ_L}
+          AND l.valid_from < coalesce(%(valid_to)s::timestamptz, 'infinity')
+          AND l.valid_to > %(valid_from)s
+          AND l.recorded_at < coalesce(%(superseded_at)s::timestamptz, 'infinity')
+          AND l.superseded_at > %(recorded_at)s
+          AND l.recorded_at <= %(known_at)s
           AND CASE WHEN l.dst_version_id IS NOT NULL THEN EXISTS (
                     SELECT 1 FROM memory_versions d WHERE d.version_id = l.dst_version_id AND {_authz("d")})
                ELSE EXISTS (
@@ -490,7 +501,16 @@ async def raw_links(conn: AsyncConnection, src_logical_id: int, pid: int, scopes
               END
         ORDER BY l.link_id
         """,
-        {"lid": src_logical_id, "pid": pid, "scopes": scopes},
+        {
+            "lid": version.logical_id,
+            "pid": pid,
+            "scopes": scopes,
+            "valid_from": version.valid_from,
+            "valid_to": version.valid_to,
+            "recorded_at": version.recorded_at,
+            "superseded_at": version.superseded_at,
+            "known_at": known_at,
+        },
     )
     return [RawLink(*r) for r in await cur.fetchall()]
 

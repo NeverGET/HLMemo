@@ -53,6 +53,7 @@ from hlmemo.auth.context import AuthContext
 from hlmemo.auth.errors import HlmError
 from hlmemo.auth.resolve import resolve
 from hlmemo.auth.tokens import parse_bearer
+from hlmemo.config import get_settings
 from hlmemo.core.budget import BudgetError, canonical
 from hlmemo.core.clues import InvalidClue
 from hlmemo.core.errors import ToolError
@@ -243,12 +244,15 @@ class McpEndpoint:
         return self.session_manager.run()
 
 
-def create_mcp_endpoint(*, json_response: bool = True, stateless: bool = True) -> McpEndpoint:
+def create_mcp_endpoint(
+    *, json_response: bool = True, stateless: bool = True, max_request_body_size: int | None = None
+) -> McpEndpoint:
     server = build_server()
     manager = StreamableHTTPSessionManager(
         app=server,
         json_response=json_response,
         stateless=stateless,
+        max_request_body_size=max_request_body_size or get_settings().request_max_body_bytes,
         security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
     return McpEndpoint(server=server, session_manager=manager, asgi=StreamableHTTPASGIApp(manager))

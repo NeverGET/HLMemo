@@ -31,7 +31,7 @@ passes the verbatim tool arguments as ``req`` (a dict is used as-is for hashing)
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -458,6 +458,8 @@ def _check_shapes(batch: _Batch, plans: list[_Plan]) -> None:
     for p in plans:
         it, i = p.item, p.index
         if it.kind == "project_card":
+            if it.device_scope != "all":
+                raise invalid_arg(f"items[{i}]: project_card device_scope must be all", index=i)
             if it.logical_id is not None and it.logical_id != card_lid:
                 raise invalid_arg(f"items[{i}]: project_card logical_id must be the project's card", index=i)
             p.is_card = True
@@ -663,6 +665,8 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     ]
     _check_shapes(batch, plans)
 
+    # Hidden targets must fail before *any* contended key can disclose their existence.
+    await _authorize_revisions(conn, ctx, batch, plans)
     # Serialise same-key requests and revisions of the same logical items (§1.1 head check).
     await q.lock_request_key(conn, home.project_id, ctx.device_id, batch.request_id)
     if batch.session_id is not None:
@@ -673,6 +677,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         + [lid for lid, _ in batch.expected_versions],
     )
 
+    # Reload after waiting: scope/head may have changed while acquiring the locks.
     cache = await _authorize_revisions(conn, ctx, batch, plans)  # §3 (3)
 
     # New events hash verbatim arguments; retries must use the stored event's algorithm.
@@ -737,6 +742,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     # (src, dst, rel) → every current link segment overlapping the new interval (codex C3: an
     # edge may be split into adjacent segments; a spanning correction supersedes all of them).
     link_supersedes: dict[tuple[int, int, str], list[q.LinkRow]] = {}
+    link_survivors: list[tuple[q.LinkRow, Interval]] = []
     for p in plans:
         it = p.item
         vf = parse_opt_ts(it.valid_from, field=f"items[{p.index}].valid_from")
@@ -750,20 +756,33 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                     (r, seg)
                     for seg in surviving_segments(r.valid_from, r.valid_to, p.interval.start, p.interval.end)
                 )
-        if p.logical_id is not None and p.links:
+        if p.logical_id is not None and (p.links or p.is_card):
             existing = await q.current_links_from(conn, p.logical_id)
+            matching = set()
             for spec in p.links:
                 dst = spec.get("dst_logical_id")
                 if "target_index" in spec:  # "$i" pointing at a revised item: its logical id is known
                     dst = plans[spec["target_index"]].logical_id
                 if dst is None:
                     continue
-                for old in existing:
-                    if (old.dst_logical_id, old.rel) == (dst, spec["rel"]) and overlaps(
-                        old.valid_from, old.valid_to, p.interval.start, p.interval.end
-                    ):
-                        link_supersedes.setdefault((p.logical_id, dst, spec["rel"]), []).append(old)
-                        superseded_recorded.append(old.recorded_at)
+                matching.add((dst, spec["rel"]))
+            for old in existing:
+                # A card revision replaces its entire source set, including dropped sources.
+                if (
+                    not (p.is_card and old.rel == "derived_from")
+                    and (old.dst_logical_id, old.rel) not in matching
+                ):
+                    continue
+                if overlaps(old.valid_from, old.valid_to, p.interval.start, p.interval.end):
+                    key = (p.logical_id, old.dst_logical_id, old.rel)
+                    link_supersedes.setdefault(key, []).append(old)
+                    superseded_recorded.append(old.recorded_at)
+                    link_survivors.extend(
+                        (old, seg)
+                        for seg in surviving_segments(
+                            old.valid_from, old.valid_to, p.interval.start, p.interval.end
+                        )
+                    )
     T = select_T(now, *superseded_recorded)
 
     # ---- chunking + id allocation ---------------------------------------------------------
@@ -784,7 +803,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     version_ids = await q.allocate_ids(conn, "memory_versions", n_versions)
     n_chunks = sum(len(p.chunks) + sum(len(old_chunks[r.version_id]) for r, _ in p.survivors) for p in plans)
     chunk_ids = await q.allocate_ids(conn, "chunks", n_chunks)
-    link_ids = await q.allocate_ids(conn, "links", sum(len(p.links) for p in plans))
+    link_ids = await q.allocate_ids(conn, "links", len(link_survivors) + sum(len(p.links) for p in plans))
 
     survivor_vids: dict[int, list[int]] = {}
     for p in plans:
@@ -797,6 +816,21 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     versions: list[q.VersionRow] = []
     chunks: list[q.ChunkRow] = []
     links: list[q.LinkRow] = []
+    link_survivors_json: list[dict[str, Any]] = []
+    for old, seg in link_survivors:
+        lid = link_ids.pop(0)
+        links.append(
+            replace(
+                old,
+                link_id=lid,
+                valid_from=seg.start,
+                valid_to=seg.end,
+                recorded_at=T,
+                source_event_id=event_id,
+                supersedes_link_id=old.link_id,
+            )
+        )
+        link_survivors_json.append({"link_id": lid, "from_link_id": old.link_id, **seg.as_json()})
     jobs: list[dict[str, Any]] = []
     resolved_items: list[dict[str, Any]] = []
     superseded_link_ids = sorted({old.link_id for olds in link_supersedes.values() for old in olds})
@@ -860,7 +894,13 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
             if sv_chunks:
                 jobs.append({"dedupe_key": embed_dedupe_key(svid), "version_id": svid})
             survivors_json.append(
-                {"version_id": svid, "from_version_id": r.version_id, **seg.as_json(), "chunks": sv_chunks}
+                {
+                    "version_id": svid,
+                    "from_version_id": r.version_id,
+                    **seg.as_json(),
+                    "chunks": sv_chunks,
+                    "last_access_at": fmt_ts(r.last_access_at) if r.last_access_at is not None else None,
+                }
             )
 
         versions.append(
@@ -986,6 +1026,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         "embedder": embedder,
         "items": resolved_items,
         "superseded_links": superseded_link_ids,
+        "link_survivors": link_survivors_json,
         "jobs": jobs,
         **batch.resolved_extra,
     }

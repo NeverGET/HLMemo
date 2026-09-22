@@ -241,7 +241,7 @@ class _Unit:
     clue: str
     version: q.ReadVersion
     span: q.ChunkSpan
-    tokens: int = 0
+    link: q.DrillLink | None = None
 
 
 async def _expand_clues(
@@ -278,31 +278,36 @@ async def _expand_clues(
     return units
 
 
-def _render_items(units: list[_Unit], links: dict[int, list[q.DrillLink]]) -> list[dict[str, Any]]:
+def _render_items(units: list[_Unit]) -> list[dict[str, Any]]:
+    """A page may contain body spans, edges, or both; each atom appears exactly once."""
     items: list[dict[str, Any]] = []
     for u in units:
-        if items and items[-1]["_ci"] == u.clue_index:
-            it = items[-1]
+        if not items or items[-1]["_ci"] != u.clue_index:
+            v = u.version
+            items.append(
+                {
+                    "_ci": u.clue_index,
+                    "_start": None,
+                    "clue": u.clue,
+                    "kind": v.kind,
+                    "title": v.title,
+                    "text": "",
+                    "ordinal_range": [u.span.ordinal, u.span.ordinal],
+                    "device_scope": v.device_scope,
+                    "links": [],
+                }
+            )
+        it = items[-1]
+        if u.link is not None:
+            it["links"].append(
+                {"rel": u.link.rel, "clue": encode_clue(u.link.clue_version_id), "stale": u.link.stale}
+            )
+        else:
+            if it["_start"] is None:
+                it["_start"] = u.span.char_start
+                it["ordinal_range"][0] = u.span.ordinal
             it["ordinal_range"][1] = u.span.ordinal
             it["text"] = u.version.body[it["_start"] : u.span.char_end]
-            continue
-        v = u.version
-        items.append(
-            {
-                "_ci": u.clue_index,
-                "_start": u.span.char_start,
-                "clue": u.clue,
-                "kind": v.kind,
-                "title": v.title,
-                "text": v.body[u.span.char_start : u.span.char_end],
-                "ordinal_range": [u.span.ordinal, u.span.ordinal],
-                "device_scope": v.device_scope,
-                "links": [
-                    {"rel": ln.rel, "clue": encode_clue(ln.clue_version_id), "stale": ln.stale}
-                    for ln in links.get(v.logical_id, [])
-                ],
-            }
-        )
     return [{k: v for k, v in it.items() if not k.startswith("_")} for it in items]
 
 
@@ -320,7 +325,15 @@ async def drilldown(
         clues = [decode_clue(c) for c in request.clue_ids]
     except InvalidClue as exc:  # defence in depth; the request model already rejects these
         raise ToolError("E_INVALID_ARG", str(exc)) from exc
-    clue_hash = _sha(request.clue_ids)
+    clue_hash = _sha(
+        {
+            "project": request.project,
+            "clues": request.clue_ids,
+            "valid_at": request.valid_at,
+            "known_at": request.known_at,
+            "include_archived": request.include_archived,
+        }
+    )
     async with conn.transaction():
         project = await _read_project(conn, ctx, request.project)
         resume = 0
@@ -337,41 +350,34 @@ async def drilldown(
         units = await _expand_clues(
             conn, clues, request.clue_ids, project.project_id, scopes, valid_at, known_at, statuses
         )
-        if request.cursor is not None:
-            p_vid, p_ord = p.get("version_id"), p.get("ordinal")
-            if not (0 <= resume < len(units)) or (
-                units[resume].version.version_id != p_vid or units[resume].span.ordinal != p_ord
-            ):
-                raise ToolError("E_INVALID_CURSOR", "cursor position is not valid any more")
-        page = units[resume:]
+        # Group each clue's chunks followed by its edges. Edges are independent packing
+        # units, so a long list cannot make every page fail before any progress is possible.
         links: dict[int, list[q.DrillLink]] = {}
-        for u in page:
+        expanded: list[_Unit] = []
+        for i, u in enumerate(units):
+            expanded.append(u)
+            if i + 1 < len(units) and units[i + 1].clue_index == u.clue_index:
+                continue
             lid = u.version.logical_id
             if lid not in links:
                 links[lid] = await q.drilldown_links(
                     conn, lid, project.project_id, scopes, valid_at, known_at
                 )
-
+            expanded.extend(_Unit(u.clue_index, u.clue, u.version, u.span, ln) for ln in links[lid])
+        units = expanded
+        if request.cursor is not None:
+            if not (0 <= resume < len(units)) or (
+                units[resume].version.version_id != p.get("version_id")
+                or units[resume].span.ordinal != p.get("ordinal")
+            ):
+                raise ToolError("E_INVALID_CURSOR", "cursor position is not valid any more")
+        page = units[resume:]
         meter = deps.meter
         envelope: dict[str, Any] = {"items": [], "next_cursor": None}
-        base = meter.settle(envelope, budget) + CURSOR_TOKENS  # estimate only; exact settle below
-        for u in page:
-            u.tokens = meter.count_text(u.span.text) + 12
-        link_cost = {
-            lid: meter.count(
-                [{"rel": ln.rel, "clue": encode_clue(ln.clue_version_id), "stale": ln.stale} for ln in ls]
-            )
-            + 8
-            for lid, ls in links.items()
-        }
+        base = meter.settle(envelope, budget) + CURSOR_TOKENS
         prefix = [0]
-        seen: set[int] = set()
         for u in page:
-            extra = u.tokens
-            if u.clue_index not in seen:
-                seen.add(u.clue_index)
-                extra += 40 + link_cost[u.version.logical_id]
-            prefix.append(prefix[-1] + extra)
+            prefix.append(prefix[-1] + meter.count(_render_items([u])))
 
         def cursor_for(n: int) -> str | None:
             if n >= len(page):
@@ -392,7 +398,7 @@ async def drilldown(
             )
 
         def apply(n: int) -> None:
-            envelope["items"] = _render_items(page[:n], links)
+            envelope["items"] = _render_items(page[:n])
             envelope["next_cursor"] = cursor_for(n)
 
         n = _pack_page(meter, envelope, budget, len(page), apply, lambda k: base + prefix[k])
@@ -528,15 +534,19 @@ async def raw(
         if v is None:
             raise _not_found("version")
         resume = 0
+        read_hash = _sha({"project": request.project, "version_id": request.version_id})
         if request.cursor is not None:
             p = _verify_cursor(deps, ctx, request.cursor)
-            if p.get("tool") != TOOL_RAW or p.get("version_id") != v.version_id:
+            if p.get("tool") != TOOL_RAW or p.get("h") != read_hash:
                 raise ToolError("E_INVALID_CURSOR", "cursor does not belong to this version")
-            resume = int(p.get("ordinal", 0))
-        links = await q.raw_links(conn, v.logical_id, project.project_id, scopes)
+            resume = int(p.get("i", 0))
+            _, known_at = await _as_of(conn, None, p.get("known_at"))
+        else:
+            known_at = await q.clock_now(conn)
+        links = await q.raw_links(conn, v, project.project_id, scopes, known_at)
         slugs = await q.project_slugs(conn, v.project_ids)
         ev, payload_item = await _provenance(conn, v, project.project_id, scopes)
-        spans = await q.chunk_spans(conn, v.version_id, resume)
+        spans = await q.chunk_spans(conn, v.version_id)
 
         envelope: dict[str, Any] = {
             "version_id": v.version_id,
@@ -560,18 +570,7 @@ async def raw(
                 "recorded_at": fmt_ts(ev.recorded_at),
             },
             "payload_item": payload_item,
-            "links": [
-                {
-                    "rel": ln.rel,
-                    "dst_logical_id": ln.dst_logical_id,
-                    "dst_version_id": ln.dst_version_id,
-                    "valid_from": fmt_ts(ln.valid_from),
-                    "valid_to": fmt_ts(ln.valid_to),
-                    "recorded_at": fmt_ts(ln.recorded_at),
-                    "superseded_at": fmt_ts(ln.superseded_at),
-                }
-                for ln in links
-            ],
+            "links": [],
             "chunks": [],
             "next_cursor": None,
         }
@@ -580,24 +579,43 @@ async def raw(
             {"ordinal": s.ordinal, "char_start": s.char_start, "char_end": s.char_end, "text": s.text}
             for s in spans
         ]
+        rendered_links = [
+            {
+                "rel": ln.rel,
+                "dst_logical_id": ln.dst_logical_id,
+                "dst_version_id": ln.dst_version_id,
+                "valid_from": fmt_ts(ln.valid_from),
+                "valid_to": fmt_ts(ln.valid_to),
+                "recorded_at": fmt_ts(ln.recorded_at),
+                "superseded_at": fmt_ts(ln.superseded_at),
+            }
+            for ln in links
+        ]
+        # Chunks and links share a single ordered cursor stream; metadata repeats on each
+        # page, while the potentially unbounded collections do not.
+        units = [("chunks", r) for r in rendered] + [("links", r) for r in rendered_links]
+        if request.cursor is not None and not 0 <= resume < len(units):
+            raise ToolError("E_INVALID_CURSOR", "cursor position is not valid any more")
+        page = units[resume:]
         base = meter.settle(envelope, budget) + CURSOR_TOKENS
         prefix = [0]
-        for r in rendered:
+        for _, r in page:
             prefix.append(prefix[-1] + meter.count(r) + 1)
 
         def apply(n: int) -> None:
-            envelope["chunks"] = rendered[:n]
+            envelope["chunks"] = [r for kind, r in page[:n] if kind == "chunks"]
+            envelope["links"] = [r for kind, r in page[:n] if kind == "links"]
             envelope["next_cursor"] = (
                 None
-                if n >= len(rendered)
+                if n >= len(page)
                 else sign_cursor(
                     deps.cursor_secret,
                     ctx,
-                    {"tool": TOOL_RAW, "version_id": v.version_id, "ordinal": rendered[n]["ordinal"]},
+                    {"tool": TOOL_RAW, "h": read_hash, "i": resume + n, "known_at": fmt_ts(known_at)},
                 )
             )
 
-        _pack_page(meter, envelope, budget, len(rendered), apply, lambda k: base + prefix[k])
+        _pack_page(meter, envelope, budget, len(page), apply, lambda k: base + prefix[k])
 
         at = await q.clock_now(conn)
         await q.record_access(

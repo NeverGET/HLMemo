@@ -93,7 +93,7 @@ async def test_close_hidden_pin_or_card_never_writes(
                         "private",
                         "secret",
                         kind="project_card" if target_kind == "card" else "fact",
-                        device_scope=scope,
+                        device_scope="all" if target_kind == "card" else scope,
                     )
                 ],
             ),
@@ -101,6 +101,13 @@ async def test_close_hidden_pin_or_card_never_writes(
         )
         await conn.commit()
         target = initial.versions[0]
+        if target_kind == "card":
+            # Legacy malformed rows still fail closed; new writes reject private cards.
+            await conn.execute(
+                "UPDATE memory_versions SET device_scope = %s WHERE version_id = %s",
+                (scope, target.version_id),
+            )
+            await conn.commit()
         head = target.version_id + (0 if correct_head else 1000)
         req = {
             "project": OTHER,

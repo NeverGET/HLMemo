@@ -23,6 +23,11 @@ async def configure_connection(conn: AsyncConnection, *, settings: Settings | No
         ("idle_in_transaction_session_timeout", settings.db_idle_in_transaction_timeout_ms),
     ):
         await conn.execute("SELECT set_config(%s, %s, false)", (name, f"{value}ms"))
+    if conn.info.server_version >= 170000:
+        await conn.execute(
+            "SELECT set_config('transaction_timeout', %s, false)",
+            (f"{settings.db_transaction_timeout_ms}ms",),
+        )
     # the pool requires configure() to hand back an IDLE connection; with autocommit=False the
     # statements above opened a transaction (SET TIME ZONE is session-scoped, so commit keeps it)
     await conn.commit()

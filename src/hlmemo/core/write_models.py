@@ -76,6 +76,12 @@ class Item(_Strict):
 
     _device_scope = field_validator("device_scope")(canonical_device_scope)
 
+    @model_validator(mode="after")
+    def _shared_card(self) -> Item:
+        if self.kind == "project_card" and self.device_scope != "all":
+            raise ValueError('project_card device_scope must be "all"')
+        return self
+
     @field_validator("project_ids", mode="before")
     @classmethod
     def _no_null_elements(cls, v: Any) -> Any:

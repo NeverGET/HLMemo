@@ -16,7 +16,7 @@ violate ``links.dst_version_id → memory_versions`` (codex C2).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -121,7 +121,11 @@ async def _replay_write(
                     recorded_at=T,
                     source_event_id=event_id,
                     supersedes_version_id=base.version_id,
-                    last_access_at=base.last_access_at,
+                    last_access_at=(
+                        parse_opt_ts(sv["last_access_at"], field="last_access_at")
+                        if "last_access_at" in sv
+                        else base.last_access_at
+                    ),
                 ),
             )
             stats.versions += 1
@@ -166,6 +170,23 @@ async def _replay_write(
         stats.chunks += len(it["chunks"])
 
     # pass 2: links — every target version of the batch now exists (forward / cyclic refs)
+    for sv in res.get("link_survivors", []):
+        base = await q.get_link(conn, sv["from_link_id"])
+        if base is None:
+            raise ReplayError(f"event {event_id}: link survivor base {sv['from_link_id']} missing")
+        await q.insert_link(
+            conn,
+            replace(
+                base,
+                link_id=sv["link_id"],
+                valid_from=parse_ts(sv["valid_from"]),
+                valid_to=parse_opt_ts(sv["valid_to"], field="valid_to"),
+                recorded_at=T,
+                source_event_id=event_id,
+                supersedes_link_id=base.link_id,
+            ),
+        )
+        stats.links += 1
     for it in res["items"]:
         for ln in it.get("links", []):
             await q.insert_link(

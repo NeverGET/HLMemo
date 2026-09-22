@@ -37,7 +37,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import deque
+from collections import OrderedDict, deque
+from functools import lru_cache
+from ipaddress import ip_address, ip_network
 from typing import Any
 
 from psycopg import Error as DatabaseError
@@ -47,7 +49,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from hlmemo.auth.errors import HlmError
 from hlmemo.auth.resolve import resolve
-from hlmemo.auth.tokens import parse_bearer
+from hlmemo.auth.tokens import constant_time_equal, parse_bearer
 from hlmemo.config import get_settings
 from hlmemo.db import auth_queries as q
 from hlmemo.server.errors import ERROR_TYPES, error_response
@@ -64,22 +66,66 @@ COMMIT_FAILED = HlmError(
 
 
 class RateLimiter:
-    """Fixed-window per-key counter (register: 5/min/IP). In-memory, per process."""
+    """Bounded sliding-window per-IP counters, ordered by most recent accepted hit."""
 
-    def __init__(self, limit: int, window_s: float = 60.0) -> None:
+    def __init__(self, limit: int, window_s: float = 60.0, max_keys: int = 4096) -> None:
+        if max_keys < 1:
+            raise ValueError("max_keys must be positive")
         self.limit = limit
         self.window_s = window_s
-        self._hits: dict[str, deque[float]] = {}
+        self.max_keys = max_keys
+        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
+        while self._hits:
+            oldest = next(iter(self._hits.values()))
+            if oldest and now - oldest[-1] < self.window_s:
+                break
+            self._hits.popitem(last=False)
+        if key not in self._hits and len(self._hits) >= self.max_keys:
+            self._hits.popitem(last=False)
         dq = self._hits.setdefault(key, deque())
-        while dq and now - dq[0] > self.window_s:
+        while dq and now - dq[0] >= self.window_s:
             dq.popleft()
         if len(dq) >= self.limit:
             return False
         dq.append(now)
+        self._hits.move_to_end(key)
         return True
+
+
+@lru_cache(maxsize=32)
+def _proxy_networks(config: str) -> tuple:
+    return tuple(ip_network(value.strip(), strict=False) for value in config.split(",") if value.strip())
+
+
+def trusted_client_ip(scope: Scope, trusted_proxy_ips: str) -> str:
+    """Use XFF only behind an explicitly trusted peer; peel trusted hops right-to-left."""
+    peer = scope.get("client")
+    if not peer:
+        return "unknown"
+    host = peer[0]
+    networks = _proxy_networks(trusted_proxy_ips)
+
+    def trusted(value: str) -> bool:
+        address = ip_address(value)
+        return any(address in network for network in networks)
+
+    try:
+        if not trusted(host):
+            return host
+        forwarded = Headers(scope=scope).get("x-forwarded-for")
+        if not forwarded:
+            return host
+        hops = [str(ip_address(value.strip())) for value in forwarded.split(",")]
+        for hop in reversed(hops):
+            if not trusted(hop):
+                return hop
+        return hops[0]
+    except ValueError:
+        # Malformed or non-IP peers/forwarding headers never become attacker-chosen buckets.
+        return host
 
 
 class AuthMiddleware:
@@ -115,9 +161,18 @@ class AuthMiddleware:
             return
 
         settings = getattr(scope["app"].state, "settings", None) or get_settings()
+        body_cap = (
+            min(settings.request_max_body_bytes, 16 * 1024)
+            if is_register
+            else settings.request_max_body_bytes
+        )
         # Untrusted network input must never own a database connection or device lock.
         try:
-            async with asyncio.timeout(settings.request_body_timeout_s):
+            loop = asyncio.get_running_loop()
+            total_deadline = loop.time() + settings.request_body_total_timeout_s
+            async with asyncio.timeout_at(
+                min(total_deadline, loop.time() + settings.request_body_timeout_s)
+            ) as body_deadline:
                 body = bytearray()
                 length = headers.get("content-length")
                 if length is not None:
@@ -130,7 +185,7 @@ class AuthMiddleware:
                             scope, receive, send
                         )
                         return
-                    if declared > settings.request_max_body_bytes:
+                    if declared > body_cap:
                         await self._body_error(scope, receive, send, 413, "request body too large")
                         return
                 while True:
@@ -138,10 +193,14 @@ class AuthMiddleware:
                     if message["type"] == "http.disconnect":
                         return
                     chunk = message.get("body", b"")
-                    if len(body) + len(chunk) > settings.request_max_body_bytes:
+                    if len(body) + len(chunk) > body_cap:
                         await self._body_error(scope, receive, send, 413, "request body too large")
                         return
                     body.extend(chunk)
+                    if chunk:
+                        body_deadline.reschedule(
+                            min(total_deadline, loop.time() + settings.request_body_timeout_s)
+                        )
                     if not message.get("more_body", False):
                         break
         except TimeoutError:
@@ -162,7 +221,14 @@ class AuthMiddleware:
         if bearer is None and route in NO_BEARER_OK:
             await self.app(scope, receive, send)
             return
-        pool = scope["app"].state.pool
+        admin_token = settings.admin_token
+        admin_route = route[1].startswith("/admin/") and bearer is not None and admin_token is not None
+        use_admin_pool = (
+            is_revoke
+            or route == READY
+            or (admin_route and constant_time_equal(bearer, admin_token.get_secret_value()))
+        )
+        pool = scope["app"].state.admin_pool if use_admin_pool else scope["app"].state.pool
         buffered: list[Message] = []
         sent_any = False
         streaming = False
@@ -245,10 +311,20 @@ class AuthMiddleware:
         try:
             async with asyncio.timeout(db_timeout) as deadline:
                 conn = await lease.__aenter__()
+                if route[1] == "/mcp" and hasattr(conn, "execute"):
+                    remaining_ms = max(1, int((deadline.when() - asyncio.get_running_loop().time()) * 1000))
+                    await conn.execute(
+                        "SELECT set_config('hlmemo.request_db_timeout_ms', %s, true)", (str(remaining_ms),)
+                    )
                 if is_revoke:
                     wait_ms = int(settings.request_db_timeout_s * 1000) + settings.db_lock_timeout_ms
                     for name in ("lock_timeout", "statement_timeout"):
                         await conn.execute("SELECT set_config(%s, %s, true)", (name, f"{wait_ms}ms"))
+                    if conn.info.server_version >= 170000:
+                        await conn.execute(
+                            "SELECT set_config('transaction_timeout', %s, true)",
+                            (f"{int(db_timeout * 1000) + 1000}ms",),
+                        )
                 if bearer is not None:
                     ctx, row = await resolve(
                         conn,
@@ -276,7 +352,11 @@ class AuthMiddleware:
             if conn is not None:
                 # Ordinary authentication denials have no detached transport worker;
                 # rolling back is sufficient and avoids reconnect churn from bad tokens.
-                await release(discard=dispatched or not isinstance(err, HlmError))
+                await release(
+                    discard=dispatched
+                    and route[1] == "/mcp"
+                    and isinstance(err, (asyncio.CancelledError, TimeoutError))
+                )
             if sent_any:
                 raise
             if commit_error is not None:
@@ -293,14 +373,14 @@ class AuthMiddleware:
             return
         finally:
             if conn is not None:
-                await release(discard=True)
+                await release(discard=dispatched and route[1] == "/mcp")
         # Finite responses are committed and detached from the pool before their first byte.
         for message in buffered:
             await send(message)
 
     @staticmethod
     async def _body_error(scope: Scope, receive: Receive, send: Send, status: int, message: str) -> None:
-        response = error_response(HlmError("E_INVALID_ARG", message))
+        response = error_response(HlmError("E_UNAVAILABLE" if status == 408 else "E_INVALID_ARG", message))
         response.status_code = status
         await response(scope, receive, send)
 
