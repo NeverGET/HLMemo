@@ -258,9 +258,9 @@ Integrity rules enforced in the write service (not expressible as FKs): every el
 
 ## 3. Tool contracts
 
-Transport: MCP streamable HTTP at `/mcp`, bearer per §2. Every tool result returns `structuredContent` plus the identical compact JSON as a single `TextContent` block; errors are tool results with `isError:true` and body `{"code","message","retryable","details"}`.
+Transport: MCP streamable HTTP at `/mcp`, bearer per §2. Every tool result is a single `TextContent` block carrying the canonical compact JSON — **no** `structuredContent` (D-024 (6): one representation on the wire; tools are registered with `@mcp.tool(structured_output=False)`); errors are tool results with `isError:true` and body `{"code","message","retryable","details"}`.
 
-**Budget rule (G2).** `token_budget` is required on `memory.query/drilldown/raw`, optional on `write`/`call_the_day` (default 2000). Range `256 ≤ token_budget ≤ 32000`; `<256` → `E_BUDGET_TOO_SMALL {min:256}`, `>32000` → `E_BUDGET_TOO_LARGE`. Meter: `tiktoken.get_encoding("o200k_base")` over `json.dumps(result, ensure_ascii=False, separators=(",",":"), sort_keys=True)` — the canonical serialisation counted once (the MCP text duplicate is transport, not counted; see CONFLICTS #6). Every success carries `budget:{limit,used,tokenizer:"o200k_base"}` with `used ≤ limit` guaranteed by measure-after-each-append packing. For write/call_the_day the ack size is computed from the item count **before** any mutation; if it cannot fit → `E_BUDGET_TOO_SMALL {min:<needed>}` and nothing is written. Budget exhaustion is never reported as "no evidence".
+**Budget rule (G2).** `token_budget` is required on `memory.query/drilldown/raw`, optional on `write`/`call_the_day` (default 2000). Range `256 ≤ token_budget ≤ 32000`; `<256` → `E_BUDGET_TOO_SMALL {min:256}`, `>32000` → `E_BUDGET_TOO_LARGE`. Meter: `tiktoken.get_encoding("o200k_base")` over `json.dumps(result, ensure_ascii=False, separators=(",",":"), sort_keys=True)` — the canonical serialisation counted once (the single `TextContent` on the wire *is* this serialisation, so wire bytes == metered bytes; see CONFLICTS #6 / D-024 (6)). Every success carries `budget:{limit,used,tokenizer:"o200k_base"}` with `used ≤ limit` guaranteed by measure-after-each-append packing. For write/call_the_day the ack size is computed from the item count **before** any mutation; if it cannot fit → `E_BUDGET_TOO_SMALL {min:<needed>}` and nothing is written. Budget exhaustion is never reported as "no evidence".
 
 **Error codes** (`retryable` in parentheses): `E_AUTH`(n), `E_DEVICE_PENDING`(y), `E_FORBIDDEN_PROJECT`(n), `E_INVALID_ARG`(n), `E_NOT_FOUND`(n), `E_BUDGET_TOO_SMALL`(n), `E_BUDGET_TOO_LARGE`(n), `E_REQUEST_ID_CONFLICT`(n), `E_VERSION_CONFLICT{current_version_id}`(n), `E_SESSION_CLOSED`(n), `E_TEMPORAL`(n), `E_CARD_TOO_LARGE`(n), `E_INVALID_CURSOR`(n), `E_UNAVAILABLE`(y).
 
@@ -358,7 +358,7 @@ Typer CLI, package `hlmemo.cli`. Commands:
 | `hlm device approve <name\|id> --class C [--notes "..."] [--grant slug:role ...]` | approval from a trusted device (§2) |
 | `hlm device revoke <name\|id>` / `hlm device grant <name\|id> <slug> <role>` / `ungrant` | grant matrix maintenance |
 | `hlm project create <slug> [--name]` / `list` | `/admin/projects` (admin device) |
-| `hlm mcp add claude\|codex\|agy` | registers the MCP server in that CLI with the device token |
+| `hlm mcp add claude\|codex\|agy` | registers the MCP server with the device token. `claude`: `claude mcp add --transport http hlmemo <URL>/mcp --header "Authorization: Bearer <token>"` (2.1.278, `-H/--header` verified). `codex`: `codex mcp add hlmemo --url <URL>/mcp --bearer-token-env-var HLM_DEVICE_TOKEN` (0.155.1; the flag names an env var, `hlm` exports it in the launching shell). `agy`: agy 1.1.4 has **no** `mcp` subcommand — `hlm` merges `{"mcpServers":{"hlmemo":{"serverUrl":"<URL>/mcp","headers":{"Authorization":"Bearer <token>"}}}}` into `~/.gemini/config/mcp_config.json` (existing entries preserved) |
 | `hlm query "<q>" [--budget 3000]` | direct `memory.query`, prints compact JSON |
 | `hlm close --notes ... [--decision ...] [--lesson "title::body"] [--card FILE]` | `memory.call_the_day` |
 | `hlm claude\|codex\|agy [--task "..."] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]` | preflight + launch |
@@ -373,7 +373,7 @@ profile        = "openrouter"
 fallback_profile = "openai"
 HLM_DB_DSN     = "env:HLM_DB_DSN"
 HLM_EMBED_MODEL = "intfloat/multilingual-e5-small"
-HLM_EMBED_REVISION = "models.lock:e5"        # ASSUMPTION: revision fixed at first build
+HLM_EMBED_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"   # HF commit of intfloat/multilingual-e5-small, mirrored in models.lock
 HLM_HOSTING_TARGET = "compose"
 
 [client]
@@ -403,6 +403,8 @@ HLM_LLM_BASE_URL = "http://127.0.0.1:8000/v1"
 HLM_LLM_MODEL    = "<served-model>"
 HLM_LLM_API_KEY  = "none"
 ```
+
+**models.lock** — `e5 = intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3` (dims 384, mean pooling, max 512 tokens, ONNX file `onnx/model.onnx`, tokenizer = XLM-R Unigram/SentencePiece loaded from `onnx/tokenizer.json` via `tokenizers` — no `sentencepiece` dependency) plus sha256 of `onnx/model.onnx` and `onnx/tokenizer.json`, written at first build and checked by `hlm doctor` and `core/embedder.py` at startup.
 `profiles/mistral-eu.toml` and `profiles/alibaba-eu.toml` are shipped too (D-017). Librarian keys are parsed and validated in Phase 0 but no LLM call is made.
 
 **Preflight.** Query text = `--task` if given, else `"<git branch>: <last 3 commit subjects>"` (else `"session start"`). Call `memory.query` with `[preflight].budget` (retry once on `E_UNAVAILABLE`/timeout). Build the first prompt:
@@ -437,7 +439,7 @@ HLMemo/
     db/queries.py        all SQL (candidate lists, scope predicate, outbox lease)
     db/replay.py         rebuild projections from events (G6)
     core/normalize.py    normalize(), term split, identifier detection
-    core/chunker.py      E5 tokenizer, 400-token chunks, 40 overlap, char offsets
+    core/chunker.py      E5 tokenizer (`tokenizers` from onnx/tokenizer.json, XLM-R Unigram), 400-token chunks, 40 overlap, char offsets
     core/embedder.py     ONNX Runtime session (fp32 onnx/model.onnx), query:/passage: prefixes
     core/budget.py       o200k_base meter + greedy packer
     core/retrieval.py    §4 steps 3-12
@@ -445,7 +447,7 @@ HLMemo/
     core/write_service.py one-tx events+versions+chunks+links+jobs, idempotency, conflicts
     core/temporal.py     bi-temporal predicates/validation
     core/scope.py        project_ids / device_scope resolution and checks (D-023)
-    server/app.py        MCP server (streamable HTTP) + /health
+    server/app.py        MCP server: `from mcp.server import MCPServer` (mcp 2.x; `FastMCP` is removed), tools via `@mcp.tool(structured_output=False)`, served with `mcp.streamable_http_app(streamable_http_path="/mcp")` mounted in Starlette (lifespan `async with mcp.session_manager.run()`) + /health
     server/auth.py       bearer -> device -> grants -> role
     server/admin.py      /admin/projects, /admin/devices, grants
     server/devices.py    /devices/register, approval state machine
@@ -456,7 +458,7 @@ HLMemo/
   tests/{unit,integration,gates,smoke,fixtures}/   .githooks/pre-commit   .gitleaks.toml
 ```
 
-`compose.yaml`: `db: pgvector/pgvector:0.8.3-pg17` (ASSUMPTION: tag exists; extension 0.8.3 observed in the local `pgvector/pgvector:pg17` image on 2026-09-22) with `pgdata` volume and `pg_isready` healthcheck; `migrate` (one-shot `alembic upgrade head`, `depends_on: db: condition: service_healthy`); `api` and `worker` from `Dockerfile` (`python:3.12.10-slim-bookworm`, model files baked at the `models.lock` revision, `depends_on: migrate: condition: service_completed_successfully`), `api` healthcheck `GET /health`; `test` profile runs pytest against the stack. Dependency pins (ASSUMPTION: latest stable at 2026-09, frozen in `uv.lock`): `mcp==2.*`, `psycopg[binary,pool]==3.3.*`, `alembic==1.17.*`, `pgvector==0.4.*`, `onnxruntime==1.23.*`, `tokenizers==0.22.*`, `tiktoken==0.12.*`, `pydantic==2.12.*`, `typer==0.20.*`, `httpx==0.28.*`, `keyring==25.*`, `pytest==8.*`.
+`compose.yaml`: `db: pgvector/pgvector:0.8.6-pg17` (verified 2026-09-22: latest pg17 tag on Docker Hub, manifest present; the local `pgvector/pgvector:pg17` image from June ships 0.8.3) with `pgdata` volume and `pg_isready` healthcheck; `migrate` (one-shot `alembic upgrade head`, `depends_on: db: condition: service_healthy`); `api` and `worker` from `Dockerfile` (`python:3.12.14-slim-bookworm`, model files baked at the `models.lock` revision, `depends_on: migrate: condition: service_completed_successfully`), `api` healthcheck `GET /health`; `test` profile runs pytest against the stack. Dependency pins (verified against PyPI on 2026-09-22, frozen in `uv.lock`): `mcp==2.*` (2.2.0), `psycopg[binary,pool]==3.3.*` (3.3.6), `alembic==1.20.*`, `pgvector==0.5.*`, `onnxruntime==1.30.*`, `tokenizers==0.23.*`, `tiktoken==0.14.*`, `pydantic==2.13.*`, `typer==0.27.*`, `httpx==0.28.*` (0.28.1), `keyring==25.*` (25.7.0), `pytest==9.*`.
 
 ---
 
@@ -497,10 +499,10 @@ Never cut: device model, budget guarantee, G5/G6, preflight-blocks-on-failure.
 3. Any trusted device of the same `user_id` may approve/position a pending device (not only admin).
 4. Device registration is open but rate-limited; `HLM_REGISTRATION_SECRET` is required when set (recommended on the VPS).
 5. Fingerprint = sha256 of platform machine id (`IOPlatformUUID` / `/etc/machine-id`) + username; collisions fall back to a random id.
-6. `intfloat/multilingual-e5-small` revision (and tokenizer/ONNX hashes) fixed at first build in `models.lock`.
-7. `o200k_base` is "the pinned tokenizer" of D-015/G2; the MCP `TextContent` duplicate is not counted (CONFLICTS #6, orchestrator decision).
-8. Image/dep pins (`pgvector/pgvector:0.8.3-pg17`, `python:3.12.10-slim-bookworm`, Python package versions) are "latest stable at 2026-09" and must be verified at first build.
-9. Pinned client versions (Claude 2.1.278, Codex 0.155.1, agy 1.1.4) recorded in `tests/smoke/VERSIONS`; `agy --prompt-interactive`/`--print`, `codex mcp add --bearer-token-env-var`, and `claude mcp add --header` flag names must be verified against those versions.
+6. ~~`intfloat/multilingual-e5-small` revision (and tokenizer/ONNX hashes) fixed at first build in `models.lock`.~~ VERIFIED 2026-09-22: revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`, `onnx/` export present, dims 384, XLM-R Unigram tokenizer (see §5 `models.lock`).
+7. `o200k_base` is "the pinned tokenizer" of D-015/G2; per D-024 (6) there is no duplicate — tool results are `TextContent`-only (`structured_output=False`), so wire bytes equal metered bytes.
+8. ~~Image/dep pins are "latest stable at 2026-09" and must be verified at first build.~~ VERIFIED 2026-09-22 (see `PHASE0-ASSUMPTIONS-VERIFIED.md`): `pgvector/pgvector:0.8.6-pg17`, `python:3.12.14-slim-bookworm`, package pins as in §6.
+9. Pinned client versions (Claude 2.1.278, Codex 0.155.1, agy 1.1.4) recorded in `tests/smoke/VERSIONS`. VERIFIED locally 2026-09-22: `agy -p/--print` (alias `--prompt`) and `-i/--prompt-interactive` exist; `codex mcp add --url … --bearer-token-env-var <ENV_VAR>` exists; `claude mcp add --transport http … -H/--header` exists; agy has **no** `mcp` subcommand → `hlm mcp add agy` writes `~/.gemini/config/mcp_config.json` (§5).
 10. Recall@5 ≥ 0.90 threshold is tuned on the synthetic fixture; real-data regression in Phase 1.
 11. `project_ids[]` referential integrity is application-enforced (no array FKs); a G5 test covers it.
 12. RRF is plain (k=60, equal weights, no multipliers) per D-024; any weighting/kind shaping is a Phase-3 change gated by G3 regression.
