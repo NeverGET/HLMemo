@@ -1,8 +1,8 @@
 # HLMemo — Phase-0 Specification (authoritative)
 
-Status: MERGED 2026-09-22 from `docs/consults/03-claude-phase0-spec.md` (Claude Plan agent) and `docs/consults/03-codex-phase0-design.md` (codex/gpt-6-astra), both written before D-022/D-023. D-001..D-023 are binding; D-023 (device identity) is applied here directly. Choices where the two sources disagreed are logged in `PHASE0-CONFLICTS.md`. Every item marked **ASSUMPTION** is collected in §9.
+Status: MERGED 2026-09-22 from `docs/consults/03-claude-phase0-spec.md` (Claude Plan agent) and `docs/consults/03-codex-phase0-design.md` (codex/gpt-6-astra), both written before D-022/D-023. D-001..D-024 are binding; D-023 (device identity) is applied here directly. Choices where the two sources disagreed are logged in `PHASE0-CONFLICTS.md`. Every item marked **ASSUMPTION** is collected in §9. REVISED 2026-09-22 after codex round 4 (`docs/consults/04-codex-review.md`): blockers B1–B6 and device-audit items D1–D5 applied (§1.1, §2, §3, §4, §7).
 
-Conventions: valid time = `valid_from/valid_to`; system time = `recorded_at/superseded_at`; open ends are `'infinity'` in SQL and `null` in JSON. All server ids are `bigint` (clue token cost); client-supplied `request_id`/`session_id` are UUID strings.
+Conventions: valid time = `valid_from/valid_to`; system time = **one** pair `recorded_at/superseded_at` on every projection row (no `created_at`/`deleted_at`/`updated_at`); open ends are `'infinity'` in SQL and `null` in JSON. All server ids are `bigint` (clue token cost); client-supplied `request_id`/`session_id` are UUID strings.
 
 ---
 
@@ -25,9 +25,10 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 CREATE SEQUENCE logical_id_seq AS bigint;
 
--- 1. devices (D-023). One hashed bearer token per device. The admin token
---    (env HLM_ADMIN_TOKEN) is materialised as device_id 1, is_admin=true,
---    so every event has a device_id.
+-- 1. devices (D-023). One hashed bearer token per device. device_id 1 is
+--    RESERVED for the admin device by this migration (bootstrap insert below);
+--    its hash is bound from HLM_ADMIN_TOKEN at API start (§2). Every event
+--    therefore has a device_id from the first migration on.
 CREATE TABLE devices (
   device_id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   user_id               text NOT NULL DEFAULT 'owner',
@@ -40,6 +41,7 @@ CREATE TABLE devices (
                         CHECK (status IN ('pending','trusted','revoked')),
   is_admin              boolean NOT NULL DEFAULT false,
   token_sha256          text NOT NULL,
+  token_generation      integer NOT NULL DEFAULT 1,   -- bumped on revoke/rotation; cursors are bound to it (§2, §3)
   notes                 text,
   registered_at         timestamptz NOT NULL DEFAULT now(),
   approved_at           timestamptz,
@@ -48,9 +50,21 @@ CREATE TABLE devices (
   last_seen_at          timestamptz,
   UNIQUE (user_id, name),
   UNIQUE (token_sha256),
-  UNIQUE (fingerprint)
+  UNIQUE (fingerprint),
+  CHECK (NOT is_admin OR device_id = 1)                -- only the reserved device may be admin
 );
 CREATE INDEX devices_status ON devices (status) WHERE status <> 'revoked';
+
+-- Bootstrap (D-023, §2): reserve device 1 atomically inside migration 0001, before any
+-- registration can run. The placeholder hash can never equal sha256(<token>), so the
+-- device is unusable until the API binds HLM_ADMIN_TOKEN to it at start-up.
+INSERT INTO devices (device_id, user_id, name, class, fingerprint, os, status, is_admin,
+                     token_sha256, notes, approved_at, approved_by_device_id)
+OVERRIDING SYSTEM VALUE
+VALUES (1, 'owner', 'admin', 'server', 'reserved:admin', NULL, 'trusted', true,
+        'reserved:admin', 'reserved by migration 0001; hash bound from HLM_ADMIN_TOKEN at API start',
+        now(), 1);
+SELECT setval(pg_get_serial_sequence('devices', 'device_id'), 1);
 
 -- 2. projects
 CREATE TABLE projects (
@@ -77,6 +91,8 @@ CREATE INDEX dpg_project ON device_project_grants (project_id) WHERE revoked_at 
 
 -- 4. events: authoritative, append-only (D-010). project_id is NULL for
 --    device-level events; NULLS NOT DISTINCT keeps request_id unique there too.
+--    request_id is unique per (project, device): the same UUID sent by another
+--    device is a different request (§3). payload = {"request","resolved"} (§1.1).
 CREATE TABLE events (
   event_id       bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   project_id     bigint REFERENCES projects,
@@ -89,18 +105,21 @@ CREATE TABLE events (
                    'device_registered','device_approved','device_revoked',
                    'grant_added','grant_revoked')),
   schema_version smallint NOT NULL DEFAULT 1,
-  payload        jsonb NOT NULL,
-  payload_sha256 text NOT NULL,
+  projection_version smallint NOT NULL DEFAULT 1, -- chunker/normalizer/meter contract that derived the projections (§1.1)
+  payload        jsonb NOT NULL,                -- {"request":<verbatim args>,"resolved":<server-resolved defaults+ids>} (§1.1)
+  payload_sha256 text NOT NULL,                 -- sha256(canonical JSON of payload.request) — idempotency key
   occurred_at    timestamptz NOT NULL,          -- client claim
-  received_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
-  result         jsonb,                         -- stored reply for idempotent replay
-  UNIQUE NULLS NOT DISTINCT (project_id, request_id)
+  received_at    timestamptz NOT NULL DEFAULT clock_timestamp(),  -- audit only; projections use payload.resolved.recorded_at
+  result         jsonb,                         -- stored reply for idempotent replay (re-authorised on replay, §3)
+  UNIQUE NULLS NOT DISTINCT (project_id, device_id, request_id)
 );
 CREATE INDEX events_project_received ON events (project_id, received_at);
 CREATE INDEX events_device_received  ON events (device_id, received_at);
 CREATE UNIQUE INDEX events_one_close ON events (project_id, session_id) WHERE kind = 'call_the_day';
 
--- 5. memory_versions: bi-temporal projection, dual-axis scope (D-023).
+-- 5. memory_versions: bi-temporal projection, dual-axis scope (D-023). Rows are
+--    immutable except for closing superseded_at. A logical_id may have several
+--    CURRENT rows as long as their valid intervals do not overlap (§1.1).
 CREATE TABLE memory_versions (
   version_id     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   logical_id     bigint NOT NULL,
@@ -119,29 +138,37 @@ CREATE TABLE memory_versions (
   token_count    integer NOT NULL,                              -- o200k_base
   valid_from     timestamptz NOT NULL,
   valid_to       timestamptz NOT NULL DEFAULT 'infinity',
-  recorded_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
+  recorded_at    timestamptz NOT NULL,                          -- = payload.resolved.recorded_at of source_event; never a fresh clock
   superseded_at  timestamptz NOT NULL DEFAULT 'infinity',
   source_event_id bigint NOT NULL REFERENCES events,
-  supersedes_version_id bigint REFERENCES memory_versions,
+  supersedes_version_id bigint REFERENCES memory_versions,      -- the row this one replaces or was split from (§1.1)
   last_access_at timestamptz,                                   -- retention signal only (D-012)
   CHECK (valid_from < valid_to AND recorded_at < superseded_at),
   CHECK (project_id = ANY (project_ids)),
   CHECK (device_scope = 'all'
          OR device_scope ~ '^class:(personal|work|server|ci|other)$'
          OR device_scope ~ '^device:[0-9]+$'),
+  -- one version of a logical item per (valid_at, known_at) point; several current,
+  -- non-overlapping valid-time segments are allowed (backdated corrections, §1.1).
   EXCLUDE USING gist (
     logical_id WITH =,
     tstzrange(valid_from, valid_to, '[)') WITH &&,
-    tstzrange(recorded_at, superseded_at, '[)') WITH &&)
+    tstzrange(recorded_at, superseded_at, '[)') WITH &&),
+  -- one project card per project per (valid_at, known_at) point (replaces the old
+  -- mv_one_card unique index, which forbade valid-time segments of the card).
+  EXCLUDE USING gist (
+    project_id WITH =,
+    tstzrange(valid_from, valid_to, '[)') WITH &&,
+    tstzrange(recorded_at, superseded_at, '[)') WITH &&) WHERE (kind = 'project_card')
 );
-CREATE UNIQUE INDEX mv_current   ON memory_versions (logical_id) WHERE superseded_at = 'infinity';
-CREATE UNIQUE INDEX mv_one_card  ON memory_versions (project_id) WHERE kind = 'project_card' AND superseded_at = 'infinity';
+CREATE INDEX mv_logical_current  ON memory_versions (logical_id, version_id) WHERE superseded_at = 'infinity';  -- head() lookup, §1.1
 CREATE INDEX mv_project_kind     ON memory_versions (project_id, kind, status) WHERE superseded_at = 'infinity';
 CREATE INDEX mv_project_ids_gin  ON memory_versions USING gin (project_ids);
 CREATE INDEX mv_temporal         ON memory_versions (valid_from, valid_to, recorded_at, superseded_at);
 
--- 6. chunks: immutable spans of one version. project_ids/device_scope denormalised
---    for candidate scoping.
+-- 6. chunks: immutable spans of exactly one version — never rewritten; a new version
+--    gets its own chunk rows. project_ids/device_scope are denormalised copies used
+--    ONLY as a candidate prefilter; memory_versions is the authoritative scope (§4).
 CREATE TABLE chunks (
   chunk_id     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   version_id   bigint NOT NULL REFERENCES memory_versions ON DELETE RESTRICT,
@@ -175,7 +202,9 @@ CREATE TABLE embeddings (
 );
 CREATE INDEX emb_model ON embeddings (model, model_revision, preproc_version);
 
--- 8. links: bi-temporal edges (D-006/D-007), dual-axis scoped (D-023).
+-- 8. links: bi-temporal edges (D-006/D-007), dual-axis scoped (D-023). Edges are
+--    immutable rows: a change = supersede (close superseded_at) + insert, never UPDATE.
+--    dst_version_id pins the immutable target version (D-015 card provenance, §1.1).
 CREATE TABLE links (
   link_id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   project_id     bigint NOT NULL REFERENCES projects,
@@ -183,22 +212,34 @@ CREATE TABLE links (
   device_scope   text NOT NULL DEFAULT 'all',
   src_logical_id bigint NOT NULL,
   dst_logical_id bigint NOT NULL,
+  dst_version_id bigint NULL REFERENCES memory_versions,        -- immutable target version; required for derived_from
   rel            text NOT NULL CHECK (rel IN
                    ('relates_to','contradicts','supersedes','derived_from','depends_on')),
   props          jsonb NOT NULL DEFAULT '{}',
   valid_from     timestamptz NOT NULL,
   valid_to       timestamptz NOT NULL DEFAULT 'infinity',
-  recorded_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
+  recorded_at    timestamptz NOT NULL,                          -- = payload.resolved.recorded_at of source_event
   superseded_at  timestamptz NOT NULL DEFAULT 'infinity',
   source_event_id bigint NOT NULL REFERENCES events,
+  supersedes_link_id bigint REFERENCES links,
   CHECK (valid_from < valid_to AND recorded_at < superseded_at),
   CHECK (project_id = ANY (project_ids)),
+  CHECK (rel <> 'derived_from' OR dst_version_id IS NOT NULL),
   CHECK (device_scope = 'all'
          OR device_scope ~ '^class:(personal|work|server|ci|other)$'
-         OR device_scope ~ '^device:[0-9]+$')
+         OR device_scope ~ '^device:[0-9]+$'),
+  -- one edge (src, dst, rel) per (valid_at, known_at) point; temporal segments allowed
+  -- (replaces the old links_current unique index).
+  EXCLUDE USING gist (
+    src_logical_id WITH =,
+    dst_logical_id WITH =,
+    rel WITH =,
+    tstzrange(valid_from, valid_to, '[)') WITH &&,
+    tstzrange(recorded_at, superseded_at, '[)') WITH &&)
 );
-CREATE UNIQUE INDEX links_current ON links (src_logical_id, dst_logical_id, rel) WHERE superseded_at = 'infinity';
+CREATE INDEX links_src            ON links (src_logical_id) WHERE superseded_at = 'infinity';
 CREATE INDEX links_dst            ON links (dst_logical_id) WHERE superseded_at = 'infinity';
+CREATE INDEX links_dst_version    ON links (dst_version_id) WHERE superseded_at = 'infinity';
 CREATE INDEX links_project_gin    ON links USING gin (project_ids);
 
 -- 9. jobs: transactional outbox with leases.
@@ -232,23 +273,65 @@ CREATE INDEX CONCURRENTLY embeddings_hnsw ON embeddings
 
 Lexical choice: `to_tsvector('simple')` GIN over app-normalised `text_norm` with prefix tsqueries, plus a `pg_trgm` GIN as a secondary list for identifier terms. No per-row stemmer covers TR/DE/EN without language detection; Turkish suffixes and German inflection/compounds are recovered by `term:*` prefix matching after deterministic casefold/diacritic folding; trigrams catch snake_case, paths, env keys and compound substrings. Both are GIN; ranking stays SQL-deterministic.
 
-Integrity rules enforced in the write service (not expressible as FKs): every element of `project_ids` exists in `projects`; `device:<id>` scopes reference an existing non-revoked device of the same `user_id`; chunks/links copy `project_ids`/`device_scope` from their version at insert time and are rewritten when a new version is created.
+Integrity rules enforced in the write service (not expressible as FKs): every element of `project_ids` exists in `projects` (unknown slug → `E_FORBIDDEN_PROJECT`, no enumeration), contains no `null` and no duplicate (`E_INVALID_ARG`), and contains the home project `project` (`E_INVALID_ARG {reason:"missing_home"}` — the home is never silently added); `device:<id>` scopes reference an existing non-revoked device of the same `user_id`; chunks and links copy `project_ids`/`device_scope` from their version at insert time and are **never** rewritten — a new version gets new chunk rows and new link rows (G5 `test_project_ids_integrity`, §7).
+
+### 1.1 Temporal model and canonical event payload
+
+**System time.** Every projection row carries exactly one pair `recorded_at`/`superseded_at`. `events.received_at` is audit only. Each write event resolves **one** instant `T = payload.resolved.recorded_at` = `greatest(clock_timestamp(), 1 µs + max(recorded_at) of every row the event supersedes)`; every row the event inserts has `recorded_at = T` and every row it supersedes gets `superseded_at = T` (so `recorded_at < superseded_at` always holds and the EXCLUDE constraints see disjoint system intervals).
+
+**Current segments and head.** A `logical_id` may have several *current* rows (`superseded_at = 'infinity'`) whose valid intervals are pairwise disjoint (the EXCLUDE constraint; the former `mv_current`/`mv_one_card`/`links_current` unique indexes are gone). `head(logical_id)` = the greatest `version_id` among its current rows. Any write that touches a logical item creates a new, greater `version_id`, so `expected_version_id = head` is a complete optimistic-concurrency check (§3).
+
+**Immutability.** Versions, chunks and links are never updated in place except to close `superseded_at`. Chunks belong to exactly one version; correcting text means a new version with new chunk rows (the old chunks stay for `known_at` reads and `memory.raw`). Links are temporally superseded and re-inserted (`supersedes_link_id`), never edited.
+
+**Revision defaults.** A revision item (`logical_id` + `expected_version_id`) without `valid_from`/`valid_to` means "the fact changed at `occurred_at`": its interval is `[occurred_at, 'infinity')`. Explicit `valid_from`/`valid_to` make it a **correction** of that interval.
+
+**Backdated correction** (one transaction, one event): for the replacement interval `[cf, ct)` and every current row `V` of the logical item with `[vf, vt) ∩ [cf, ct) ≠ ∅`: (1) `V.superseded_at := T`; (2) insert one replacement row `R` with the new content, valid `[cf, ct)`, `supersedes_version_id = head`, fresh chunks; (3) for each such `V` insert **surviving interval segments** that copy `V`'s content unchanged: `[vf, cf)` if `vf < cf` and `[ct, vt)` if `ct < vt`, each with `supersedes_version_id = V.version_id` and its own copied chunk rows (same text/offsets, new `chunk_id`s); (4) links whose `src`/`dst` is the corrected item are untouched (they are keyed by `logical_id`; a link with `dst_version_id = V` becomes stale, §4.10); (5) `embed` jobs are enqueued per new version — the worker copies a vector when an embedding for identical `text_norm` under the same `model@revision/preproc` already exists, otherwise infers. Current rows outside `[cf, ct)` are not touched. G6 `test_backdated_correction_preserves_unaffected_intervals` reads the item at three `valid_at` points before and after the correction and at `known_at` before/after `T`.
+
+**Reads respect both axes on links too.** `memory.drilldown` returns an edge iff `link.valid_from ≤ valid_at < link.valid_to AND link.recorded_at ≤ known_at < link.superseded_at`, the link's own `project_ids`/`device_scope` pass the §4.4 scope test, and both endpoint versions are visible under the §4.4 predicate (the `dst` endpoint is `dst_version_id` when set, else the version of `dst_logical_id` current at `(valid_at, known_at)`). `memory.raw` is addressed by `version_id` and returns the row's own `valid_from/valid_to/recorded_at/superseded_at`, scope-checked on the version.
+
+**Canonical event payload (D-010).** `events.payload` has two parts. `payload.request` is the client's tool arguments verbatim (`payload_sha256 = sha256(canonical JSON of payload.request)` — the idempotency key). `payload.resolved` records every value the server chose, so a projection rebuild never calls a clock, a sequence or a tokenizer for identities:
+
+```json
+{"request":{"...":"tool arguments verbatim"},
+ "resolved":{
+  "recorded_at":"2026-09-22T10:00:00.123456Z","occurred_at":"…","projection_version":1,
+  "normalizer_version":1,
+  "chunker":{"name":"e5-window","version":1,"chunk_tok":400,"overlap":40,"tokenizer_sha256":"<onnx/tokenizer.json>"},
+  "meter":{"tokenizer":"o200k_base","tiktoken":"0.14.x"},
+  "embedder":{"model":"intfloat/multilingual-e5-small","revision":"614241f622f53c4eeff9890bdc4f31cfecc418b3","preproc_version":1,"dims":384},
+  "items":[{"index":0,"logical_id":17,"version_id":903,"project_ids":[3,5],"device_scope":"all",
+            "valid_from":"…","valid_to":null,"token_count":212,
+            "supersedes":[871],
+            "survivors":[{"version_id":904,"from_version_id":871,"valid_from":"…","valid_to":"…","chunks":[{"chunk_id":5011,"ordinal":0,"char_start":0,"char_end":1490,"e5_tokens":398}]}],
+            "chunks":[{"chunk_id":5009,"ordinal":0,"char_start":0,"char_end":1502,"e5_tokens":400}],
+            "links":[{"link_id":77,"rel":"derived_from","dst_logical_id":12,"dst_version_id":880,"supersedes_link_id":41,"valid_from":"…","valid_to":null}]}],
+  "superseded_links":[41],
+  "jobs":[{"dedupe_key":"embed:903:intfloat/multilingual-e5-small@614241f6"}]}}
+```
+
+`recorded_at` is stored with microsecond precision (Postgres `timestamptz` resolution) so the JSON round-trips exactly. `events.projection_version` names the chunker/normalizer/meter contract used; Phase 0 has version 1 only, and a contract change is a new version whose implementation is kept in code.
+
+**Replay (`db/replay.py`, G6).** Truncate `memory_versions`, `chunks`, `embeddings`, `links`, `jobs`; re-apply events in `event_id` order using only `payload.resolved` (and `payload.request` bodies for chunk text, sliced by the recorded `char_start/char_end` and normalised with the recorded `normalizer_version`); insert with `OVERRIDING SYSTEM VALUE` and the recorded `version_id`/`chunk_id`/`link_id`/`logical_id`; set `superseded_at` from the superseding event's `recorded_at`; `access` events replay `last_access_at`; finally `setval` `logical_id_seq` and the identity sequences to their maxima. Replay never calls `clock_timestamp()`, `nextval()` or the chunker. `test_rebuild_projections_from_events_identical` compares a primary-key-ordered `pg_dump --data-only` of `memory_versions`, `chunks`, `links`, `jobs(kind, dedupe_key, payload)` byte-for-byte and `embeddings.vec` within 1e-6 after the worker has drained (`embeddings.created_at` is excluded).
 
 ---
 
 ## 2. Auth & device model (D-023)
 
-**Token.** `Authorization: Bearer hlm_<43 base64url chars>` (32 random bytes). The server stores only `sha256(token)` in `devices.token_sha256`. Lookup by hash resolves the calling **device**; the client payload never names a device. `HLM_ADMIN_TOKEN` (env) is hashed on API start and upserted as device `admin` (`device_id` 1, class `server`, `is_admin=true`, status `trusted`), so admin actions are ordinary device actions with `events.device_id = 1`.
+**Token.** `Authorization: Bearer hlm_<43 base64url chars>` (32 random bytes). The server stores only `sha256(token)` in `devices.token_sha256`. Lookup by hash resolves the calling **device**; the client payload never names a device.
 
-**Status gate.** `pending` and `revoked` devices may call only `GET /health`. `/health` with a bearer echoes `{"status":"ok","device":{"id","name","status","class"}}` so a pending device can poll for approval without another endpoint. Any tool or admin call from a pending device → `E_DEVICE_PENDING`; from a revoked/unknown token → `E_AUTH`.
+**Admin device (device 1).** Migration `0001` reserves `device_id = 1` (`name admin`, class `server`, `is_admin`, status `trusted`, placeholder hash) atomically before any registration is possible (§1 bootstrap insert; `CHECK (NOT is_admin OR device_id = 1)`). On every API start the server hashes `HLM_ADMIN_TOKEN` and runs `UPDATE devices SET token_sha256 = :h, token_generation = token_generation + (token_sha256 <> :h)::int WHERE device_id = 1` — rebinding is idempotent across restarts; a changed token is a rotation that invalidates all admin cursors. If the env var is unset the placeholder stays (admin unusable, API still starts, `hlm doctor` warns). `is_admin` bypasses `device_project_grants` **only**; it does **not** bypass `device_scope`: device 1 sees rows scoped `all`, `class:server` or `device:1`, nothing else. Device 1 never goes through ordinary device workflows: `/devices/register` cannot create it, `approve`/`revoke`/`grants` with `id = 1` → `E_FORBIDDEN`, `hlm device list` shows it as `admin (reserved)` and never prints or stores its token; rotation = change the env var and restart. Admin actions are ordinary device actions with `events.device_id = 1`.
 
-**Authorization matrix.** For each tool call: `project` slug → `project_id` (unknown slug → `E_FORBIDDEN_PROJECT`, no enumeration); then `device_project_grants` with `revoked_at IS NULL` must contain the pair, or the device is `is_admin`. Role check: `read` → query/drilldown/raw; `write` → + write/call_the_day; `admin` → + grant/revoke other devices on that project. A write whose item lists several `project_ids` requires `write` on **every** listed project. `last_seen_at` is refreshed at most once per 60 s per device.
+**Status gate.** `pending` and `revoked` devices may call only `GET /health`. `/health` with a bearer echoes `{"status":"ok","device":{"id","name","status","class"}}` so a pending device can poll for approval without another endpoint. The gate is an HTTP middleware that runs **before** routing and before the MCP session manager: every `/admin/*`, `/devices/*` route and every JSON-RPC method on `/mcp` — `initialize`, `tools/list`, `tools/call`, `ping`, everything — from a pending device → HTTP 403 `{"code":"E_DEVICE_PENDING"}`; from a revoked/unknown token → HTTP 401 `{"code":"E_AUTH"}`. G5 `test_pending_device_all_http_routes_rejected` is parametrised over the full route table of `server/app.py` and `test_pending_device_mcp_initialize_list_call_rejected` covers the three MCP methods (§7). HTTP status mapping for non-tool routes: `E_AUTH` 401, `E_DEVICE_PENDING`/`E_FORBIDDEN`/`E_FORBIDDEN_PROJECT` 403, `E_NOT_FOUND` 404, `E_INVALID_ARG` 400, `E_REQUEST_ID_CONFLICT`/`E_VERSION_CONFLICT` 409, `E_UNAVAILABLE` 503.
+
+**Authorization matrix.** For each tool call: `project` slug → `project_id` (unknown slug → `E_FORBIDDEN_PROJECT`, no enumeration); then `device_project_grants` with `revoked_at IS NULL` must contain the pair, or the device is `is_admin`. Role check: `read` → query/drilldown/raw; `write` → + write/call_the_day; `admin` → + grant/revoke other devices on that project. A write whose item lists several `project_ids` requires `write` on **every** listed project; a revision additionally requires `write` on the item's immutable home project and on every project of the *existing* version (old ∪ new, §3). `last_seen_at` is refreshed at most once per 60 s per device.
+
+**Per-request, in-transaction authorization (revocation ordering).** Every request — tool call, admin route, cursor continuation and idempotent replay alike — opens its transaction, resolves the device with `SELECT … FROM devices WHERE token_sha256 = :h FOR SHARE`, loads the grants it needs inside that same transaction, then performs its reads/writes and commits. Revocation, grant removal and token rebinding `UPDATE` the device row (`FOR UPDATE`), so the two are serialised: a request that acquires the share lock before the revoke commits finishes under its old authorization, and **no** request whose authorization SELECT runs after the revoke commit succeeds — that is the definition of "immediately". Nothing is cached across requests; sequential token rejection is not sufficient. Cursors (§3) are signed over `{version_id, ordinal, device_id, token_generation}`: a cursor presented by another device, or after the issuing device's `token_generation` changed (revoke/rotation), → `E_INVALID_CURSOR`. G5 `test_revocation_ordering_concurrent`, `test_cursor_bound_to_device_and_generation` (§7).
 
 **Device onboarding flow.**
 1. `POST /devices/register {name, class?, fingerprint, os, client}` → creates `pending` device, issues its token once, records `device_registered` (device_id = the new device). Requires header `X-HLM-Registration-Secret` when `HLM_REGISTRATION_SECRET` is set (ASSUMPTION: set on the VPS, unset in local compose); rate-limited 5/min/IP.
-2. An already-trusted device of the same `user_id` (ASSUMPTION: any trusted device may approve, not only admins) or the admin device calls `POST /admin/devices/{id}/approve {class, notes?, grants:[{project, role}]}` → status `trusted`, `approved_by_device_id`, `device_approved` + `grant_added` events.
-3. `POST /admin/devices/{id}/revoke` → `revoked`, all grants get `revoked_at`, token stops working immediately (hash lookup checks status).
-4. Grants: `POST/DELETE /admin/projects/{slug}/grants {device, role}` require `admin` role on that project or `is_admin`. `POST /admin/projects {slug,name}` requires `is_admin` and grants the creator `admin` on the new project.
+2. `POST /admin/devices/{id}/approve {class, notes?, grants?:[{project, role}]}` — any trusted device of the same `user_id` (ASSUMPTION §9.3) or device 1 may flip a pending device to `trusted` (sets `approved_at`, `approved_by_device_id`, `device_approved` event). **Embedded grants are subject to exactly the grant-endpoint rule:** the approving device must hold role `admin` (non-revoked) on **every** listed project, or be device 1; unknown slug or missing admin grant → `E_FORBIDDEN_PROJECT` (no enumeration); duplicate project in `grants[]` → `E_INVALID_ARG`. The check and the writes happen in **one** transaction with the status change: on any failure nothing is approved and no grant is added (`device_approved` + one `grant_added` event per grant, all committed together). Approving an already-trusted device → `E_INVALID_ARG`; a revoked device cannot be approved (`E_INVALID_ARG`, register again). G5 `test_approve_grants_require_project_admin`.
+3. `POST /admin/devices/{id}/revoke` (global revocation) is allowed **only** for device 1 or for the device itself (`id = caller`); anyone else → `E_FORBIDDEN`, including devices holding project `admin` (they may only remove that project's grant via 4). `id = 1` → `E_FORBIDDEN`. Effect in one transaction: status `revoked`, `revoked_at`, all grants get `revoked_at`, `token_generation + 1`, `device_revoked` + `grant_revoked` events; the token stops working per the ordering rule above. G5 `test_revoke_restricted_to_admin_or_self`.
+4. Grants: `POST/DELETE /admin/projects/{slug}/grants {device, role}` require `admin` role on that project or `is_admin`; `device = 1` → `E_FORBIDDEN`. `POST /admin/projects {slug,name}` requires `is_admin` and grants the creator `admin` on the new project.
 
 **Dual-axis scope on data.** Every version/link carries `project_ids[]` (home first) and `device_scope ∈ {all, class:<c>, device:<id>}`. Retrieval for a device `d` of class `c` in project `p` sees a row iff `p = ANY(project_ids)` **and** `device_scope ∈ {'all','class:'||c,'device:'||d}`. Writes may target another device's scope (e.g. from the personal machine: "on the work machine never push to X"). The server derives `d`/`c` from the token, never from the payload. G5 covers both axes (§7).
 
@@ -258,11 +341,11 @@ Integrity rules enforced in the write service (not expressible as FKs): every el
 
 ## 3. Tool contracts
 
-Transport: MCP streamable HTTP at `/mcp`, bearer per §2. Every tool result is a single `TextContent` block carrying the canonical compact JSON — **no** `structuredContent` (D-024 (6): one representation on the wire; tools are registered with `@mcp.tool(structured_output=False)`); errors are tool results with `isError:true` and body `{"code","message","retryable","details"}`.
+Transport: MCP streamable HTTP at `/mcp`, bearer per §2. **Wire format (D-024 (6)).** Every tool result is `CallToolResult(content=[TextContent(text=<canonical JSON>)])` — exactly **one** text block, **no** `structuredContent`, and `tools/list` advertises `inputSchema` only, never `outputSchema` (advertising it would oblige conforming structured results). Tools are registered with `@mcp.tool(structured_output=False)` and return the canonical JSON string; the `output` schemas printed below are validated **internally** before serialisation and are not exposed. Errors are tool results with `isError:true` whose single text block is `{"code","message","retryable","details"}`. G2 asserts this on the wire: `test_g2_budget.py::test_single_text_block_no_structured_content` (raw JSON-RPC `tools/call` for all five tools, success and error: `len(content)==1`, `content[0].type=="text"`, `"structuredContent" not in result`, and `content[0].text` byte-equals the metered serialisation) and `::test_tools_list_has_no_output_schema`.
 
 **Budget rule (G2).** `token_budget` is required on `memory.query/drilldown/raw`, optional on `write`/`call_the_day` (default 2000). Range `256 ≤ token_budget ≤ 32000`; `<256` → `E_BUDGET_TOO_SMALL {min:256}`, `>32000` → `E_BUDGET_TOO_LARGE`. Meter: `tiktoken.get_encoding("o200k_base")` over `json.dumps(result, ensure_ascii=False, separators=(",",":"), sort_keys=True)` — the canonical serialisation counted once (the single `TextContent` on the wire *is* this serialisation, so wire bytes == metered bytes; see CONFLICTS #6 / D-024 (6)). Every success carries `budget:{limit,used,tokenizer:"o200k_base"}` with `used ≤ limit` guaranteed by measure-after-each-append packing. For write/call_the_day the ack size is computed from the item count **before** any mutation; if it cannot fit → `E_BUDGET_TOO_SMALL {min:<needed>}` and nothing is written. Budget exhaustion is never reported as "no evidence".
 
-**Error codes** (`retryable` in parentheses): `E_AUTH`(n), `E_DEVICE_PENDING`(y), `E_FORBIDDEN_PROJECT`(n), `E_INVALID_ARG`(n), `E_NOT_FOUND`(n), `E_BUDGET_TOO_SMALL`(n), `E_BUDGET_TOO_LARGE`(n), `E_REQUEST_ID_CONFLICT`(n), `E_VERSION_CONFLICT{current_version_id}`(n), `E_SESSION_CLOSED`(n), `E_TEMPORAL`(n), `E_CARD_TOO_LARGE`(n), `E_INVALID_CURSOR`(n), `E_UNAVAILABLE`(y).
+**Error codes** (`retryable` in parentheses): `E_AUTH`(n), `E_DEVICE_PENDING`(y), `E_FORBIDDEN`(n, device-level authorization: revoke/approve/grant rules of §2), `E_FORBIDDEN_PROJECT`(n), `E_INVALID_ARG`(n), `E_NOT_FOUND`(n), `E_BUDGET_TOO_SMALL`(n), `E_BUDGET_TOO_LARGE`(n), `E_REQUEST_ID_CONFLICT`(n), `E_VERSION_CONFLICT{current_version_id}`(n), `E_SESSION_CLOSED`(n), `E_TEMPORAL`(n), `E_CARD_TOO_LARGE`(n), `E_INVALID_CURSOR`(n), `E_UNAVAILABLE`(y).
 
 Clue = `v<version_id>` (whole item) or `v<version_id>.<ordinal>` (chunk). Shared `$defs`:
 
@@ -277,7 +360,7 @@ Clue = `v<version_id>` (whole item) or `v<version_id>.<ordinal>` (chunk). Shared
  "Clue":{"type":"string","pattern":"^v[0-9]+(\\.[0-9]+)?$"},
  "DeviceScope":{"type":"string","pattern":"^(all|class:(personal|work|server|ci|other)|device:[0-9]+)$"},
  "BudgetOut":{"type":"object","properties":{"limit":{"type":"integer"},"used":{"type":"integer"},"tokenizer":{"const":"o200k_base"}},"required":["limit","used","tokenizer"]},
- "Error":{"type":"object","properties":{"code":{"enum":["E_AUTH","E_DEVICE_PENDING","E_FORBIDDEN_PROJECT","E_INVALID_ARG","E_NOT_FOUND","E_BUDGET_TOO_SMALL","E_BUDGET_TOO_LARGE","E_REQUEST_ID_CONFLICT","E_VERSION_CONFLICT","E_SESSION_CLOSED","E_TEMPORAL","E_CARD_TOO_LARGE","E_INVALID_CURSOR","E_UNAVAILABLE"]},"message":{"type":"string"},"retryable":{"type":"boolean"},"details":{"type":"object"}},"required":["code","message","retryable"],"additionalProperties":false},
+ "Error":{"type":"object","properties":{"code":{"enum":["E_AUTH","E_DEVICE_PENDING","E_FORBIDDEN","E_FORBIDDEN_PROJECT","E_INVALID_ARG","E_NOT_FOUND","E_BUDGET_TOO_SMALL","E_BUDGET_TOO_LARGE","E_REQUEST_ID_CONFLICT","E_VERSION_CONFLICT","E_SESSION_CLOSED","E_TEMPORAL","E_CARD_TOO_LARGE","E_INVALID_CURSOR","E_UNAVAILABLE"]},"message":{"type":"string"},"retryable":{"type":"boolean"},"details":{"type":"object"}},"required":["code","message","retryable"],"additionalProperties":false},
  "Item":{"type":"object","properties":{
    "kind":{"$ref":"#/$defs/Kind"},"logical_id":{"type":"integer"},"expected_version_id":{"type":"integer"},
    "title":{"type":"string","minLength":1,"maxLength":200},"body":{"type":"string","minLength":1,"maxLength":64000},
@@ -286,7 +369,7 @@ Clue = `v<version_id>` (whole item) or `v<version_id>.<ordinal>` (chunk). Shared
    "project_ids":{"type":"array","items":{"$ref":"#/$defs/Slug"},"minItems":1,"maxItems":16,"uniqueItems":true},
    "device_scope":{"$ref":"#/$defs/DeviceScope","default":"all"},
    "valid_from":{"$ref":"#/$defs/Ts"},"valid_to":{"anyOf":[{"$ref":"#/$defs/Ts"},{"type":"null"}]},
-   "links":{"type":"array","maxItems":32,"items":{"type":"object","properties":{"rel":{"$ref":"#/$defs/Rel"},"target":{"type":["integer","string"],"description":"logical_id or \"$<item_index>\""}},"required":["rel","target"],"additionalProperties":false}}},
+   "links":{"type":"array","maxItems":32,"items":{"type":"object","properties":{"rel":{"$ref":"#/$defs/Rel"},"target":{"type":["integer","string"],"description":"logical_id or \"$<item_index>\""},"target_version_id":{"type":"integer","description":"pin the immutable target version (default: head at write time; recorded in payload.resolved)"}},"required":["rel","target"],"additionalProperties":false}}},
    "required":["kind","title","body"],"additionalProperties":false},
  "Ack":{"type":"object","properties":{"request_id":{"$ref":"#/$defs/Uuid"},"replayed":{"type":"boolean"},
    "versions":{"type":"array","items":{"type":"object","properties":{"index":{"type":"integer"},"logical_id":{"type":"integer"},"version_id":{"type":"integer"},"chunk_count":{"type":"integer"},"embedding_status":{"enum":["queued","done"]}},"required":["index","logical_id","version_id","chunk_count","embedding_status"]}},
@@ -299,20 +382,28 @@ Clue = `v<version_id>` (whole item) or `v<version_id>.<ordinal>` (chunk). Shared
 ```json
 {"input":{"type":"object","properties":{"project":{"$ref":"#/$defs/Slug"},"query":{"type":"string","minLength":1,"maxLength":2000},"token_budget":{"$ref":"#/$defs/Budget"},"valid_at":{"$ref":"#/$defs/Ts"},"known_at":{"$ref":"#/$defs/Ts"},"include_archived":{"type":"boolean","default":false},"kinds":{"type":"array","items":{"$ref":"#/$defs/Kind"}}},"required":["project","query","token_budget"],"additionalProperties":false},
  "output":{"type":"object","properties":{"project":{"$ref":"#/$defs/Slug"},"as_of":{"type":"object","properties":{"valid_at":{"$ref":"#/$defs/Ts"},"known_at":{"$ref":"#/$defs/Ts"}}},"device_class":{"enum":["personal","work","server","ci","other"]},
-  "card":{"anyOf":[{"type":"null"},{"type":"object","properties":{"clue":{"$ref":"#/$defs/Clue"},"text":{"type":"string"},"stale":{"type":"boolean"},"truncated":{"type":"boolean"}},"required":["clue","text","stale","truncated"]}]},
+  "card":{"anyOf":[{"type":"null"},{"type":"object","properties":{"clue":{"$ref":"#/$defs/Clue"},"text":{"type":"string"},"stale":{"type":"boolean"},"stale_clues":{"type":"array","items":{"$ref":"#/$defs/Clue"},"description":"pinned derived_from versions that are superseded at known_at or whose valid interval ended before valid_at (empty when stale=false)"},"truncated":{"type":"boolean"}},"required":["clue","text","stale","stale_clues","truncated"]}]},
   "hits":{"type":"array","items":{"type":"object","properties":{"clue":{"$ref":"#/$defs/Clue"},"kind":{"$ref":"#/$defs/Kind"},"title":{"type":"string"},"preview":{"type":"string"},"score":{"type":"number"},"valid_from":{"$ref":"#/$defs/Ts"},"tags":{"type":"array","items":{"type":"string"}},"device_scope":{"$ref":"#/$defs/DeviceScope"}},"required":["clue","kind","title","preview","score","valid_from","tags","device_scope"]}},
   "omitted":{"type":"integer"},"evidence":{"enum":["matched","none"]},"indexing_pending":{"type":"boolean"},"budget":{"$ref":"#/$defs/BudgetOut"}},
   "required":["project","as_of","device_class","card","hits","omitted","evidence","indexing_pending","budget"],"additionalProperties":false}}
 ```
 `evidence:"none"` is the only negative wording (D-014). `indexing_pending:true` when queued `embed` jobs exist for the project (vector list may be incomplete). No write on query.
 
-**memory.drilldown** — in `{project, clue_ids:[Clue](1..20, unique), token_budget, cursor?, valid_at?, known_at?}`; out `{items:[{clue,kind,title,text,ordinal_range:[a,b],device_scope,links:[{rel,clue}]}], next_cursor:string|null, budget}`. A chunk clue returns the chunk ±1 neighbour; an item clue returns the body in ordinal order; `links` are current one-hop edges. Unknown, out-of-scope or foreign clue → `E_NOT_FOUND` (no distinction). Records an async `access` event (resets idleness, D-012). Cursor = opaque base64 `{version_id, ordinal}` signed with `HLM_CURSOR_SECRET`; tampered → `E_INVALID_CURSOR`.
+**memory.drilldown** — in `{project, clue_ids:[Clue](1..20, unique), token_budget, cursor?, valid_at?, known_at?}`; out `{items:[{clue,kind,title,text,ordinal_range:[a,b],device_scope,links:[{rel,clue,stale}]}], next_cursor:string|null, budget}`. A chunk clue returns the chunk ±1 neighbour; an item clue returns the body in ordinal order. **Scope is enforced on the version** (§4.4 predicate on `memory_versions` at `valid_at`/`known_at`, project grant and `device_scope` from the token); the chunk's denormalised columns are never consulted for authorization. `links` are the one-hop edges visible at `(valid_at, known_at)` per §1.1 — the link row's own valid/system intervals and scope **and** both endpoint versions must pass; `clue` = `v<dst_version_id>` when the edge is version-pinned (all `derived_from`), else `v<version current at (valid_at, known_at)>`; `stale:true` when a pinned target is superseded at `known_at` or its valid interval ended before `valid_at`. Unknown, out-of-scope or foreign clue → `E_NOT_FOUND` (no distinction). Records an async `access` event (resets idleness, D-012). Cursor = opaque base64 `{version_id, ordinal, device_id, token_generation}` signed with `HLM_CURSOR_SECRET`; a continuation re-runs the full authorization and scope check inside its own transaction (§2), so a cursor never outlives a grant; tampered, foreign-device or stale-generation cursor → `E_INVALID_CURSOR`.
 
-**memory.raw** — in `{project, version_id:int, token_budget, cursor?}`; out `{version_id, logical_id, kind, project_ids:[Slug], device_scope, source_event:{event_id,request_id,device:{id,name,class},client,occurred_at}, payload_item:object, chunks:[{ordinal,char_start,char_end,text}], next_cursor, budget}`. Same access event and cursor rules as drilldown.
+**memory.raw** — in `{project, version_id:int, token_budget, cursor?}`; out `{version_id, logical_id, kind, project_ids:[Slug], device_scope, valid_from, valid_to, recorded_at, superseded_at, supersedes_version_id, source_event:{event_id,request_id,device:{id,name,class},client,occurred_at,recorded_at}, payload_item:object, links:[{rel,dst_logical_id,dst_version_id,valid_from,valid_to,recorded_at,superseded_at}], chunks:[{ordinal,char_start,char_end,text}], next_cursor, budget}`. Raw is version-addressed and may return superseded versions (provenance), but the version's `project_ids` must contain `project`, the caller must hold `read` on `project`, and the version's `device_scope` must match the calling device — evaluated on `memory_versions`, never on chunks; a version outside that → `E_NOT_FOUND`. `links` lists the version's outgoing edges with their full temporal columns (no filtering by valid/known time, since raw is the audit view); each listed edge must itself pass the scope test. Same access event and cursor rules as drilldown.
 
-**memory.write** — in `{project, request_id:Uuid, occurred_at?:Ts, client:string, items:[Item](1..50), token_budget?}`; out `Ack`. Rules: same `request_id` + same `payload_sha256` → stored `result`, `replayed:true`; same id, different hash → `E_REQUEST_ID_CONFLICT`. `logical_id` given ⇒ `expected_version_id` required; mismatch with the current version → `E_VERSION_CONFLICT{current_version_id}`. New logical ids come from `logical_id_seq`. `project_card`: at most one current per project (`mv_one_card`), body > 512 o200k tokens → `E_CARD_TOO_LARGE`, `logical_id` must equal `projects.card_logical_id`. `valid_to ≤ valid_from` or `valid_from` in the future beyond 5 min → `E_TEMPORAL`. Items default `project_ids=[project]`; every listed slug needs `write` grant. The whole batch is one transaction: event → versions (superseding the previous version by setting its `superseded_at = clock_timestamp()`) → chunks → links → `embed` jobs; the event `result` is stored in the same transaction. Lexically visible on commit; vectors after the worker.
+**memory.write** — in `{project, request_id:Uuid, occurred_at?:Ts, client:string, items:[Item](1..50), token_budget?}`; out `Ack`.
 
-**memory.call_the_day** — in `{project, request_id, session_id:Uuid, client, notes:string(1..64000), decisions?:[string](≤32), lessons?:[{title,body,tags?,device_scope?}](≤16), card_update?:{body, expected_version_id}, expected_versions?:[{logical_id,version_id}], token_budget?}`; out `Ack` + `session_note_clue`. Maps to exactly one write batch (`session_note` + `lesson`s + optional card; `decisions` are appended to the note body as a `## Decisions` list) through the same service; no LLM. A second close for the same `session_id` → `E_SESSION_CLOSED` (`events_one_close`); `expected_versions` mismatch → `E_VERSION_CONFLICT`.
+*Idempotency.* `request_id` is unique per `(project, device)` (`events` UNIQUE `(project_id, device_id, request_id)`): the same UUID from another device is an independent request, never a replay and never a conflict. Same `(project, device, request_id)` + same `payload_sha256` → the stored `result` with `replayed:true`, **but only after re-running the full authorization of this section against the current grants and device status** inside the replay's own transaction (a device revoked or downgraded since the original write gets `E_AUTH`/`E_FORBIDDEN_PROJECT`, not the stored result); same key, different hash → `E_REQUEST_ID_CONFLICT`.
+
+*Authorization order (evaluated before any conflict or existence disclosure).* (1) `project` resolves and the device holds `write` on it (else `E_FORBIDDEN_PROJECT`). (2) Every slug in each item's `project_ids` (default `[project]`; must include `project`, §1 integrity rules) resolves and carries a `write` grant (else `E_FORBIDDEN_PROJECT`). (3) For a **revision** (`logical_id` given ⇒ `expected_version_id` required, else `E_INVALID_ARG`): the logical item's **home project is immutable** and must equal `project` — a `logical_id` whose home is another project, or that does not exist, → `E_NOT_FOUND` (no cross-project revision, no enumeration); the device must hold `write` on the home project **and** on every project in `old.project_ids ∪ new.project_ids`, where `old` = the union over all current segments of the logical item (else `E_FORBIDDEN_PROJECT`). Only when (1)–(3) pass does the server compare versions: `expected_version_id ≠ head(logical_id)` (§1.1) → `E_VERSION_CONFLICT{current_version_id: head}`. An unauthorized caller therefore never learns whether a logical id exists or what its head is (G6 `test_version_conflict_not_disclosed_without_grant`, `test_revision_requires_home_and_union_write`, `test_request_id_scoped_per_project_device`, `test_replay_reauthorizes`).
+
+*Content rules.* New logical ids come from `logical_id_seq`. `project_card`: `logical_id` must equal `projects.card_logical_id`, body > 512 o200k tokens → `E_CARD_TOO_LARGE`; the partial EXCLUDE constraint keeps one card per project per bi-temporal point. `valid_to ≤ valid_from` or `valid_from` in the future beyond 5 min → `E_TEMPORAL`. Card `derived_from` links must resolve to a version: `target_version_id` if given (must be a version of `target`'s logical id, else `E_INVALID_ARG`), otherwise `head(target)` at write time; the resolved `dst_version_id` is recorded in `payload.resolved` and on the link row (D-015).
+
+*Transaction.* The whole batch is one transaction: authorization → resolve `T = recorded_at` (§1.1) → event row (`payload.resolved` complete) → versions (supersede/split per §1.1 with `superseded_at = T`) → chunks (new rows only) → links (supersede + insert, `dst_version_id` pinned) → `embed` jobs; the event `result` is stored in the same transaction. Lexically visible on commit; vectors after the worker.
+
+**memory.call_the_day** — in `{project, request_id, session_id:Uuid, client, notes:string(1..64000), decisions?:[string](≤32), lessons?:[{title,body,tags?,device_scope?}](≤16), card_update?:{body, expected_version_id}, expected_versions?:[{logical_id,version_id}], token_budget?}`; out `Ack` + `session_note_clue`. Maps to exactly one write batch (`session_note` + `lesson`s + optional card; `decisions` are appended to the note body as a `## Decisions` list) through the same service; no LLM. A second close for the same `session_id` → `E_SESSION_CLOSED` (`events_one_close`, per project across devices); `expected_versions` mismatch → `E_VERSION_CONFLICT` under the same authorization-before-disclosure order as `memory.write`. `card_update` links the new card version `derived_from` the pinned versions listed in `expected_versions` (plus the session note) — that is the version-specific dependency input of D-015.
 
 ---
 
@@ -332,13 +423,13 @@ Constants: `K_RRF=60`, `L_MAX=100`, `T_MAX=20`, `V_MAX=100`, `w_L=1.0`, `w_T=1.0
    AND mv.status = 'active'            -- IN ('active','archived') if include_archived
    AND mv.kind <> 'project_card'       -- AND mv.kind = ANY(:kinds) if given
    ```
-   (chunks carry `project_ids`/`device_scope` too, so the GIN index prunes before the join.)
+   The predicate on `memory_versions` is **authoritative** for every read path (query hits, card, drilldown, raw, cursor continuations, link endpoints). Chunks carry copies of `project_ids`/`device_scope` only so the GIN index can prune candidates *before* the join; a chunk whose copy disagrees with its version is decided by the version (G5 `test_chunk_scope_is_prefilter_only` deliberately desynchronises a copy and asserts the version wins in both directions).
 5. **Lexical list L** (≤`L_MAX`): `tsquery = OR of "term:*"`; `ORDER BY ts_rank_cd(c.tsv, q, 32) DESC, c.chunk_id ASC`.
 6. **Trigram list T** (≤`T_MAX`, only if identifier terms exist): per identifier term `WHERE :term <% c.text_norm`, `ORDER BY word_similarity(:term, c.text_norm) DESC, c.chunk_id ASC`, merged by best similarity.
 7. **Vector list V** (≤`V_MAX`): embed `"query: " + raw_query` (ONNX in-process, mean-pool, L2-normalise); exact scan `ORDER BY e.vec <=> :q ASC, c.chunk_id ASC` filtered by current `model@revision/preproc` and the scope predicate. `indexing_pending` = queued embed jobs exist for `:pid`.
 8. **Fusion** (RRF): `S(c) = Σ_{s∈{L,T,V}} w_s / (K_RRF + rank_s(c))`, ranks start at 1, absent from a list → no contribution.
 9. **Dedupe** by `logical_id`, keep the best chunk; `S'(c) = S(c)` (no kind multiplier, D-024). No decay in Phase 0 (signals only). Order: `S'` desc, then device specificity (`device:` > `class:` > `all`), then lexical rank asc, then `chunk_id` asc.
-10. **Card**: fetch the current `project_card` separately (slot 0) under the same temporal predicate; `stale = any(derived_from targets superseded at known_at)`.
+10. **Card**: fetch the version of `projects.card_logical_id` visible at `(valid_at, known_at)` separately (slot 0) under the same scope + temporal predicate (a card outside the device's scope is `null`, not an error). Staleness (D-015) is computed against the **pinned** versions: take the card's `derived_from` edges visible at `(valid_at, known_at)` (§1.1); `stale = any(dst.superseded_at ≤ known_at OR dst.valid_to ≤ valid_at)` over their `dst_version_id` rows; `stale_clues` lists those `v<dst_version_id>`. Logical-id-level "is there a newer version" is never used — a backdated correction that supersedes a source segment marks the card stale exactly because the pinned version is superseded (G6 `test_card_stale_on_superseded_source_version`).
 11. **Clues**: `v{version_id}.{ordinal}` for hits, `v{version_id}` for the card.
 12. **Pack** (measure with the §3 meter after each append, never exceed): (a) envelope with empty lists; (b) card: full if ≤ `CARD_ALLOW` tokens else cut at `CARD_ALLOW` o200k tokens and `truncated:true`; (c) hits in `S'` order with `preview` = first `PREVIEW_TOK` tokens of chunk text, stop at the first non-fit, `omitted` = remainder; (d) if ≥ 96 tokens remain, extend the top-3 previews to `PREVIEW_EXT` tokens. `evidence = "none"` iff the deduped candidate set is empty (before packing).
 13. **Chunking at write time**: E5 tokenizer, `CHUNK_TOK` tokens per chunk with `CHUNK_OVERLAP` overlap, char offsets stored, passage embedded as `"passage: " + text`.
@@ -437,7 +528,7 @@ HLMemo/
     config.py            pydantic-settings: HLM_* env + hlm.toml + profiles
     db/pool.py           psycopg3 AsyncConnectionPool
     db/queries.py        all SQL (candidate lists, scope predicate, outbox lease)
-    db/replay.py         rebuild projections from events (G6)
+    db/replay.py         rebuild projections from events using payload.resolved only — no clocks/sequences (§1.1, G6)
     core/normalize.py    normalize(), term split, identifier detection
     core/chunker.py      E5 tokenizer (`tokenizers` from onnx/tokenizer.json, XLM-R Unigram), 400-token chunks, 40 overlap, char offsets
     core/embedder.py     ONNX Runtime session (fp32 onnx/model.onnx), query:/passage: prefixes
@@ -448,7 +539,7 @@ HLMemo/
     core/temporal.py     bi-temporal predicates/validation
     core/scope.py        project_ids / device_scope resolution and checks (D-023)
     server/app.py        MCP server: `from mcp.server import MCPServer` (mcp 2.x; `FastMCP` is removed), tools via `@mcp.tool(structured_output=False)`, served with `mcp.streamable_http_app(streamable_http_path="/mcp")` mounted in Starlette (lifespan `async with mcp.session_manager.run()`) + /health
-    server/auth.py       bearer -> device -> grants -> role
+    server/auth.py       bearer -> device (FOR SHARE, per request, in-tx) -> grants -> role; status-gate middleware ahead of routing and /mcp (§2)
     server/admin.py      /admin/projects, /admin/devices, grants
     server/devices.py    /devices/register, approval state machine
     server/tools/{query,drilldown,raw,write,call_the_day}.py
@@ -471,11 +562,11 @@ Session-scoped compose stack; each test module uses its own project slugs and de
 | Gate | pytest |
 |---|---|
 | G1 | `tests/gates/test_g1_boot.py::test_health_within_60s`, `::test_restart_preserves_acked_events` |
-| G2 | `test_g2_budget.py::test_1000_random_budgets_never_overflow` (seeded, budgets ∈ [500, 8000]), `::test_budget_below_min_rejected`, `::test_drilldown_raw_budget`, `::test_undersized_budget_no_write` |
+| G2 | `test_g2_budget.py::test_1000_random_budgets_never_overflow` (seeded, budgets ∈ [500, 8000]), `::test_budget_below_min_rejected`, `::test_drilldown_raw_budget`, `::test_undersized_budget_no_write`, `::test_single_text_block_no_structured_content` (raw JSON-RPC over all five tools, success + error: one `text` block, no `structuredContent`, text == metered bytes), `::test_tools_list_has_no_output_schema` |
 | G3 | `test_g3_recall.py::test_recall_at_5_ge_090`, `::test_per_language_recall_logged` |
 | G4 | `test_g4_latency.py::test_warm_p95_le_500ms_3_callers` (300 queries, 3 threads, incl. query embedding; writes `HARDWARE.md`) |
-| G5 | `test_g5_isolation.py::test_1000_cross_project_probes_zero_leaks` (query/drilldown/raw with a device lacking the grant), `::test_1000_cross_device_probes_zero_leaks` (`class:`/`device:` rows never cross), `::test_pending_device_only_health`, `::test_revoked_token_rejected`, `::test_project_ids_requires_all_write_grants` |
-| G6 | `test_g6_durability.py::test_duplicate_request_id_single_effect`, `::test_request_id_hash_conflict`, `::test_concurrent_revision_conflict`, `::test_kill_api_mid_batch_then_replay`, `::test_rebuild_projections_from_events_identical`, `::test_backdated_correction_valid_at_known_at`, `::test_pg_dump_restore_same_answers`, `::test_worker_lease_expiry_reprocess` |
+| G5 | `test_g5_isolation.py::test_1000_cross_project_probes_zero_leaks` (query/drilldown/raw with a device lacking the grant), `::test_1000_cross_device_probes_zero_leaks` (`class:`/`device:` rows never cross), `::test_pending_device_all_http_routes_rejected` (parametrised over every route in `server/app.py`, only `GET /health` passes), `::test_pending_device_mcp_initialize_list_call_rejected` (`initialize`, `tools/list`, `tools/call` → 403 `E_DEVICE_PENDING`; revoked → 401 `E_AUTH`), `::test_revoked_token_rejected`, `::test_revocation_ordering_concurrent` (revoke racing 200 reads/writes/replays: none whose authz SELECT ran after the revoke commit succeeds, no partial write), `::test_cursor_bound_to_device_and_generation`, `::test_project_ids_requires_all_write_grants`, `::test_project_ids_integrity` (nonexistent slug → `E_FORBIDDEN_PROJECT`; `null` element, duplicate, missing home → `E_INVALID_ARG`; nothing written), `::test_card_scope_enforced`, `::test_raw_scope_enforced`, `::test_cursor_scope_enforced` (grant removed between pages → `E_NOT_FOUND`), `::test_link_endpoint_scope_enforced` (drilldown never lists an edge whose far endpoint is out of scope; raw never lists an out-of-scope edge), `::test_chunk_scope_is_prefilter_only`, `::test_admin_bypasses_grants_not_device_scope` (device 1 sees `all`/`class:server`/`device:1` only), `::test_device1_reserved_at_migration` (row exists after `alembic upgrade head` with placeholder hash, class `server`, `is_admin`; register/approve/revoke/grant on id 1 → `E_FORBIDDEN`), `::test_approve_grants_require_project_admin` (embedded `grants[]` without project admin → `E_FORBIDDEN_PROJECT`, device stays `pending`, no grant rows), `::test_revoke_restricted_to_admin_or_self` |
+| G6 | `test_g6_durability.py::test_duplicate_request_id_single_effect`, `::test_request_id_hash_conflict`, `::test_request_id_scoped_per_project_device` (same UUID from two devices → two events), `::test_replay_reauthorizes` (grant revoked between original and replay → error, not stored result), `::test_concurrent_revision_conflict`, `::test_revision_requires_home_and_union_write`, `::test_version_conflict_not_disclosed_without_grant`, `::test_kill_api_mid_batch_then_replay`, `::test_rebuild_projections_from_events_identical` (pk-ordered `pg_dump --data-only` of versions/chunks/links/jobs byte-identical, embeddings within 1e-6; replay code path has no `clock_timestamp`/`nextval`), `::test_backdated_correction_valid_at_known_at`, `::test_backdated_correction_preserves_unaffected_intervals`, `::test_chunks_immutable_per_version` (old chunk rows unchanged after revision), `::test_links_superseded_not_edited`, `::test_card_stale_on_superseded_source_version`, `::test_pg_dump_restore_same_answers`, `::test_worker_lease_expiry_reprocess` |
 | G7 | `tests/smoke/{claude,codex,agy}.sh` (pinned versions in `tests/smoke/VERSIONS`, headless `-p`/`exec`/`--print`); `test_g7_clients.py::test_cli_write_query_drilldown_raw`, `::test_preflight_300_per_cli` (query-before-first-action rate = 300/300 from correlated server traces), `::test_outage_no_launch`, `::test_self_project_smoke` (write→query→drilldown on `hlmemo`, D-021) |
 | G8 | `test_g8_secrets.py::test_gitleaks_clean`, `::test_env_untracked`; `.githooks/pre-commit` + CI |
 
@@ -494,17 +585,17 @@ Never cut: device model, budget guarantee, G5/G6, preflight-blocks-on-failure.
 
 ## 9. Open assumptions (deduped)
 
-1. `HLM_ADMIN_TOKEN` env is the bootstrap secret; it is materialised as device 1 (`admin`, class `server`, `is_admin`) so every event has a device_id.
+1. `HLM_ADMIN_TOKEN` env is the bootstrap secret; device 1 (`admin`, class `server`, `is_admin`) is reserved by migration 0001 and the hash is bound at API start (§2), so every event has a device_id. `is_admin` bypasses project grants only, never `device_scope`.
 2. Single `user_id='owner'` in Phase 0; the column exists for later multi-user.
-3. Any trusted device of the same `user_id` may approve/position a pending device (not only admin).
+3. Any trusted device of the same `user_id` may approve/position a pending device (not only admin) — but embedded `grants[]` need project `admin` on each listed project, checked atomically with the approval (§2 step 2); global revocation is device 1 or self only (§2 step 3).
 4. Device registration is open but rate-limited; `HLM_REGISTRATION_SECRET` is required when set (recommended on the VPS).
 5. Fingerprint = sha256 of platform machine id (`IOPlatformUUID` / `/etc/machine-id`) + username; collisions fall back to a random id.
 6. ~~`intfloat/multilingual-e5-small` revision (and tokenizer/ONNX hashes) fixed at first build in `models.lock`.~~ VERIFIED 2026-09-22: revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`, `onnx/` export present, dims 384, XLM-R Unigram tokenizer (see §5 `models.lock`).
-7. `o200k_base` is "the pinned tokenizer" of D-015/G2; per D-024 (6) there is no duplicate — tool results are `TextContent`-only (`structured_output=False`), so wire bytes equal metered bytes.
+7. `o200k_base` is "the pinned tokenizer" of D-015/G2; per D-024 (6) there is no duplicate — tool results are one `TextContent` (`structured_output=False`), no `structuredContent`, no advertised `outputSchema`, so wire bytes equal metered bytes (G2 wire assertions, §3). This bounds payload size, not each client's context accounting (clients may wrap or truncate; G7 verifies the pinned CLIs).
 8. ~~Image/dep pins are "latest stable at 2026-09" and must be verified at first build.~~ VERIFIED 2026-09-22 (see `PHASE0-ASSUMPTIONS-VERIFIED.md`): `pgvector/pgvector:0.8.6-pg17`, `python:3.12.14-slim-bookworm`, package pins as in §6.
 9. Pinned client versions (Claude 2.1.278, Codex 0.155.1, agy 1.1.4) recorded in `tests/smoke/VERSIONS`. VERIFIED locally 2026-09-22: `agy -p/--print` (alias `--prompt`) and `-i/--prompt-interactive` exist; `codex mcp add --url … --bearer-token-env-var <ENV_VAR>` exists; `claude mcp add --transport http … -H/--header` exists; agy has **no** `mcp` subcommand → `hlm mcp add agy` writes `~/.gemini/config/mcp_config.json` (§5).
 10. Recall@5 ≥ 0.90 threshold is tuned on the synthetic fixture; real-data regression in Phase 1.
-11. `project_ids[]` referential integrity is application-enforced (no array FKs); a G5 test covers it.
+11. `project_ids[]` referential integrity is application-enforced (no array FKs); G5 `test_project_ids_integrity` covers nonexistent/null/duplicate/missing-home (§1, §7).
 12. RRF is plain (k=60, equal weights, no multipliers) per D-024; any weighting/kind shaping is a Phase-3 change gated by G3 regression.
 13. HNSW deferral threshold is 200k embedding rows; exact scan at 10k×384-d is < 10 ms.
 14. `CARD_ALLOW=clamp(0.25·budget, 64, 512)` replaces the source formula, which could exceed small budgets.
