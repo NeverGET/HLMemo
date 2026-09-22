@@ -1,0 +1,250 @@
+"""Rebuild the projections from ``events`` (PHASE0-SPEC §1.1 *Replay*, G6).
+
+Truncates ``memory_versions``, ``chunks``, ``embeddings``, ``links``, ``jobs`` (``events``,
+``devices``, ``projects``, ``device_project_grants`` are kept) and re-applies every event in
+``event_id`` order using **only** ``payload.resolved`` — recorded ids, ``recorded_at`` = T,
+chunk offsets, resolved link targets — plus the item bodies (``payload.request.items`` for
+``write``, ``payload.resolved.write.items`` for the synthesized ``call_the_day`` batch) sliced by
+the recorded ``char_start/char_end``. Never calls ``clock_timestamp()``, ``nextval()`` or the
+chunker; identity sequences and ``logical_id_seq`` are ``setval``'d to their maxima at the end.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from psycopg import AsyncConnection
+
+from hlmemo.core import NORMALIZER_VERSION
+from hlmemo.core.normalize import normalize
+from hlmemo.core.temporal import parse_opt_ts, parse_ts
+from hlmemo.db import write_queries as q
+
+PROJECTION_TABLES = ("jobs", "links", "embeddings", "chunks", "memory_versions")
+
+
+@dataclass(slots=True)
+class RebuildStats:
+    events: int = 0
+    versions: int = 0
+    chunks: int = 0
+    links: int = 0
+    jobs: int = 0
+
+
+class ReplayError(RuntimeError):
+    pass
+
+
+def _embed_payload(version_id: int, embedder: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version_id": version_id,
+        "model": embedder["model"],
+        "model_revision": embedder["revision"],
+        "preproc_version": embedder["preproc_version"],
+        "dims": embedder["dims"],
+    }
+
+
+async def rebuild_projections(conn: AsyncConnection) -> RebuildStats:
+    stats = RebuildStats()
+    async with conn.transaction():
+        await conn.execute(f"TRUNCATE TABLE {', '.join(PROJECTION_TABLES)}")
+        cur = await conn.execute(
+            "SELECT event_id, project_id, kind, payload, projection_version FROM events ORDER BY event_id"
+        )
+        events = await cur.fetchall()
+        for event_id, project_id, kind, payload, projection_version in events:
+            stats.events += 1
+            if kind in ("write", "call_the_day"):
+                if projection_version != 1:
+                    raise ReplayError(
+                        f"event {event_id}: unsupported projection_version {projection_version}"
+                    )
+                await _replay_write(conn, stats, event_id, project_id, payload)
+            elif kind == "access":
+                await _replay_access(conn, payload)
+            # device/project/grant events have no projection rows
+        await _reset_sequences(conn)
+    return stats
+
+
+async def _replay_write(
+    conn: AsyncConnection, stats: RebuildStats, event_id: int, project_id: int, payload: dict[str, Any]
+) -> None:
+    res = payload["resolved"]
+    if res.get("normalizer_version", 1) != NORMALIZER_VERSION:
+        raise ReplayError(f"event {event_id}: normalizer_version {res.get('normalizer_version')} not in code")
+    T = parse_ts(res["recorded_at"], field="resolved.recorded_at")
+    src_items = res.get("write", {}).get("items") or payload["request"]["items"]
+    embedder = res["embedder"]
+
+    superseded = [vid for it in res["items"] for vid in it.get("supersedes", [])]
+    if await q.supersede_versions(conn, superseded, T) != len(superseded):
+        raise ReplayError(f"event {event_id}: superseded versions {superseded} not all current")
+    sup_links = list(res.get("superseded_links", []))
+    if await q.supersede_links(conn, sup_links, T) != len(sup_links):
+        raise ReplayError(f"event {event_id}: superseded links {sup_links} not all current")
+
+    for it in res["items"]:
+        src = src_items[it["index"]]
+        # survivors first: they copy the row they were split from
+        for sv in it.get("survivors", []):
+            base = await q.get_version(conn, sv["from_version_id"])
+            if base is None:
+                raise ReplayError(f"event {event_id}: survivor base {sv['from_version_id']} missing")
+            await q.insert_version(
+                conn,
+                q.VersionRow(
+                    version_id=sv["version_id"],
+                    logical_id=base.logical_id,
+                    project_id=base.project_id,
+                    project_ids=list(base.project_ids),
+                    device_scope=base.device_scope,
+                    kind=base.kind,
+                    status=base.status,
+                    title=base.title,
+                    body=base.body,
+                    tags=list(base.tags),
+                    pinned=base.pinned,
+                    stability=base.stability,
+                    importance=base.importance,
+                    token_count=base.token_count,
+                    valid_from=parse_ts(sv["valid_from"]),
+                    valid_to=parse_opt_ts(sv["valid_to"], field="valid_to"),
+                    recorded_at=T,
+                    source_event_id=event_id,
+                    supersedes_version_id=base.version_id,
+                    last_access_at=base.last_access_at,
+                ),
+            )
+            stats.versions += 1
+            await q.insert_chunks(
+                conn,
+                _chunk_rows(
+                    sv["chunks"], sv["version_id"], base.body, list(base.project_ids), base.device_scope
+                ),
+            )
+            stats.chunks += len(sv["chunks"])
+
+        body: str = src["body"]
+        await q.insert_version(
+            conn,
+            q.VersionRow(
+                version_id=it["version_id"],
+                logical_id=it["logical_id"],
+                project_id=project_id,
+                project_ids=list(it["project_ids"]),
+                device_scope=it["device_scope"],
+                kind=src["kind"],
+                status="active",
+                title=src["title"],
+                body=body,
+                tags=list(src.get("tags", [])),
+                pinned=bool(src.get("pinned", False)),
+                stability=src.get("stability", "volatile"),
+                importance=src.get("importance"),
+                token_count=it["token_count"],
+                valid_from=parse_ts(it["valid_from"]),
+                valid_to=parse_opt_ts(it["valid_to"], field="valid_to"),
+                recorded_at=T,
+                source_event_id=event_id,
+                supersedes_version_id=it.get("supersedes_version_id"),
+            ),
+        )
+        stats.versions += 1
+        await q.insert_chunks(
+            conn,
+            _chunk_rows(it["chunks"], it["version_id"], body, list(it["project_ids"]), it["device_scope"]),
+        )
+        stats.chunks += len(it["chunks"])
+        for ln in it.get("links", []):
+            await q.insert_link(
+                conn,
+                q.LinkRow(
+                    link_id=ln["link_id"],
+                    project_id=project_id,
+                    project_ids=list(it["project_ids"]),
+                    device_scope=it["device_scope"],
+                    src_logical_id=it["logical_id"],
+                    dst_logical_id=ln["dst_logical_id"],
+                    dst_version_id=ln.get("dst_version_id"),
+                    rel=ln["rel"],
+                    props=ln.get("props", {}),
+                    valid_from=parse_ts(ln["valid_from"]),
+                    valid_to=parse_opt_ts(ln["valid_to"], field="valid_to"),
+                    recorded_at=T,
+                    source_event_id=event_id,
+                    supersedes_link_id=ln.get("supersedes_link_id"),
+                ),
+            )
+            stats.links += 1
+
+    for job in res.get("jobs", []):
+        await q.insert_job(
+            conn,
+            kind=job.get("kind", "embed"),
+            dedupe_key=job["dedupe_key"],
+            source_event_id=event_id,
+            payload=_embed_payload(job["version_id"], embedder),
+            run_after=T,
+            created_at=T,
+        )
+        stats.jobs += 1
+
+
+def _chunk_rows(
+    recorded: list[dict[str, Any]], version_id: int, body: str, project_ids: list[int], device_scope: str
+) -> list[q.ChunkRow]:
+    rows: list[q.ChunkRow] = []
+    for c in recorded:
+        text = body[c["char_start"] : c["char_end"]]
+        rows.append(
+            q.ChunkRow(
+                chunk_id=c["chunk_id"],
+                version_id=version_id,
+                project_ids=project_ids,
+                device_scope=device_scope,
+                ordinal=c["ordinal"],
+                char_start=c["char_start"],
+                char_end=c["char_end"],
+                text=text,
+                text_norm=normalize(text),
+                e5_tokens=c["e5_tokens"],
+            )
+        )
+    return rows
+
+
+async def _replay_access(conn: AsyncConnection, payload: dict[str, Any]) -> None:
+    """``access`` events (drilldown/raw) replay ``last_access_at`` from their resolved payload."""
+    res = payload.get("resolved", {})
+    at_raw = res.get("recorded_at")
+    version_ids = res.get("version_ids") or []
+    if at_raw and version_ids:
+        await q.touch_last_access(conn, list(version_ids), parse_ts(at_raw, field="resolved.recorded_at"))
+
+
+async def _reset_sequences(conn: AsyncConnection) -> None:
+    for table, col in (
+        ("memory_versions", "version_id"),
+        ("chunks", "chunk_id"),
+        ("links", "link_id"),
+        ("jobs", "job_id"),
+    ):
+        await conn.execute(
+            f"SELECT setval(pg_get_serial_sequence('{table}', '{col}'),"
+            f" COALESCE((SELECT max({col}) FROM {table}), 1),"
+            f" (SELECT max({col}) FROM {table}) IS NOT NULL)"
+        )
+    await conn.execute(
+        """
+        SELECT setval('logical_id_seq', GREATEST(m.mx, 1), m.mx IS NOT NULL)
+        FROM (SELECT max(x) AS mx FROM (SELECT logical_id AS x FROM memory_versions
+                                        UNION ALL SELECT card_logical_id FROM projects) u) m
+        """
+    )
+
+
+__all__ = ["PROJECTION_TABLES", "RebuildStats", "ReplayError", "rebuild_projections"]
