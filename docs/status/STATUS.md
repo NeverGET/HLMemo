@@ -22,6 +22,11 @@ Updated: 2026-09-22 12:05
 - PUBLIC: NeverGET/HLMemo (generic product)
 - PRIVATE: NeverGET/hlmemo-ops (our deployment; create at first deploy artifact)
 
+## Roadmap adjustment (D-022/D-023)
+- Phase 0 schema: +devices table, device-scoped tokens, events.device_id
+- Phase 1.5: raw importers (plumbing only)
+- Phase 2.5 NEW: per-project reconstruction campaign (needs librarian), ~2× estate incl. work computer
+
 ## Next
 - Owner answer pending: Hetzner CX43 confirm (D-005). NotebookLM question RESOLVED (D-020: HLMemo is the import target; legacy estate inventory in progress).
 - Phase-0 implementation plan (7 tables, 5 tools, hlm wrapper) → consult codex #03 on schema DDL
