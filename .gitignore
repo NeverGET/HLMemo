@@ -47,3 +47,6 @@ bench/results/*.json
 
 # private (owner's estate details, belongs to hlmemo-ops)
 docs/private/
+
+# embedding model cache (downloaded at build, pinned by models.lock)
+models/
