@@ -1,0 +1,8 @@
+google/gemini-embedding-2           dims=  768 nD=8 prefix=y top1=6/6 MRR=1.00 meanMargin=+0.156
+google/gemini-embedding-2           dims=  768 nD=8 prefix=n top1=6/6 MRR=1.00 meanMargin=+0.164
+google/gemini-embedding-001         dims=  768 nD=8 prefix=n top1=6/6 MRR=1.00 meanMargin=+0.215
+voyageai/voyage-4                   dims= 1024 nD=8 prefix=n top1=6/6 MRR=1.00 meanMargin=+0.315
+qwen/qwen3-embedding-4b             dims= 1024 nD=8 prefix=y top1=6/6 MRR=1.00 meanMargin=+0.258
+perplexity/pplx-embed-v1-4b         dims= 1024 nD=8 prefix=n top1=6/6 MRR=1.00 meanMargin=+0.329
+openai/text-embedding-3-large       dims= 1024 nD=8 prefix=n top1=6/6 MRR=1.00 meanMargin=+0.246
+intfloat/multilingual-e5-large      dims= 1024 nD=8 prefix=y top1=6/6 MRR=1.00 meanMargin=+0.057

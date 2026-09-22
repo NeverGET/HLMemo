@@ -1,0 +1,22 @@
+{"id": "google/gemini-embedding-2", "http": 200, "dims": 3072, "dims@768req": 768, "median_ms": 412, "n": 5, "provider": "Google", "err": null}
+{"id": "google/gemini-embedding-2-preview", "http": 200, "dims": 3072, "dims@768req": 768, "median_ms": 517, "n": 5, "provider": "Google AI Studio", "err": null}
+{"id": "google/gemini-embedding-001", "http": 200, "dims": 3072, "dims@768req": 768, "median_ms": 1202, "n": 5, "provider": "Google", "err": null}
+{"id": "voyageai/voyage-4", "http": 200, "dims": 1024, "dims@768req": "HTTP400", "median_ms": 355, "n": 5, "provider": "VoyageAI by MongoDB", "err": null}
+{"id": "voyageai/voyage-4-large", "http": 200, "dims": 1024, "dims@768req": "HTTP400", "median_ms": 312, "n": 5, "provider": "VoyageAI by MongoDB", "err": null}
+{"id": "voyageai/voyage-4-lite", "http": 200, "dims": 1024, "dims@768req": "HTTP400", "median_ms": 281, "n": 5, "provider": "VoyageAI by MongoDB", "err": null}
+{"id": "voyageai/voyage-code-4", "http": 200, "dims": 1024, "dims@768req": "HTTP400", "median_ms": 288, "n": 5, "provider": "VoyageAI by MongoDB", "err": null}
+{"id": "perplexity/pplx-embed-v1-4b", "http": 200, "dims": 2560, "dims@768req": 768, "median_ms": 270, "n": 5, "provider": "Perplexity", "err": null}
+{"id": "qwen/qwen3-embedding-8b", "http": 200, "dims": 4096, "dims@768req": 768, "median_ms": 3320, "n": 5, "provider": "Nebius", "err": null}
+{"id": "qwen/qwen3-embedding-4b", "http": 200, "dims": 2560, "dims@768req": 768, "median_ms": 481, "n": 5, "provider": "DeepInfra", "err": null}
+{"id": "openai/text-embedding-3-large", "http": 200, "dims": 3072, "dims@768req": 768, "median_ms": 745, "n": 5, "provider": "OpenAI", "err": null}
+{"id": "openai/text-embedding-3-small", "http": 200, "dims": 1536, "dims@768req": 768, "median_ms": 525, "n": 5, "provider": "OpenAI", "err": null}
+{"id": "mistralai/mistral-embed-2312", "http": 200, "dims": 1024, "dims@768req": "HTTP422", "median_ms": 315, "n": 5, "provider": "Mistral", "err": null}
+{"id": "mistralai/codestral-embed-2505", "http": 200, "dims": 1536, "dims@768req": "HTTP422", "median_ms": 338, "n": 5, "provider": "Mistral", "err": null}
+{"id": "baai/bge-m3", "http": 200, "dims": 1024, "dims@768req": 768, "median_ms": 409, "n": 5, "provider": "DeepInfra", "err": null}
+{"id": "intfloat/multilingual-e5-large", "http": 200, "dims": 1024, "dims@768req": 1024, "median_ms": 2297, "n": 5, "provider": "DeepInfra", "err": null}
+{"id": "nvidia/nemotron-3-embed-1b:free", "http": 200, "dims": 2048, "dims@768req": "HTTP400", "median_ms": 197, "n": 5, "provider": "Nvidia", "err": null}
+{"id": "cohere/embed-v4.0", "http": 400, "dims": null, "dims@768req": null, "median_ms": null, "n": 0, "provider": null, "err": "{\"error\":{\"message\":\"Model cohere/embed-v4.0 does not exist\",\"code\":400}}"}
+{"id": "jinaai/jina-embeddings-v4", "http": 400, "dims": null, "dims@768req": null, "median_ms": null, "n": 0, "provider": null, "err": "{\"error\":{\"message\":\"Model jinaai/jina-embeddings-v4 does not exist\",\"code\":400}}"}
+{"id": "snowflake/snowflake-arctic-embed-l-v2.0", "http": 400, "dims": null, "dims@768req": null, "median_ms": null, "n": 0, "provider": null, "err": "{\"error\":{\"message\":\"Model snowflake/snowflake-arctic-embed-l-v2.0 does not exist\",\"code\":400}}"}
+{"id": "nomic-ai/nomic-embed-text-v2-moe", "http": 400, "dims": null, "dims@768req": null, "median_ms": null, "n": 0, "provider": null, "err": "{\"error\":{\"message\":\"Model nomic-ai/nomic-embed-text-v2-moe does not exist\",\"code\":400}}"}
+{"id": "voyageai/voyage-3.5", "http": 400, "dims": null, "dims@768req": null, "median_ms": null, "n": 0, "provider": null, "err": "{\"error\":{\"message\":\"Model voyageai/voyage-3.5 does not exist\",\"code\":400}}"}
