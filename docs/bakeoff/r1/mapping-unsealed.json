@@ -1,0 +1,70 @@
+{
+ "F01": {
+  "source": "opus",
+  "orig_no": "7"
+ },
+ "F02": {
+  "source": "astra",
+  "orig_no": "3"
+ },
+ "F03": {
+  "source": "opus",
+  "orig_no": "3"
+ },
+ "F04": {
+  "source": "astra",
+  "orig_no": "8"
+ },
+ "F05": {
+  "source": "opus",
+  "orig_no": "5"
+ },
+ "F06": {
+  "source": "opus",
+  "orig_no": "6"
+ },
+ "F07": {
+  "source": "opus",
+  "orig_no": "8"
+ },
+ "F08": {
+  "source": "astra",
+  "orig_no": "5"
+ },
+ "F09": {
+  "source": "astra",
+  "orig_no": "2"
+ },
+ "F10": {
+  "source": "astra",
+  "orig_no": "9"
+ },
+ "F11": {
+  "source": "opus",
+  "orig_no": "2"
+ },
+ "F12": {
+  "source": "astra",
+  "orig_no": "6"
+ },
+ "F13": {
+  "source": "opus",
+  "orig_no": "1"
+ },
+ "F14": {
+  "source": "astra",
+  "orig_no": "1"
+ },
+ "F15": {
+  "source": "astra",
+  "orig_no": "7"
+ },
+ "F16": {
+  "source": "opus",
+  "orig_no": "4"
+ },
+ "F17": {
+  "source": "astra",
+  "orig_no": "4"
+ }
+}

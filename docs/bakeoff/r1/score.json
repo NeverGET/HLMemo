@@ -1,0 +1,29 @@
+{
+ "score": {
+  "opus": 15.0,
+  "astra": 10.0
+ },
+ "detail": {
+  "opus": [
+   "F01 Low +1",
+   "F03 Med +2",
+   "F05 Med +2",
+   "F06 Low +1",
+   "F07 Low +1 G-A",
+   "F11 High +3 G-B",
+   "F13 High +3",
+   "F16 Med +2"
+  ],
+  "astra": [
+   "F02 Low +1 G-A",
+   "F04 Low +1",
+   "F08 Med +2",
+   "F09 Low +1",
+   "F10 REJECTED -1",
+   "F12 Low +1",
+   "F14 Med +2 G-B",
+   "F15 Med +2",
+   "F17 Low +1"
+  ]
+ }
+}
