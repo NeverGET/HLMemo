@@ -108,23 +108,24 @@ async def register(request: Request) -> JSONResponse:
     conn = conn_of(request)
     token = generate_token()
     try:
-        async with conn.transaction():  # savepoint: a unique violation must not poison the request tx
-            row = await q.insert_device(
-                conn,
-                name=body.name,
-                device_class=body.device_class,
-                fingerprint=body.fingerprint,
-                os=body.os,
-                token_hash=hash_token(token),
-            )
-    except pgerrors.Error as exc:
-        if (
-            isinstance(exc, pgerrors.UniqueViolation)
-            and exc.diag.constraint_name == "devices_fingerprint_key"
-        ):
-            # §2 fallback: keep the historical identity and token revoked; the new
-            # registration gets an independent identity and still needs approval.
-            async with conn.transaction():
+        # Name reclamation and insertion are atomic, including the fingerprint fallback.
+        async with conn.transaction():
+            await q.release_revoked_device_name(conn, body.name)
+            try:
+                async with conn.transaction():  # recover from a fingerprint collision
+                    row = await q.insert_device(
+                        conn,
+                        name=body.name,
+                        device_class=body.device_class,
+                        fingerprint=body.fingerprint,
+                        os=body.os,
+                        token_hash=hash_token(token),
+                    )
+            except pgerrors.UniqueViolation as exc:
+                if exc.diag.constraint_name != "devices_fingerprint_key":
+                    raise
+                # §2 fallback: retain the historical identity and revoked token.
+                # The independent new identity still needs approval.
                 row = await q.insert_device(
                     conn,
                     name=body.name,
@@ -133,11 +134,11 @@ async def register(request: Request) -> JSONResponse:
                     os=body.os,
                     token_hash=hash_token(token),
                 )
-        else:
-            mapped = from_db_error(exc)
-            if mapped is None:
-                raise
-            raise mapped from exc
+    except pgerrors.Error as exc:
+        mapped = from_db_error(exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
     request_dump = body.model_dump(by_alias=True)
     await q.insert_event(
         conn,
