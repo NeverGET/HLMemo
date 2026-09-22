@@ -1,0 +1,11 @@
+.env*
+!.env.prod.example
+backup/data/
+*.dump
+*.partial
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.terraform/
+crash.log

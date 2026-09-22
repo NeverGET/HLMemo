@@ -1,0 +1,43 @@
+{
+	admin localhost:2019
+}
+
+(tls_acme) {
+	tls {
+		issuer acme
+	}
+}
+
+(tls_internal) {
+	tls internal
+}
+
+{$HLM_DOMAIN} {
+	import tls_{$HLM_TLS_MODE:acme}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		-Server
+	}
+	request_body {
+		max_size 2MB
+	}
+
+	@mcp path /mcp
+	handle @mcp {
+		reverse_proxy api:8765 {
+			flush_interval -1
+		}
+	}
+	@rest path /health /ready /devices/* /admin/*
+	handle @rest {
+		reverse_proxy api:8765
+	}
+	handle {
+		respond "Not found" 404
+	}
+}

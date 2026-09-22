@@ -1,0 +1,69 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+timezone: UTC
+disable_root: true
+ssh_pwauth: false
+groups:
+  - docker
+users:
+  - name: ${deploy_user}
+    groups: [sudo, docker]
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - ${jsonencode(ssh_public_key)}
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - python3
+  - unattended-upgrades
+  - fail2ban
+write_files:
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  - path: /etc/apt/apt.conf.d/52hlmemo-unattended
+    permissions: '0644'
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+  - path: /etc/fail2ban/jail.d/hlmemo.local
+    permissions: '0644'
+    content: |
+      [sshd]
+      enabled = true
+      backend = systemd
+      maxretry = 5
+      bantime = 1h
+  - path: /etc/ssh/sshd_config.d/00-hlmemo.conf
+    permissions: '0644'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+  - path: /usr/local/sbin/hlmemo-install-docker
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+      chmod a+r /etc/apt/keyrings/docker.asc
+      . /etc/os-release
+      printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
+        "$(dpkg --print-architecture)" "$VERSION_CODENAME" > /etc/apt/sources.list.d/docker.list
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      systemctl enable --now docker fail2ban unattended-upgrades
+      sshd -t
+      systemctl reload ssh
+      install -d -m 0750 -o ${deploy_user} -g ${deploy_user} /opt/hlmemo /var/backups/hlmemo
+      install -d -m 0750 -o root -g ${deploy_user} /etc/hlmemo
+      docker compose version
+runcmd:
+  - [bash, /usr/local/sbin/hlmemo-install-docker]
+final_message: "HLMemo host initialized. Install /etc/hlmemo/prod.env (0600) before deploying."

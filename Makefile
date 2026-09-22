@@ -58,3 +58,52 @@ test-g8:
 lint:
 	$(UV) run ruff check src tests alembic
 	$(UV) run ruff format --check src tests alembic
+
+# Production tooling. Keep HLM_ENV_FILE outside Git; BAKE_* isolates local drills.
+DEPLOY_ENV ?= $(CURDIR)/deploy/.env.prod
+DEPLOY = HLM_ENV_FILE="$(DEPLOY_ENV)" bash deploy/scripts/stack.sh
+.PHONY: deploy-config deploy-build deploy-up deploy-down deploy-status deploy-logs deploy-smoke deploy-backup deploy-restore deploy-drill deploy-remote deploy-tf-validate deploy-lint
+
+deploy-config:
+	$(DEPLOY) config -q
+
+deploy-build:
+	$(DEPLOY) build api
+
+deploy-up:
+	$(DEPLOY) up -d --build --wait --wait-timeout 300
+
+deploy-down:
+	$(DEPLOY) down
+
+deploy-status:
+	$(DEPLOY) ps
+
+deploy-logs:
+	$(DEPLOY) logs --tail 100
+
+deploy-smoke:
+	HLM_ENV_FILE="$(DEPLOY_ENV)" bash deploy/scripts/smoke_mcp.sh
+
+deploy-backup:
+	HLM_ENV_FILE="$(DEPLOY_ENV)" bash deploy/backup/backup.sh
+
+deploy-restore:
+	@test -n "$(DUMP)" || (echo 'Set DUMP=/absolute/path/file.dump' >&2; exit 1)
+	HLM_ENV_FILE="$(DEPLOY_ENV)" bash deploy/backup/restore.sh "$(DUMP)" --yes
+
+deploy-drill:
+	HLM_ENV_FILE="$(DEPLOY_ENV)" bash deploy/scripts/drill_backup_restore.sh
+
+deploy-remote:
+	@test -n "$(HOST)" -a -n "$(REF)" || (echo 'Set HOST=hlmdeploy@server REF=git-ref [REPO=git-url]' >&2; exit 1)
+	bash deploy/scripts/deploy.sh "$(HOST)" "$(REF)" $(if $(REPO),"$(REPO)")
+
+deploy-tf-validate:
+	terraform -chdir=deploy/terraform/hetzner init -backend=false
+	terraform -chdir=deploy/terraform/hetzner validate
+	terraform fmt -check -recursive deploy/terraform
+
+deploy-lint:
+	shellcheck deploy/backup/*.sh deploy/scripts/*.sh
+	gitleaks dir deploy --no-banner

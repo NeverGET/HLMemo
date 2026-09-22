@@ -1,0 +1,152 @@
+# Production defaults; BAKE_* overrides keep local validation isolated.
+name: ${BAKE_PROJECT:-${HLM_COMPOSE_PROJECT:-hlmemo-prod}}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# --env-file configures interpolation; HLM_ENV_FILE selects the same file for containers.
+# Missing file is allowed only to render G-D1; DB cannot start without its password.
+# Scripts require an existing file. Never fall back to committed example credentials.
+x-env: &env
+  - path: ${HLM_ENV_FILE:-.env.prod}
+    required: false
+
+x-app: &app
+  image: ${HLM_IMAGE:-hlmemo:prod}
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    target: runtime
+    args:
+      BAKE_MODELS: "1"
+  env_file: *env
+  environment:
+    HLM_PROFILES_DIR: /app/profiles
+    HLM_MODELS_DIR: /app/models
+    HLM_API_HOST: 0.0.0.0
+    HLM_API_PORT: "8765"
+    PYTHONUNBUFFERED: "1"
+  restart: unless-stopped
+  logging: *logging
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  pids_limit: 256
+  networks: [backend, outbound]
+
+services:
+  db:
+    image: ${HLM_DB_IMAGE:-pgvector/pgvector:0.8.6-pg17}
+    env_file: *env
+    environment:
+      POSTGRES_INITDB_ARGS: --data-checksums
+    command: ["postgres", "-c", "timezone=UTC", "-c", "shared_buffers=1GB", "-c", "max_connections=100"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    # No ports, even on loopback. Only the private backend network reaches Postgres.
+    networks: [backend]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 4g
+    cpus: 2.0
+    shm_size: 1g
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "phase0@head"]
+    restart: "no" # Successful completion IS the one-shot migration's health signal.
+    mem_limit: 1g
+    cpus: 1.0
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["python", "-m", "hlmemo.server.app"]
+    mem_limit: 3g
+    cpus: 2.0
+    networks: [backend, frontend, outbound]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 90s
+
+  worker:
+    <<: *app
+    command: ["python", "/opt/hlmemo/worker_entrypoint.py"]
+    volumes:
+      - ./scripts/worker_entrypoint.py:/opt/hlmemo/worker_entrypoint.py:ro
+      - ./scripts/worker_health.py:/opt/hlmemo/worker_health.py:ro
+    mem_limit: 4g
+    cpus: 3.0
+    stop_grace_period: 150s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "/opt/hlmemo/worker_health.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  caddy:
+    image: ${HLM_CADDY_IMAGE:-caddy:2.11.2-alpine}
+    environment:
+      HLM_DOMAIN: ${HLM_DOMAIN:?Set HLM_DOMAIN in the env file}
+      HLM_TLS_MODE: ${HLM_TLS_MODE:-acme}
+    ports:
+      - "${BAKE_BIND_IP:-0.0.0.0}:${BAKE_HTTP_PORT:-80}:80"
+      - "${BAKE_BIND_IP:-0.0.0.0}:${BAKE_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [frontend, outbound]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+networks:
+  backend:
+    internal: true
+  frontend:
+    internal: true
+  outbound: {}
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
