@@ -6,8 +6,11 @@ the real API in a later task.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 import psycopg
 import pytest
@@ -337,3 +340,85 @@ async def test_api_boots_and_health_ok(db_dsn) -> None:
             assert r.status_code == 200 and r.json() == {"status": "ok"}
             r = await c.get("/mcp")
             assert r.status_code == 401  # gated: no bearer
+
+
+@pytest.mark.parametrize("cancel_first", [False, True], ids=["concurrent", "cancelled-leader"])
+async def test_concurrent_cold_readiness_loads_models_once(
+    db_dsn, tmp_path, monkeypatch, cancel_first
+) -> None:
+    """Overlapping cold probes share one load, even if the first HTTP caller disconnects."""
+    import httpx
+
+    from hlmemo.config import get_settings
+    from hlmemo.server import app as server
+
+    for rel in server.MODEL_FILES:
+        asset = tmp_path / rel
+        asset.parent.mkdir(parents=True, exist_ok=True)
+        asset.write_text("readiness test asset")
+    expected_hashes = server.model_hashes(tmp_path)
+    lock = tmp_path / "models.lock"
+    lock.write_text("\n".join(f"{rel}: sha256:{digest}" for rel, digest in expected_hashes.items()))
+    project_file = server._project_file
+    monkeypatch.setattr(
+        server, "_project_file", lambda name: lock if name == "models.lock" else project_file(name)
+    )
+
+    loop = asyncio.get_running_loop()
+    hash_started = asyncio.Event()
+    all_probes_started = asyncio.Event()
+    release_hash = threading.Event()
+    probe_count = 8
+    probes_started = 0
+
+    def model_dir():
+        nonlocal probes_started
+        probes_started += 1
+        if probes_started == probe_count:
+            all_probes_started.set()
+        return tmp_path
+
+    def gated_hashes(path):
+        assert path == tmp_path
+        loop.call_soon_threadsafe(hash_started.set)
+        assert release_hash.wait(timeout=10), "test did not release model verification"
+        return expected_hashes
+
+    hashes = Mock(side_effect=gated_hashes)
+    embedder = Mock()
+    meter = Mock()
+    monkeypatch.setattr(server, "default_model_dir", model_dir)
+    monkeypatch.setattr(server, "model_hashes", hashes)
+    monkeypatch.setattr(server, "Embedder", embedder)
+    monkeypatch.setattr(server, "Meter", meter)
+
+    app = server.create_app(get_settings(db_dsn=db_dsn, admin_token=None, registration_secret=None))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            first = asyncio.create_task(c.get("/ready"))
+            tasks = [first]
+            try:
+                await asyncio.wait_for(hash_started.wait(), timeout=5)
+                if cancel_first:
+                    first.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await first
+                tasks.extend(asyncio.create_task(c.get("/ready")) for _ in range(probe_count - 1))
+                await asyncio.wait_for(all_probes_started.wait(), timeout=5)
+                assert not any(task.done() for task in tasks[1:])
+            finally:
+                release_hash.set()
+                results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10)
+
+            for response in results[1:] if cancel_first else results:
+                assert isinstance(response, httpx.Response), response
+                assert response.status_code == 200, response.text
+                assert response.json()["status"] == "ready"
+                assert response.json()["checks"]["models"]["inference"] is True
+            assert (await c.get("/ready")).status_code == 200  # warm cache stays reusable
+
+    hashes.assert_called_once_with(tmp_path)
+    embedder.assert_called_once_with(tmp_path)
+    embedder.return_value.embed_query.assert_called_once_with("readiness")
+    meter.assert_called_once_with()
+    meter.return_value.count_text.assert_called_once_with("readiness")

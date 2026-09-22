@@ -10,7 +10,9 @@ Order inside the transaction (§3 *Authorization order* / *Transaction*):
    sha256 of the canonical JSON of the arguments **as received** (``raw``), never of the
    validated model — omitted vs explicit defaults (``device_scope:"all"``) or ``null`` vs absent
    are different requests. ``payload.request`` preserves those arguments; ``resolved.write``
-   records validated items, including defaults and coercions, for deterministic replay;
+   records validated items, including defaults and coercions, for deterministic replay. The
+   event's ``resolved.hash_version`` selects retry hashing; unversioned historical events use
+   the compatibility inference documented in ``_event_hash_version``;
 4. ``events_one_close`` guard (call_the_day), head comparison (``E_VERSION_CONFLICT``), content
    rules (card size, temporal, device scope, link targets), ack-size budget check. A link target
    is authorized with §4.4 (a) on the *selected* endpoint (home-project membership + read grant +
@@ -73,6 +75,8 @@ from hlmemo.db import write_queries as q
 
 PROJECTION_VERSION = 1
 PREPROC_VERSION = 1
+HASH_VERSION_NORMALIZED = 1
+HASH_VERSION_VERBATIM = 2
 CARD_MAX_TOKENS = 512
 CHUNKER_NAME = "e5-window"
 JOB_KIND_EMBED = "embed"
@@ -137,6 +141,105 @@ def embed_job_payload(version_id: int, embedder: dict[str, Any]) -> dict[str, An
 
 def payload_sha256(request: dict[str, Any]) -> str:
     return hashlib.sha256(canonical(request).encode("utf-8")).hexdigest()
+
+
+def _legacy_request_v1(request: dict[str, Any], kind: str) -> dict[str, Any]:
+    """Historical validated JSON, including defaults and omitting nulls (pre-round-8).
+
+    Keep this serializer's field set/defaults frozen when request models evolve. Validation
+    supplies coercions; the explicit v1 defaults below must not inherit later model defaults.
+    """
+    model = WriteRequest if kind == "write" else CloseRequest
+    validated = parse_request(model, request).model_dump(mode="json", exclude_none=True)
+
+    def fields(raw: dict[str, Any], values: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: values[key] if key in raw else default
+            for key, default in defaults.items()
+            if (key in raw and key in values) or (key not in raw and default is not None)
+        }
+
+    top_defaults = {
+        "project": None,
+        "request_id": None,
+        "client": None,
+        "occurred_at": None,
+        "token_budget": None,
+    }
+    if kind == "write":
+        result = fields(request, validated, top_defaults)
+        item_defaults = {
+            "kind": None,
+            "logical_id": None,
+            "expected_version_id": None,
+            "title": None,
+            "body": None,
+            "tags": [],
+            "pinned": False,
+            "stability": "volatile",
+            "importance": None,
+            "project_ids": None,
+            "device_scope": "all",
+            "valid_from": None,
+            "valid_to": None,
+            "links": [],
+        }
+        result["items"] = [
+            fields(raw, value, item_defaults)
+            for raw, value in zip(request["items"], validated["items"], strict=True)
+        ]
+        for raw, value in zip(request["items"], result["items"], strict=True):
+            value["links"] = [
+                fields(link, validated_link, {"rel": None, "target": None, "target_version_id": None})
+                for link, validated_link in zip(raw.get("links", []), value["links"], strict=True)
+            ]
+        return result
+    result = fields(
+        request,
+        validated,
+        dict(
+            top_defaults,
+            session_id=None,
+            notes=None,
+            decisions=[],
+            lessons=[],
+            card_update=None,
+            expected_versions=[],
+        ),
+    )
+    result["lessons"] = [
+        fields(raw, value, {"title": None, "body": None, "tags": [], "device_scope": "all"})
+        for raw, value in zip(request.get("lessons", []), result["lessons"], strict=True)
+    ]
+    if "card_update" in result:
+        result["card_update"] = fields(
+            request["card_update"], result["card_update"], {"body": None, "expected_version_id": None}
+        )
+    result["expected_versions"] = [
+        {key: value[key] for key in ("logical_id", "version_id")} for value in result["expected_versions"]
+    ]
+    return result
+
+
+def _event_hash_version(prior: q.EventRef) -> int | None:
+    """Explicit versions are authoritative; never try another algorithm after a mismatch.
+
+    Round 8 introduced resolved.write for writes alongside verbatim hashing. Historical close
+    events already had resolved.write, so their exact old normalized request shape is the only
+    available discriminator. An unversioned round-8 close with every default explicitly supplied
+    is indistinguishable from a legacy close; retain legacy retry behavior in that ambiguous case.
+    New events always carry a version, eliminating that ambiguity without rewriting old events.
+    """
+    resolved = prior.payload.get("resolved", {})
+    if "hash_version" in resolved:
+        version = resolved["hash_version"]
+        return version if type(version) is int else None
+    if prior.kind == "write":
+        return HASH_VERSION_VERBATIM if "write" in resolved else HASH_VERSION_NORMALIZED
+    request = prior.payload["request"]
+    if canonical(request) == canonical(_legacy_request_v1(request, prior.kind)):
+        return HASH_VERSION_NORMALIZED
+    return HASH_VERSION_VERBATIM
 
 
 def verbatim_args(req: Any, raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -563,11 +666,22 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
 
     cache = await _authorize_revisions(conn, ctx, batch, plans)  # §3 (3)
 
-    # Idempotency (after re-authorization, §3): the key is the hash of the *verbatim* arguments.
+    # New events hash verbatim arguments; retries must use the stored event's algorithm.
     sha = payload_sha256(batch.request_payload)
     prior = await q.find_event(conn, home.project_id, ctx.device_id, batch.request_id)
     if prior is not None:
-        if prior.payload_sha256 != sha or prior.result is None:
+        version = _event_hash_version(prior) if prior.kind == batch.kind else None
+        retry_sha = (
+            payload_sha256(_legacy_request_v1(batch.request_payload, batch.kind))
+            if version == HASH_VERSION_NORMALIZED
+            else sha
+        )
+        if (
+            version not in (HASH_VERSION_NORMALIZED, HASH_VERSION_VERBATIM)
+            or prior.kind != batch.kind
+            or prior.payload_sha256 != retry_sha
+            or prior.result is None
+        ):
             raise ToolError("E_REQUEST_ID_CONFLICT", "request_id was already used with a different payload")
         replay = dict(prior.result)
         replay["replayed"] = True
@@ -853,6 +967,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         )
 
     resolved: dict[str, Any] = {
+        "hash_version": HASH_VERSION_VERBATIM,
         "recorded_at": T_json,
         "occurred_at": fmt_ts(occurred_at),
         "projection_version": PROJECTION_VERSION,

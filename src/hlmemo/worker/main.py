@@ -18,20 +18,32 @@ back) or waits behind it and then finds the job ``done``. Before that transactio
 *reads* (which chunks lack a vector, which of them have a copyable predecessor vector) and infers.
 
 ``drain(conn_factory, embedder)`` runs the same loop until the queue is empty (tests / one-shot).
+
+Heartbeat (codex review O2): every ``HEARTBEAT_SECONDS`` at most, the loop logs
+``worker heartbeat: …`` with the last committed job id + its timestamp, the number of ready jobs
+and the age of the oldest ready job. An idle worker and a stalled worker both log nothing useful
+otherwise — ``ready_jobs=0`` is idle, a growing ``oldest_ready_age_s`` is a stall.
+
+Test barrier: ``HLM_WORKER_TEST_BARRIER`` (unset in production) names a row in a
+``hlm_test_barrier`` table that the O2 crash test creates. See ``_test_barrier``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 import signal
 import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
+import psycopg
 from psycopg import AsyncConnection
 
 from hlmemo.core import MODEL_ID, MODEL_REVISION
@@ -47,6 +59,12 @@ BATCH_CHUNKS = 32
 MAX_JOBS_PER_BATCH = 16
 POLL_INTERVAL = 1.0
 JOB_KINDS = ("embed", "reembed")
+HEARTBEAT_SECONDS = 10.0
+
+#: Test-only crash hook, off unless this env var names an armed ``hlm_test_barrier`` row.
+BARRIER_ENV = "HLM_WORKER_TEST_BARRIER"
+BARRIER_TIMEOUT_SECONDS = 300.0
+BARRIER_POLL_SECONDS = 0.1
 
 ConnFactory = Callable[[], Awaitable[AsyncConnection]]
 
@@ -69,6 +87,10 @@ class DrainStats:
     chunks_copied: int = 0
     seconds: float = 0.0
     errors: list[str] = field(default_factory=list)
+    #: Heartbeat state (O2): the last job whose fenced transaction *committed*, and when.
+    last_done_job_id: int | None = None
+    last_done_at: datetime | None = None
+    last_heartbeat_monotonic: float = 0.0
 
 
 # --------------------------------------------------------------------------- SQL
@@ -232,6 +254,144 @@ async def _mark_failed(conn: AsyncConnection, job: Job, error: str) -> str:
     return "failed" if permanent else "queued"
 
 
+# --------------------------------------------------------------------------- heartbeat (O2)
+#: ``ready_*`` is exactly what ``lease_jobs`` would pick up next (queued and due, or a dead lease).
+#: ``in_flight_*`` counts jobs held under a *live* lease. Those are invisible to the ready counters,
+#: which is precisely the window a crashed worker leaves behind: until its lease expires the queue
+#: looks idle (``ready_jobs=0``) while nothing is progressing. A non-zero ``in_flight_jobs`` whose
+#: age approaches ``LEASE_SECONDS`` while ``last_done_job`` stands still is that stall.
+_HEARTBEAT_SQL = """
+    SELECT count(*) FILTER (WHERE ready)::bigint,
+           COALESCE(EXTRACT(EPOCH FROM (now() - min(run_after) FILTER (WHERE ready))), 0)::float8,
+           count(*) FILTER (WHERE in_flight)::bigint,
+           COALESCE(EXTRACT(EPOCH FROM (now() - min(leased_at) FILTER (WHERE in_flight))), 0)::float8
+      FROM (
+        SELECT run_after,
+               lease_until - make_interval(secs => %(lease)s) AS leased_at,
+               ((status = 'queued' AND run_after <= now())
+                OR (status = 'running' AND lease_until < now())) AS ready,
+               (status = 'running' AND lease_until >= now()) AS in_flight
+          FROM jobs
+         WHERE kind = ANY(%(kinds)s) AND status IN ('queued', 'running')
+      ) j
+"""
+
+
+async def heartbeat(
+    conn: AsyncConnection, stats: DrainStats, *, force: bool = False
+) -> dict[str, Any] | None:
+    """Emit at most one ``worker heartbeat:`` line per ``HEARTBEAT_SECONDS`` (O2).
+
+    Returns the heartbeat dict when it fired, ``None`` when it was rate-limited. The line carries
+    the last *committed* job id and timestamp, the ready-job count and the oldest ready age, plus
+    the in-flight (leased) count and age. Idle is ``ready_jobs=0 in_flight_jobs=0``; a stall is a
+    backlog that ages while ``last_done_job`` does not move — either ready jobs nobody picks up, or
+    a job leased by a worker that is no longer alive.
+    """
+    now = time.monotonic()
+    if not force and (now - stats.last_heartbeat_monotonic) < HEARTBEAT_SECONDS:
+        return None
+    stats.last_heartbeat_monotonic = now
+    cur = await conn.execute(_HEARTBEAT_SQL, {"kinds": list(JOB_KINDS), "lease": LEASE_SECONDS})
+    ready_jobs, oldest_ready_age_s, in_flight_jobs, oldest_in_flight_age_s = await cur.fetchone()
+    await conn.commit()
+    hb: dict[str, Any] = {
+        "last_done_job": stats.last_done_job_id,
+        "last_done_at": stats.last_done_at.isoformat() if stats.last_done_at else None,
+        "ready_jobs": int(ready_jobs),
+        "oldest_ready_age_s": round(float(oldest_ready_age_s), 3) if ready_jobs else None,
+        "in_flight_jobs": int(in_flight_jobs),
+        "oldest_in_flight_age_s": round(float(oldest_in_flight_age_s), 3) if in_flight_jobs else None,
+        "jobs_done": stats.jobs_done,
+    }
+    log.info(
+        "worker heartbeat: last_done_job=%s last_done_at=%s ready_jobs=%s oldest_ready_age_s=%s"
+        " in_flight_jobs=%s oldest_in_flight_age_s=%s jobs_done_this_process=%s",
+        hb["last_done_job"],
+        hb["last_done_at"],
+        hb["ready_jobs"],
+        hb["oldest_ready_age_s"],
+        hb["in_flight_jobs"],
+        hb["oldest_in_flight_age_s"],
+        hb["jobs_done"],
+    )
+    return hb
+
+
+# --------------------------------------------------------------------------- test-only crash hook
+def _self_destruct() -> None:  # pragma: no cover - the process does not survive this
+    """Kill *this* process (PID 1 under compose) as abruptly as the kernel allows.
+
+    ``kill(1, SIGKILL)`` from inside the container is silently dropped: the kernel marks a PID
+    namespace's init ``SIGNAL_UNKILLABLE`` and ignores every default-action signal sent to it from
+    within its own namespace (``sig_task_ignored``), self-sent ones included — measured, the
+    process simply keeps running. A *forced* fault is the one path that is not ignorable:
+    ``force_sig_info_to_task`` clears ``SIGNAL_UNKILLABLE`` first, so the process dies immediately
+    with SIGSEGV (exit 139) and Docker's ``restart: unless-stopped`` brings it back. No cleanup
+    runs, the open transaction is abandoned, and the server rolls it back when the backend dies —
+    which is the point of the test.
+    """
+    import ctypes
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.kill(1, signal.SIGKILL)  # the real thing first; ignored for a namespace init
+    time.sleep(0.2)
+    ctypes.string_at(0)  # unignorable: SIGSEGV via force_sig clears SIGNAL_UNKILLABLE
+    time.sleep(30)  # unreachable
+
+
+async def _test_barrier(job: Job) -> None:
+    """One-shot, *persisted* pause immediately before ``_mark_done`` — O2 crash test only.
+
+    Inert unless ``HLM_WORKER_TEST_BARRIER`` names a row of a ``hlm_test_barrier`` table (the test
+    creates it; a missing table is a no-op). The claim ``UPDATE … WHERE armed`` runs on an
+    independent autocommit connection, so it survives the rollback of the fenced transaction *and*
+    the process death: the worker Docker restarts finds the barrier already consumed and completes
+    the job normally. While a claimed barrier is held, the job is ``running`` and none of its
+    embeddings are committed yet — exactly the window O2 needs to observe.
+    """
+    name = os.environ.get(BARRIER_ENV, "").strip()
+    if not name:
+        return
+    from hlmemo.config import get_settings
+
+    conn = await AsyncConnection.connect(get_settings().db_dsn, autocommit=True)
+    try:
+        try:
+            cur = await conn.execute(
+                "UPDATE hlm_test_barrier SET armed = false, hit_at = now(), hit_job_id = %s,"
+                " hit_pid = %s WHERE name = %s AND armed RETURNING 1",
+                (job.job_id, os.getpid(), name),
+            )
+        except psycopg.errors.UndefinedTable:
+            log.warning("test barrier %r: no hlm_test_barrier table, ignoring", name)
+            return
+        if cur.rowcount != 1:
+            return  # already consumed — this is the restarted worker
+        log.warning(
+            "TEST BARRIER %r claimed by pid %s: holding job %s before _mark_done",
+            name,
+            os.getpid(),
+            job.job_id,
+        )
+        deadline = time.monotonic() + BARRIER_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            cur = await conn.execute("SELECT released, action FROM hlm_test_barrier WHERE name = %s", (name,))
+            row = await cur.fetchone()
+            if row and row[0]:
+                action = row[1]
+                log.warning("TEST BARRIER %r released, action=%s", name, action)
+                if action == "sigkill":
+                    _self_destruct()
+                return
+            await asyncio.sleep(BARRIER_POLL_SECONDS)
+        log.error("TEST BARRIER %r timed out after %ss", name, BARRIER_TIMEOUT_SECONDS)
+    finally:
+        with contextlib.suppress(Exception):
+            await conn.close()
+
+
 # --------------------------------------------------------------------------- batch processing
 def _check_job_model(job: Job) -> None:
     p = job.payload
@@ -293,12 +453,15 @@ async def process_jobs(conn: AsyncConnection, embedder: Embedder, jobs: list[Job
             async with conn.transaction():
                 copied = await _copy_from_predecessor(conn, job, plan.copy_ids)
                 await _insert_embeddings(conn, job, rows)
+                await _test_barrier(job)  # inert in production; O2 crashes the process here
                 if not await _mark_done(conn, job):
                     raise _LeaseLost(job.job_id)
             await conn.commit()
             stats.jobs_done += 1
             stats.chunks_copied += copied
             stats.chunks_embedded += len(rows)
+            stats.last_done_job_id = job.job_id
+            stats.last_done_at = datetime.now(UTC)
         except _LeaseLost:
             await conn.rollback()
             log.warning(
@@ -378,6 +541,7 @@ async def run_forever(
             if conn is None or conn.closed:
                 conn = await conn_factory()
             leased = await run_once(conn, embedder, stats)
+            await heartbeat(conn, stats)
         except Exception as exc:  # noqa: BLE001 - database hiccups: reconnect after a pause
             log.error("worker loop error: %s", exc)
             if conn is not None:
@@ -440,12 +604,15 @@ if __name__ == "__main__":
 
 __all__ = [
     "BACKOFF_SECONDS",
+    "BARRIER_ENV",
     "BATCH_CHUNKS",
+    "HEARTBEAT_SECONDS",
     "LEASE_SECONDS",
     "MAX_ATTEMPTS",
     "DrainStats",
     "Job",
     "drain",
+    "heartbeat",
     "lease_jobs",
     "main",
     "process_jobs",

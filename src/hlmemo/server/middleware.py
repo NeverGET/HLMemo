@@ -20,8 +20,11 @@ the request transaction; nothing they produce is durable until the outer ``COMMI
 response the route produced is therefore *buffered* and only released to the client after that
 commit succeeded — a client that sees a success envelope holds a durable write. If the commit
 fails, the buffered response is discarded and the client receives the ``E_UNAVAILABLE`` (503,
-retryable) envelope instead. The configured MCP transport uses finite JSON responses; all body
-chunks are buffered, including responses split across several ASGI messages.
+retryable) envelope instead. Finite JSON responses remain buffered even when chunked. At
+``http.response.start``, a ``text/event-stream`` media type declares an event stream: commit
+before forwarding its headers, then pass its messages through. Transfer-Encoding/chunk count
+and absence of Content-Length do not imply an indefinite stream (ASGI owns HTTP framing).
+This covers the persistent MCP GET channel; tool POST acknowledgements use finite JSON.
 
 `GET /health` (liveness) and `GET /ready` (readiness) need no bearer; with one they are gated
 like every other route except that `/health` also resolves pending/revoked devices (§2 poll).
@@ -29,6 +32,7 @@ like every other route except that `/health` also resolves pending/revoked devic
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
@@ -107,6 +111,9 @@ class AuthMiddleware:
         pool = scope["app"].state.pool
         buffered: list[Message] = []  # response messages held back until the outer commit
         sent_any = False  # at least one message reached the client
+        streaming = False
+        commit_error: Exception | None = None
+        send_lock = asyncio.Lock()  # SSE pings and response start can run in separate tasks
 
         async def flush() -> None:
             nonlocal sent_any
@@ -115,7 +122,24 @@ class AuthMiddleware:
                 await send(buffered.pop(0))
 
         async def send_wrapper(message: Message) -> None:
-            buffered.append(message)
+            nonlocal streaming, sent_any, commit_error
+            async with send_lock:
+                if commit_error is not None:
+                    raise commit_error
+                if message["type"] == "http.response.start":
+                    content_type = Headers(raw=message.get("headers", [])).get("content-type", "")
+                    if content_type.partition(";")[0].strip().lower() == "text/event-stream":
+                        try:
+                            await self.commit_request(conn)
+                        except Exception as exc:
+                            commit_error = exc
+                            raise
+                        streaming = True
+                if streaming:
+                    sent_any = True
+                    await send(message)
+                else:
+                    buffered.append(message)
 
         async with pool.connection() as conn:
             ctx = None
@@ -133,22 +157,31 @@ class AuthMiddleware:
             state["conn"] = conn
             try:
                 await self.app(scope, receive, send_wrapper)
-            except ERROR_TYPES as err:
-                await conn.rollback()
-                if sent_any:
-                    raise
-                buffered.clear()
-                await error_response(err)(scope, receive, send)
-                return
-            except BaseException:
+            except BaseException as err:
+                if commit_error is not None:
+                    await self._commit_failed(conn, commit_error, sent_any, scope, receive, send)
+                    return
+                if isinstance(err, ERROR_TYPES):
+                    await conn.rollback()
+                    if sent_any:
+                        raise
+                    buffered.clear()
+                    await error_response(err)(scope, receive, send)
+                    return
                 await _rollback_quietly(conn)
                 raise  # Starlette's ServerErrorMiddleware answers 500; nothing buffered was sent
-            try:
-                await self.commit_request(conn)
-            except Exception as exc:
-                await self._commit_failed(conn, exc, sent_any, scope, receive, send)
+            # The MCP transport may catch a streaming send failure itself. Never retry the
+            # failed commit or emit its success response just because the ASGI app returned.
+            if commit_error is not None:
+                await self._commit_failed(conn, commit_error, sent_any, scope, receive, send)
                 return
-            await flush()
+            if not streaming:
+                try:
+                    await self.commit_request(conn)
+                except Exception as exc:
+                    await self._commit_failed(conn, exc, sent_any, scope, receive, send)
+                    return
+                await flush()
             if ctx is not None and state["device"] is not None and state["device"]["status"] == "trusted":
                 try:
                     await q.touch_last_seen(conn, ctx.device_id)

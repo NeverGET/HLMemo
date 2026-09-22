@@ -16,6 +16,7 @@ from hlmemo.core import MODEL_ID
 from hlmemo.core.errors import ToolError
 from hlmemo.core.temporal import ONE_US, parse_ts
 from hlmemo.core.write_service import call_the_day, default_deps, write
+from hlmemo.db import write_queries as q
 from hlmemo.db.replay import rebuild_projections
 from tests.integration._write_fixtures import (
     MAIN,
@@ -88,6 +89,7 @@ async def test_initial_create_persists_event_versions_chunks_links_jobs(connect,
         canon = json.dumps(req, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         assert sha == hashlib.sha256(canon.encode()).hexdigest()
         assert payload["request"] == req
+        assert payload["resolved"]["hash_version"] == 2
         assert payload["resolved"]["write"]["items"][0]["device_scope"] == "all"
         r = payload["resolved"]
         assert {
@@ -179,6 +181,111 @@ async def test_request_id_conflict_on_different_payload(connect, world, deps) ->
         await conn.rollback()
         assert _err(ei).code == "E_REQUEST_ID_CONFLICT"
         assert await count(conn, "events") == 1 and await count(conn, "memory_versions") == 1
+
+
+@pytest.mark.parametrize("kind", ["write", "call_the_day"])
+@pytest.mark.parametrize(
+    "event_style", ["legacy", "legacy_versioned", "raw_unversioned", "raw_unversioned_coerced"]
+)
+async def test_retry_uses_stored_hash_version(connect, world, deps, monkeypatch, kind, event_style):
+    """An upgrade must preserve both legacy normalized retries and round-8 raw distinctions."""
+    req = {"project": MAIN, "request_id": str(uuid.uuid4()), "client": "pytest/0"}
+    if kind == "write":
+        req["items"] = [{"kind": "fact", "title": "t", "body": "b"}]
+        legacy = dict(
+            req,
+            items=[
+                dict(
+                    req["items"][0], tags=[], pinned=False, stability="volatile", device_scope="all", links=[]
+                )
+            ],
+        )
+        explicit = dict(req, items=[dict(req["items"][0], device_scope="all")])
+        changed = dict(req, items=[dict(req["items"][0], body="different")])
+        operation = write
+    else:
+        req.update(session_id=str(uuid.uuid4()), notes="n")
+        legacy = dict(req, decisions=[], lessons=[], expected_versions=[])
+        explicit = dict(req, decisions=[])
+        changed = dict(req, notes="different")
+        operation = call_the_day
+    if event_style == "raw_unversioned_coerced":
+        # Python considers 1000.0 == 1000; canonical JSON must still distinguish these requests.
+        req = dict(legacy, token_budget=1000.0)
+        explicit = dict(req, token_budget=1000)
+
+    # Emulate the original writer at insertion: no mutation of authoritative historical events.
+    insert_event = q.insert_event
+
+    async def insert_historical(conn, **kwargs):
+        payload = json.loads(json.dumps(kwargs["payload"]))
+        payload["resolved"].pop("hash_version")
+        if event_style.startswith("legacy"):
+            payload["request"] = legacy
+            if kind == "write":
+                payload["resolved"].pop("write")
+            if event_style == "legacy_versioned":
+                payload["resolved"]["hash_version"] = 1
+        canon = json.dumps(payload["request"], ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        kwargs.update(payload=payload, payload_sha256=hashlib.sha256(canon.encode()).hexdigest())
+        return await insert_event(conn, **kwargs)
+
+    async with await connect() as conn:
+        with monkeypatch.context() as patch:
+            patch.setattr(q, "insert_event", insert_historical)
+            first = await operation(conn, world.ctx_a, req, deps=deps)
+            await conn.commit()
+        payload_before = await event_payload(conn, req["request_id"])
+        await conn.commit()
+        # Dict order is not meaningful in canonical JSON.
+        replayed = await operation(conn, world.ctx_a, dict(reversed(list(req.items()))), deps=deps)
+        await conn.commit()
+        assert replayed.replayed and replayed.versions == first.versions
+        with pytest.raises(ToolError, match="different payload") as exc:
+            await operation(conn, world.ctx_a, changed, deps=deps)
+        await conn.rollback()
+        assert exc.value.code == "E_REQUEST_ID_CONFLICT"
+        if event_style.startswith("legacy"):
+            again = await operation(conn, world.ctx_a, explicit, deps=deps)
+            await conn.commit()
+            assert again.replayed and again.versions == first.versions
+        else:
+            # The compatibility path must not normalize round-8 requests that omitted defaults.
+            for altered in (explicit, dict(req, occurred_at=None)):
+                with pytest.raises(ToolError) as exc:
+                    await operation(conn, world.ctx_a, altered, deps=deps)
+                await conn.rollback()
+                assert exc.value.code == "E_REQUEST_ID_CONFLICT"
+        assert await event_payload(conn, req["request_id"]) == payload_before
+        assert await count(conn, "events") == 1
+        assert await count(conn, "memory_versions") == len(first.versions)
+
+
+@pytest.mark.parametrize("kind", ["write", "call_the_day"])
+async def test_unknown_idempotency_hash_version_fails_closed(connect, world, deps, monkeypatch, kind):
+    req = {"project": MAIN, "request_id": str(uuid.uuid4()), "client": "pytest/0"}
+    if kind == "write":
+        req["items"] = [{"kind": "fact", "title": "t", "body": "b"}]
+        operation = write
+    else:
+        req.update(session_id=str(uuid.uuid4()), notes="n")
+        operation = call_the_day
+    insert_event = q.insert_event
+
+    async def insert_future(conn, **kwargs):
+        kwargs["payload"]["resolved"]["hash_version"] = 99
+        return await insert_event(conn, **kwargs)
+
+    async with await connect() as conn:
+        with monkeypatch.context() as patch:
+            patch.setattr(q, "insert_event", insert_future)
+            await operation(conn, world.ctx_a, req, deps=deps)
+            await conn.commit()
+        with pytest.raises(ToolError) as exc:
+            await operation(conn, world.ctx_a, req, deps=deps)
+        await conn.rollback()
+        assert exc.value.code == "E_REQUEST_ID_CONFLICT"
+        assert await count(conn, "events") == 1
 
 
 # --------------------------------------------------------------------------- concurrency

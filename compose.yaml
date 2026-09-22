@@ -85,7 +85,11 @@ services:
   worker:
     build: *build
     image: hlmemo:dev
-    environment: *app-env
+    environment:
+      <<: *app-env
+      # Test-only crash hook (worker/main.py `_test_barrier`), empty => inert. Only the O2 restart
+      # test (`tests/integration/test_worker_restart.py`) ever sets it, in its own compose project.
+      HLM_WORKER_TEST_BARRIER: "${HLM_WORKER_TEST_BARRIER:-}"
     env_file: *env-file
     command: ["python", "-m", "hlmemo.worker.main"]
     depends_on:

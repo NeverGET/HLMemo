@@ -172,11 +172,21 @@ async def readiness(app: Starlette) -> tuple[bool, dict[str, Any]]:
     cache: dict[str, Any] | None = getattr(app.state, "model_check_cache", None)
     if cache is None:
         cache = app.state.model_check_cache = {}
+    model_check_lock = getattr(app.state, "model_check_lock", None)
+    if model_check_lock is None:
+        model_check_lock = app.state.model_check_lock = asyncio.Lock()
     model_dir = default_model_dir()  # honours HLM_MODELS_DIR
+
+    async def verify_models() -> dict[str, Any]:
+        async with model_check_lock:
+            return await asyncio.to_thread(
+                _verify_models_blocking, model_dir, _project_file(MODELS_LOCK), cache
+            )
+
     try:
-        checks["models"] = await asyncio.to_thread(
-            _verify_models_blocking, model_dir, _project_file(MODELS_LOCK), cache
-        )
+        # The shielded task owns the lock: cancelling a probe must not release it while
+        # to_thread is still hashing/loading and mutating the shared cache.
+        checks["models"] = await asyncio.shield(verify_models())
     except Exception as exc:  # noqa: BLE001
         checks["models"] = {"ok": False, "dir": str(model_dir), "error": f"{type(exc).__name__}: {exc}"}
     return all(c.get("ok") for c in checks.values()), checks
@@ -284,6 +294,8 @@ def create_app(
     )
     app.state.settings = settings
     app.state.mcp = mcp
+    app.state.model_check_cache = {}
+    app.state.model_check_lock = asyncio.Lock()
     app.state.cursor_secret = load_cursor_secret()
     app.state.register_limiter = RateLimiter(register_rate_limit) if register_rate_limit else None
     return app

@@ -1,5 +1,5 @@
 # HLMemo developer targets. Requires uv (https://docs.astral.sh/uv/) and Docker.
-.PHONY: up down down-v migrate models test test-compose test-g7 test-g8 smoke lint sync db
+.PHONY: up down down-v migrate models test test-compose test-o2 test-g7 test-g8 smoke lint sync db
 
 COMPOSE ?= docker compose
 UV ?= uv
@@ -43,6 +43,13 @@ smoke:
 	HLM_PROJECT=$${HLM_PROJECT:-g7-smoke} bash tests/smoke/claude.sh
 	HLM_PROJECT=$${HLM_PROJECT:-g7-smoke} bash tests/smoke/codex.sh
 	HLM_PROJECT=$${HLM_PROJECT:-g7-smoke} bash tests/smoke/agy.sh
+
+# O2: worker crash/restart (codex review 09 §4). Opt-in and slow (~LEASE_SECONDS + warm-up): it
+# brings up an ISOLATED compose project (`hlmemo-o2`, own db + volume on a free loopback port),
+# lets the single worker kill itself mid-commit and asserts Docker restarts it and it reclaims the
+# job. Never touches the dev stack or `HLM_TEST_DSN`.
+test-o2:
+	HLM_O2_RESTART=1 $(UV) run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_worker_restart.py
 
 # G8: gitleaks over the history + secret paths untracked (host only, no DB)
 test-g8:
