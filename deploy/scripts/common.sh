@@ -9,6 +9,17 @@ if [[ ! -f "$HLM_ENV_FILE" ]]; then
 fi
 HLM_ENV_FILE=$(cd -- "$(dirname -- "$HLM_ENV_FILE")" && pwd)/$(basename -- "$HLM_ENV_FILE")
 export HLM_ENV_FILE
+_env_dir=$(dirname "$HLM_ENV_FILE")
+HLM_APP_ENV_FILE=${HLM_APP_ENV_FILE:-$_env_dir/app.env}
+HLM_API_ENV_FILE=${HLM_API_ENV_FILE:-$_env_dir/api.env}
+HLM_DB_ENV_FILE=${HLM_DB_ENV_FILE:-$_env_dir/db.env}
+HLM_BACKUP_ENV_FILE=${HLM_BACKUP_ENV_FILE:-$_env_dir/backup.env}
+for _name in HLM_APP_ENV_FILE HLM_API_ENV_FILE HLM_DB_ENV_FILE HLM_BACKUP_ENV_FILE; do
+  _path=${!_name}
+  [[ -f $_path ]] || { printf 'Missing service env file: %s\n' "$_path" >&2; exit 1; }
+  printf -v "$_name" '%s/%s' "$(cd -- "$(dirname -- "$_path")" && pwd)" "$(basename -- "$_path")"
+done
+export HLM_APP_ENV_FILE HLM_API_ENV_FILE HLM_DB_ENV_FILE HLM_BACKUP_ENV_FILE
 # Resolve project from the env file as well as explicit overrides without eval/source.
 _file_project=$(docker compose -f "$DEPLOY_DIR/compose.prod.yaml" --env-file "$HLM_ENV_FILE" config --environment | python3 -c 'import sys; d=dict(line.rstrip("\n").partition("=")[::2] for line in sys.stdin if "=" in line); print(d.get("BAKE_PROJECT") or d.get("HLM_COMPOSE_PROJECT") or "hlmemo-prod")')
 COMPOSE_PROJECT=${BAKE_PROJECT:-${HLM_COMPOSE_PROJECT:-$_file_project}}
@@ -24,4 +35,16 @@ dc() {
 
 env_value() {
   dc config --environment | python3 -c 'import sys; d=dict(line.rstrip("\n").partition("=")[::2] for line in sys.stdin if "=" in line); print(d.get(sys.argv[1], ""))' "$1"
+}
+
+# A separate minimal Compose model parses backup.env with the same dotenv semantics.
+# Extract ONLY its service environment, never the host/production interpolation environment.
+backup_env() {
+  printf 'services:\n  settings:\n    image: unused\n    env_file:\n      - "%s"\n' "$HLM_BACKUP_ENV_FILE" |
+    docker compose -p hlmemo-backup-config --env-file /dev/null -f - config --format json |
+    python3 -c 'import json,sys; d=json.load(sys.stdin)["services"]["settings"]["environment"]; [print(k+"="+str(v).replace("$$", "$")) for k,v in d.items() if v is not None]'
+}
+
+backup_value() {
+  backup_env | python3 -c 'import sys; d=dict(line.rstrip("\n").partition("=")[::2] for line in sys.stdin if "=" in line); print(d.get(sys.argv[1], ""))' "$1"
 }

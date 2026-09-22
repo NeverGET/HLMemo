@@ -15,13 +15,11 @@ dump=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 dc exec -T db pg_restore --list < "$dump" > /dev/null
 # Refuse administrative databases before stopping services or modifying data.
 dc exec -T db sh -eu -c 'case "$POSTGRES_DB" in postgres|template0|template1|"") exit 64;; esac'
-BACKUP_DIR=${HLM_BACKUP_DIR:-$(env_value HLM_BACKUP_DIR)}
+BACKUP_DIR=${HLM_BACKUP_DIR:-$(backup_value HLM_BACKUP_DIR)}
 BACKUP_DIR=${BACKUP_DIR:-$DEPLOY_DIR/backup/data}
 mkdir -p "$BACKUP_DIR"
-if ! mkdir "$BACKUP_DIR/.operation.lock" 2>/dev/null; then
-    echo "Another backup/restore is active (or remove stale $BACKUP_DIR/.operation.lock after checking)." >&2
-    exit 1
-fi
+exec 8>"$BACKUP_DIR/.operation.flock"
+flock -n 8 || { echo 'Another backup/restore is active.' >&2; exit 1; }
 writers_stopped=0
 cleanup() {
     status=$?
@@ -29,7 +27,6 @@ cleanup() {
         dc stop caddy api worker >&2 || true
         echo 'Restore failed; writers remain stopped. Use the printed safety dump to recover.' >&2
     fi
-    rmdir "$BACKUP_DIR/.operation.lock"
     exit "$status"
 }
 trap cleanup EXIT
@@ -48,5 +45,5 @@ dc exec -T db sh -eu -c '
     createdb --username="$POSTGRES_USER" --owner="$POSTGRES_USER" --template=template0 -- "$POSTGRES_DB"
 '
 dc exec -T db sh -eu -c 'pg_restore --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --no-owner --no-acl --exit-on-error --single-transaction' < "$dump"
-dc up -d --wait --wait-timeout 180
+dc up -d --no-deps --wait --wait-timeout 180 db api worker caddy
 echo "Restore completed; stack healthy. Safety dump retained: $safety"

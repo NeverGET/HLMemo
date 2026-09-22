@@ -15,7 +15,12 @@ import uuid
 
 class Probe:
     def __init__(self, config):
-        self.settings = config["services"]["api"]["environment"]
+        # Compose escapes literal dollars for config round-tripping. HTTP
+        # credentials need the actual container values, decoded exactly once.
+        self.settings = {
+            key: value.replace("$$", "$") if isinstance(value, str) else value
+            for key, value in config["services"]["api"]["environment"].items()
+        }
         caddy = config["services"]["caddy"].get("environment", {})
         domain = os.environ.get("HLM_DOMAIN", caddy.get("HLM_DOMAIN", "localhost"))
         ports = config["services"]["caddy"].get("ports", [])
@@ -87,14 +92,31 @@ class Probe:
 
     def bootstrap(self):
         name = "deploy-" + uuid.uuid4().hex[:16]
-        project = name
-        self.request("/admin/projects", {"slug": project, "name": "Deployment verification"}, self.admin)
+        project = "deploy-smoke"
+        project_status = "created"
+        try:
+            self.request("/admin/projects", {"slug": project, "name": "Deployment verification"}, self.admin)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            # The current API maps unique violations to 400. Confirm the slug
+            # exists instead of swallowing an unrelated validation/auth failure.
+            if exc.code not in {400, 409}:
+                raise
+            projects = self.request("/admin/projects", token=self.admin)["projects"]
+            if not any(item["slug"] == project for item in projects):
+                raise
+            project_status = "reused"
         registered = self.request("/devices/register", {"name": name, "class": "ci", "fingerprint": str(uuid.uuid4()), "client": "deploy-probe/1"}, extra={"X-HLM-Registration-Secret": self.settings.get("HLM_REGISTRATION_SECRET", "")})
         device_id = registered["device"]["id"]
-        self.request("/devices/approve", {"id": device_id, "class": "ci", "grants": [{"project": project, "role": "write"}]}, self.admin)
         token = registered["token"]
-        self.initialize(token)
-        return {"project": project, "token": token, "device_id": device_id}
+        state = {"project": project, "project_status": project_status, "token": token, "device_id": device_id}
+        try:
+            self.request("/devices/approve", {"id": device_id, "class": "ci", "grants": [{"project": project, "role": "write"}]}, self.admin)
+            self.initialize(token)
+        except BaseException:
+            self.revoke(state)
+            raise
+        return state
 
     def call(self, token, name, arguments):
         result = self.rpc(token, "tools/call", {"name": name, "arguments": arguments})
@@ -115,26 +137,32 @@ def main():
     if args.mode == "smoke":
         state = probe.bootstrap()
         probe.revoke(state)
-        print("PASS G-D3: HTTPS initialize + tools/list returned all five memory tools using an approved device")
+        print(f"PASS G-D3: HTTPS initialize + tools/list returned all five memory tools; project deploy-smoke {state['project_status']}; device revoked")
         return
     if args.state is None:
         parser.error("--state is required for write/read")
     if args.mode == "write":
         state = probe.bootstrap()
-        state["marker"] = "Backup drill payload " + str(uuid.uuid4())
-        result = probe.call(state["token"], "memory.write", {"project": state["project"], "request_id": str(uuid.uuid4()), "client": "deploy-probe/1", "items": [{"kind": "fact", "title": "Backup restore drill", "body": state["marker"]}], "token_budget": 2000})
-        state["version_id"] = result["versions"][0]["version_id"]
-        fd = os.open(args.state, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(fd, "w") as stream:
-            json.dump(state, stream)
+        try:
+            state["marker"] = "Backup drill payload " + str(uuid.uuid4())
+            result = probe.call(state["token"], "memory.write", {"project": state["project"], "request_id": str(uuid.uuid4()), "client": "deploy-probe/1", "items": [{"kind": "fact", "title": "Backup restore drill", "body": state["marker"]}], "token_budget": 2000})
+            state["version_id"] = result["versions"][0]["version_id"]
+            fd = os.open(args.state, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "w") as stream:
+                json.dump(state, stream)
+        except BaseException:
+            probe.revoke(state)
+            raise
         print("Drill payload written through HTTPS memory.write")
     else:
         state = json.loads(args.state.read_text())
-        probe.initialize(state["token"])
-        result = probe.call(state["token"], "memory.raw", {"project": state["project"], "version_id": state["version_id"], "token_budget": 4000})
-        if result["payload_item"]["body"] != state["marker"]:
-            raise ValueError("Restored payload does not match the original write")
-        probe.revoke(state)
+        try:
+            probe.initialize(state["token"])
+            result = probe.call(state["token"], "memory.raw", {"project": state["project"], "version_id": state["version_id"], "token_budget": 4000})
+            if result["payload_item"]["body"] != state["marker"]:
+                raise ValueError("Restored payload does not match the original write")
+        finally:
+            probe.revoke(state)
         print("PASS G-D4: HTTPS memory.raw returned the identical payload after database wipe and restore")
 
 

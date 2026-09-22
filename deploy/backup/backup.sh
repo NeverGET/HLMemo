@@ -1,34 +1,55 @@
 #!/usr/bin/env bash
-# Consistent PostgreSQL custom-format backup; stdout is the completed daily dump path.
-# PostgreSQL variables below expand inside the container, never in the host shell.
+# Snapshot-consistent backup. stdout is the completed dump path; deployment snapshots
+# are independent of calendar rotation and survive until an explicit prune command.
 # shellcheck disable=SC2016
 set -euo pipefail
 umask 077
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=deploy/scripts/common.sh
 source "$SCRIPT_DIR/../scripts/common.sh"
-BACKUP_DIR=${HLM_BACKUP_DIR:-$(env_value HLM_BACKUP_DIR)}
+mode=daily
+revision=
+case ${1:-} in
+    "") ;;
+    --pre-upgrade)
+        [[ $# == 2 && $2 =~ ^[a-f0-9]{7,64}$ ]] || { echo 'Usage: backup.sh --pre-upgrade GIT_SHA' >&2; exit 64; }
+        mode=pre-upgrade; revision=$2 ;;
+    --prune-pre-upgrade) [[ $# == 1 ]] || exit 64; mode=prune ;;
+    *) echo 'Usage: backup.sh [--pre-upgrade GIT_SHA | --prune-pre-upgrade]' >&2; exit 64 ;;
+esac
+BACKUP_DIR=${HLM_BACKUP_DIR:-$(backup_value HLM_BACKUP_DIR)}
 BACKUP_DIR=${BACKUP_DIR:-$DEPLOY_DIR/backup/data}
-mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly"
+mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/pre-upgrade"
 BACKUP_DIR=$(cd "$BACKUP_DIR" && pwd)
-if ! mkdir "$BACKUP_DIR/.operation.lock" 2>/dev/null; then
-    echo "Another backup/restore is active (or remove stale $BACKUP_DIR/.operation.lock after checking)." >&2
-    exit 1
+# Advisory fd locks are released by the kernel, including after SIGKILL/reboot.
+# A different filename also ignores legacy stale .operation.lock directories.
+exec 8>"$BACKUP_DIR/.operation.flock"
+flock -n 8 || { echo 'Another backup/restore is active; stack remains running.' >&2; exit 1; }
+if [[ $mode == prune ]]; then
+    keep=${HLM_PRE_UPGRADE_KEEP:-$(backup_value HLM_PRE_UPGRADE_KEEP)}
+    python3 "$SCRIPT_DIR/retention.py" --prune-pre-upgrade "$BACKUP_DIR" --keep "${keep:-5}"
+    exit
 fi
 temporary=$(mktemp "$BACKUP_DIR/.dump.XXXXXX")
-cleanup() {
-    rm -f "$temporary"
-    rmdir "$BACKUP_DIR/.operation.lock"
-}
-trap cleanup EXIT
+trap 'rm -f "$temporary"' EXIT
 stamp=$(date -u +%Y-%m-%dT%H%M%SZ)
-dump="$BACKUP_DIR/daily/hlmemo-$stamp.dump"
+if [[ $mode == pre-upgrade ]]; then
+    # The random suffix also preserves two deploy attempts within the same second.
+    dump="$BACKUP_DIR/pre-upgrade/$revision-$stamp-${temporary##*.}.dump"
+else
+    dump="$BACKUP_DIR/daily/hlmemo-$stamp.dump"
+fi
 dc exec -T db sh -eu -c 'pg_dump --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --format=custom --no-owner --no-acl' > "$temporary"
 dc exec -T db pg_restore --list < "$temporary" > /dev/null
 mv "$temporary" "$dump"
-# Retain the latest snapshot for each UTC day and each ISO week, then 7 days + 4 weeks.
-# Copies (not hardlinks) prevent a replacement of one tier from mutating the other tier.
-weekly=$(python3 "$SCRIPT_DIR/retention.py" "$dump" "$BACKUP_DIR")
-dc config --environment | python3 "$SCRIPT_DIR/upload.py" "$dump" "$weekly"
-echo "Backup completed: $dump (7 daily / 4 weekly retention)" >&2
+if [[ $mode == pre-upgrade ]]; then
+    if ! backup_env | python3 "$SCRIPT_DIR/upload.py" "$dump"; then
+        echo "WARNING: pre-upgrade S3 upload failed; local dump retained: $dump" >&2
+    fi
+    echo "Pre-upgrade backup completed: $dump (retained until explicit prune)" >&2
+else
+    weekly=$(python3 "$SCRIPT_DIR/retention.py" "$dump" "$BACKUP_DIR")
+    backup_env | python3 "$SCRIPT_DIR/upload.py" "$dump" "$weekly"
+    echo "Backup completed: $dump (7 daily / 4 weekly retention)" >&2
+fi
 printf '%s\n' "$dump"

@@ -1,0 +1,31 @@
+# Opus 5.5 adversarial review of the D-034 deploy fixes (2026-09-22)
+
+## Six-defect status
+
+| Defect | Status | Evidence |
+|---|---|---|
+| D11 retention deletes same-day pre-upgrade dumps | FIXED | backup.sh:541-546 writes to `pre-upgrade/<sha>-<stamp>-<rand>.dump`. retention.py `rotate()` refuses anything that is not a daily dump, and `prune()` runs only when called explicitly. I found no remaining path that deletes these dumps. Side effect: they now grow without limit. |
+| D13 writers stopped before a backup that can fail | FIXED | deploy.sh:147-163: the dump, marker writes and flock all happen before `dc stop`. An upload failure only warns (backup.sh:556). The flock name change makes the stale mkdir lock harmless. |
+| D01 cloud-init ssh reload under set -e | FIXED (static only) | Directories are now created first (tftpl:53-55). `mkdir /run/sshd && sshd -t && try-reload-or-restart` sits inside `if !`. Residual: if `sshd -t` fails, the bad drop-in stays in place and only a warning is printed, so the next ssh.socket activation can lock you out. Not tested on a real VM. |
+| D09 IPv4-only binding | FIXED (caveat) | Rendered config shows `published 80/443` with no host_ip, plus 443/udp. Caveat (medium confidence): on the IPv4-only compose bridge, Docker serves `::` through docker-proxy. Caddy/API then see the gateway IP for every IPv6 client, so the per-IP registration limit becomes one shared bucket. |
+| D05 one env file injected everywhere | FIXED | I rendered the config: the admin, registration and cursor secrets appear only in api. db gets only POSTGRES_*. No AWS or S3 variables reach any service. |
+| D02 smoke creates a project per run | FIXED | probe.py:95-110 reuses `deploy-smoke`. Each run still leaves one revoked device row, which is minor. |
+
+## New defects
+
+| # | file:line | Trigger → observed vs expected | Sev | Conf |
+|---|---|---|---|---|
+| 1 | deploy.sh:24/148/166, backup.sh:547 (**pre-existing, not introduced, but it blocks the first deploy**) | The remote script is sent as `bash -s` stdin over SSH, and bash reads a pipe one byte at a time. I checked this: `printf 'echo a\ncat>/dev/null\necho b\n' \| bash -s` prints only `a`. `dc exec -T db … pg_dump` in backup.sh has no stdin redirect, and `dc run --rm migrate` is interactive by default. Both forward stdin, so they swallow the rest of the script. On a first deploy, migrate runs, then bash hits EOF and exits 0: api, worker and caddy never start and "Deployment ready" never prints. On an upgrade, the script stops silently after the backup, leaving the new checkout and the `hlmemo:prod` tag rebuilt but not running. The test doubles (tests/deploy/test_deploy_recovery.py:30-44) never read stdin for pg_dump or run, so the tests miss it. Fix: add `</dev/null` to those calls, or copy the script to the server and run it as a file. | High | High |
+| 2 | backup/restore.sh:48 | `up --no-deps … db api worker caddy` now skips migrate. Restoring an older daily dump taken before a migration, with the current checkout, starts current code on an older schema. Before this change, `up` ran `alembic upgrade`. The RUNBOOK only covers rollback to old code. The G-D4 drill misses it because it restores the same schema. | Med | High |
+| 3 | common.sh:45 (`["environment"]`) | A `backup.env` with no keys (only comments, or created with `touch`) gives a KeyError. I reproduced this with a real compose render. `backup_value` then fails under `set -e`/pipefail (also checked), so every daily backup, restore.sh:18 and the deploy's pre-upgrade backup fail. The RUNBOOK sentence "All five files must exist, even when S3 upload is disabled" invites exactly that file. | Med | High |
+| 4 | deploy.sh:167-170 → 104-112 | The public `curl /ready` fails for reasons outside the app (DNS not propagated, ACME rate limit, IPv6 AAAA misrouting) after the new stack is healthy and serving. Recovery then drops the database and restores the pre-upgrade dump, silently discarding writes the new stack accepted during the retry window (up to about 4 minutes). A readiness failure outside the app should not trigger a destructive database rollback. | Med | High |
+| 5 | deploy.sh:133-134, whole remote flow | The INT and TERM traps never fire on an operator Ctrl-C or network drop: without a pty, ssh forwards no signals. After an SSH drop, the next write to stdout or stderr gets SIGPIPE. That kills compose mid-migration, then kills bash at the first `echo >&2` inside `deployment_failed`. Writers stay stopped with no recovery, and the `.rollback-compose.*` file (every resolved secret, mode 0600) is left behind because the EXIT trap does not run. The deploy should run detached (`systemd-run`/`setsid` plus a log file). | Med | Med |
+| 6 | deploy.sh:64-67 | Rollback config is rendered from the old checkout's compose and common.sh. The first upgrade from a pre-D-034 ref, after secrets have moved out of prod.env, captures services without POSTGRES_* or the DSN, so automatic recovery fails. No production host exists yet, so this matters only once. | Low | High |
+| 7 | hlmemo-backup.service:12, backup.env.example:2 | Both hard-coded `HLM_BACKUP_DIR=/var/backups/hlmemo` values were removed, and the example leaves the line commented out. If the example is copied unchanged, all dumps (including pre-upgrade) go to `/opt/hlmemo/app/deploy/backup/data` inside the git checkout, not the directory cloud-init provisions. | Low | High |
+
+Also: a deploy that fails after writers stop and is recovered overwrites `previous-ref` and `previous-dump` with the current release. The markers for a manual rollback to the release before that are lost. Low.
+
+Checks run: shellcheck and `terraform fmt -check` both pass. I rendered compose from the example env files.
+
+## Verdict
+Not ready for a first real VPS deploy. The six D-034 defects are fixed (D01 and D09 statically only), but defect #1 is pre-existing and still blocks: the first deploy exits 0 with the app never started. Fix #1 through #4 and add a regression test that makes the fake docker read stdin, then do the first deploy.

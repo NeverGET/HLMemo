@@ -4,19 +4,30 @@ This directory implements DP1 (D-032). No cloud resource is needed to validate i
 belongs outside this checkout (D-018); the public templates contain placeholders. Commands below
 are operator instructions, not evidence that a VPS has been provisioned. Never use the development
 Compose project `hlmemo` for these scripts. Requirements: Docker Engine + Compose **2.24+**, Bash,
-Python 3, curl; Terraform **1.6+** for provisioning; AWS CLI only for optional uploads.
+Python 3, curl, `flock` (Ubuntu util-linux; macOS `brew install flock`); Terraform **1.6+** for provisioning; AWS CLI only for optional uploads.
 
 ## Configuration and local gate
 
-Copy `deploy/.env.prod.example` to a private file with mode 0600. Replace the four `CHANGE_ME_*`
-values with independent `openssl rand -hex 32` outputs, using the **same database password** in
-`POSTGRES_PASSWORD` and `HLM_DB_DSN`. Hex avoids URI/Compose escaping pitfalls. Set a real domain
-and `HLM_TLS_MODE=acme` in production. Do not paste tokens into commands, Git, Terraform, tickets or
-logs. Env files are Compose dotenv syntax, not executable scripts. A service env file is passed only
-to DB/app containers; Caddy receives only domain/TLS settings. Docker administrators can inspect
-container environment, so Docker membership is privileged.
+Keep these private files together with mode 0600; each has exactly one example in `deploy/`:
 
-For local validation, use a private file such as `/private/tmp/hlmemo-local.env` and set:
+| Private file | Example | Consumer |
+|---|---|---|
+| `prod.env` | `.env.prod.example` | Compose interpolation (domain, images, local ports) |
+| `app.env` | `app.env.example` | API, worker and migration: database DSN/provider settings |
+| `api.env` | `api.env.example` | API only: admin token, registration and cursor secrets |
+| `db.env` | `db.env.example` | DB only: PostgreSQL variables |
+| `backup.env` | `backup.env.example` | Host backup/upload only: S3 credentials and retention |
+
+Replace the four `CHANGE_ME_*` values with independent `openssl rand -hex 32` outputs;
+use the **same database password** in `db.env` and `app.env`'s DSN. Set a real domain and
+`HLM_TLS_MODE=acme` in `prod.env`. Keep secrets out of `prod.env` and keep backup credentials out
+of every service file. Env files use Compose dotenv syntax, never shell `source`.
+Docker administrators can inspect container environments; Docker membership is privileged.
+`HLM_ENV_FILE` selects `prod.env`; scripts resolve the other four files alongside it. Explicit
+`HLM_APP_ENV_FILE`, `HLM_API_ENV_FILE`, `HLM_DB_ENV_FILE`, `HLM_BACKUP_ENV_FILE` overrides select
+other absolute paths. All five files must exist, even when S3 upload is disabled.
+
+For local validation, use a private file directory such as `/private/tmp/hlmemo-local/`; copy all five templates there and set in `prod.env` and set:
 
 ```dotenv
 HLM_DOMAIN=localhost
@@ -31,23 +42,32 @@ BAKE_BIND_IP=127.0.0.1
 The rest of the template, including generated credentials, is still required.
 
 ```sh
-export HLM_ENV_FILE=/private/tmp/hlmemo-local.env
+export HLM_ENV_FILE=/private/tmp/hlmemo-local/prod.env
 make deploy-up DEPLOY_ENV="$HLM_ENV_FILE"
 curl -sk https://localhost:18443/ready
 curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:18443/anything-else
 bash deploy/scripts/smoke_tls.sh
 bash deploy/scripts/smoke_mcp.sh
+bash deploy/scripts/smoke_mcp.sh # same deploy-smoke project; device revoked after each run
 HLM_ALLOW_DESTRUCTIVE_DRILL=1 bash deploy/scripts/drill_backup_restore.sh
+HLM_ALLOW_DESTRUCTIVE_DRILL=1 bash deploy/scripts/drill_deploy_backup.sh
 bash deploy/scripts/stack.sh down -v   # disposable LOCAL bake data only
 ```
 
 `-k` is only for this local internal CA test. The probes skip verification only for internal TLS on
 loopback; for other custom CAs set `HLM_CA_FILE=/path/to/ca.pem`. Caddy stores its CA in its `caddy_data`
 volume. It is not installed into the Mac trust store. HTTP redirect targets normal port 443;
-with remapped local ports use the explicit HTTPS URL. A raw Compose invocation needs **both**
-`HLM_ENV_FILE=/absolute/file` and `--env-file /absolute/file`: the first selects service env injection,
-the second provides Compose interpolation. The scripts handle both. `config -q` can render without
-a real service env file; starting a DB without credentials fails closed.
+with remapped local ports use the explicit HTTPS URL. A raw Compose invocation selects the service files explicitly:
+
+```sh
+HLM_APP_ENV_FILE="$PWD/deploy/app.env.example" \
+HLM_API_ENV_FILE="$PWD/deploy/api.env.example" \
+HLM_DB_ENV_FILE="$PWD/deploy/db.env.example" \
+docker compose -f deploy/compose.prod.yaml --env-file deploy/.env.prod.example config -q
+```
+
+That command is the example-only G-D1; replace paths with private files for actual operation.
+Scripts supply these paths automatically. Missing service files fail closed.
 
 `api`, `db` and `worker` have no published host ports. Resource ceilings are DB 4 GiB/2 CPUs,
 API 3 GiB/2 CPUs, worker 4 GiB/3 CPUs, migration 1 GiB/1 CPU, Caddy 256 MiB/0.5 CPU; these are limits,
@@ -79,7 +99,7 @@ terraform -chdir=deploy/terraform/hetzner output
 Required private tfvars fields: `ssh_public_key` (OpenSSH public key), `admin_cidrs` (list such as
 `["203.0.113.10/32"]`, replace documentation address). Defaults: `server_type="cx43"`, `location="fsn1"`,
 `image="ubuntu-24.04"`, `deploy_user="hlmdeploy"`. Firewall ingress permits TCP 22 only from those
-CIDRs and TCP 80/443 globally over IPv4/IPv6. No other inbound rules; outbound remains allowed.
+CIDRs, TCP 80/443 and UDP 443 (HTTP/3) globally over IPv4/IPv6. No other inbound rules; outbound remains allowed.
 Host snapshots default off and do not replace logical dumps. Cloud-init installs the official
 Docker repository, Engine and Compose plugin, key-only SSH, fail2ban and unattended upgrades.
 Automatic reboots are disabled; schedule maintenance for pending kernel/security reboots.
@@ -92,17 +112,17 @@ ssh hlmdeploy@SERVER 'sudo cloud-init status --wait && docker compose version'
 ssh hlmdeploy@SERVER 'sudo systemctl is-active docker fail2ban unattended-upgrades'
 ```
 
-Create DNS A → output IPv4 and only publish AAAA after verifying IPv6 routing. No DNS provider is
+Create DNS A → output IPv4 and AAAA → output IPv6 after verifying routing and external IPv6 HTTPS reachability (`curl -6 https://YOUR_DOMAIN/ready`). Production port declarations omit the host IP so Docker can publish both families; confirm the host Docker/network IPv6 configuration. Local tests bind only 127.0.0.1. UDP 443 exposes Caddy HTTP/3. No DNS provider is
 hard-coded. Cloud-init creates `/etc/hlmemo`, `/opt/hlmemo` and `/var/backups/hlmemo`. Docker group
 and passwordless sudo membership make `hlmdeploy` a privileged operator despite being non-root.
 
 ## First deploy and admin bootstrap
 
-Install the completed private env file, with `HLM_BACKUP_DIR=/var/backups/hlmemo`:
+Install all five completed private env files, with `HLM_BACKUP_DIR=/var/backups/hlmemo` in `backup.env`:
 
 ```sh
-scp /secure/path/prod.env hlmdeploy@SERVER:/opt/hlmemo/prod.env.pending
-ssh hlmdeploy@SERVER 'sudo install -o hlmdeploy -g hlmdeploy -m 0600 /opt/hlmemo/prod.env.pending /etc/hlmemo/prod.env && rm /opt/hlmemo/prod.env.pending'
+scp /secure/path/{prod,app,api,db,backup}.env hlmdeploy@SERVER:/opt/hlmemo/
+ssh hlmdeploy@SERVER 'for file in prod app api db backup; do sudo install -o hlmdeploy -g hlmdeploy -m 0600 "/opt/hlmemo/$file.env" "/etc/hlmemo/$file.env" && rm "/opt/hlmemo/$file.env"; done'
 bash deploy/scripts/deploy.sh hlmdeploy@SERVER RELEASE_REF
 ```
 
@@ -110,11 +130,13 @@ bash deploy/scripts/deploy.sh hlmdeploy@SERVER RELEASE_REF
 selects another repository URL; private repositories need read credentials installed separately on
 the server. Do not embed credentials into the URL. Defaults: `/opt/hlmemo/app`, `/etc/hlmemo/prod.env`;
 override with `HLM_REMOTE_DIR` / `HLM_REMOTE_ENV`. The script fetches the requested ref, resolves an
-immutable commit, builds including model assets, stops writers, takes a pre-upgrade dump when a DB
-is running, runs `alembic upgrade phase0@head`, starts with `up -d --wait`, then checks public HTTPS
+immutable commit, builds including model assets, takes a snapshot-consistent pre-upgrade dump while
+the DB and writers are live, then stops writers and runs `alembic upgrade phase0@head`, starts with `up -d --wait`, then checks public HTTPS
 readiness with certificate validation. A first uncached model build can take several minutes.
 Repeated deployment of the same ref is supported. This is a single-node maintenance-window deploy,
-not zero downtime. Failure after downtime begins requires inspection before resuming traffic.
+not zero downtime. Failures after writers stop trigger recovery of the previous pinned images and, if migration began,
+the recorded pre-upgrade database snapshot. Inspect recovery output and verify readiness. A failed
+first deployment has no previous stack to restore.
 
 At every API startup, `HLM_ADMIN_TOKEN` binds reserved device 1; there is no separate SQL bootstrap.
 Use the **same** token on your workstation, loaded from a secret manager into `HLM_ADMIN_TOKEN`.
@@ -145,7 +167,7 @@ Claude and agy adapters store the bearer in their user configurations; protect t
 See [the exact supported CLI commands](../docs/USAGE.md). `hlm doctor` also checks local DB/model
 settings and may report those local checks absent on a remote-only workstation; `/ready` is the
 server's authoritative DB/model readiness check. Use per-project grants and revoke lost devices.
-Rotating admin token needs editing the env file and recreating API; device tokens are rotated by
+Rotating admin token needs editing `api.env` and recreating API; device tokens are rotated by
 revoke/register/approve and re-running `hlm mcp add`.
 
 ## Backups and restore
@@ -168,9 +190,10 @@ The timer runs daily; backup uses `pg_dump --format=custom`, validates its table
 atomically publishes it. Local retention keeps the latest snapshot on each of 7 distinct UTC days
 and the latest snapshot in each of 4 distinct ISO weeks. Missed days cannot be reconstructed.
 For S3-compatible upload install the AWS CLI, set `S3_BUCKET`, `S3_PREFIX`, `S3_ENDPOINT_URL` and
-AWS credential/region fields in the env file. Use least-privilege bucket access and server-side
+AWS credential/region fields only in `backup.env`. Use least-privilege bucket access and server-side
 encryption/versioning. Upload failure exits nonzero while retaining the local dump; monitor the
-service. Configure bucket lifecycle independently: local retention does not delete remote objects.
+service. Deploy-time uploads warn without failing deployment; the local pre-upgrade dump survives.
+Configure bucket lifecycle independently: local retention does not delete remote objects.
 
 ```sh
 # Restore ONLY trusted dumps, during an announced maintenance window:
@@ -183,9 +206,10 @@ Restore validates the dump before stopping Caddy/API/worker, saves and validates
 recreates the configured database and restores in one transaction. All writers stay stopped on
 failure; use the reported safety dump to recover. Safety dumps are not auto-pruned: remove them
 only after confirming recovery. Do not restore a dump with untrusted SQL. Backup and restore share
-an operation lock; after a killed process, confirm no operation is running before removing a stale
-`.operation.lock` directory. Preserve a copy off-host; server loss destroys local volumes and dumps.
-Caddy certificate/account volumes and the private env file are separate from database backups;
+an fd-based `flock` lock (`.operation.flock`), released automatically on process exit or reboot.
+A leftover lock file is harmless; never unlink it during an operation. Legacy `.operation.lock`
+directories are ignored. Preserve a copy off-host; server loss destroys local volumes and dumps.
+Caddy certificate/account volumes and the private env files are separate from database backups;
 back them up encrypted (or reissue certificates with attention to CA rate limits).
 
 The destructive `drill_backup_restore.sh` additionally requires a `bake-*` project, local Unix Docker
@@ -196,18 +220,46 @@ payload through MCP with the restored device bearer. It is intended for disposab
 ## Upgrade and rollback
 
 Before an upgrade, verify recent off-host backup and disk headroom. Deploy a reviewed immutable
-release ref using the same `deploy.sh` command. Logs and last successful refs live under `/opt/hlmemo`
-(`current-ref`, `previous-ref`). Inspect `stack.sh ps` and `stack.sh logs --tail 100` on failures. Do not
-change major PostgreSQL versions by simply changing the image; plan a dump/restore or pg_upgrade.
-Keep the old image/ref and pre-migration dump until validation succeeds.
+release ref using `deploy.sh`. `/opt/hlmemo/current-ref` names the last successful deployment;
+`previous-ref` and `previous-dump` record the exact rollback pair. Every deploy snapshot lives at
+`$HLM_BACKUP_DIR/pre-upgrade/<previous-sha>-<UTC-stamp>-<unique>.dump`, outside daily/weekly rotation.
+Two deployments on the same day retain both snapshots. They are kept until explicitly pruned:
 
-If old code supports the current schema, redeploy the recorded last-good commit. Otherwise stop
-traffic, check out the old ref, build its image, restore its matching **pre-upgrade** dump using that
-ref's restore script, then start/check readiness. Restoring the old dump discards writes after that
-snapshot; make a new safety backup first. Do not run blind `alembic downgrade` or automatically
-rollback after a migration failure. A restored older schema must be run with matching old code;
-`restore.sh` starts that checkout's services and migration head. There is no automatic point-in-time
-recovery/WAL archive in this package.
+```sh
+# Inspect rollback markers and preserve any required older snapshots first.
+bash deploy/backup/backup.sh --prune-pre-upgrade
+```
+
+Explicit pruning keeps the last `HLM_PRE_UPGRADE_KEEP` snapshots (default 5, set in `backup.env`);
+it never runs during a deploy or daily backup. Prune only after verifying the recorded dump is
+among those kept. Keep old images and refs too. Do not change major PostgreSQL versions by simply
+changing the image; plan a dump/restore or pg_upgrade.
+
+For a manual rollback, copy the matching markers before changing the checkout. On the server:
+
+```sh
+cd /opt/hlmemo/app
+export HLM_ENV_FILE=/etc/hlmemo/prod.env
+previous=$(cat /opt/hlmemo/previous-ref)
+dump=$(cat /opt/hlmemo/previous-dump)
+test -f "$dump"
+bash deploy/scripts/stack.sh stop caddy api worker
+# Save the failed/new database before replacing it:
+bash deploy/backup/backup.sh
+git checkout --detach "$previous"
+bash deploy/scripts/stack.sh build api worker migrate
+bash deploy/backup/restore.sh "$dump" --yes
+curl --fail https://YOUR_DOMAIN/ready
+bash deploy/scripts/smoke_mcp.sh
+printf '%s\n' "$previous" > /opt/hlmemo/current-ref
+```
+
+Use a ref supporting the split env layout; for older tooling retain its compatible private config.
+Restore starts the selected checkout's services with `--no-deps`, skipping migrations; select the
+matching old code **before** restoring. Automatic deployment recovery pins the old running image IDs and skips
+migration entirely. Restoring the pre-upgrade dump discards writes after its snapshot, including
+writes between the live snapshot and writer shutdown. The dump path is recorded before downtime.
+Do not run blind `alembic downgrade`. This package has no point-in-time recovery/WAL archive.
 
 ## TLS, routing and operational diagnosis
 

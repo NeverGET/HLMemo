@@ -9,3 +9,5 @@ backup/data/
 *.tfvars.json
 .terraform/
 crash.log
+
+*.env

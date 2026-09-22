@@ -1,27 +1,59 @@
 #!/usr/bin/env python3
-"""Maintain 7 distinct daily snapshots and 4 distinct ISO-week snapshots."""
+"""Calendar rotation excludes deployment snapshots; those require explicit pruning."""
+import argparse
 from datetime import datetime
-from pathlib import Path
 import os
+from pathlib import Path
 import shutil
 import sys
 
-dump, root = map(Path, sys.argv[1:])
-timestamp = datetime.strptime(dump.stem.removeprefix("hlmemo-"), "%Y-%m-%dT%H%M%SZ")
-year, week, _ = timestamp.isocalendar()
-weekly = root / "weekly" / f"hlmemo-{year}-W{week:02d}.dump"
-temp = weekly.with_suffix(".partial")
-shutil.copyfile(dump, temp)
-os.chmod(temp, 0o600)
-os.replace(temp, weekly)
 
-days = set()
-for path in sorted((root / "daily").glob("hlmemo-*.dump"), reverse=True):
-    day = path.name[7:17]
-    if day in days or len(days) >= 7:
+def rotate(dump: Path, root: Path) -> Path:
+    if dump.parent.resolve() != (root / "daily").resolve():
+        raise ValueError("Calendar rotation accepts only daily snapshots")
+    timestamp = datetime.strptime(dump.stem.removeprefix("hlmemo-"), "%Y-%m-%dT%H%M%SZ")
+    year, week, _ = timestamp.isocalendar()
+    weekly = root / "weekly" / f"hlmemo-{year}-W{week:02d}.dump"
+    temp = weekly.with_suffix(".partial")
+    shutil.copyfile(dump, temp)
+    os.chmod(temp, 0o600)
+    os.replace(temp, weekly)
+    days = set()
+    for path in sorted((root / "daily").glob("hlmemo-*.dump"), reverse=True):
+        day = path.name[7:17]
+        if day in days or len(days) >= 7:
+            path.unlink()
+        else:
+            days.add(day)
+    for path in sorted((root / "weekly").glob("hlmemo-*.dump"), reverse=True)[4:]:
         path.unlink()
+    return weekly
+
+
+def prune(root: Path, keep: int) -> int:
+    if keep < 1:
+        raise ValueError("pre-upgrade retention must keep at least one dump")
+    snapshots = sorted(
+        (root / "pre-upgrade").glob("*.dump"),
+        key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True,
+    )
+    for path in snapshots[keep:]:
+        path.unlink()
+    return len(snapshots[keep:])
+
+
+def main() -> None:
+    if sys.argv[1:2] == ["--prune-pre-upgrade"]:
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--prune-pre-upgrade", type=Path, required=True)
+        parser.add_argument("--keep", type=int, default=5)
+        args = parser.parse_args()
+        removed = prune(args.prune_pre_upgrade, args.keep)
+        print(f"Pre-upgrade prune completed: removed {removed}; keeping latest {args.keep}")
     else:
-        days.add(day)
-for path in sorted((root / "weekly").glob("hlmemo-*.dump"), reverse=True)[4:]:
-    path.unlink()
-print(weekly)
+        dump, root = map(Path, sys.argv[1:])
+        print(rotate(dump, root))
+
+
+if __name__ == "__main__":
+    main()

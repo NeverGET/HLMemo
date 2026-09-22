@@ -24,6 +24,12 @@ resource "hcloud_firewall" "hlmemo" {
     port       = "443"
     source_ips = ["0.0.0.0/0", "::/0"]
   }
+  rule {
+    direction  = "in"
+    protocol   = "udp"
+    port       = "443"
+    source_ips = ["0.0.0.0/0", "::/0"]
+  }
   # No other ingress; no egress rules means outbound is allowed (apt, ACME,
   # model downloads, configured model providers and optional object storage).
 }

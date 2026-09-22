@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional S3 upload; compose interpolation environment arrives through stdin, never eval."""
+"""Optional S3 upload; isolated backup.env settings arrive through stdin, never eval."""
 import os
 from pathlib import Path
 import shutil
@@ -16,7 +16,10 @@ if not bucket:
     sys.exit(0)
 if not shutil.which("aws"):
     sys.exit("S3_BUCKET is configured but the AWS CLI is not installed; local backup was retained")
-environment = os.environ.copy()
+# Credentials come only from backup.env, never inherited shell/profile settings.
+environment = {key: value for key, value in os.environ.items() if not key.startswith("AWS_")}
+environment.update(AWS_CONFIG_FILE=os.devnull, AWS_SHARED_CREDENTIALS_FILE=os.devnull,
+                   AWS_EC2_METADATA_DISABLED="true")
 for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_DEFAULT_REGION", "AWS_REGION"):
     if settings.get(key):
         environment[key] = settings[key]
@@ -28,4 +31,7 @@ for name in sys.argv[1:]:
     if settings.get("S3_ENDPOINT_URL"):
         cmd.extend(["--endpoint-url", settings["S3_ENDPOINT_URL"]])
     cmd.extend(["s3", "cp", str(path), f"s3://{bucket}/{key}", "--only-show-errors"])
-    subprocess.run(cmd, env=environment, check=True)
+    try:
+        subprocess.run(cmd, env=environment, check=True)
+    except subprocess.CalledProcessError as error:
+        sys.exit(f"S3 upload failed (exit {error.returncode}); local backup retained")

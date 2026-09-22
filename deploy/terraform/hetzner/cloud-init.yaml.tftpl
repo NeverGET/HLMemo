@@ -50,6 +50,9 @@ write_files:
     content: |
       #!/bin/bash
       set -euo pipefail
+      # cloud-init creates deploy_user before runcmd. Prepare durable paths first.
+      install -d -m 0750 -o ${deploy_user} -g ${deploy_user} /opt/hlmemo /var/backups/hlmemo
+      install -d -m 0750 -o root -g ${deploy_user} /etc/hlmemo
       install -m 0755 -d /etc/apt/keyrings
       curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
       chmod a+r /etc/apt/keyrings/docker.asc
@@ -59,11 +62,12 @@ write_files:
       apt-get update
       DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       systemctl enable --now docker fail2ban unattended-upgrades
-      sshd -t
-      systemctl reload ssh
-      install -d -m 0750 -o ${deploy_user} -g ${deploy_user} /opt/hlmemo /var/backups/hlmemo
-      install -d -m 0750 -o root -g ${deploy_user} /etc/hlmemo
+      # Ubuntu 24.04 may use ssh.socket while ssh.service is inactive.
+      # A hardening/reload failure must not abort the remaining provisioning.
+      if ! (mkdir -p /run/sshd && sshd -t && systemctl try-reload-or-restart ssh.service); then
+        printf '%s\n' 'WARNING: SSH hardening could not be activated; inspect ssh.service.' >&2
+      fi
       docker compose version
 runcmd:
   - [bash, /usr/local/sbin/hlmemo-install-docker]
-final_message: "HLMemo host initialized. Install /etc/hlmemo/prod.env (0600) before deploying."
+final_message: "HLMemo host initialized. Install /etc/hlmemo/prod.env, app.env, api.env, db.env and backup.env (0600) before deploying."

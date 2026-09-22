@@ -59,7 +59,8 @@ lint:
 	$(UV) run ruff check src tests alembic
 	$(UV) run ruff format --check src tests alembic
 
-# Production tooling. Keep HLM_ENV_FILE outside Git; BAKE_* isolates local drills.
+# Production tooling. DEPLOY_ENV selects prod.env with sibling app/api/db/backup.env files.
+# Keep all real env files outside Git; BAKE_* isolates local drills.
 DEPLOY_ENV ?= $(CURDIR)/deploy/.env.prod
 DEPLOY = HLM_ENV_FILE="$(DEPLOY_ENV)" bash deploy/scripts/stack.sh
 .PHONY: deploy-config deploy-build deploy-up deploy-down deploy-status deploy-logs deploy-smoke deploy-backup deploy-restore deploy-drill deploy-remote deploy-tf-validate deploy-lint
