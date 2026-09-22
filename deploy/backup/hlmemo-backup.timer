@@ -1,0 +1,11 @@
+[Unit]
+Description=HLMemo daily backup timer
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=hlmemo-backup.service
+
+[Install]
+WantedBy=timers.target
