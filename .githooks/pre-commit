@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# HLMemo pre-commit secret gate. Blocks commits containing secrets or forbidden files.
+set -euo pipefail
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+# 1. forbidden files
+for f in $staged; do
+  case "$f" in
+    .env|.env.*|*.pem|*.key|*.p12) [ "$f" = ".env.example" ] || { echo "BLOCKED: forbidden file staged: $f"; exit 1; } ;;
+  esac
+done
+
+# 2. gitleaks (preferred)
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --staged --no-banner --redact >/dev/null 2>&1 || gitleaks protect --staged --no-banner --redact >/dev/null 2>&1 || { echo "BLOCKED: gitleaks found secrets in staged changes"; exit 1; }
+fi
+
+# 3. fallback pattern grep (always runs)
+pat='sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|ghp_[A-Za-z0-9]{30,}|gho_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|xox[baprs]-[0-9A-Za-z-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+if git diff --cached -U0 | grep -E '^\+' | grep -Eq "$pat"; then
+  echo "BLOCKED: secret-like pattern in staged diff"; exit 1
+fi
+exit 0

@@ -1,0 +1,46 @@
+# secrets / local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+credentials*.json
+
+# tool/session state
+.claude/settings.local.json
+.serena/
+.codex/
+*-run.log
+*.log
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# node
+node_modules/
+
+# data / runtime
+data/
+pgdata/
+*.sqlite
+*.db
+bench/results/*.json
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# codex scratch state
+.fable/
