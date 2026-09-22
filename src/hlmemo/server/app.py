@@ -4,11 +4,12 @@
     lifespan  : open the pool, bind device 1 from HLM_ADMIN_TOKEN in ONE transaction (§2) — before
                 uvicorn opens the listener — then serve; close the pool on shutdown.
     middleware: AuthMiddleware (bearer -> AuthContext on request.state, status gate before routing).
-    routes    : GET /health (no auth) · /devices/* · /admin/* · /mcp (placeholder, gated, 501).
+    routes    : GET /health (no auth) · /devices/* · /admin/* · /mcp (MCP streamable HTTP, gated).
 
 `python -m hlmemo.server.app` runs uvicorn with settings from HLM_* / hlm.toml.
-The real MCP server (`mcp.streamable_http_app("/mcp")`) replaces the /mcp placeholder in a later task;
-the middleware already sits in front of it.
+The MCP endpoint (`server/mcp_server.py`, five tools of §3) is a plain `Route("/mcp", <ASGI>)` so
+that `AuthMiddleware` runs before the MCP session manager sees a byte (§2 status gate); its
+session manager is started inside the app lifespan.
 """
 
 from __future__ import annotations
@@ -24,13 +25,13 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from hlmemo.auth.cursors import load_cursor_secret
-from hlmemo.auth.errors import HlmError
 from hlmemo.auth.tokens import hash_token
 from hlmemo.config import Settings, get_settings
 from hlmemo.db import auth_queries as q
 from hlmemo.db.pool import create_pool
 from hlmemo.server import admin, devices
 from hlmemo.server.common import device_view
+from hlmemo.server.mcp_server import McpEndpoint, create_mcp_endpoint
 from hlmemo.server.middleware import AuthMiddleware, RateLimiter
 
 log = logging.getLogger("hlmemo.server")
@@ -51,13 +52,9 @@ async def health(request: Request) -> JSONResponse:
     return JSONResponse(body)
 
 
-async def mcp_placeholder(request: Request) -> JSONResponse:
-    """Gated like the real thing (pending -> 403, revoked -> 401 by the middleware); not implemented yet."""
-    err = HlmError("E_UNAVAILABLE", "MCP endpoint not implemented yet")
-    return JSONResponse(err.to_dict(), status_code=501)
-
-
-def build_routes() -> list[Route]:
+def build_routes(mcp: McpEndpoint | None = None) -> list[Route]:
+    """All routes; `/mcp` is the MCP ASGI handler (gated by the middleware like every other route)."""
+    mcp = mcp or create_mcp_endpoint()
     return [
         Route("/health", health, methods=["GET"]),
         Route("/devices/register", devices.register, methods=["POST"]),
@@ -73,7 +70,7 @@ def build_routes() -> list[Route]:
         Route("/admin/projects", admin.projects_list, methods=["GET"]),
         Route("/admin/projects/{slug}/grants", devices.grant_add, methods=["POST"]),
         Route("/admin/projects/{slug}/grants", devices.grant_remove, methods=["DELETE"]),
-        Route("/mcp", mcp_placeholder, methods=["GET", "POST", "DELETE"]),
+        Route("/mcp", mcp.asgi, methods=["GET", "POST", "DELETE"]),
     ]
 
 
@@ -125,6 +122,7 @@ def create_app(
     register_rate_limit: int | None = 5,
 ) -> Starlette:
     settings = settings or get_settings()
+    mcp = create_mcp_endpoint()
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -135,16 +133,18 @@ def create_app(
         await pool.open()
         app.state.pool = pool
         try:
-            yield
+            async with mcp.run():  # MCP session manager lives exactly as long as the app
+                yield
         finally:
             await pool.close()
 
     app = Starlette(
-        routes=build_routes(),
+        routes=build_routes(mcp),
         middleware=[Middleware(AuthMiddleware)],
         lifespan=lifespan,
     )
     app.state.settings = settings
+    app.state.mcp = mcp
     app.state.cursor_secret = load_cursor_secret()
     app.state.register_limiter = RateLimiter(register_rate_limit) if register_rate_limit else None
     return app
@@ -155,7 +155,7 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     s = get_settings()
-    log.warning("hlmemo api: /mcp is a gated placeholder (501); MCP tools land in a later task")
+    log.info("hlmemo api: MCP streamable HTTP at /mcp (memory.query/drilldown/raw/write/call_the_day)")
     uvicorn.run(create_app(s), host=s.api_host, port=s.api_port, log_level="info")
 
 

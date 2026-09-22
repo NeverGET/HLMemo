@@ -1,0 +1,27 @@
+# HARDWARE.md — G4 latency gate record
+
+Written by `tests/integration/test_g4_latency.py::test_warm_p95_le_500ms_3_callers` (PHASE0-SPEC §7, VALIDATION-GATES G4). Regenerated on every run.
+
+- Date: 2026-09-22 12:26 UTC
+- Machine: Apple M3 Pro, 12 (6 performance + 6 efficiency) cores, 36 GB RAM, Darwin 25.6.0 (arm64)
+- Python: 3.12.12; onnxruntime 1.30.0; psycopg 3.3.6
+- Postgres: 17.11 (Debian 17.11-1.pgdg12+2); pgvector 0.8.6 (docker compose `db`, exact `<=>` scan, no HNSW)
+- Database: `hlm_retr` — 2400 versions, 11574 chunks, 11574 embeddings (G3 fixture, `fx-main` + `fx-other`)
+
+## Workload
+
+- 300 `memory.query` calls = the 100 G3 fixture queries × 3, shuffled (seed 20260922), `token_budget=2000`, project `fx-main`, reader device (read grant on `fx-main` only)
+- 3 concurrent asyncio callers, one connection each, service-level (no HTTP); 20 warm-up queries before measuring
+- Each measurement covers the whole call: term split, query embedding (ONNX CPU, in-process), lexical (GIN tsvector), trigram (GIN pg_trgm), exact vector scan, RRF fusion, dedupe, card slot, budget packing (o200k_base meter)
+
+## Result
+
+| metric | ms |
+|---|---|
+| p50 | 250.0 |
+| p95 | 370.6 |
+| p99 | 551.6 |
+| mean | 264.3 |
+| max | 615.7 |
+
+Wall time 26.6 s (11.3 queries/s aggregate). Gate: p95 ≤ 500 ms → **PASS**.

@@ -257,9 +257,9 @@ async def test_pending_device_mcp_initialize_list_call_rejected(db_dsn) -> None:
             assert (r.status_code, r.json()["code"]) == (401, "E_AUTH"), msg["method"]
         r = await c.post("/mcp", json=rpc[0])
         assert (r.status_code, r.json()["code"]) == (401, "E_AUTH")
-        # a trusted device reaches the (not yet implemented) endpoint
-        r = await c.post("/mcp", json=rpc[0], headers=bearer(ADMIN_TOKEN))
-        assert r.status_code == 501 and r.json()["code"] == "E_UNAVAILABLE"
+        # a trusted device reaches the MCP endpoint itself (a JSON-RPC answer, not the gate's envelope)
+        r = await c.post("/mcp", json=rpc[0], headers={**bearer(ADMIN_TOKEN), "Accept": "application/json"})
+        assert r.status_code == 200 and r.json().get("jsonrpc") == "2.0" and "code" not in r.json()
 
 
 async def test_revoked_token_rejected(db_dsn, connect) -> None:

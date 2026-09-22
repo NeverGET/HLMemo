@@ -1,0 +1,517 @@
+"""``memory.query`` / ``memory.drilldown`` / ``memory.raw`` (PHASE0-SPEC §3, §4).
+
+Each function takes an idle connection, opens one transaction, authorizes the call against the
+project (``read`` grant) and returns a plain dict that is already budget-packed (``budget.used``
+is the exact o200k measure of its canonical JSON and never exceeds ``limit``). Errors are
+``ToolError`` (``core/errors.py``) with the spec's codes.
+
+* query: no write. Steps 1-12 of §4.
+* drilldown / raw: record an ``access`` event and touch ``last_access_at`` (D-012) in the same
+  transaction; cursors are ``hlmemo.auth.cursors`` HMAC tokens bound to device + generation, and a
+  continuation re-runs the full authorization inside its own transaction (§2).
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from psycopg import AsyncConnection
+
+from hlmemo.auth.context import AuthContext, Role
+from hlmemo.auth.cursors import load_cursor_secret, sign_cursor, verify_cursor
+from hlmemo.auth.errors import HlmError
+from hlmemo.core import MODEL_ID, MODEL_REVISION
+from hlmemo.core.budget import BudgetError, Meter, canonical, validate_budget
+from hlmemo.core.clues import Clue, decode_clue, encode_clue
+from hlmemo.core.embedder import Embedder, default_model_dir
+from hlmemo.core.errors import ToolError
+from hlmemo.core.read_models import DrilldownRequest, QueryRequest, RawRequest, parse_request
+from hlmemo.core.retrieval import (
+    L_MAX,
+    T_MAX,
+    TRGM_WORD_SIMILARITY_THRESHOLD,
+    V_MAX,
+    CardInput,
+    dedupe_and_order,
+    pack_prefix,
+    pack_query,
+    rrf_fuse,
+    split_terms,
+)
+from hlmemo.core.temporal import fmt_ts, parse_opt_ts
+from hlmemo.db import read_queries as q
+from hlmemo.db.write_queries import ProjectRef
+
+PREPROC_VERSION = 1
+MIN_HIT_TOKENS = 40  # lower bound of a rendered hit; bounds how many rows are fetched for packing
+CURSOR_TOKENS = 70  # additive estimate for a signed ``next_cursor`` (exact measure decides)
+TOOL_QUERY = "memory.query"
+TOOL_DRILLDOWN = "memory.drilldown"
+TOOL_RAW = "memory.raw"
+
+
+# --------------------------------------------------------------------------- dependencies
+@dataclass(slots=True)
+class ReadDeps:
+    meter: Meter
+    model_dir: Path
+    cursor_secret: bytes
+    _embedder: Embedder | None = field(default=None, repr=False)
+
+    @property
+    def embedder(self) -> Embedder:
+        if self._embedder is None:
+            self._embedder = Embedder(self.model_dir)
+        return self._embedder
+
+
+@lru_cache(maxsize=4)
+def _deps_for(model_dir: str) -> ReadDeps:
+    return ReadDeps(meter=Meter(), model_dir=Path(model_dir), cursor_secret=load_cursor_secret())
+
+
+def default_read_deps(model_dir: str | Path | None = None) -> ReadDeps:
+    """Process-wide Meter + lazily created ONNX Embedder + cursor secret."""
+    return _deps_for(str(Path(model_dir) if model_dir else default_model_dir()))
+
+
+# --------------------------------------------------------------------------- shared helpers
+def _budget(raw: object) -> int:
+    try:
+        return validate_budget(raw)
+    except BudgetError as exc:
+        raise ToolError(exc.code, str(exc), **exc.details) from exc
+
+
+async def _read_project(conn: AsyncConnection, ctx: AuthContext, slug: str) -> ProjectRef:
+    """§2: the slug resolves and the device holds ``read`` (unknown slug → same error, no enumeration)."""
+    ref = await q.resolve_project(conn, slug)
+    if ref is None or not ctx.has(ref.project_id, Role.READ):
+        raise ToolError("E_FORBIDDEN_PROJECT", f"no read grant on project {slug!r}", project=slug)
+    return ref
+
+
+async def _as_of(
+    conn: AsyncConnection, valid_at: str | None, known_at: str | None
+) -> tuple[datetime, datetime]:
+    now = await q.clock_now(conn)
+    va = parse_opt_ts(valid_at, field="valid_at") or now
+    ka = parse_opt_ts(known_at, field="known_at") or now
+    return va, ka
+
+
+def _statuses(include_archived: bool) -> list[str]:
+    return ["active", "archived"] if include_archived else ["active"]
+
+
+def _sha(obj: Any) -> str:
+    return hashlib.sha256(canonical(obj).encode("utf-8")).hexdigest()
+
+
+def _verify_cursor(deps: ReadDeps, ctx: AuthContext, cursor: str) -> dict[str, Any]:
+    try:
+        return verify_cursor(deps.cursor_secret, cursor, ctx)
+    except HlmError as exc:
+        raise ToolError("E_INVALID_CURSOR", exc.message) from exc
+
+
+def _not_found(what: str) -> ToolError:
+    return ToolError("E_NOT_FOUND", f"{what} not found")
+
+
+# --------------------------------------------------------------------------- memory.query
+async def query(
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    req: QueryRequest | dict[str, Any],
+    *,
+    deps: ReadDeps | None = None,
+) -> dict[str, Any]:
+    request = parse_request(QueryRequest, req)
+    deps = deps or default_read_deps()
+    budget = _budget(request.token_budget)
+    async with conn.transaction():
+        project = await _read_project(conn, ctx, request.project)
+        valid_at, known_at = await _as_of(conn, request.valid_at, request.known_at)
+        scopes = list(ctx.scope_values())
+        filters = q.QueryFilters(
+            pid=project.project_id,
+            scopes=scopes,
+            valid_at=valid_at,
+            known_at=known_at,
+            statuses=_statuses(request.include_archived),
+            kinds=list(request.kinds) if request.kinds is not None else None,
+        )
+
+        terms = split_terms(request.query)
+        qvec = deps.embedder.embed_query(request.query)
+
+        lexical = await q.lexical_candidates(conn, filters, terms.lexical_text, L_MAX)
+        trigram: list[q.Candidate] = []
+        if terms.identifiers:
+            await q.set_trigram_threshold(conn, TRGM_WORD_SIMILARITY_THRESHOLD)
+            trigram = await q.trigram_candidates(conn, filters, terms.identifiers, T_MAX)
+        vector = await q.vector_candidates(
+            conn,
+            filters,
+            qvec,
+            model=MODEL_ID,
+            revision=MODEL_REVISION,
+            preproc_version=PREPROC_VERSION,
+            limit=V_MAX,
+        )
+        pending = await q.indexing_pending(conn, project.project_id)
+
+        ordered = dedupe_and_order(rrf_fuse(lexical, trigram, vector))
+        n_fetch = min(len(ordered), budget // MIN_HIT_TOKENS + 3)
+        head = ordered[:n_fetch]
+        rows = await q.hit_rows(conn, [f.chunk_id for f in head])
+        for f in head:
+            f.row = rows[f.chunk_id]
+
+        card: CardInput | None = None
+        found = await q.card_version(
+            conn, project.project_id, scopes, project.card_logical_id, valid_at, known_at
+        )
+        if found is not None:
+            sources = await q.pinned_sources(
+                conn, project.card_logical_id, project.project_id, scopes, valid_at, known_at
+            )
+            card = CardInput(version_id=found[0], body=found[1], sources=sources)
+
+    envelope: dict[str, Any] = {
+        "project": project.slug,
+        "as_of": {"valid_at": fmt_ts(valid_at), "known_at": fmt_ts(known_at)},
+        "device_class": ctx.device_class,
+        "evidence": "matched" if ordered else "none",
+        "indexing_pending": pending,
+    }
+    try:
+        return pack_query(deps.meter, envelope, budget, card, head, total=len(ordered))
+    except BudgetError as exc:
+        raise ToolError(exc.code, str(exc), **exc.details) from exc
+
+
+# --------------------------------------------------------------------------- memory.drilldown
+@dataclass(slots=True)
+class _Unit:
+    clue_index: int
+    clue: str
+    version: q.ReadVersion
+    span: q.ChunkSpan
+    tokens: int = 0
+
+
+async def _expand_clues(
+    conn: AsyncConnection,
+    clues: list[Clue],
+    raw_clues: list[str],
+    pid: int,
+    scopes: list[str],
+    valid_at: datetime,
+    known_at: datetime,
+    statuses: list[str],
+) -> list[_Unit]:
+    """A chunk clue → the chunk ±1 neighbour; an item clue → the body in ordinal order.
+    Unknown, out-of-scope, superseded/expired or foreign clue → ``E_NOT_FOUND`` (no distinction)."""
+    units: list[_Unit] = []
+    versions: dict[int, q.ReadVersion] = {}
+    for i, clue in enumerate(clues):
+        v = versions.get(clue.version_id)
+        if v is None:
+            v = await q.version_live(conn, clue.version_id, pid, scopes, valid_at, known_at, statuses)
+            if v is None:
+                raise _not_found("clue")
+            versions[clue.version_id] = v
+        if clue.is_chunk:
+            assert clue.ordinal is not None
+            spans = await q.chunk_spans(conn, v.version_id, clue.ordinal - 1, clue.ordinal + 1)
+            if not any(s.ordinal == clue.ordinal for s in spans):
+                raise _not_found("clue")
+        else:
+            spans = await q.chunk_spans(conn, v.version_id)
+            if not spans:  # a version without chunks: the body as one span
+                spans = [q.ChunkSpan(0, 0, len(v.body), v.body)]
+        units.extend(_Unit(i, raw_clues[i], v, s) for s in spans)
+    return units
+
+
+def _render_items(units: list[_Unit], links: dict[int, list[q.DrillLink]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for u in units:
+        if items and items[-1]["_ci"] == u.clue_index:
+            it = items[-1]
+            it["ordinal_range"][1] = u.span.ordinal
+            it["text"] = u.version.body[it["_start"] : u.span.char_end]
+            continue
+        v = u.version
+        items.append(
+            {
+                "_ci": u.clue_index,
+                "_start": u.span.char_start,
+                "clue": u.clue,
+                "kind": v.kind,
+                "title": v.title,
+                "text": v.body[u.span.char_start : u.span.char_end],
+                "ordinal_range": [u.span.ordinal, u.span.ordinal],
+                "device_scope": v.device_scope,
+                "links": [
+                    {"rel": ln.rel, "clue": encode_clue(ln.clue_version_id), "stale": ln.stale}
+                    for ln in links.get(v.logical_id, [])
+                ],
+            }
+        )
+    return [{k: v for k, v in it.items() if not k.startswith("_")} for it in items]
+
+
+async def drilldown(
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    req: DrilldownRequest | dict[str, Any],
+    *,
+    deps: ReadDeps | None = None,
+) -> dict[str, Any]:
+    request = parse_request(DrilldownRequest, req)
+    deps = deps or default_read_deps()
+    budget = _budget(request.token_budget)
+    clues = [decode_clue(c) for c in request.clue_ids]
+    clue_hash = _sha(request.clue_ids)
+    async with conn.transaction():
+        project = await _read_project(conn, ctx, request.project)
+        resume = 0
+        if request.cursor is not None:
+            p = _verify_cursor(deps, ctx, request.cursor)
+            if p.get("tool") != TOOL_DRILLDOWN or p.get("h") != clue_hash:
+                raise ToolError("E_INVALID_CURSOR", "cursor does not belong to this drilldown")
+            valid_at, known_at = await _as_of(conn, p.get("valid_at"), p.get("known_at"))
+            resume = int(p.get("i", 0))
+        else:
+            valid_at, known_at = await _as_of(conn, request.valid_at, request.known_at)
+        scopes = list(ctx.scope_values())
+        statuses = _statuses(request.include_archived)
+        units = await _expand_clues(
+            conn, clues, request.clue_ids, project.project_id, scopes, valid_at, known_at, statuses
+        )
+        if request.cursor is not None:
+            p_vid, p_ord = p.get("version_id"), p.get("ordinal")
+            if not (0 <= resume < len(units)) or (
+                units[resume].version.version_id != p_vid or units[resume].span.ordinal != p_ord
+            ):
+                raise ToolError("E_INVALID_CURSOR", "cursor position is not valid any more")
+        page = units[resume:]
+        links: dict[int, list[q.DrillLink]] = {}
+        for u in page:
+            lid = u.version.logical_id
+            if lid not in links:
+                links[lid] = await q.drilldown_links(
+                    conn, lid, project.project_id, scopes, valid_at, known_at
+                )
+
+        meter = deps.meter
+        envelope: dict[str, Any] = {"items": [], "next_cursor": None}
+        base = meter.settle(envelope, budget) + CURSOR_TOKENS  # estimate only; exact settle below
+        for u in page:
+            u.tokens = meter.count_text(u.span.text) + 12
+        link_cost = {
+            lid: meter.count(
+                [{"rel": ln.rel, "clue": encode_clue(ln.clue_version_id), "stale": ln.stale} for ln in ls]
+            )
+            + 8
+            for lid, ls in links.items()
+        }
+        prefix = [0]
+        seen: set[int] = set()
+        for u in page:
+            extra = u.tokens
+            if u.clue_index not in seen:
+                seen.add(u.clue_index)
+                extra += 40 + link_cost[u.version.logical_id]
+            prefix.append(prefix[-1] + extra)
+
+        def cursor_for(n: int) -> str | None:
+            if n >= len(page):
+                return None
+            nxt = page[n]
+            return sign_cursor(
+                deps.cursor_secret,
+                ctx,
+                {
+                    "tool": TOOL_DRILLDOWN,
+                    "h": clue_hash,
+                    "i": resume + n,
+                    "version_id": nxt.version.version_id,
+                    "ordinal": nxt.span.ordinal,
+                    "valid_at": fmt_ts(valid_at),
+                    "known_at": fmt_ts(known_at),
+                },
+            )
+
+        def apply(n: int) -> None:
+            envelope["items"] = _render_items(page[:n], links)
+            envelope["next_cursor"] = cursor_for(n)
+
+        try:
+            n, _used = pack_prefix(meter, envelope, budget, len(page), apply, lambda k: base + prefix[k])
+        except BudgetError as exc:
+            raise ToolError(exc.code, str(exc), **exc.details) from exc
+        if n == 0:
+            apply(1)
+            need = meter.settle(envelope, budget)  # the exact measure that did not fit
+            raise ToolError(
+                "E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold the first chunk", min=need
+            )
+
+        at = await q.clock_now(conn)
+        await q.record_access(
+            conn,
+            pid=project.project_id,
+            device_id=ctx.device_id,
+            client=ctx.client,
+            tool=TOOL_DRILLDOWN,
+            request=request.model_dump(mode="json", exclude_none=True),
+            version_ids=[u.version.version_id for u in page[:n]],
+            at=at,
+            payload_sha256=_sha(request.model_dump(mode="json", exclude_none=True)),
+        )
+    return envelope
+
+
+# --------------------------------------------------------------------------- memory.raw
+def _payload_item(payload: dict[str, Any], version_id: int) -> dict[str, Any]:
+    """The verbatim request item behind ``version_id`` (a survivor segment maps to the item of
+    the version it was split from)."""
+    resolved = payload.get("resolved") or {}
+    request = payload.get("request") or {}
+    index: int | None = None
+    for it in resolved.get("items", []):
+        if it.get("version_id") == version_id or any(
+            s.get("version_id") == version_id for s in it.get("survivors", [])
+        ):
+            index = it.get("index")
+            break
+    if index is None:
+        return {}
+    items = request.get("items")
+    if not isinstance(items, list):  # call_the_day: the derived write batch is recorded in resolved.write
+        items = (resolved.get("write") or {}).get("items", [])
+    return items[index] if 0 <= index < len(items) else {}
+
+
+async def raw(
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    req: RawRequest | dict[str, Any],
+    *,
+    deps: ReadDeps | None = None,
+) -> dict[str, Any]:
+    request = parse_request(RawRequest, req)
+    deps = deps or default_read_deps()
+    budget = _budget(request.token_budget)
+    async with conn.transaction():
+        project = await _read_project(conn, ctx, request.project)
+        scopes = list(ctx.scope_values())
+        v = await q.version_authz(conn, request.version_id, project.project_id, scopes)
+        if v is None:
+            raise _not_found("version")
+        resume = 0
+        if request.cursor is not None:
+            p = _verify_cursor(deps, ctx, request.cursor)
+            if p.get("tool") != TOOL_RAW or p.get("version_id") != v.version_id:
+                raise ToolError("E_INVALID_CURSOR", "cursor does not belong to this version")
+            resume = int(p.get("ordinal", 0))
+        links = await q.raw_links(conn, v.logical_id, project.project_id, scopes)
+        slugs = await q.project_slugs(conn, v.project_ids)
+        ev = await q.source_event(conn, v.source_event_id)
+        spans = await q.chunk_spans(conn, v.version_id, resume)
+
+        envelope: dict[str, Any] = {
+            "version_id": v.version_id,
+            "logical_id": v.logical_id,
+            "kind": v.kind,
+            "project_ids": [slugs[pid] for pid in v.project_ids if pid in slugs],
+            "device_scope": v.device_scope,
+            "valid_from": fmt_ts(v.valid_from),
+            "valid_to": fmt_ts(v.valid_to),
+            "recorded_at": fmt_ts(v.recorded_at),
+            "superseded_at": fmt_ts(v.superseded_at),
+            "supersedes_version_id": v.supersedes_version_id,
+            "source_event": None
+            if ev is None
+            else {
+                "event_id": ev.event_id,
+                "request_id": ev.request_id,
+                "device": {"id": ev.device_id, "name": ev.device_name, "class": ev.device_class},
+                "client": ev.client,
+                "occurred_at": fmt_ts(ev.occurred_at),
+                "recorded_at": fmt_ts(ev.recorded_at),
+            },
+            "payload_item": _payload_item(ev.payload, v.version_id) if ev is not None else {},
+            "links": [
+                {
+                    "rel": ln.rel,
+                    "dst_logical_id": ln.dst_logical_id,
+                    "dst_version_id": ln.dst_version_id,
+                    "valid_from": fmt_ts(ln.valid_from),
+                    "valid_to": fmt_ts(ln.valid_to),
+                    "recorded_at": fmt_ts(ln.recorded_at),
+                    "superseded_at": fmt_ts(ln.superseded_at),
+                }
+                for ln in links
+            ],
+            "chunks": [],
+            "next_cursor": None,
+        }
+        meter = deps.meter
+        rendered = [
+            {"ordinal": s.ordinal, "char_start": s.char_start, "char_end": s.char_end, "text": s.text}
+            for s in spans
+        ]
+        base = meter.settle(envelope, budget) + CURSOR_TOKENS
+        prefix = [0]
+        for r in rendered:
+            prefix.append(prefix[-1] + meter.count(r) + 1)
+
+        def apply(n: int) -> None:
+            envelope["chunks"] = rendered[:n]
+            envelope["next_cursor"] = (
+                None
+                if n >= len(rendered)
+                else sign_cursor(
+                    deps.cursor_secret,
+                    ctx,
+                    {"tool": TOOL_RAW, "version_id": v.version_id, "ordinal": rendered[n]["ordinal"]},
+                )
+            )
+
+        try:
+            n, _used = pack_prefix(meter, envelope, budget, len(rendered), apply, lambda k: base + prefix[k])
+        except BudgetError as exc:
+            raise ToolError(exc.code, str(exc), **exc.details) from exc
+        if n == 0 and rendered:
+            apply(1)
+            need = meter.settle(envelope, budget)
+            raise ToolError(
+                "E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold the first chunk", min=need
+            )
+
+        at = await q.clock_now(conn)
+        await q.record_access(
+            conn,
+            pid=project.project_id,
+            device_id=ctx.device_id,
+            client=ctx.client,
+            tool=TOOL_RAW,
+            request=request.model_dump(mode="json", exclude_none=True),
+            version_ids=[v.version_id],
+            at=at,
+            payload_sha256=_sha(request.model_dump(mode="json", exclude_none=True)),
+        )
+    return envelope
+
+
+__all__ = ["ReadDeps", "default_read_deps", "drilldown", "query", "raw"]
