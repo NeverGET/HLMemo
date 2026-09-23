@@ -340,6 +340,61 @@ class W0DeployTest(unittest.TestCase):
         self.assertTrue(state["accepted"])
         self.assertEqual([], state["retired_backups"])
 
+    def assert_no_retired_secret_anywhere(self, root):
+        leftovers = sorted(str(p) for p in root.rglob("*.pre-w0-*"))
+        self.assertEqual([], leftovers)
+        for path in root.rglob("*"):
+            if path.is_file() and not path.is_symlink():
+                data = path.read_bytes()
+                for secret in (ADMIN_SECRET, REGISTRATION_SECRET):
+                    self.assertNotIn(secret.encode(), data, f"retired secret left in {path}")
+
+    def test_failed_recovered_deploy_then_success_then_accept_leaves_no_backup(self):
+        """R1 finding: the backup of a failed, auto-recovered W0 deploy is recorded at once and
+        deleted by --accept-release after a later successful deployment."""
+        root, env = self.prepare_split("migration")
+        failed, output = self.deploy(root, env)
+        self.assertNotEqual(0, failed.returncode, output)
+        self.assertIn("Previous stack restored", output)
+        self.assertEqual(API_ENV, (root / "api.env").read_text())
+        recorded = self.state(root)["retired_backups"]
+        self.assertEqual(2, len(recorded), recorded)  # api.env + prod.env of the FAILED run
+        self.assertTrue(all(".pre-w0-" in p for p in recorded))
+        self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip(), "legacy marker kept")
+        time.sleep(1.1)  # distinct backup stamps for the second run
+        env["FAIL"] = ""
+        result, output = self.deploy(root, env)
+        self.assertEqual(0, result.returncode, output)
+        retired = self.state(root)["retired_backups"]
+        self.assertTrue(set(recorded) <= set(retired), (recorded, retired))
+        self.assertEqual(4, len(retired), retired)
+        result, output, _ = self.remote(root, env, "--accept-release")
+        self.assertEqual(0, result.returncode, output)
+        self.assertEqual([], self.state(root)["retired_backups"])
+        self.assert_no_retired_secret_anywhere(root)
+
+    def test_accept_release_sweeps_unrecorded_stray_backup(self):
+        root, env = self.cutover()
+        stray = root / "api.env.pre-w0-20250101T000000Z"
+        stray.write_text(API_ENV)
+        stray.chmod(0o600)
+        self.assertNotIn(str(stray), self.state(root)["retired_backups"])
+        result, output, _ = self.remote(root, env, "--accept-release")
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn(f"deleted unrecorded env backup {stray}", output)
+        self.assert_no_retired_secret_anywhere(root)
+
+    def test_accept_release_does_not_sweep_when_current_release_predates_w0(self):
+        root, env = self.cutover()
+        stray = root / "api.env.pre-w0-20250101T000000Z"
+        stray.write_text(API_ENV)
+        # The fake git's cat-file fails for NEXT (b*40) only when PREW0_CURRENT=1.
+        result, output, _ = self.remote(root, dict(env, PREW0_CURRENT="1"), "--accept-release")
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("predates W0a: unrecorded *.pre-w0-* backups are left in place", output)
+        self.assertTrue(stray.exists())
+        self.assertEqual([str(stray)], [str(p) for p in root.glob("*.pre-w0-*")], "recorded ones deleted")
+
     def test_interrupted_rollback_can_be_rerun(self):
         root, env = self.cutover()
         killed, output, rows = self.remote(root, dict(env, FAIL="rollback-kill"), "--rollback")

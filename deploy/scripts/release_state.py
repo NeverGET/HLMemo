@@ -4,7 +4,9 @@
     release_state.py publish DIR --current SHA [--previous SHA --previous-dump PATH
                      --previous-image REPO:SHA --previous-image-id ID] [--env-backup FILE=BACKUP ...]
     release_state.py rolled-back DIR          # after a rollback: current <- previous, no rollback pair
-    release_state.py accept DIR               # delete every recorded env backup; mark accepted
+    release_state.py add-retired DIR PATH...  # record retired-secret backups NOW (before cutover)
+    release_state.py accept DIR [--sweep-dir D ...]  # delete every recorded env backup (and any
+                                              # unrecorded D/*.pre-w0-*); mark accepted
     release_state.py begin-rollback DIR SHA   # record an attempt (an interrupted rollback re-runs)
     release_state.py end-rollback DIR         # clear an aborted attempt
     release_state.py get DIR KEY              # one field ('' if absent); env_backups: FILE=BACKUP lines
@@ -83,6 +85,33 @@ def publish(directory: Path, args: argparse.Namespace) -> None:
     store(directory, state)
 
 
+def add_retired(directory: Path, paths: list[str]) -> None:
+    """Record retired-secret backups the moment migrate_env_w0 creates them, so a failed (and
+    auto-recovered) deployment can never leave an untracked copy of the retired secrets behind.
+    Only the state file is written (no derive): on a host still on legacy markers, a state without
+    current_ref must not delete them. publish/rolled-back keep the list; accept deletes it."""
+    state = load(directory)
+    state["retired_backups"] = sorted(set(state.get("retired_backups") or []) | set(paths))
+    _atomic_write(directory / STATE, json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+def accept(directory: Path, sweep_dirs: list[Path]) -> None:
+    state = load(directory)
+    backups = set((state.get("env_backups") or {}).values()) | set(state.get("retired_backups") or [])
+    for backup in sorted(backups):
+        Path(backup).unlink(missing_ok=True)
+        print(f"deleted env backup {backup}")
+    # Defensive sweep (the caller passes --sweep-dir only for a W0+ current release, D-065): a
+    # backup nobody recorded (crash between copy and record, older runner) still holds secrets.
+    for sweep in sweep_dirs:
+        for stray in sorted(sweep.glob("*.pre-w0-*")):
+            if str(stray) not in backups and (stray.is_file() or stray.is_symlink()):
+                stray.unlink()
+                print(f"deleted unrecorded env backup {stray}")
+    state.update(accepted=True, env_backups={}, retired_backups=[])
+    store(directory, state)
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -94,8 +123,14 @@ def main(argv: list[str]) -> int:
     p.add_argument("--previous-image")
     p.add_argument("--previous-image-id")
     p.add_argument("--env-backup", action="append", default=[])
-    for name in ("rolled-back", "accept", "derive", "end-rollback"):
+    for name in ("rolled-back", "derive", "end-rollback"):
         sub.add_parser(name).add_argument("dir", type=Path)
+    a = sub.add_parser("accept")
+    a.add_argument("dir", type=Path)
+    a.add_argument("--sweep-dir", type=Path, action="append", default=[])
+    r = sub.add_parser("add-retired")
+    r.add_argument("dir", type=Path)
+    r.add_argument("paths", nargs="+")
     b = sub.add_parser("begin-rollback")
     b.add_argument("dir", type=Path)
     b.add_argument("target")
@@ -115,13 +150,9 @@ def main(argv: list[str]) -> int:
         elif value not in (None, ""):
             print(value)
     elif args.cmd == "accept":
-        state = load(directory)
-        backups = set((state.get("env_backups") or {}).values()) | set(state.get("retired_backups") or [])
-        for backup in sorted(backups):
-            Path(backup).unlink(missing_ok=True)
-            print(f"deleted env backup {backup}")
-        state.update(accepted=True, env_backups={}, retired_backups=[])
-        store(directory, state)
+        accept(directory, args.sweep_dir)
+    elif args.cmd == "add-retired":
+        add_retired(directory, args.paths)
     elif args.cmd == "begin-rollback":
         state = load(directory)
         state["rollback_in_progress"] = args.target

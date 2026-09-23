@@ -13,7 +13,8 @@
 # the previous ref, its quiesced dump and its image (verified by ID) as one unit. The state records
 # the attempt before anything stops, so an interrupted (killed) rollback can simply be re-run. If a
 # step fails, the saved current database is restored and the current release restarted.
-# accept: verifies the running release, deletes every recorded env backup (retired secrets).
+# accept: verifies the running release, deletes every recorded env backup (retired secrets) and, for
+# a W0+ current release, sweeps any unrecorded *.pre-w0-* next to the env files.
 # shellcheck disable=SC2016,SC2217
 set -Eeuo pipefail
 umask 077
@@ -68,7 +69,21 @@ fi
 
 case $mode in
   accept)
-    python3 "$helpers/release_state.py" accept "$parent_dir"
+    # Defensive sweep of UNRECORDED *.pre-w0-* backups next to the env files, only when the
+    # current release is W0+ (D-065 one-way door): pre-W0 code would still need those secrets.
+    sweep=()
+    if git cat-file -e "$current:alembic/versions/0005_w0_access.py" 2>/dev/null &&
+      git cat-file -e "$current:src/hlmemo/ops/__init__.py" 2>/dev/null; then
+      declare -A seen=()
+      for file in "$HLM_ENV_FILE" "${HLM_APP_ENV_FILE:-}" "${HLM_API_ENV_FILE:-}"; do
+        [[ -n $file ]] || continue
+        dir=$(dirname "$file")
+        [[ -n ${seen[$dir]:-} ]] || { seen[$dir]=1; sweep+=(--sweep-dir "$dir"); }
+      done
+    else
+      echo "Current release $current predates W0a: unrecorded *.pre-w0-* backups are left in place." >&2
+    fi
+    python3 "$helpers/release_state.py" accept "$parent_dir" "${sweep[@]}"
     echo "Release $current accepted; recorded env backups deleted."
     exit 0 ;;
   rollback) ;;
