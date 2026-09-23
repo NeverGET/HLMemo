@@ -38,7 +38,11 @@ async def test_one_embedder_across_startup_readiness_and_queries(db_dsn, monkeyp
     class CountingEmbedder:
         def __init__(self, path, **kwargs):
             self.queries = []
+            self.closed = False
             constructions.append((self, path, kwargs))
+
+        def close(self):
+            self.closed = True
 
         def embed_query(self, text):
             self.queries.append(text)
@@ -92,3 +96,4 @@ async def test_one_embedder_across_startup_readiness_and_queries(db_dsn, monkeyp
             assert app.state.read_deps.embedder is instance
             assert len(constructions) == 1
     assert len(constructions) == 1
+    assert instance.closed

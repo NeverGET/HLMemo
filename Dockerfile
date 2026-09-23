@@ -63,7 +63,8 @@ SH
 
 FROM python:3.12.14-slim-bookworm AS runtime
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
-    HLM_PROFILES_DIR=/app/profiles HLM_MODELS_DIR=/app/models TIKTOKEN_CACHE_DIR=/app/tiktoken-cache
+    HLM_PROFILES_DIR=/app/profiles HLM_MODELS_DIR=/app/models TIKTOKEN_CACHE_DIR=/app/tiktoken-cache \
+    ORT_DISABLE_TELEMETRY=1
 RUN groupadd --system --gid 10001 hlm && useradd --system --uid 10001 --gid hlm --home /app --shell /usr/sbin/nologin hlm
 WORKDIR /app
 COPY --from=builder --chown=hlm:hlm /app/.venv /app/.venv

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -33,11 +34,19 @@ def test_onnx_cpu_arena_disabled_and_threads_bounded(monkeypatch, tmp_path, thre
     session = Mock()
     session.get_inputs.return_value = [SimpleNamespace(name="input_ids")]
     session.get_outputs.return_value = [SimpleNamespace(name="last_hidden_state")]
-    session_factory = Mock(return_value=session)
+    telemetry = Mock()
+    monkeypatch.setattr(ort, "disable_telemetry_events", telemetry)
+
+    def create_session(*args, **kwargs):
+        assert os.environ["ORT_DISABLE_TELEMETRY"] == "1"
+        telemetry.assert_called_once_with()
+        return session
+
+    session_factory = Mock(side_effect=create_session)
     monkeypatch.setattr(ort, "InferenceSession", session_factory)
 
     options = {} if threads is None else {"threads": threads}
-    embedding.Embedder(model_dir, **options)
+    embedder = embedding.Embedder(model_dir, **options)
 
     session_factory.assert_called_once()
     args, kwargs = session_factory.call_args
@@ -46,6 +55,9 @@ def test_onnx_cpu_arena_disabled_and_threads_bounded(monkeypatch, tmp_path, thre
     assert kwargs["sess_options"].enable_cpu_mem_arena is False
     assert kwargs["sess_options"].intra_op_num_threads == (2 if threads is None else threads)
     tokenizer_loader.assert_called_once_with(str(model_dir / "onnx" / "tokenizer.json"))
+    embedder.close()
+    embedder.close()
+    assert embedder._sess is None and embedder._tok is None
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -69,7 +81,11 @@ async def test_worker_passes_configured_thread_budget_to_its_single_embedder(
 
     assert await worker._amain() == 0
 
-    factory.assert_called_once_with(tmp_path, threads=settings.embed_intra_op_num_threads)
+    factory.assert_called_once_with(
+        tmp_path,
+        threads=settings.embed_intra_op_num_threads,
+        max_batch_tokens=settings.embed_max_batch_tokens,
+    )
     run_forever.assert_awaited_once()
     args, kwargs = run_forever.await_args
     assert args[1] is sentinel

@@ -34,7 +34,9 @@ def chunker(model_dir):
 def embedder(model_dir):
     from hlmemo.core.embedder import Embedder
 
-    return Embedder(model_dir)
+    instance = Embedder(model_dir)
+    yield instance
+    instance.close()
 
 
 @pytest.fixture(scope="session")

@@ -141,6 +141,10 @@ class Settings(BaseSettings):
     embed_model: str = "intfloat/multilingual-e5-small"
     embed_revision: str = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
     embed_intra_op_num_threads: int = Field(default=2, gt=0)
+    embed_max_batch_tokens: int = Field(default=1024, ge=512)
+    worker_batch_chunks: int = Field(default=32, gt=0)
+    worker_max_jobs_per_batch: int = Field(default=1, gt=0)
+    worker_memory_profile: bool = False
     hosting_target: str = "compose"
 
     # --- librarian LLM: parsed and validated in Phase 0, never called (D-017/D-019) ---

@@ -9,6 +9,7 @@ Between tests every table is truncated except `devices` row 1 (reserved admin, Â
 
 from __future__ import annotations
 
+import gc
 import os
 import subprocess
 import sys
@@ -19,12 +20,26 @@ from pathlib import Path
 import psycopg
 import pytest
 
+# Before any test module can import onnxruntime (some import it directly): the native 1DS
+# telemetry uploader raced interpreter exit (recursive_mutex abort, rc=134).
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_DB_USER = "hlm"
 COMPOSE_DB_PASSWORD = "hlm"
 COMPOSE_DB_NAME = "hlm"
 
 ConnectFactory = Callable[[], Awaitable[psycopg.AsyncConnection]]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _release_standalone_native_dependencies():
+    """Drop service caches while Python and ONNX Runtime are still fully operational."""
+    yield
+    from hlmemo.core.read_service import _deps_for
+
+    _deps_for.cache_clear()
+    gc.collect()
 
 
 def _compose(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:

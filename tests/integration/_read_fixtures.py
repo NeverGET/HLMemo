@@ -306,14 +306,17 @@ def embedder() -> Embedder:
     model_dir = default_model_dir()
     if not (model_dir / "onnx" / "model.onnx").is_file():
         pytest.skip(f"E5 model not present at {model_dir}")
-    return Embedder(model_dir)
+    instance = Embedder(model_dir)
+    yield instance
+    instance.close()
 
 
 @pytest.fixture(scope="session")
 def read_deps(embedder: Embedder) -> ReadDeps:
     deps = default_read_deps()
     deps._embedder = embedder
-    return deps
+    yield deps
+    deps._embedder = None
 
 
 @pytest.fixture(scope="session")

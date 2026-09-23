@@ -14,8 +14,9 @@ Fencing (codex review C6): *every* embedding row a job produces — copied from 
 freshly inferred — is inserted in the one final transaction that also runs the lease-fenced
 ``UPDATE jobs … WHERE lease_token = :ours``. That UPDATE row-locks the job until commit, so a
 takeover either happened before it (rowcount 0 → the whole transaction, copies included, rolls
-back) or waits behind it and then finds the job ``done``. Before that transaction the worker only
-*reads* (which chunks lack a vector, which of them have a copyable predecessor vector) and infers.
+back) or waits behind it and then finds the job ``done``. The worker streams bounded pages inside
+that transaction; intermediate inserts remain
+uncommitted until the final fence succeeds.
 
 ``drain(conn_factory, embedder)`` runs the same loop until the queue is empty (tests / one-shot).
 
@@ -37,6 +38,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -53,6 +55,7 @@ from hlmemo.core.embedder import (
     default_model_dir,
     require_pinned_embed_config,
 )
+from hlmemo.core.memory_profile import configure_memory_profile, memory_sample
 from hlmemo.db.read_queries import vector_literal
 
 log = logging.getLogger("hlmemo.worker")
@@ -61,7 +64,7 @@ LEASE_SECONDS = 120
 BACKOFF_SECONDS = (1, 2, 4, 8, 16)
 MAX_ATTEMPTS = len(BACKOFF_SECONDS)
 BATCH_CHUNKS = 32
-MAX_JOBS_PER_BATCH = 16
+MAX_JOBS_PER_BATCH = 1
 POLL_INTERVAL = 1.0
 JOB_KINDS = ("embed", "reembed")
 HEARTBEAT_SECONDS = 10.0
@@ -129,20 +132,24 @@ async def lease_jobs(conn: AsyncConnection, limit: int, *, lease_seconds: int = 
     return [Job(r[0], r[1], r[2], r[3], token) for r in rows]
 
 
-async def _pending_chunks(conn: AsyncConnection, job: Job) -> list[tuple[int, str]]:
+async def _pending_chunks(
+    conn: AsyncConnection, job: Job, *, after_id: int = 0, limit: int = BATCH_CHUNKS
+) -> list[tuple[int, str]]:
     """Chunks of the job's version that have no vector for its ``model@revision/preproc`` yet."""
     p = job.payload
     cur = await conn.execute(
         """
         SELECT c.chunk_id, c.text FROM chunks c
-        WHERE c.version_id = %(vid)s
+        WHERE c.version_id = %(vid)s AND c.chunk_id > %(after_id)s
           AND NOT EXISTS (SELECT 1 FROM embeddings e
                            WHERE e.chunk_id = c.chunk_id AND e.model = %(model)s
                              AND e.model_revision = %(rev)s AND e.preproc_version = %(preproc)s)
-        ORDER BY c.ordinal
+        ORDER BY c.chunk_id LIMIT %(limit)s
         """,
         {
             "vid": p["version_id"],
+            "after_id": after_id,
+            "limit": limit,
             "model": p["model"],
             "rev": p["model_revision"],
             "preproc": p["preproc_version"],
@@ -407,64 +414,65 @@ def _check_job_model(job: Job) -> None:
         )
 
 
-@dataclass(slots=True)
-class _Plan:
-    """What one leased job needs: chunks to copy from the predecessor and chunks to infer."""
-
-    copy_ids: list[int]
-    infer: list[tuple[int, str]]
-
-
 async def process_jobs(conn: AsyncConnection, embedder: Embedder, jobs: list[Job], stats: DrainStats) -> None:
-    """Embed the pending chunks of every leased job (one model call per ≤ ``BATCH_CHUNKS`` chunks)
-    and commit each job's vectors (copied + inferred) and ``done`` in ONE transaction under its
-    lease fence. Losing the lease rolls back everything the loser produced."""
-    plans: dict[int, _Plan] = {}
+    """Stream one SQL page at a time; publish every job atomically under its final lease fence.
+
+    Inserts remain uncommitted during inference. A lease takeover makes the final UPDATE fail,
+    rolling back every page, including predecessor copies. Neither texts nor vectors accumulate
+    with the size of the job. The next page is fetched only after this page has been released.
+    """
+    from hlmemo.config import get_settings
+
+    limit = get_settings().worker_batch_chunks
     for job in jobs:
         try:
             _check_job_model(job)
-            async with conn.transaction():  # read-only
-                chunks = await _pending_chunks(conn, job)
-                copyable = await _copyable_chunks(conn, job, [cid for cid, _ in chunks])
-            await conn.commit()
-            plans[job.job_id] = _Plan(
-                copy_ids=[cid for cid, _ in chunks if cid in copyable],
-                infer=[(cid, text) for cid, text in chunks if cid not in copyable],
-            )
-        except Exception as exc:  # noqa: BLE001 - a job failure must not stop the loop
-            await _handle_failure(conn, job, exc, stats)
-
-    todo = [(job, cid, text) for job in jobs if job.job_id in plans for cid, text in plans[job.job_id].infer]
-    vectors: dict[int, Any] = {}
-    for start in range(0, len(todo), BATCH_CHUNKS):
-        batch = todo[start : start + BATCH_CHUNKS]
-        try:
-            embedded = await asyncio.to_thread(embedder.embed_passages, [t for _, _, t in batch])
-        except Exception as exc:  # noqa: BLE001
-            failed_jobs = {job.job_id: job for job, _, _ in batch}
-            for job in failed_jobs.values():
-                plans.pop(job.job_id, None)
-                await _handle_failure(conn, job, exc, stats)
-            continue
-        for (_, cid, _), vec in zip(batch, embedded, strict=True):
-            vectors[cid] = vec
-
-    for job in jobs:
-        plan = plans.get(job.job_id)
-        if plan is None:
-            continue
-        rows = [(cid, vectors[cid]) for cid, _ in plan.infer if cid in vectors]
-        try:
+            memory_sample("job_load", job_id=job.job_id)
+            copied = inferred = 0
+            after_id = 0
             async with conn.transaction():
-                copied = await _copy_from_predecessor(conn, job, plan.copy_ids)
-                await _insert_embeddings(conn, job, rows)
-                await _test_barrier(job)  # inert in production; O2 crashes the process here
+                while True:
+                    chunks = await _pending_chunks(conn, job, after_id=after_id, limit=limit)
+                    if not chunks:
+                        break
+                    after_id = chunks[-1][0]
+                    memory_sample("chunk_page", job_id=job.job_id, texts=len(chunks))
+                    copyable = await _copyable_chunks(conn, job, [cid for cid, _ in chunks])
+                    copied += await _copy_from_predecessor(conn, job, list(copyable))
+                    batch = [(cid, text) for cid, text in chunks if cid not in copyable]
+                    if batch:
+                        # Cancellation waits for this native call before releasing its objects.
+                        task = asyncio.create_task(
+                            asyncio.to_thread(embedder.embed_passages, [text for _, text in batch])
+                        )
+                        try:
+                            embedded = await asyncio.shield(task)
+                        except asyncio.CancelledError:
+                            # Repeated cancellation must not cancel the asyncio wrapper while
+                            # its non-cancellable native thread still owns the model.
+                            while not task.done():
+                                try:
+                                    await asyncio.shield(task)
+                                except asyncio.CancelledError:
+                                    continue
+                                except Exception:  # noqa: BLE001 - consume below; cancellation wins
+                                    break
+                            with contextlib.suppress(Exception):
+                                task.result()
+                            raise
+                        rows = list(zip((cid for cid, _ in batch), embedded, strict=True))
+                        await _insert_embeddings(conn, job, rows)
+                        inferred += len(rows)
+                        memory_sample("insert", job_id=job.job_id, texts=len(rows))
+                        del rows, embedded, task
+                    del batch, chunks, copyable
+                await _test_barrier(job)
                 if not await _mark_done(conn, job):
                     raise _LeaseLost(job.job_id)
             await conn.commit()
             stats.jobs_done += 1
             stats.chunks_copied += copied
-            stats.chunks_embedded += len(rows)
+            stats.chunks_embedded += inferred
             stats.last_done_job_id = job.job_id
             stats.last_done_at = datetime.now(UTC)
         except _LeaseLost:
@@ -472,8 +480,13 @@ async def process_jobs(conn: AsyncConnection, embedder: Embedder, jobs: list[Job
             log.warning(
                 "job %s: lease lost before commit; nothing written, left to the new owner", job.job_id
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - one failed job must not stop the queue
             await _handle_failure(conn, job, exc, stats)
+            # A completed executor Future can retain the embedding traceback and its text args.
+            traceback.clear_frames(exc.__traceback__)
+        finally:
+            # Exception tracebacks may otherwise retain a failed page until the next job.
+            chunks = batch = rows = embedded = task = copyable = None
 
 
 class _LeaseLost(RuntimeError):
@@ -502,7 +515,9 @@ async def _handle_failure(conn: AsyncConnection, job: Job, exc: Exception, stats
 
 async def run_once(conn: AsyncConnection, embedder: Embedder, stats: DrainStats) -> int:
     """Lease one batch and process it. Returns the number of jobs leased (0 = queue idle)."""
-    jobs = await lease_jobs(conn, MAX_JOBS_PER_BATCH)
+    from hlmemo.config import get_settings
+
+    jobs = await lease_jobs(conn, get_settings().worker_max_jobs_per_batch)
     if jobs:
         await process_jobs(conn, embedder, jobs, stats)
     return len(jobs)
@@ -541,28 +556,39 @@ async def run_forever(
     stop = stop or asyncio.Event()
     stats = DrainStats()
     conn: AsyncConnection | None = None
-    while not stop.is_set():
-        try:
-            if conn is None or conn.closed:
-                conn = await conn_factory()
-            leased = await run_once(conn, embedder, stats)
-            await heartbeat(conn, stats)
-        except Exception as exc:  # noqa: BLE001 - database hiccups: reconnect after a pause
-            log.error("worker loop error: %s", exc)
-            if conn is not None:
-                try:
-                    await conn.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            conn = None
-            leased = 0
-        if leased == 0:
+    try:
+        while not stop.is_set():
             try:
-                await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL)
-            except TimeoutError:
-                pass
-    if conn is not None:
-        await conn.close()
+                if conn is None or conn.closed:
+                    conn = await conn_factory()
+                leased = await run_once(conn, embedder, stats)
+                await heartbeat(conn, stats)
+            except Exception as exc:  # noqa: BLE001 - database hiccups: reconnect after a pause
+                log.error("worker loop error: %s", exc)
+                if conn is not None:
+                    try:
+                        await conn.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                conn = None
+                leased = 0
+            if leased == 0:
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL)
+                except TimeoutError:
+                    pass
+    finally:
+        if conn is not None:
+            closing = asyncio.create_task(conn.close())
+            cancelled = False
+            while not closing.done():
+                try:
+                    await asyncio.shield(closing)
+                except asyncio.CancelledError:
+                    cancelled = True
+            closing.result()
+            if cancelled:
+                raise asyncio.CancelledError
 
 
 # --------------------------------------------------------------------------- entrypoint
@@ -585,11 +611,16 @@ async def _amain() -> int:
     from hlmemo.config import get_settings
 
     settings = get_settings()
+    configure_memory_profile(settings.worker_memory_profile)
     # F04: the embedder is pinned by models.lock; a different HLM_EMBED_MODEL/REVISION is fatal.
     require_pinned_embed_config(settings.embed_model, settings.embed_revision)
     model_dir = default_model_dir()
     log.info("worker: model %s@%s from %s", MODEL_ID, MODEL_REVISION[:8], model_dir)
-    embedder = Embedder(model_dir, threads=settings.embed_intra_op_num_threads)
+    embedder = Embedder(
+        model_dir,
+        threads=settings.embed_intra_op_num_threads,
+        max_batch_tokens=settings.embed_max_batch_tokens,
+    )
 
     async def factory() -> AsyncConnection:
         c = await AsyncConnection.connect(settings.db_dsn, autocommit=False)
@@ -605,12 +636,18 @@ async def _amain() -> int:
         except (NotImplementedError, RuntimeError):  # pragma: no cover - non-POSIX
             pass
     log.info(
-        "worker: polling %s (lease %ss, batch %s chunks)",
+        "worker: polling %s (lease %ss, page %s chunks, max padded batch tokens %s)",
         redact_dsn(settings.db_dsn),
         LEASE_SECONDS,
-        BATCH_CHUNKS,
+        settings.worker_batch_chunks,
+        settings.embed_max_batch_tokens,
     )
-    await run_forever(factory, embedder, stop=stop)
+    try:
+        await run_forever(factory, embedder, stop=stop)
+    finally:
+        close = getattr(embedder, "close", None)
+        if close is not None:
+            close()
     log.info("worker: stopped")
     return 0
 

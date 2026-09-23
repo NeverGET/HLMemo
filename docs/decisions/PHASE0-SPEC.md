@@ -523,6 +523,10 @@ HLM_LLM_API_KEY  = "none"
 | `readiness_timeout_s` | `2.0` | Dedicated readiness DB connection/query deadline, independent of traffic pools. |
 | `readiness_cache_ttl_s` | `1.0` | Cache successful and failed readiness results; concurrent probes share one task, with a semaphore limiting the dedicated DB connection to one. |
 | `embed_intra_op_num_threads` | `2` | Positive ONNX Runtime intra-op thread count, shared by API and worker session construction; sized for a 2-vCPU host. CPU memory arenas are disabled in both processes. |
+| `embed_max_batch_tokens` | `1024` | Maximum padded tokens in one inference (`batch rows × maximum encoded length`, prefixes and special tokens included); at least 512. The separate text-count ceiling remains 32. |
+| `worker_batch_chunks` | `32` | Positive SQL page limit; worker never fetches all chunk texts of a job. |
+| `worker_max_jobs_per_batch` | `1` | Positive lease batch size; jobs are processed sequentially, with no cross-job text/vector accumulation. |
+| `worker_memory_profile` | `false` | Opt-in RSS and tracemalloc stage diagnostics; no memory content is logged. |
 | `api_limit_concurrency` | `512` | Uvicorn maximum concurrent connections/tasks; overload receives Uvicorn's HTTP 503. |
 | `api_timeout_keep_alive` | `5` | Uvicorn idle keep-alive timeout in seconds. |
 | `request_max_body_bytes` | `67108864` (64 MiB) | Trusted-gate application and SDK wire-envelope cap; registration 16 KiB, ungated requests 64 KiB. |
@@ -542,6 +546,28 @@ The dedicated admin pool is selected only for a bearer that constant-time matche
 **models.lock** — `e5 = intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3` (dims 384, mean pooling, max 512 tokens, ONNX file `onnx/model.onnx`, tokenizer = XLM-R Unigram/SentencePiece loaded from `onnx/tokenizer.json` via `tokenizers` — no `sentencepiece` dependency) plus sha256 of `onnx/model.onnx` and `onnx/tokenizer.json`, written at first build and checked by `hlm doctor` and `core/embedder.py` at startup.
 
 **Shared embedder lifecycle.** The API owns exactly one process-wide `Embedder`, stores it on `app.state`, and injects that instance into every query's read dependencies. With available model files, lifespan constructs it once. Missing files do not crash lifespan: `/ready` returns 503 `not_ready` with the missing paths and repair guidance. After files are restored, the serialized, shielded readiness probe lazily initializes the shared instance and read dependencies; concurrent/cancelled probes cannot duplicate construction. `/ready` exercises this same instance; the API query path refuses uninitialized dependencies and never creates a second lazy session. File-signature/hash checks remain cached and serialized separately from session ownership. Both the API and worker set ONNX Runtime `SessionOptions.enable_cpu_mem_arena=False` and `intra_op_num_threads=embed_intra_op_num_threads` (default 2). The worker owns its own single persistent embedder because it runs in a separate process. API sizing must include the measured inference peak plus the full spool tmpfs allowance, with 25% headroom; a model construction counter across startup, readiness and repeated queries, and a 1536 MiB container smoke, guard against duplicated sessions and OOM regressions.
+
+**Deterministic native shutdown.** ONNX telemetry is disabled before library initialization
+(`ORT_DISABLE_TELEMETRY=1`) as well as through its Python API; this prevents its independent
+native upload thread from surviving into interpreter finalization. The variable is set in the
+runtime image `ENV`, the production Compose app environment, at import of the embedder module
+(before its lazy `import onnxruntime`) and at the top of `tests/conftest.py`. The API owns a dedicated
+single-thread executor for model loading and readiness work. Lifespan shutdown rejects new
+native work, cancels and awaits the readiness task, drains even repeatedly cancelled native
+futures, joins the executor, releases the ONNX session/tokenizer and then closes the pools.
+Fixtures must exit lifespan and explicitly release their standalone model sessions. Worker
+shutdown also awaits active native inference before closing its session.
+
+**Bounded embedding jobs.** A write already enqueues one job per version, so the maximum
+50-item request produces 50 independently processed jobs. The worker leases one job by
+default, fetches at most `worker_batch_chunks` texts with SQL keyset pagination, infers
+under both text-count and padded-token limits (each text is tokenized once, truncated to 512
+tokens, and that encoding is reused for inference) and releases the page's arrays/texts before
+fetching the next page. Each version's inserts, including predecessor copies, remain in
+one uncommitted transaction; the final `lease_token` fence either commits all pages and
+marks the job done, or rolls everything back. No job-sized text/vector list is retained.
+The 1536 MiB container gate must exercise all embeddings of a 38.4 MB write, not merely
+API readiness or queries; it also records OOMKilled, RestartCount and cgroup memory peak.
 
 `profiles/mistral-eu.toml` and `profiles/alibaba-eu.toml` are shipped too (D-017). Librarian keys are parsed and validated in Phase 0 but no LLM call is made.
 

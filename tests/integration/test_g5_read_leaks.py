@@ -17,6 +17,7 @@ runs with a stub embedder (no embeddings are drained here, the lexical list carr
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -296,7 +297,11 @@ async def test_drilldown_links_filtered(connect, world: World, wdeps, rdeps) -> 
         )
         for page in (first, page2):
             assert {ln["clue"] for it in page["items"] for ln in it["links"]} <= {f"v{vid_of[ok_lid]}"}
-            assert f"v{vid_of[work_lid]}" not in str(page) and f"v{vid_of[other_lid]}" not in str(page)
+            # Whole-token match outside the opaque cursor: a random base64 cursor can contain
+            # e.g. "v2" as a substring (observed flake), which is not a leaked clue.
+            visible = str({k: v for k, v in page.items() if k != "next_cursor"})
+            for hidden in (work_lid, other_lid):
+                assert not re.search(rf"(?<![\w-])v{vid_of[hidden]}(?![\w-])", visible)
 
 
 # --------------------------------------------------------------------------- C4

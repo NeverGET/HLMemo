@@ -29,6 +29,8 @@ x-app: &app
     HLM_API_HOST: 0.0.0.0
     HLM_API_PORT: "8765"
     PYTHONUNBUFFERED: "1"
+    # Disable the native telemetry uploader before ONNX Runtime initializes.
+    ORT_DISABLE_TELEMETRY: "1"
   restart: unless-stopped
   logging: *logging
   security_opt: ["no-new-privileges:true"]
@@ -109,6 +111,11 @@ services:
 
   worker:
     <<: *app
+    environment:
+      <<: *app-environment
+      HLM_EMBED_MAX_BATCH_TOKENS: ${HLM_EMBED_MAX_BATCH_TOKENS:-1024}
+      HLM_WORKER_BATCH_CHUNKS: ${HLM_WORKER_BATCH_CHUNKS:-32}
+      HLM_WORKER_MAX_JOBS_PER_BATCH: ${HLM_WORKER_MAX_JOBS_PER_BATCH:-1}
     command: ["python", "/opt/hlmemo/worker_entrypoint.py"]
     volumes:
       - ./scripts/worker_entrypoint.py:/opt/hlmemo/worker_entrypoint.py:ro

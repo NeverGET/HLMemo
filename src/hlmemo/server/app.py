@@ -28,8 +28,9 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,7 @@ from hlmemo.db.pool import create_pool
 from hlmemo.server import admin, devices
 from hlmemo.server.common import device_view
 from hlmemo.server.mcp_server import McpEndpoint, create_mcp_endpoint
-from hlmemo.server.middleware import AuthMiddleware, RateLimiter, _proxy_networks
+from hlmemo.server.middleware import AuthMiddleware, RateLimiter, _finish_shielded, _proxy_networks
 
 log = logging.getLogger("hlmemo.server")
 
@@ -181,6 +182,8 @@ class _ReadinessProbe:
     expires_at: float = 0.0
 
     async def get(self, app: Starlette, settings: Settings) -> tuple[bool, dict[str, Any]]:
+        if getattr(app.state, "shutting_down", False):
+            return False, {"lifecycle": {"ok": False, "error": "application is shutting down"}}
         if self.result is not None and asyncio.get_running_loop().time() < self.expires_at:
             return self.result
         # There is no suspension between inspecting and publishing the shared task.
@@ -250,7 +253,8 @@ async def _check_readiness(
                 (model_dir / rel).is_file() for rel in MODEL_FILES
             ):
                 await _load_shared_embedder(app, settings, model_dir)
-            return await asyncio.to_thread(
+            return await _run_native(
+                app,
                 _verify_models_blocking,
                 model_dir,
                 _project_file(MODELS_LOCK),
@@ -260,9 +264,9 @@ async def _check_readiness(
             )
 
     try:
-        # The shielded task owns the lock: cancelling a probe must not release it while
-        # to_thread is still hashing/loading and mutating the shared cache.
-        checks["models"] = await asyncio.shield(verify_models())
+        # _run_native drains its thread before cancellation can release this lock.
+        # Keep this coroutine owned by the probe instead of orphaning a shielded task.
+        checks["models"] = await verify_models()
     except Exception as exc:  # noqa: BLE001
         checks["models"] = {"ok": False, "dir": str(model_dir), "error": f"{type(exc).__name__}: {exc}"}
     return all(c.get("ok") for c in checks.values()), checks
@@ -321,18 +325,33 @@ def route_table(app: Starlette) -> list[tuple[str, str]]:
 # --------------------------------------------------------------------------- lifespan
 
 
+async def _run_native(app: Starlette, operation: Any, *args: Any, **kwargs: Any) -> Any:
+    """Cancellation waits for native work; an app lifespan owns and joins its executor."""
+    executor = getattr(app.state, "native_executor", None)
+    if executor is None:
+        # Dependency-only probes outside a lifespan must not leave an executor behind.
+        return operation(*args, **kwargs)
+    future = asyncio.get_running_loop().run_in_executor(executor, partial(operation, *args, **kwargs))
+    return await _finish_shielded(future)
+
+
 async def _load_shared_embedder(app: Starlette, settings: Settings, model_dir: Path) -> None:
     """Publish one complete dependency bundle; readiness's shielded lock serializes recovery."""
-    embedder = await asyncio.to_thread(Embedder, model_dir, threads=settings.embed_intra_op_num_threads)
-    deps = ReadDeps(
-        meter=Meter(),
-        model_dir=model_dir,
-        cursor_secret=app.state.cursor_secret,
-        _embedder=embedder,
-    )
-    app.state.embedder = embedder
-    app.state.read_deps = deps
-    app.state.embedding_deferred = False
+
+    def load() -> None:
+        embedder = Embedder(
+            model_dir,
+            threads=settings.embed_intra_op_num_threads,
+            max_batch_tokens=settings.embed_max_batch_tokens,
+        )
+        # Publish ownership inside the drained operation, even if its awaiter is cancelled.
+        app.state.embedder = embedder
+        app.state.read_deps = ReadDeps(
+            meter=Meter(), model_dir=model_dir, cursor_secret=app.state.cursor_secret, _embedder=embedder
+        )
+        app.state.embedding_deferred = False
+
+    await _run_native(app, load)
 
 
 async def bind_admin_device(settings: Settings) -> int:
@@ -371,33 +390,54 @@ def create_app(
         app.state.embedder = None
         app.state.read_deps = None
         app.state.embedding_deferred = True
+        app.state.shutting_down = False
+        app.state.readiness_probe = _ReadinessProbe()
+        app.state.native_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hlmemo-native")
+        pool = admin_pool = None
         try:
-            if all((model_dir / rel).is_file() for rel in MODEL_FILES):
-                await _load_shared_embedder(app, settings, model_dir)
-        except FileNotFoundError:
-            # Files can disappear between the presence check and loading. Keep liveness
-            # available; readiness reports the missing paths and retries after its TTL.
-            log.warning("model files disappeared during loading; initialization deferred to readiness")
-        # Binding runs (and commits) before the pool used for traffic is opened and before uvicorn
-        # starts accepting connections — no request can observe a half-bound device 1.
-        app.state.admin_generation = await bind_admin_device(settings)
-        pool = create_pool(settings)
-        await pool.open()
-        app.state.pool = pool
-        admin_pool = create_pool(settings.model_copy(update={"pool_min_size": 1, "pool_max_size": 2}))
-        app.state.admin_pool = admin_pool
-        try:
+            try:
+                if all((model_dir / rel).is_file() for rel in MODEL_FILES):
+                    await _load_shared_embedder(app, settings, model_dir)
+            except FileNotFoundError:
+                log.warning("model files disappeared during loading; initialization deferred to readiness")
+            # Admin binding commits before any traffic can observe a half-bound device.
+            app.state.admin_generation = await bind_admin_device(settings)
+            pool = create_pool(settings)
+            app.state.pool = pool
+            await pool.open()
+            admin_pool = create_pool(settings.model_copy(update={"pool_min_size": 1, "pool_max_size": 2}))
+            app.state.admin_pool = admin_pool
             await admin_pool.open()
             async with mcp.run():  # MCP session manager lives exactly as long as the app
                 yield
         finally:
-            probe = getattr(app.state, "readiness_probe", None)
-            if probe is not None and probe.task is not None:
-                await asyncio.shield(probe.task)
-            await admin_pool.close()
-            await pool.close()
-            app.state.read_deps = None
-            app.state.embedder = None
+            app.state.shutting_down = True
+
+            async def shutdown() -> None:
+                probe = app.state.readiness_probe
+                if probe.task is not None:
+                    probe.task.cancel()
+                    try:
+                        await probe.task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        log.exception("readiness probe failed during shutdown")
+                    probe.task = None
+                # Every native future has drained before joining; no native access can
+                # race session/tokenizer destruction or outlive the event loop.
+                app.state.native_executor.shutdown(wait=True, cancel_futures=True)
+                app.state.native_executor = None
+                if app.state.embedder is not None:
+                    app.state.embedder.close()
+                app.state.read_deps = None
+                app.state.embedder = None
+                if admin_pool is not None:
+                    await admin_pool.close()
+                if pool is not None:
+                    await pool.close()
+
+            await _finish_shielded(asyncio.create_task(shutdown()))
 
     app = Starlette(
         routes=build_routes(mcp),

@@ -149,6 +149,40 @@ The API uses one ONNX session shared by readiness and every query. Missing model
 the API running with `/ready` returning 503 `not_ready` and the missing file list; after the
 files are restored, the next readiness probe initializes the shared session once. Both API and
 worker disable the CPU memory arena and use `HLM_EMBED_INTRA_OP_NUM_THREADS=2` by default.
+`ORT_DISABLE_TELEMETRY=1` (runtime image `ENV`, Compose app environment, embedder module) is set before ONNX Runtime initializes: on macOS its native
+telemetry HTTP callback was observed locking a destroyed mutex during interpreter exit.
+The API owns a single native executor, drains/cancels the readiness task on shutdown,
+joins the executor and releases its session/tokenizer before the event loop closes.
+The worker drains active inference before releasing its native session as well.
+
+Worker limits are configurable: `HLM_WORKER_BATCH_CHUNKS=32` bounds each SQL page;
+`HLM_EMBED_MAX_BATCH_TOKENS=1024` bounds **padded** tokens (`texts × longest text`,
+including prefixes/special tokens), not just the number of texts. It permits two
+full-length 512-token texts per inference. `HLM_WORKER_MAX_JOBS_PER_BATCH=1` avoids
+leasing jobs that wait behind a large job. Pages are inserted into one uncommitted
+transaction per version; the final lease fence commits every page together or rolls
+them all back. Texts and vectors are released before fetching the next page. Writes
+already create one job per version; a 50-item write therefore creates 50 bounded jobs.
+`HLM_WORKER_MEMORY_PROFILE=1` enables RSS/tracemalloc stage logs for diagnosis (off
+by default; profiling adds overhead). Increasing batch limits requires repeating the
+1536 MiB worker test; the earlier API-query smoke does not validate worker sizing.
+In production Compose, set the three batch limits in `prod.env` (Compose
+interpolation); set the optional profiling flag in the worker's app environment.
+
+Run the contract-max worker test separately from tests that reset `hlm_exit`:
+
+```sh
+HLM_TEST_DSN=postgresql://hlm:hlm@127.0.0.1:5432/hlm_exit \
+uv run --frozen python tests/deploy/worker_oom_smoke.py \
+  --image hlmemo:worker-oom --build --worker-log tests/auth-worker-memory.log
+```
+
+The harness creates only Compose project `oom-worker`, binds an ephemeral loopback
+port, writes 50 × 64,000 emoji characters (38.4 MB escaped JSON), checks all returned
+versions' embeddings, reports memory/OOM/restarts, and verifies API SIGTERM exit 0.
+It removes its own containers/network and preserves database rows and the log. The worker runs
+with production defaults; add `--profile` to enable `HLM_WORKER_MEMORY_PROFILE` stage logs.
+
 `HLM_REQUEST_SPOOL_DIR=/var/spool/hlmemo` is backed by a **320 MiB tmpfs** owned by UID/GID 10001;
 `/tmp` retains its separate 64 MiB tmpfs. Both tmpfs allocations count against the API cgroup.
 Required budget: `(1536 + 320) × 1.25 = 2320 MiB`; also reserving all of `/tmp` gives

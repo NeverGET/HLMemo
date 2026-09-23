@@ -423,7 +423,7 @@ async def test_concurrent_cold_readiness_loads_models_once(
             assert (await c.get("/ready")).status_code == 200  # warm cache stays reusable
 
     hashes.assert_called_once_with(tmp_path)
-    embedder.assert_called_once_with(tmp_path, threads=2)
+    embedder.assert_called_once_with(tmp_path, threads=2, max_batch_tokens=1024)
     embedder.return_value.embed_query.assert_called_once_with("readiness")
     meter.assert_called_once_with()
     meter.return_value.count_text.assert_called_once_with("readiness")
