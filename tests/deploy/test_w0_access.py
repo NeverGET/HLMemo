@@ -40,6 +40,15 @@ SPLIT_COMMON = (
 )
 
 
+def reset_current(root: Path) -> None:
+    """Point both the atomic state and the legacy marker back at PREVIOUS (harness re-runs)."""
+    state_path = root / "release-state.json"
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    state["current_ref"] = PREVIOUS
+    state_path.write_text(json.dumps(state))
+    (root / "current-ref").write_text(PREVIOUS + "\n")
+
+
 class W0DeployTest(unittest.TestCase):
     """The recovery harness's fake docker/git/ssh/curl/python3 doubles, W0a scenarios only."""
 
@@ -98,7 +107,7 @@ class W0DeployTest(unittest.TestCase):
         for secret in (ADMIN_SECRET, REGISTRATION_SECRET, CURSOR_SECRET):
             self.assertNotIn(secret, output)
         # Second run: already migrated, no new backup, files unchanged.
-        (root / "current-ref").write_text(PREVIOUS + "\n")
+        reset_current(root)  # the harness only verifies PREVIOUS as an existing commit
         before = {n: (root / n).read_text() for n in ("api.env", "app.env")}
         second, output = self.deploy(root, env)
         self.assertEqual(0, second.returncode, output)
@@ -197,7 +206,7 @@ class W0DeployTest(unittest.TestCase):
         self.assertIn("Device inventory after cutover", output)
         self.assertIn("g7-mac", output)
         # Re-run (idempotent): same acknowledgement, env already migrated, same result.
-        (root / "current-ref").write_text(PREVIOUS + "\n")
+        reset_current(root)  # the harness only verifies PREVIOUS as an existing commit
         backups = sorted(p.name for p in root.glob("*.pre-w0-*"))
         again, output = self.deploy(root, env, accept)
         self.assertEqual(0, again.returncode, output)
@@ -242,6 +251,99 @@ class W0DeployTest(unittest.TestCase):
         self.assertEqual("c" * 40, (root / "previous-ref").read_text().strip())
         self.assertEqual("older-marker.dump", (root / "previous-dump").read_text().strip())
         self.assertIn(f"HLM_IMAGE=hlmemo:{PREVIOUS}\n", (root / "prod.env").read_text())
+
+    # ------------------------------------------------------------------ rollback after cutover (Sol 36 H)
+
+    def cutover(self, api_env=API_ENV, prod_env=None):
+        root, env, accept = self.prepare_compose_change()
+        (root / "api.env").write_text(api_env)
+        if prod_env is not None:
+            (root / "prod.env").write_text(prod_env)
+        result, output = self.deploy(root, env, accept)
+        self.assertEqual(0, result.returncode, output)
+        env = {k: v for k, v in env.items() if k != "COMPOSE_CHANGE"}
+        return root, env
+
+    def remote(self, root, env, flag):
+        before = len(self.rows(root))
+        result = subprocess.run(
+            ["bash", str(ROOT / "deploy/scripts/deploy.sh"), flag, "local"],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        logs = "".join(p.read_text() for p in sorted(root.glob(".deploy-runs/*/log")))
+        return result, result.stdout + result.stderr + logs, self.rows(root)[before:]
+
+    @staticmethod
+    def state(root):
+        return json.loads((root / "release-state.json").read_text())
+
+    def test_rollback_after_successful_cutover_restores_env_image_and_dump(self):
+        root, env = self.cutover()
+        state = self.state(root)
+        self.assertEqual((state["current_ref"], state["previous_ref"]), (NEXT, PREVIOUS))
+        self.assertEqual(state["previous_image"], f"hlmemo:{PREVIOUS}")
+        self.assertEqual(state["previous_image_id"], "sha256:old-image")
+        self.assertEqual(2, len(state["env_backups"]))  # api.env + prod.env
+        self.assertNotIn("HLM_REGISTRATION_SECRET", (root / "api.env").read_text())
+        result, output, rows = self.remote(root, env, "--rollback")
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("Rollback validated", output)
+        self.assertIn("Rollback complete", output)
+        self.assertEqual(API_ENV, (root / "api.env").read_text(), "retired secrets are back")
+        prod = (root / "prod.env").read_text()
+        self.assertIn(f"HLM_REGISTRATION_SECRET={REGISTRATION_SECRET}", prod)
+        self.assertIn(f"HLM_IMAGE=hlmemo:{PREVIOUS}\n", prod)
+        self.assertEqual("sha256:old-image", (root / "events.running-image").read_text())
+        stop = next(i for i, r in enumerate(rows) if "stop" in r)
+        restore = next(i for i, r in enumerate(rows) if "dropdb" in r[-1])
+        self.assertLess(stop, restore)
+        self.assertTrue(any("checkout" in r and PREVIOUS in r for r in rows))
+        state = self.state(root)
+        self.assertEqual((state["current_ref"], state["rolled_back_from"]), (PREVIOUS, NEXT))
+        self.assertNotIn("previous_ref", state)
+        self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
+        self.assertFalse((root / "previous-ref").exists(), "a consumed rollback pair is never reused")
+        for secret in (ADMIN_SECRET, REGISTRATION_SECRET):
+            self.assertNotIn(secret, output)
+        again, output, rows = self.remote(root, env, "--rollback")
+        self.assertNotEqual(0, again.returncode)
+        self.assertIn("records no previous release", output)
+        self.assertFalse(any("stop" in r for r in rows))
+
+    def test_rollback_refused_when_env_backups_are_missing(self):
+        root, env = self.cutover()
+        for backup in root.glob("*.pre-w0-*"):
+            backup.unlink()
+        result, output, rows = self.remote(root, env, "--rollback")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Rollback refused (nothing was stopped)", output)
+        self.assertIn("is missing", output)
+        self.assertFalse(any("stop" in r or "dropdb" in r[-1] for r in rows))
+        self.assertEqual(NEXT, self.state(root)["current_ref"])
+
+    def test_accept_release_deletes_backups_then_pre_w0_rollback_is_refused(self):
+        root, env = self.cutover()
+        result, output, _ = self.remote(root, env, "--accept-release")
+        self.assertEqual(0, result.returncode, output)
+        self.assertEqual([], list(root.glob("*.pre-w0-*")))
+        self.assertTrue(self.state(root)["accepted"])
+        result, output, rows = self.remote(root, env, "--rollback")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("predates W0a and no env backups are recorded", output)
+        self.assertFalse(any("stop" in r for r in rows))
+
+    def test_rollback_refused_when_restored_env_would_open_registration(self):
+        # The pre-W0 env had an admin token but no registration secret: the old code would open
+        # public registration, so the rollback must refuse even though backups exist.
+        api_env = f"HLM_ADMIN_TOKEN={ADMIN_SECRET}\nHLM_CURSOR_SECRET={CURSOR_SECRET}\n"
+        root, env = self.cutover(api_env=api_env, prod_env="HLM_DOMAIN=localhost\n")
+        result, output, rows = self.remote(root, env, "--rollback")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("would open public registration", output)
+        self.assertFalse(any("stop" in r for r in rows))
 
 
 def _fake_ssh(bin_dir: Path) -> None:

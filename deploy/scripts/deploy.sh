@@ -8,6 +8,16 @@
 # shellcheck disable=SC2217
 set -Eeuo pipefail
 
+# --rollback / --accept-release USER@HOST: the current release's deploy/scripts/rollback.sh runs
+# detached (same lock, log, heartbeat and status as a deployment); see RUNBOOK "Rollback".
+mode=deploy
+if [[ ${1:-} == --rollback || ${1:-} == --accept-release ]]; then
+  mode=${1#--}
+  mode=${mode%-release}
+  shift
+  [[ $# == 1 ]] || { echo "Usage: deploy.sh --rollback|--accept-release USER@HOST" >&2; exit 64; }
+  set -- "$1" rollback-runner
+fi
 accept_compose=
 if [[ ${1:-} == --accept-compose-change=* ]]; then
   accept_compose=${1#--accept-compose-change=}
@@ -71,6 +81,7 @@ umask 077
 ref=$1 repository=$2 app_dir=$3 remote_env=$4 run_dir=$5
 # Protocol 3 runners that know it read the acknowledgement from the environment.
 export HLM_ACCEPT_COMPOSE_SHA256=${6:-}
+mode=${7:-deploy}
 printf '%s\n' "$$" > "$run_dir/pid"
 finish() {
   result=$?
@@ -96,6 +107,14 @@ mkdir -p "$parent_dir"
 exec 9>"$parent_dir/.deploy.lock"
 flock -n 9 || { echo 'Another deployment is running' >&2; exit 1; }
 export HLM_DEPLOY_LOCK_HELD=1 HLM_DEPLOY_NEW_CHECKOUT=0
+if [[ $mode != deploy ]]; then
+  cd "$app_dir"  # no clone, fetch or origin change: only the deployed checkout matters
+  # Rollback/acceptance logic comes from the CURRENT release (it knows its own state file).
+  current=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("current_ref") or "")' "$parent_dir/release-state.json" 2>/dev/null || true)
+  [[ -n $current ]] || { echo 'No release-state.json: this host was not deployed by a runner that supports --rollback' >&2; exit 1; }
+  git show "$current:deploy/scripts/rollback.sh" > "$run_dir/deploy.sh" || { echo "Current release $current has no deploy/scripts/rollback.sh" >&2; exit 1; }
+  exec bash "$run_dir/deploy.sh" "$mode" "$app_dir" "$remote_env" "$run_dir"
+fi
 if [[ ! -d $app_dir/.git ]]; then
   git clone --no-checkout -- "$repository" "$app_dir"
   HLM_DEPLOY_NEW_CHECKOUT=1
@@ -128,8 +147,8 @@ fi
 exec bash "$run_dir/deploy.sh" "$HLM_DEPLOY_PREPARED_REVISION" "$repository" "$app_dir" "$remote_env" "$run_dir"
 BOOTSTRAP
 )
-printf -v launch 'nohup setsid bash -c %q deploy-bootstrap %q %q %q %q %q %q </dev/null >%q/log 2>&1 &' \
-  "$bootstrap" "$ref" "$repository" "$remote_dir" "$remote_env" "$run_dir" "$accept_compose" "$run_dir"
+printf -v launch 'nohup setsid bash -c %q deploy-bootstrap %q %q %q %q %q %q %q </dev/null >%q/log 2>&1 &' \
+  "$bootstrap" "$ref" "$repository" "$remote_dir" "$remote_env" "$run_dir" "$accept_compose" "$mode" "$run_dir"
 # shellcheck disable=SC2016
 printf -v command 'umask 077; for required in nohup setsid bash git flock ps grep; do command -v "$required" >/dev/null || { echo "Missing required remote command: $required" >&2; exit 1; }; done; : >%q/log; %s launcher=$!; printf "%%s\n" "$launcher" >%q/launcher.pid; attempts=0; while ! test -s %q/pid && ! test -f %q/status; do attempts=$((attempts + 1)); if ! kill -0 "$launcher" 2>/dev/null || test "$attempts" -ge 50; then echo "Detached deployment runner failed to start; inspect the remote log" >&2; exit 1; fi; sleep 0.1; done' \
   "$run_dir" "$launch" "$run_dir" "$run_dir" "$run_dir"

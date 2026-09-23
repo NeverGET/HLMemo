@@ -496,8 +496,9 @@ detached runner does, in order: validate the full new and previous refs and the 
 as the rollback model; take a live pre-upgrade dump (proves backups work); `migrate_env_w0`; stop
 caddy/api/worker; take the final **quiesced** dump (no write can commit after it; it replaces the
 live one and is the rollback dump); build; `alembic upgrade main@head`; `up --wait`; internal
-readiness, Caddy loopback and the W0a route table; publish the image; write `current-ref`,
-`previous-ref` and `previous-dump` together; public readiness + route table; print the device
+readiness, Caddy loopback and the W0a route table; publish the image; publish the rollback tuple
+atomically in `/opt/hlmemo/release-state.json` (previous ref, quiesced dump, image + ID, this
+run's env backups; legacy `current-ref`/`previous-ref`/`previous-dump` are derived from it); public readiness + route table; print the device
 inventory. On any internal failure it restores the quiesced dump if migration began, restores the
 env-file backups (retired secrets included), selects the previous image explicitly
 (`HLM_IMAGE=repository:<previous>`), verifies the rendered rollback model runs the pinned previous
@@ -510,7 +511,9 @@ from the printed device inventory, rotate the g7 device (`remote_gates.sh ... --
 `hlm_ops.sh device rotate g7-<host> | hlm device login --name g7-<host> --token-stdin` followed by
 `hlm mcp add claude|codex|agy`) and revoke stale pre-W0a devices (`gates-*`, `deploy-*`, `judge-*`)
 with `hlm_ops.sh device revoke <name>`. Pre-W0a tokens have no expiry and keep working until then.
-Delete `/etc/hlmemo/*.pre-w0-*` (they hold the retired secrets) once the release is accepted.
+The `/etc/hlmemo/*.pre-w0-*` backups (retired secrets) are what a rollback to the pre-W0 release
+restores: keep them until `deploy.sh --accept-release hlmdeploy@SERVER` deletes them (after which
+that rollback is refused). Never delete them by hand.
 
 ### Application releases
 
@@ -532,30 +535,25 @@ Daily backup rotation does not touch pre-upgrade snapshots. Before manual prunin
 recorded rollback dump is among those kept. Keep old images and refs too. Do not change major PostgreSQL versions by simply
 changing the image; plan a dump/restore or pg_upgrade.
 
-For a manual rollback, copy the matching markers before changing the checkout. On the server:
+### Rollback of a successful release (`deploy.sh --rollback`)
 
 ```sh
-cd /opt/hlmemo/app
-export HLM_ENV_FILE=/etc/hlmemo/prod.env
-previous=$(cat /opt/hlmemo/previous-ref)
-dump=$(cat /opt/hlmemo/previous-dump)
-test -f "$dump"
-helper=$(mktemp /opt/hlmemo/release-env.XXXXXX.py)
-cp deploy/scripts/release_env.py "$helper"
-bash deploy/scripts/stack.sh stop caddy api worker
-# Save the failed/new database before replacing it:
-bash deploy/backup/backup.sh
-git checkout --detach "$previous"
-# Select the retained image from the same repository, never rebuild a release tag.
-old_image="hlmemo:$previous" # substitute your configured image repository
-docker image inspect "$old_image" >/dev/null
-python3 "$helper" "$HLM_ENV_FILE" "$old_image"
-rm "$helper"
-bash deploy/backup/restore.sh "$dump" --yes
-curl --fail https://YOUR_DOMAIN/ready
-bash deploy/scripts/smoke_mcp.sh
-printf '%s\n' "$previous" > /opt/hlmemo/current-ref
+bash deploy/scripts/deploy.sh --rollback hlmdeploy@SERVER        # detached, same log/status/lock
+bash deploy/scripts/deploy.sh --accept-release hlmdeploy@SERVER  # later: keep this release for good
 ```
+
+`--rollback` runs the **current** release's `deploy/scripts/rollback.sh` and reads only
+`release-state.json`. Before stopping anything it validates the whole tuple: the previous commit,
+its quiesced dump, its image resolving to the recorded image ID, every recorded env backup, and the
+rendered previous Compose model (with the backups in place of the live env files) pinned to that
+image ID. It **refuses** a pre-W0 previous release (its model does not pin
+`HLM_REGISTRATION_MODE: closed`) when no env backups are recorded (accepted or deleted) or when the
+restored env gives its API no non-empty `HLM_REGISTRATION_SECRET`: that old code would open public
+registration. Then it stops writers, saves the current database (`backup.sh`), restores the env
+backups, checks out the previous commit, publishes its image in `prod.env`, restores the dump,
+starts the previous stack from the verified model and checks readiness. The consumed pair is
+removed from the state (a second `--rollback` is refused). `--accept-release` deletes the recorded
+env backups and marks the release accepted.
 
 Use a ref supporting the split env layout; for older tooling retain its compatible private config.
 Restore migrates to the selected checkout's head before starting its services with `--no-deps`;
