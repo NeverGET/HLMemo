@@ -59,6 +59,7 @@ from hlmemo.core.embedder import (
 from hlmemo.core.read_service import ReadDeps
 from hlmemo.db import auth_queries as q
 from hlmemo.db.pool import create_pool
+from hlmemo.librarian.risk_judge import close_app_judge
 from hlmemo.server import admin, devices
 from hlmemo.server.common import device_view
 from hlmemo.server.mcp_server import McpEndpoint, create_mcp_endpoint
@@ -462,6 +463,7 @@ def create_app(
                     probe.task = None
                 # Every native future has drained before joining; no native access can
                 # race session/tokenizer destruction or outlive the event loop.
+                await close_app_judge(app)  # W2d: the risk judge's HTTP clients (built on first use)
                 app.state.native_executor.shutdown(wait=True, cancel_futures=True)
                 app.state.native_executor = None
                 if app.state.embedder is not None:

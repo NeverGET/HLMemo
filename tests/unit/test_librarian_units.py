@@ -74,6 +74,7 @@ def test_max_tokens_per_task() -> None:
         "contradiction": 600,
         "summary": 700,
         "risk": 500,
+        "risk_judge": 500,  # W2d memory.risk_check judge
         "synthesis": 700,
     }
     for task in ("placement", "contradiction", "summary", "risk"):

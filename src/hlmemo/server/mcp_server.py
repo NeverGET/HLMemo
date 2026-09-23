@@ -201,6 +201,8 @@ async def on_call_tool(
                     if deps is None:
                         raise RuntimeError("read dependencies are not initialized")
                     result = await cast(ReadHandler, spec.handler)(conn, auth, dict(arguments), deps=deps)
+                elif spec.app_bound:  # W2d: handlers that need the app (shared deps, risk judge)
+                    result = await cast(Any, spec.handler)(conn, auth, dict(arguments), app=ctx.request.app)
                 else:
                     result = await spec.handler(conn, auth, dict(arguments))
     except (ToolError, HlmError, BudgetError, InvalidClue) as err:
