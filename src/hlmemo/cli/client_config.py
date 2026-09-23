@@ -177,33 +177,68 @@ INSTALL_ID_FILE = "install_id"
 _INSTALL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
+def _read_install_id(path: Path) -> str | None:
+    try:
+        value = path.read_text().strip()
+    except OSError:
+        return None
+    return value if _INSTALL_ID_RE.match(value) else None
+
+
+def _publish_install_id(path: Path, value: str) -> bool:
+    """Create ``path`` with ``value`` atomically and never overwrite: the content is written to a
+    private temp file first and published with ``link()`` (fails with EEXIST if another process
+    won; readers never see a partial file). Where hard links are unsupported, ``O_CREAT|O_EXCL``
+    is used. Returns False when the file already exists."""
+    tmp = path.with_name(f".{INSTALL_ID_FILE}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(value + "\n")
+        try:
+            os.link(tmp, path)
+            return True
+        except FileExistsError:
+            return False
+        except OSError:  # no hard links on this filesystem: exclusive create instead
+            try:
+                fd2 = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return False
+            with os.fdopen(fd2, "w") as fh:
+                fh.write(value + "\n")
+            return True
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def install_id() -> str:
     """Random per-config-dir id (``<config_dir>/install_id``, 0600), created on first use (D-055).
 
     Two `hlm` installations of the same OS user (different ``HLM_CONFIG_DIR``) are different
     devices and must not collide on ``devices.fingerprint``; the same config dir keeps its id, so
-    re-registering from it presents the same fingerprint. A missing or malformed file is
-    (re)created; if the directory is not writable a per-process id is used (registration still
-    works — the server stores it — only the stability across runs is lost).
+    re-registering from it presents the same fingerprint. Creation is race-free: concurrent first
+    uses publish with no-overwrite semantics and the losers re-read the winner's id. A malformed
+    file is replaced. If the directory is not writable a per-process id is used (registration
+    still works — the server stores it — only the stability across runs is lost).
     """
     path = config_dir() / INSTALL_ID_FILE
-    try:
-        value = path.read_text().strip()
-        if _INSTALL_ID_RE.match(value):
-            return value
-    except OSError:
-        pass
-    value = uuid.uuid4().hex
+    value = _read_install_id(path)
+    if value is not None:
+        return value
+    candidate = uuid.uuid4().hex
     try:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        tmp = path.with_name(f".{INSTALL_ID_FILE}.{os.getpid()}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as fh:
-            fh.write(value + "\n")
-        os.replace(tmp, path)
+        for _ in range(3):
+            if _publish_install_id(path, candidate):
+                return candidate
+            value = _read_install_id(path)
+            if value is not None:
+                return value  # another process won the race
+            path.unlink(missing_ok=True)  # malformed leftover: replace it
     except OSError:
         pass
-    return value
+    return candidate
 
 
 def device_fingerprint() -> str:

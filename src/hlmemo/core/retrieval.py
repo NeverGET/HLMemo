@@ -5,6 +5,7 @@ assembly and budget packing. Pure and DB-free; ``core/read_service.py`` feeds it
 from __future__ import annotations
 
 import re
+import unicodedata
 from bisect import bisect_right
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ ELLIPSIS = "…"
 DF_MAX_FRAC = 0.20
 DF_MIN_DOCS = 100
 DF_FALLBACK_KEEP = 2
+_RAW_TERM_RE = re.compile(r"[\w][\w./-]*")
 TERM_SCAN_MAX = 96  # terms read from the query before filtering (then capped at TERM_MAX)
 CARD_ALLOW_MIN = 64
 CARD_ALLOW_MAX = 512
@@ -71,7 +73,7 @@ class QueryTerms:
     terms: list[str]  # §4.3 terms (first TERM_MAX)
     identifiers: list[str]
     lexical: list[str] = field(default_factory=list)  # D-055: DF-filtered terms for the lexical list
-    title: list[str] = field(default_factory=list)  # D-055: DF-filtered (title DF) terms for titles
+    title: list[str] = field(default_factory=list)  # D-055: raw query tokens of the title-DF survivors
 
     @property
     def lexical_text(self) -> str:
@@ -111,15 +113,33 @@ def select_terms(
     return [terms[i] for i in sorted(rarest)]
 
 
+def raw_terms(query: str, keep: Sequence[str]) -> list[str]:
+    """The query's *unnormalised* tokens whose normalised terms are in ``keep`` (D-055 title list).
+
+    The title list applies the SQL ``hlm_title_norm()`` to these raw tokens, exactly as the index
+    applies it to raw titles, so query and title are folded by the same function by construction.
+    Tokens come from the ``[\\w][\\w./-]*`` split of the NFC query; order and first occurrence kept.
+    """
+    wanted = set(keep)
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _RAW_TERM_RE.finditer(unicodedata.normalize("NFC", query)):
+        tok = m.group(0).rstrip("./-")
+        if tok and tok not in seen and wanted.intersection(extract_terms(tok, max_terms=TERM_SCAN_MAX)):
+            seen.add(tok)
+            out.append(tok)
+    return out
+
+
 def split_terms(query: str, stats: ProjectStats | None = None) -> QueryTerms:
     """§4.3 terms, then the D-055 DF filter against ``stats`` (``None`` = no filtering)."""
     if stats is None:
         terms = extract_terms(query, max_terms=TERM_MAX)
-        return QueryTerms(terms, identifier_terms(terms), list(terms), list(terms))
+        return QueryTerms(terms, identifier_terms(terms), list(terms), raw_terms(query, terms))
     scanned = extract_terms(query, max_terms=TERM_SCAN_MAX)
     lexical = select_terms(scanned, stats.chunks.prefix_df, stats.chunks.n)[:TERM_MAX]
     title = select_terms(lexical, stats.titles.prefix_df, stats.titles.n, fallback=0)
-    return QueryTerms(scanned[:TERM_MAX], identifier_terms(lexical), lexical, title)
+    return QueryTerms(scanned[:TERM_MAX], identifier_terms(lexical), lexical, raw_terms(query, title))
 
 
 # --------------------------------------------------------------------------- steps 8-9: fusion

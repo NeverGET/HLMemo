@@ -251,3 +251,133 @@ def test_unwritable_config_dir_still_yields_a_fingerprint(
     blocker.write_text("x")
     monkeypatch.setenv("HLM_CONFIG_DIR", str(blocker / "sub"))  # parent is a file: mkdir fails
     assert len(client_config.device_fingerprint()) == 64
+
+
+# --------------------------------------------------------------------------- review 33 fixes
+def test_title_terms_are_raw_query_tokens() -> None:
+    from hlmemo.core.retrieval import raw_terms
+
+    # the SQL hlm_title_norm() folds these on both sides; Python only selects which tokens
+    assert raw_terms("Straße ΟΔΟΣ ıspanak read_service.py.", ["strasse", "οδοσ", "read_service.py"]) == [
+        "Straße",
+        "ΟΔΟΣ",
+        "read_service.py",
+    ]
+    qt = split_terms("Wo ist die Straße?")
+    assert qt.title == ["Wo", "ist", "die", "Straße"]
+
+
+class _FakeQ:
+    """Stands in for ``hlmemo.db.read_queries`` in StatsCache tests (no database)."""
+
+    def __init__(self) -> None:
+        self.revision = 1
+        self.calls = 0
+        self.fail = False
+
+    async def term_stats_key(self, conn, pid):  # noqa: ANN001, ANN201
+        return "db", "created", self.revision
+
+    async def term_stats(self, conn, pid, *, sample_max, timeout_ms):  # noqa: ANN001, ANN201
+        import asyncio
+
+        import psycopg
+
+        self.calls += 1
+        await asyncio.sleep(0.05)  # a slow refresh: concurrent callers must wait for this one
+        if self.fail:
+            raise psycopg.errors.QueryCanceled("statement timeout")
+        return 200, [(f"w{pid}_{i}", 1) for i in range(10)], 20, [("t", 1)]
+
+
+@pytest.fixture
+def fake_q(monkeypatch: pytest.MonkeyPatch) -> _FakeQ:
+    from hlmemo.core import term_stats
+
+    fake = _FakeQ()
+    monkeypatch.setattr(term_stats, "q", fake)
+    return fake
+
+
+async def test_stats_cache_single_flight_for_concurrent_cold_queries(fake_q: _FakeQ) -> None:
+    import asyncio
+
+    from hlmemo.core.term_stats import StatsCache
+
+    cache = StatsCache()
+    results = await asyncio.gather(*(cache.get(None, 1) for _ in range(16)))
+    assert fake_q.calls == 1 and cache.refreshes == 1
+    assert all(r is results[0] for r in results) and results[0].chunks.n == 200
+
+
+async def test_stats_cache_invalidates_on_project_revision(fake_q: _FakeQ) -> None:
+    from hlmemo.core.term_stats import StatsCache
+
+    cache = StatsCache()
+    first = await cache.get(None, 1)
+    assert await cache.get(None, 1) is first and fake_q.calls == 1
+    fake_q.revision = 2  # any write/revision in the project
+    second = await cache.get(None, 1)
+    assert second is not first and fake_q.calls == 2
+
+
+async def test_stats_cache_timeout_means_unfiltered_and_backs_off(fake_q: _FakeQ) -> None:
+    from hlmemo.core.term_stats import StatsCache
+
+    fake_q.fail = True
+    cache = StatsCache()
+    assert await cache.get(None, 1) is None
+    assert await cache.get(None, 1) is None and fake_q.calls == 1  # not retried immediately
+    assert split_terms("the and of", None).lexical == ["the", "and", "of"]
+
+
+async def test_stats_cache_is_lru_bounded(fake_q: _FakeQ) -> None:
+    from hlmemo.core.term_stats import StatsCache
+
+    cache = StatsCache(max_projects=3, max_terms=25)  # each entry holds 10 + 1 lexemes
+    for pid in range(1, 6):
+        await cache.get(None, pid)
+    assert len(cache._entries) == 2 and cache._terms == 22  # term bound is the tighter one
+    assert [k[1] for k in cache._entries] == [4, 5]
+    cache = StatsCache(max_projects=3)
+    for pid in (1, 2, 3, 1, 4):  # 1 is refreshed-by-use, 2 is the least recently used
+        await cache.get(None, pid)
+    assert [k[1] for k in cache._entries] == [3, 1, 4]
+
+
+def _race_worker(cfg: str, out) -> None:  # noqa: ANN001
+    import os
+
+    os.environ["HLM_CONFIG_DIR"] = cfg
+    from hlmemo.cli import client_config as cc
+
+    out.put(cc.install_id())
+
+
+def test_install_id_race_has_one_winner(tmp_path: Path) -> None:
+    import multiprocessing as mp
+
+    ctx = mp.get_context("spawn")
+    out = ctx.Queue()
+    procs = [ctx.Process(target=_race_worker, args=(str(tmp_path / "cfg"), out)) for _ in range(8)]
+    for p in procs:
+        p.start()
+    ids = [out.get(timeout=60) for _ in procs]
+    for p in procs:
+        p.join(timeout=60)
+    persisted = (tmp_path / "cfg" / client_config.INSTALL_ID_FILE).read_text().strip()
+    assert set(ids) == {persisted}
+    assert not [p for p in (tmp_path / "cfg").iterdir() if p.name.endswith(".tmp")]
+
+
+def test_install_id_loser_rereads_the_winner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HLM_CONFIG_DIR", str(tmp_path))
+    winner = "a" * 32
+    real = client_config._publish_install_id
+
+    def lose(path: Path, value: str) -> bool:  # another process publishes first
+        assert real(path, winner)
+        return real(path, value)
+
+    monkeypatch.setattr(client_config, "_publish_install_id", lose)
+    assert client_config.install_id() == winner

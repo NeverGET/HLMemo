@@ -313,36 +313,52 @@ _STATS_SCOPE = (
 
 
 async def term_stats_key(conn: AsyncConnection, pid: int) -> tuple[str, str | None, int]:
-    """``(database, project created_at, chunk id watermark)`` — the cheap cache key/validator."""
+    """``(database, project created_at, project corpus revision)`` — the cheap cache key/validator.
+
+    The revision is the newest ``version_id`` whose ``project_ids`` contain the project. Version
+    rows are append-only (a revision, correction, archive or tombstone always inserts a row), so
+    any change to the project's corpus moves it; other projects' writes do not."""
     cur = await conn.execute(
-        "SELECT current_database(), (SELECT created_at::text FROM projects WHERE project_id = %s),"
-        " (SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM chunks_chunk_id_seq)",
-        (pid,),
+        "SELECT current_database(), (SELECT created_at::text FROM projects WHERE project_id = %(pid)s),"
+        " (SELECT coalesce(max(version_id), 0) FROM memory_versions WHERE %(pid)s = ANY(project_ids))",
+        {"pid": pid},
     )
-    db, created, wm = await cur.fetchone()
-    return db, created, int(wm)
+    db, created, rev = await cur.fetchone()
+    return db, created, int(rev)
 
 
 async def term_stats(
-    conn: AsyncConnection, pid: int
+    conn: AsyncConnection, pid: int, *, sample_max: int, timeout_ms: int
 ) -> tuple[int, list[tuple[str, int]], int, list[tuple[str, int]]]:
     """``ts_stat`` of the shared corpus (``device_scope = 'all'`` current versions) of the project:
-    ``(n_chunks, [(lexeme, ndoc)], n_titles, [(title lexeme, ndoc)])``."""
+    ``(n_chunks, [(lexeme, ndoc)], n_titles, [(title lexeme, ndoc)])``.
+
+    Bounded work: at most the newest ``sample_max`` chunks/versions are read, under
+    ``statement_timeout = timeout_ms`` inside a savepoint (the caller's setting is restored).
+    A timeout raises ``psycopg.errors.QueryCanceled`` after the savepoint rolled back, so the
+    caller's transaction stays usable."""
     scope = _STATS_SCOPE % int(pid)
+    limit = int(sample_max)
     chunk_sql = (
-        f"SELECT c.tsv FROM chunks c JOIN memory_versions mv ON mv.version_id = c.version_id WHERE {scope}"
+        "SELECT c.tsv FROM chunks c JOIN memory_versions mv ON mv.version_id = c.version_id"
+        f" WHERE {scope} ORDER BY c.chunk_id DESC LIMIT {limit}"
     )
-    title_sql = f"SELECT {TITLE_TSV} FROM memory_versions mv WHERE {scope}"
-    cur = await conn.execute(
-        f"SELECT count(*) FROM chunks c JOIN memory_versions mv ON mv.version_id = c.version_id WHERE {scope}"
+    title_sql = (
+        f"SELECT {TITLE_TSV} FROM memory_versions mv WHERE {scope} ORDER BY mv.version_id DESC LIMIT {limit}"
     )
-    n_chunks = int((await cur.fetchone())[0])
-    cur = await conn.execute(f"SELECT count(*) FROM memory_versions mv WHERE {scope}")
-    n_titles = int((await cur.fetchone())[0])
-    cur = await conn.execute("SELECT word, ndoc FROM ts_stat(%s)", (chunk_sql,))
-    chunk_rows = [(w, int(n)) for w, n in await cur.fetchall()]
-    cur = await conn.execute("SELECT word, ndoc FROM ts_stat(%s)", (title_sql,))
-    title_rows = [(w, int(n)) for w, n in await cur.fetchall()]
+    cur = await conn.execute("SELECT current_setting('statement_timeout')")
+    previous = (await cur.fetchone())[0]
+    async with conn.transaction():
+        await conn.execute(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
+        cur = await conn.execute(f"SELECT count(*) FROM ({chunk_sql}) s")
+        n_chunks = int((await cur.fetchone())[0])
+        cur = await conn.execute(f"SELECT count(*) FROM ({title_sql}) s")
+        n_titles = int((await cur.fetchone())[0])
+        cur = await conn.execute("SELECT word, ndoc FROM ts_stat(%s)", (chunk_sql,))
+        chunk_rows = [(w, int(n)) for w, n in await cur.fetchall()]
+        cur = await conn.execute("SELECT word, ndoc FROM ts_stat(%s)", (title_sql,))
+        title_rows = [(w, int(n)) for w, n in await cur.fetchall()]
+        await conn.execute("SELECT set_config('statement_timeout', %s, true)", (previous,))
     return n_chunks, chunk_rows, n_titles, title_rows
 
 

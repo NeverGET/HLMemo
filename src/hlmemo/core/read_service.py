@@ -178,7 +178,9 @@ async def query(
     budget = _budget(request.token_budget)
     async with conn.transaction():
         project = await _read_project(conn, ctx, request.project)
-        valid_at, known_at = await _as_of(conn, request.valid_at, request.known_at)
+        now = await q.clock_now(conn)
+        valid_at = parse_opt_ts(request.valid_at, field="valid_at") or now
+        known_at = parse_opt_ts(request.known_at, field="known_at") or now
         scopes = list(ctx.scope_values())
         filters = q.QueryFilters(
             pid=project.project_id,
@@ -189,7 +191,10 @@ async def query(
             kinds=list(request.kinds) if request.kinds is not None else None,
         )
 
-        stats = await deps.term_stats.get(conn, project.project_id)
+        # D-055: DF describes today's corpus; a historical query (valid_at/known_at in the past)
+        # is not filtered by it, so a term distinctive back then is never dropped using later data.
+        historical = valid_at < now or known_at < now
+        stats = None if historical else await deps.term_stats.get(conn, project.project_id)
         terms = split_terms(request.query, stats)
         qvec = deps.embedder.embed_query(request.query)
 

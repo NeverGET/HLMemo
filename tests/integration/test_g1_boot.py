@@ -70,9 +70,9 @@ async def _insert_version(
 async def test_migration_applies_and_device1_reserved(connect) -> None:
     async with await connect() as conn:
         cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
-        # phase0 head is 0003_title_lexical (D-055); the hnsw branch must NOT be applied.
+        # phase0 head is 0004_title_norm_fold (D-055); the hnsw branch must NOT be applied.
         heads = [r[0] for r in await cur.fetchall()]
-        assert heads == ["0003_title_lexical"], "hnsw branch must NOT be applied"
+        assert heads == ["0004_title_norm_fold"], "hnsw branch must NOT be applied"
         cur = await conn.execute(
             "SELECT indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
             " WHERE c.relname = 'mv_title_tsv'"
