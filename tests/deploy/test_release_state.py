@@ -136,6 +136,35 @@ class ReleaseStateTests(unittest.TestCase):
         rs.main(["accept", str(self.dir)])
         self.assertFalse(first.exists() or second.exists())
 
+    def test_add_retired_records_before_publish_and_keeps_legacy_markers(self):
+        """R1 finding: a backup made by a FAILED deployment is recorded at once, survives the next
+        publish and is deleted by accept; add-retired never derives (legacy markers stay)."""
+        (self.dir / "current-ref").write_text(OLD + "\n")  # legacy-only host, no state file yet
+        failed = self.dir / "api.env.pre-w0-0"
+        failed.write_text("HLM_ADMIN_TOKEN=x\n")
+        rs.main(["add-retired", str(self.dir), str(failed)])
+        rs.main(["add-retired", str(self.dir), str(failed)])  # idempotent
+        state = json.loads((self.dir / rs.STATE).read_text())
+        self.assertEqual(state, {"retired_backups": [str(failed)]})
+        self.assertEqual(self.markers(), {"current-ref": OLD})
+        self.publish(NEW, OLD, "/b/old.dump")
+        state = json.loads((self.dir / rs.STATE).read_text())
+        self.assertEqual(state["retired_backups"], sorted([str(failed), "/etc/hlmemo/api.env.pre-w0-1"]))
+        rs.main(["accept", str(self.dir)])
+        self.assertFalse(failed.exists())
+
+    def test_accept_sweeps_unrecorded_backups_only_in_sweep_dirs(self):
+        envdir = self.dir / "etc"
+        envdir.mkdir()
+        stray, other = envdir / "api.env.pre-w0-20260101T000000Z", envdir / "api.env"
+        stray.write_text("HLM_REGISTRATION_SECRET=x\n")
+        other.write_text("HLM_CURSOR_SECRET=y\n")
+        rs.main(["accept", str(self.dir)])
+        self.assertTrue(stray.exists(), "no --sweep-dir: unrecorded backups are left alone")
+        rs.main(["accept", str(self.dir), "--sweep-dir", str(envdir)])
+        self.assertFalse(stray.exists())
+        self.assertTrue(other.exists())
+
     def test_crash_while_consuming_the_pair_is_repaired_by_derive(self):
         """D-065 item 5: state consumption + marker removal is one derive; a crash in between leaves
         a consistent state, and deriving again deletes the stale previous-ref/previous-dump."""
