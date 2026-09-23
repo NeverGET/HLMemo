@@ -36,6 +36,7 @@ from hlmemo.core.read_models import DrilldownRequest, QueryRequest, RawRequest, 
 from hlmemo.core.retrieval import (
     L_MAX,
     T_MAX,
+    TI_MAX,
     TRGM_WORD_SIMILARITY_THRESHOLD,
     V_MAX,
     CardInput,
@@ -46,6 +47,7 @@ from hlmemo.core.retrieval import (
     split_terms,
 )
 from hlmemo.core.temporal import fmt_ts, parse_opt_ts
+from hlmemo.core.term_stats import StatsCache
 from hlmemo.db import read_queries as q
 from hlmemo.db.write_queries import ProjectRef
 
@@ -64,6 +66,7 @@ class ReadDeps:
     model_dir: Path
     cursor_secret: bytes
     _embedder: Embedder | None = field(default=None, repr=False)
+    term_stats: StatsCache = field(default_factory=StatsCache, repr=False)  # D-055 DF cache
 
     @property
     def embedder(self) -> Embedder:
@@ -186,10 +189,12 @@ async def query(
             kinds=list(request.kinds) if request.kinds is not None else None,
         )
 
-        terms = split_terms(request.query)
+        stats = await deps.term_stats.get(conn, project.project_id)
+        terms = split_terms(request.query, stats)
         qvec = deps.embedder.embed_query(request.query)
 
         lexical = await q.lexical_candidates(conn, filters, terms.lexical_text, L_MAX)
+        title = await q.title_candidates(conn, filters, terms.title, TI_MAX)
         trigram: list[q.Candidate] = []
         if terms.identifiers:
             await q.set_trigram_threshold(conn, TRGM_WORD_SIMILARITY_THRESHOLD)
@@ -205,7 +210,7 @@ async def query(
         )
         pending = await q.indexing_pending(conn, project.project_id)
 
-        ordered = dedupe_and_order(rrf_fuse(lexical, trigram, vector))
+        ordered = dedupe_and_order(rrf_fuse(lexical, trigram, vector, title))
         n_fetch = min(len(ordered), budget // MIN_HIT_TOKENS + 3)
         head = ordered[:n_fetch]
         rows = await q.hit_rows(conn, [f.chunk_id for f in head])
@@ -230,7 +235,9 @@ async def query(
         "indexing_pending": pending,
     }
     try:
-        return pack_query(deps.meter, envelope, budget, card, head, total=len(ordered))
+        return pack_query(
+            deps.meter, envelope, budget, card, head, total=len(ordered), terms=terms.preview_terms
+        )
     except BudgetError as exc:
         raise ToolError(exc.code, str(exc), **exc.details) from exc
 

@@ -67,7 +67,7 @@ log = logging.getLogger("hlmemo.server")
 
 ADMIN_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_TOKEN not set"
 PHASE0_BRANCH = "phase0"
-PHASE0_HEAD_FALLBACK = "0001_phase0"  # used only when alembic/ is not on disk (never in the image)
+PHASE0_HEAD_FALLBACK = "0003_title_lexical"  # used only when alembic/ is not on disk (never in the image)
 MODELS_LOCK = "models.lock"
 
 

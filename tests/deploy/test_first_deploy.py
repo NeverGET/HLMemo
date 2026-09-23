@@ -14,7 +14,10 @@ FIRST_DEPLOY = REPO / "deploy" / "scripts" / "first_deploy.sh"
 def git(*args: str, cwd: Path) -> None:
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@invalid", *args],
-        cwd=cwd, check=True, capture_output=True, text=True,
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -32,8 +35,14 @@ class FirstDeployTests(unittest.TestCase):
         (self.checkout / "deploy" / "scripts").mkdir(parents=True)
         shutil.copy(FIRST_DEPLOY, self.checkout / "deploy" / "scripts" / "first_deploy.sh")
         shutil.copy(REPO / "deploy" / "bootstrap.sh", self.checkout / "deploy" / "bootstrap.sh")
-        for name in (".env.prod.example", "app.env.example", "api.env.example", "db.env.example",
-                     "backup.env.example", "Caddyfile"):
+        for name in (
+            ".env.prod.example",
+            "app.env.example",
+            "api.env.example",
+            "db.env.example",
+            "backup.env.example",
+            "Caddyfile",
+        ):
             shutil.copy(REPO / "deploy" / name, self.checkout / "deploy" / name)
         git("add", "-A", cwd=self.checkout)
         git("commit", "-q", "-m", "tooling", cwd=self.checkout)
@@ -46,9 +55,18 @@ class FirstDeployTests(unittest.TestCase):
     def run_first_deploy(self, *args: str):
         env = dict(os.environ, HLM_LOCAL_STATE_DIR=str(self.state))
         return subprocess.run(
-            ["bash", str(self.checkout / "deploy" / "scripts" / "first_deploy.sh"),
-             "--ssh-key", str(self.key), *args],
-            env=env, text=True, capture_output=True, check=False, timeout=60,
+            [
+                "bash",
+                str(self.checkout / "deploy" / "scripts" / "first_deploy.sh"),
+                "--ssh-key",
+                str(self.key),
+                *args,
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
         )
 
     def test_public_host_refuses_rehearsal_affordances(self):
@@ -72,23 +90,44 @@ class FirstDeployTests(unittest.TestCase):
 
     def test_rehearsal_repo_must_be_loopback_git_daemon(self):
         result = self.run_first_deploy(
-            "--host", "127.0.0.1", "--ssh-port", "2223", "--domain", "localhost", "--tls", "internal",
-            "--repo", "git://10.0.0.5/HLMemo.git", "--dry-run",
+            "--host",
+            "127.0.0.1",
+            "--ssh-port",
+            "2223",
+            "--domain",
+            "localhost",
+            "--tls",
+            "internal",
+            "--repo",
+            "git://10.0.0.5/HLMemo.git",
+            "--dry-run",
         )
         self.assertEqual(result.returncode, 64)
         self.assertIn("git://127.0.0.1", result.stderr)
 
     def test_repository_credentials_refused(self):
         result = self.run_first_deploy(
-            "--host", "203.0.113.10", "--domain", "mcp.example.com",
-            "--repo", "https://user:pw@github.com/x/y.git", "--dry-run",
+            "--host",
+            "203.0.113.10",
+            "--domain",
+            "mcp.example.com",
+            "--repo",
+            "https://user:pw@github.com/x/y.git",
+            "--dry-run",
         )
         self.assertEqual(result.returncode, 64)
 
     def test_public_dry_run_plan(self):
         result = self.run_first_deploy(
-            "--host", "203.0.113.10", "--domain", "mcp.example.com", "--tls", "acme",
-            "--repo", "https://github.com/NeverGET/HLMemo.git", "--dry-run",
+            "--host",
+            "203.0.113.10",
+            "--domain",
+            "mcp.example.com",
+            "--tls",
+            "acme",
+            "--repo",
+            "https://github.com/NeverGET/HLMemo.git",
+            "--dry-run",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("url=https://mcp.example.com", result.stdout)
@@ -100,8 +139,18 @@ class FirstDeployTests(unittest.TestCase):
 
     def test_rehearsal_state_is_keyed_by_ssh_port(self):
         result = self.run_first_deploy(
-            "--host", "127.0.0.1", "--ssh-port", "2223", "--public-port", "19443",
-            "--domain", "localhost", "--tls", "internal", "--repo", "git://127.0.0.1/HLMemo.git",
+            "--host",
+            "127.0.0.1",
+            "--ssh-port",
+            "2223",
+            "--public-port",
+            "19443",
+            "--domain",
+            "localhost",
+            "--tls",
+            "internal",
+            "--repo",
+            "git://127.0.0.1/HLMemo.git",
             "--dry-run",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -114,8 +163,13 @@ class FirstDeployTests(unittest.TestCase):
         git("add", "extra", cwd=self.checkout)
         git("commit", "-q", "-m", "local only", cwd=self.checkout)
         result = self.run_first_deploy(
-            "--host", "203.0.113.10", "--domain", "sslip",
-            "--repo", "https://github.com/NeverGET/HLMemo.git", "--dry-run",
+            "--host",
+            "203.0.113.10",
+            "--domain",
+            "sslip",
+            "--repo",
+            "https://github.com/NeverGET/HLMemo.git",
+            "--dry-run",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("domain=hlm.203-0-113-10.sslip.io", result.stdout)
@@ -123,9 +177,17 @@ class FirstDeployTests(unittest.TestCase):
 
     def test_acme_without_email_secrets(self):
         """Owner decision: ACME without an account email. Nothing may write an empty email."""
-        result = self.run_first_deploy("--host", "203.0.113.10", "--domain", "mcp.example.com",
-                                       "--tls", "acme", "--repo", "https://github.com/NeverGET/HLMemo.git",
-                                       "--secrets-only")
+        result = self.run_first_deploy(
+            "--host",
+            "203.0.113.10",
+            "--domain",
+            "mcp.example.com",
+            "--tls",
+            "acme",
+            "--repo",
+            "https://github.com/NeverGET/HLMemo.git",
+            "--secrets-only",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         state = self.state / "203.0.113.10"
         secrets = state / "secrets"
@@ -143,8 +205,15 @@ class FirstDeployTests(unittest.TestCase):
         self.assertRegex(token, r"^[0-9a-f]{64}$")
         self.assertNotIn(token, result.stdout + result.stderr)
         # Idempotent: a second run reuses the same secrets.
-        again = self.run_first_deploy("--host", "203.0.113.10", "--domain", "mcp.example.com",
-                                      "--repo", "https://github.com/NeverGET/HLMemo.git", "--secrets-only")
+        again = self.run_first_deploy(
+            "--host",
+            "203.0.113.10",
+            "--domain",
+            "mcp.example.com",
+            "--repo",
+            "https://github.com/NeverGET/HLMemo.git",
+            "--secrets-only",
+        )
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertIn("reusing existing secrets", again.stdout)
         self.assertEqual((state / "admin.token").read_text().strip(), token)

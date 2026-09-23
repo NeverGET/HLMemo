@@ -120,10 +120,19 @@ class BootstrapTests(unittest.TestCase):
     def docker_suite(self, os_release: str):
         release = self.root / "os-release"
         release.write_text(os_release)
-        env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
-                   BOOTSTRAP_TEST_MARKER=str(self.marker), HLM_OS_RELEASE_FILE=str(release))
-        return subprocess.run(["bash", str(BOOTSTRAP), "--print-docker-suite"], env=env,
-                              text=True, capture_output=True, check=False)
+        env = dict(
+            os.environ,
+            PATH=f"{self.bin}:{os.environ['PATH']}",
+            BOOTSTRAP_TEST_MARKER=str(self.marker),
+            HLM_OS_RELEASE_FILE=str(release),
+        )
+        return subprocess.run(
+            ["bash", str(BOOTSTRAP), "--print-docker-suite"],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
 
     def test_noble_uses_noble_docker_suite(self):
         result = self.docker_suite('ID=ubuntu\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n')
@@ -134,7 +143,7 @@ class BootstrapTests(unittest.TestCase):
         result = self.docker_suite(
             'PRETTY_NAME="Ubuntu 26.04.1 LTS"\nNAME="Ubuntu"\nVERSION_ID="26.04"\n'
             'VERSION="26.04.1 LTS (Resolute Raccoon)"\nVERSION_CODENAME=resolute\nID=ubuntu\n'
-            'ID_LIKE=debian\nUBUNTU_CODENAME=resolute\n'
+            "ID_LIKE=debian\nUBUNTU_CODENAME=resolute\n"
         )
         self.assertEqual((result.returncode, result.stdout), (0, "resolute\n"), result.stderr)
 
@@ -158,7 +167,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_os_release_is_parsed_not_sourced(self):
         result = self.docker_suite(
-            f'ID=ubuntu\nVERSION_ID=26.04\nVERSION_CODENAME=resolute\nX=$(touch {self.marker})\n'
+            f"ID=ubuntu\nVERSION_ID=26.04\nVERSION_CODENAME=resolute\nX=$(touch {self.marker})\n"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.marker.exists())
@@ -173,7 +182,9 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn("linux/ubuntu noble stable", text)
         self.assertIn('"$docker_apt_suite" > /etc/apt/sources.list.d/docker.list', text)
         # The sudoers rule is validated before it is installed (a broken drop-in disables sudo-rs).
-        self.assertLess(text.index('visudo -cf "$sudoers_tmp"'), text.index("/etc/sudoers.d/90-hlmemo-deploy"))
+        self.assertLess(
+            text.index('visudo -cf "$sudoers_tmp"'), text.index("/etc/sudoers.d/90-hlmemo-deploy")
+        )
         # OpenSSH >= 9.8 logs auth failures from sshd-session; Debian's default jail misses them.
         self.assertIn("_COMM=sshd + _COMM=sshd-session", text)
         # sudo-rs ignores -E; only the explicit --preserve-env=LIST form is portable.

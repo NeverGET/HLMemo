@@ -106,12 +106,23 @@ class Meter:
     def truncate(self, text: str, max_tokens: int) -> tuple[str, bool]:
         """First ``max_tokens`` o200k tokens of ``text`` (decoded), and whether it was cut.
 
-        Used for previews (``PREVIEW_TOK``/``PREVIEW_EXT``) and the card cut at ``CARD_ALLOW``.
+        Used for the card cut at ``CARD_ALLOW`` and to cap query-centred previews (D-055).
         """
         ids = self._enc.encode(text, disallowed_special=())
         if len(ids) <= max_tokens:
             return text, False
         return self._enc.decode(ids[:max_tokens]), True
+
+    def token_offsets(self, text: str) -> list[int]:
+        """Character offset in ``text`` where each o200k token of ``text`` starts (D-055 previews)."""
+        return self._enc.decode_with_offsets(self._enc.encode(text, disallowed_special=()))[1]
+
+    def head(self, text: str, max_tokens: int) -> tuple[str, int]:
+        """``(truncate(text, max_tokens)[0], total token count of text)`` with one encode (D-055)."""
+        ids = self._enc.encode(text, disallowed_special=())
+        if len(ids) <= max_tokens:
+            return text, len(ids)
+        return self._enc.decode(ids[:max_tokens]), len(ids)
 
     # -- packing ------------------------------------------------------------
     def settle(self, envelope: dict[str, Any], limit: int, *, budget_key: str | None = "budget") -> int:
