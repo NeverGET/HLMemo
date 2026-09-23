@@ -3,3 +3,6 @@ HLM_LLM_BASE_URL = "https://api.openai.com/v1"
 HLM_LLM_MODEL    = "gpt-5.6-luna"
 HLM_LLM_API_KEY  = "env:OPENAI_API_KEY"
 extra = { response_format = { type = "json_object" }, temperature = 0 }
+# USD per 1M tokens (list price mirrored from the OpenRouter catalogue 2026-09-23; verify on switch).
+price_in_per_m  = 0.20
+price_out_per_m = 1.20

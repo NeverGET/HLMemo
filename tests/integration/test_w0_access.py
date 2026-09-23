@@ -406,7 +406,7 @@ async def test_ops_cli_prints_only_the_token(db_dsn, connect) -> None:
     assert run("device", "mint", "--name", "w0-cli-dev", "--class", "ci").returncode == 2  # name taken
     assert run("device", "revoke", "w0-cli-dev").returncode == 0
     status = json.loads(run("status", "--json").stdout)
-    assert status["devices"] == {"revoked": 1} and status["migration"] == ["0005_w0_access"]
+    assert status["devices"] == {"revoked": 1} and status["migration"] == ["0006_librarian"]
     assert status["ready"]["status"] == "unreachable"  # no API on the loopback port in this test
 
 
@@ -625,7 +625,7 @@ async def test_check_edge_routes_against_a_real_listener(db_dsn, connect) -> Non
     # Sol 34 #6: the public route saw status only; operators get the details via hlmemo.ops.
     assert status.returncode == 0, status.stderr
     ready = json.loads(status.stdout)["ready"]
-    assert ready["status"] == "ready" and ready["checks"]["migration"]["expected"] == "0005_w0_access"
+    assert ready["status"] == "ready" and ready["checks"]["migration"]["expected"] == "0006_librarian"
     assert "RESULT routes PASS" in proc.stdout
     assert "hlm_" not in proc.stdout + proc.stderr, "a token was printed"
     # The checker's device revoked itself through the public self-revoke route.
@@ -664,7 +664,7 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
         with psycopg.connect(dsn) as conn:
             return conn.execute("SELECT version_num FROM alembic_version ORDER BY 1").fetchall()
 
-    for start in ("0001_phase0", "0004_title_norm_fold"):
+    for start in ("0001_phase0", "0004_title_norm_fold", "0005_w0_access"):
         with psycopg.connect(dsn, autocommit=True) as conn:  # disposable: start from an empty schema
             conn.execute("DROP SCHEMA public CASCADE")
             conn.execute("CREATE SCHEMA public")
@@ -672,7 +672,7 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
         assert version() == [(start,)]
         up = alembic("upgrade", "main@head")
         assert up.returncode == 0, up.stderr
-        assert version() == [("0005_w0_access",)]
+        assert version() == [("0006_librarian",)]
         with psycopg.connect(dsn) as conn:
             assert conn.execute(
                 "SELECT 1 FROM information_schema.columns"
@@ -681,7 +681,7 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
     down = alembic("downgrade", "0004_title_norm_fold")
     assert down.returncode == 0, down.stderr
     assert alembic("upgrade", "phase0@head").returncode == 0  # the old label resolves the same head
-    assert version() == [("0005_w0_access",)]
+    assert version() == [("0006_librarian",)]
     # device_minted events are authoritative: the downgrade refuses instead of rewriting them.
     with psycopg.connect(dsn) as conn:
         conn.execute(
@@ -690,4 +690,4 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
         )
     refused = alembic("downgrade", "0004_title_norm_fold")
     assert refused.returncode != 0 and "events_kind_check" in refused.stderr
-    assert version() == [("0005_w0_access",)]
+    assert version() == [("0005_w0_access",)]  # 0006 downgraded in its own tx; 0005 refused

@@ -39,7 +39,6 @@ import signal
 import sys
 import time
 import traceback
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -57,6 +56,7 @@ from hlmemo.core.embedder import (
 )
 from hlmemo.core.memory_profile import configure_memory_profile, memory_sample
 from hlmemo.db.read_queries import vector_literal
+from hlmemo.worker.lease import lease_jobs as _shared_lease_jobs
 
 log = logging.getLogger("hlmemo.worker")
 
@@ -104,32 +104,10 @@ class DrainStats:
 # --------------------------------------------------------------------------- SQL
 async def lease_jobs(conn: AsyncConnection, limit: int, *, lease_seconds: int = LEASE_SECONDS) -> list[Job]:
     """Lease up to ``limit`` ready jobs: queued with ``run_after <= now()`` or running with an
-    expired lease. One statement, ``FOR UPDATE SKIP LOCKED`` — concurrent workers never collide."""
-    token = str(uuid.uuid4())
-    async with conn.transaction():
-        cur = await conn.execute(
-            """
-            WITH cand AS (
-                SELECT job_id FROM jobs
-                WHERE kind = ANY(%(kinds)s)
-                  AND ((status = 'queued' AND run_after <= now())
-                       OR (status = 'running' AND lease_until < now()))
-                ORDER BY run_after, job_id
-                LIMIT %(limit)s
-                FOR UPDATE SKIP LOCKED
-            )
-            UPDATE jobs j
-               SET status = 'running', attempts = j.attempts + 1, lease_token = %(token)s,
-                   lease_until = now() + make_interval(secs => %(lease)s), last_error = NULL
-              FROM cand
-             WHERE j.job_id = cand.job_id
-            RETURNING j.job_id, j.kind, j.payload, j.attempts
-            """,
-            {"kinds": list(JOB_KINDS), "limit": limit, "token": token, "lease": lease_seconds},
-        )
-        rows = await cur.fetchall()
-    await conn.commit()  # the factory may hand over a connection with an implicit transaction open
-    return [Job(r[0], r[1], r[2], r[3], token) for r in rows]
+    expired lease. One statement, ``FOR UPDATE SKIP LOCKED`` — concurrent workers never collide.
+    The statement is shared with the librarian (``worker/lease.py``): ``(priority, run_after)``."""
+    leased = await _shared_lease_jobs(conn, JOB_KINDS, limit, lease_seconds=lease_seconds)
+    return [Job(j.job_id, j.kind, j.payload, j.attempts, j.lease_token) for j in leased]
 
 
 async def _pending_chunks(

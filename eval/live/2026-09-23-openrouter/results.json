@@ -1,0 +1,2330 @@
+{
+ "profile": "openrouter",
+ "model_id": "deepseek/deepseek-v4.1-flash",
+ "reps": 3,
+ "calls": 99,
+ "ledger_rows": 99,
+ "ledger_outcomes": {
+  "ok": 99
+ },
+ "json_fail": 0,
+ "json_fail_rate": 0.0,
+ "infra_error": 0,
+ "latency_p50_ms": 1832,
+ "latency_p95_ms": 7886,
+ "cost_usd": "0.0064235375204",
+ "tasks": {
+  "placement": {
+   "rep_means": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "mean": 1.0,
+   "threshold": 0.9,
+   "pass": true
+  },
+  "contradiction": {
+   "rep_means": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "mean": 1.0,
+   "threshold": 0.9,
+   "pass": true
+  },
+  "summary": {
+   "rep_means": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "mean": 1.0,
+   "threshold": 0.8,
+   "pass": true
+  },
+  "risk": {
+   "rep_means": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "mean": 1.0,
+   "threshold": 0.85,
+   "pass": true
+  }
+ },
+ "pass": true,
+ "results": [
+  {
+   "task": "placement",
+   "case": "p01",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "user-prefs",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 1630,
+   "cost_usd": "0.00008134",
+   "prompt_tokens": 491,
+   "completion_tokens": 30
+  },
+  {
+   "task": "placement",
+   "case": "p02",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "episode",
+    "topic_id": "infra-vps",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 1809,
+   "cost_usd": "0.0000967",
+   "prompt_tokens": 565,
+   "completion_tokens": 31
+  },
+  {
+   "task": "placement",
+   "case": "p03",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "lesson",
+    "topic_id": "infra-vps",
+    "importance": 9,
+    "stability": "stable"
+   },
+   "latency_ms": 3058,
+   "cost_usd": "0.00006471",
+   "prompt_tokens": 561,
+   "completion_tokens": 30
+  },
+  {
+   "task": "placement",
+   "case": "p04",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "experience",
+    "topic_id": "librarian-llm",
+    "importance": 6,
+    "stability": "stable"
+   },
+   "latency_ms": 1261,
+   "cost_usd": "0.0000538552",
+   "prompt_tokens": 537,
+   "completion_tokens": 32
+  },
+  {
+   "task": "placement",
+   "case": "p05",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "user-profile",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 755,
+   "cost_usd": "0.0000500752",
+   "prompt_tokens": 522,
+   "completion_tokens": 28
+  },
+  {
+   "task": "placement",
+   "case": "p06",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "episode",
+    "topic_id": "codex-consults",
+    "importance": 6,
+    "stability": "stable"
+   },
+   "latency_ms": 1071,
+   "cost_usd": "0.00009044",
+   "prompt_tokens": 550,
+   "completion_tokens": 32
+  },
+  {
+   "task": "placement",
+   "case": "p07",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "family-personal",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 3713,
+   "cost_usd": "0.00005499",
+   "prompt_tokens": 492,
+   "completion_tokens": 29
+  },
+  {
+   "task": "placement",
+   "case": "p08",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "lesson",
+    "topic_id": "librarian-llm",
+    "importance": 8,
+    "stability": "stable"
+   },
+   "latency_ms": 2289,
+   "cost_usd": "0.0000577752",
+   "prompt_tokens": 565,
+   "completion_tokens": 32
+  },
+  {
+   "task": "placement",
+   "case": "p09",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "experience",
+    "topic_id": "mcp-server",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 1302,
+   "cost_usd": "0.00006409",
+   "prompt_tokens": 562,
+   "completion_tokens": 29
+  },
+  {
+   "task": "placement",
+   "case": "p10",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "infra-docker",
+    "importance": 6,
+    "stability": "volatile"
+   },
+   "latency_ms": 1020,
+   "cost_usd": "0.0000523152",
+   "prompt_tokens": 529,
+   "completion_tokens": 31
+  },
+  {
+   "task": "contradiction",
+   "case": "c01",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Cannot live in both Berlin and Munich at the same time; B is later and replaces A."
+   },
+   "latency_ms": 1049,
+   "cost_usd": "0.0000196952",
+   "prompt_tokens": 266,
+   "completion_tokens": 41
+  },
+  {
+   "task": "contradiction",
+   "case": "c02",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Same stack cannot run both Postgres 16 and 17; B has the later t_valid and replaces A."
+   },
+   "latency_ms": 1634,
+   "cost_usd": "0.000072",
+   "prompt_tokens": 270,
+   "completion_tokens": 45
+  },
+  {
+   "task": "contradiction",
+   "case": "c03",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "Different beverages and contexts; both can be true simultaneously."
+   },
+   "latency_ms": 982,
+   "cost_usd": "0.00005264",
+   "prompt_tokens": 277,
+   "completion_tokens": 33
+  },
+  {
+   "task": "contradiction",
+   "case": "c04",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "A states Monday 10:00, B states the meeting moved to Tuesday 09:00; both cannot hold simultaneously, and B has the later t_valid."
+   },
+   "latency_ms": 1737,
+   "cost_usd": "0.00006454",
+   "prompt_tokens": 296,
+   "completion_tokens": 55
+  },
+  {
+   "task": "contradiction",
+   "case": "c05",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "A",
+    "reason": "Monthly rotation on the 1st and weekly rotation on Friday cannot both be the rotation schedule; A has the later t_valid."
+   },
+   "latency_ms": 1637,
+   "cost_usd": "0.00005866",
+   "prompt_tokens": 275,
+   "completion_tokens": 48
+  },
+  {
+   "task": "contradiction",
+   "case": "c06",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "Different children (daughter vs son) with different names; both can be true."
+   },
+   "latency_ms": 1064,
+   "cost_usd": "0.0000525",
+   "prompt_tokens": 261,
+   "completion_tokens": 38
+  },
+  {
+   "task": "contradiction",
+   "case": "c07",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Same production server cannot be both CX22 and CX32; B is later and replaces A."
+   },
+   "latency_ms": 964,
+   "cost_usd": "0.00005754",
+   "prompt_tokens": 288,
+   "completion_tokens": 41
+  },
+  {
+   "task": "contradiction",
+   "case": "c08",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "A says Cemal eats no fish; B says he now eats fish, so both cannot be true at the same time. B is later and replaces A."
+   },
+   "latency_ms": 1569,
+   "cost_usd": "0.00006328",
+   "prompt_tokens": 287,
+   "completion_tokens": 55
+  },
+  {
+   "task": "contradiction",
+   "case": "c09",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "B adds index detail; both can be true together."
+   },
+   "latency_ms": 1384,
+   "cost_usd": "0.00005194",
+   "prompt_tokens": 272,
+   "completion_tokens": 33
+  },
+  {
+   "task": "contradiction",
+   "case": "c10",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "A",
+    "reason": "Same daily standup time cannot be both 09:30 and 08:30; A has the later t_valid and replaces B."
+   },
+   "latency_ms": 7886,
+   "cost_usd": "0.00002774",
+   "prompt_tokens": 274,
+   "completion_tokens": 50
+  },
+  {
+   "task": "summary",
+   "case": "s01",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 67,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "On 2026-09-20 production went down for about two hours due to an expired TLS certificate. The root cause was that the certbot renewal cron job had never been installed on the VPS. To prevent recurrence, decision ADR-009 switches to Caddy for automatic TLS renewal, keeping nginx only as a fallback. Other items were minor housekeeping: a variable rename, README comment, .gitignore update, and a docs typo fix.",
+    "clue_ids": [
+     "m1",
+     "m3",
+     "m5"
+    ]
+   },
+   "latency_ms": 3954,
+   "cost_usd": "0.00014476",
+   "prompt_tokens": 427,
+   "completion_tokens": 119
+  },
+  {
+   "task": "summary",
+   "case": "s02",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 55,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Key dates and commitments: Elif's birthday is 3 October and she wants a bicycle; mother's surgery is 15 October in Ankara, requiring leave that week; new apartment rent is 1,450 EUR with the contract starting 1 November and a deposit of three months' rent. Other items are routine or trivial (groceries, weather, coffee, delayed bus).",
+    "clue_ids": [
+     "m3",
+     "m5",
+     "m1"
+    ]
+   },
+   "latency_ms": 3970,
+   "cost_usd": "0.0001008",
+   "prompt_tokens": 417,
+   "completion_tokens": 101
+  },
+  {
+   "task": "summary",
+   "case": "s03",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 82,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "ADR-004 fixes the memory-layer names as fact / episode / lesson / experience. Codex-Consult #3 recommended a 4k token budget per MCP response, accepted and recorded in ADR-005. DeepSeek V4 Flash was chosen as the Librarian model because it is roughly 10x cheaper than Gemini Flash with equal JSON reliability in benchmarks. Remaining items are minor: coffee machine repair, whitespace fix in run.py, an open logo-color discussion, a 10-minute meeting shift, a documentation footnote correction, and editor tab width set to 4.",
+    "clue_ids": [
+     "m1",
+     "m2",
+     "m5"
+    ]
+   },
+   "latency_ms": 2725,
+   "cost_usd": "0.00012488",
+   "prompt_tokens": 463,
+   "completion_tokens": 143
+  },
+  {
+   "task": "summary",
+   "case": "s04",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 70,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Benchmarking of model JSON reliability: Gemini Flash wrapped output in ```json fences in 3 of 10 placement calls despite response_format=json_object, while DeepSeek V4 Flash returned parseable JSON in all 33 calls. The smoke bench run cost $0.12. As a result, it was decided that every librarian job strips code fences before json.loads and retries once on parse failure. Minor housekeeping included renaming bench/out to bench/results and muting noisy Slack notifications.",
+    "clue_ids": [
+     "m5",
+     "m1",
+     "m3"
+    ]
+   },
+   "latency_ms": 3791,
+   "cost_usd": "0.0001652",
+   "prompt_tokens": 382,
+   "completion_tokens": 127
+  },
+  {
+   "task": "summary",
+   "case": "s05",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 62,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Key items: a doctor's appointment on 12 October at 09:00 with Dr. Weber (Hausarzt) in Schwabing; a flight to Istanbul on 20.12 (TK1634, departing 07:15 from MUC, return 03.01); and a blood test showing low vitamin D (18 ng/ml) with the doctor recommending 2000 IU daily. Other notes are minor: new headphones, a podcast, tea to buy, a new pen, and parking.",
+    "clue_ids": [
+     "m1",
+     "m3",
+     "m5"
+    ]
+   },
+   "latency_ms": 4525,
+   "cost_usd": "0.00015515",
+   "prompt_tokens": 455,
+   "completion_tokens": 128
+  },
+  {
+   "task": "risk",
+   "case": "r01",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L1"
+    ],
+    "message": "L1 applies: `docker compose down -v` on production deletes Postgres volumes (prior 3h restore). Avoid -v or use a non-destructive restart."
+   },
+   "latency_ms": 5101,
+   "cost_usd": "0.0000854",
+   "prompt_tokens": 436,
+   "completion_tokens": 58
+  },
+  {
+   "task": "risk",
+   "case": "r02",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 1237,
+   "cost_usd": "0.00007054",
+   "prompt_tokens": 433,
+   "completion_tokens": 19
+  },
+  {
+   "task": "risk",
+   "case": "r03",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L3"
+    ],
+    "message": "L3 applies: Gemini Flash may wrap JSON in ```json fences even with response_format=json_object; strip fences before json.loads."
+   },
+   "latency_ms": 5056,
+   "cost_usd": "0.00009899",
+   "prompt_tokens": 473,
+   "completion_tokens": 50
+  },
+  {
+   "task": "risk",
+   "case": "r04",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L6"
+    ],
+    "message": "L6 applies: MCP SSE stream requires proxy_read_timeout >= 3600 and proxy_buffering off; keeping nginx default 60s timeouts will hang clients."
+   },
+   "latency_ms": 2287,
+   "cost_usd": "0.00008624",
+   "prompt_tokens": 439,
+   "completion_tokens": 59
+  },
+  {
+   "task": "risk",
+   "case": "r05",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L2",
+     "L5"
+    ],
+    "message": "Committing .env would leak the OpenRouter key again (L2); after rotating, restart the librarian worker so the old key isn't kept in memory (L5)."
+   },
+   "latency_ms": 4601,
+   "cost_usd": "0.00010659",
+   "prompt_tokens": 468,
+   "completion_tokens": 61
+  },
+  {
+   "task": "risk",
+   "case": "r06",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 4116,
+   "cost_usd": "0.00006426",
+   "prompt_tokens": 402,
+   "completion_tokens": 19
+  },
+  {
+   "task": "risk",
+   "case": "r07",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L4",
+     "L5"
+    ],
+    "message": "Friday evening deploy matches L4 (no Friday deploys; past weekend outages, nobody reachable). Postgres major upgrade matches L5 (pgvector must be rebuilt/reinstalled or HLMemo won't start)."
+   },
+   "latency_ms": 2519,
+   "cost_usd": "0.00008932",
+   "prompt_tokens": 428,
+   "completion_tokens": 70
+  },
+  {
+   "task": "risk",
+   "case": "r08",
+   "rep": 0,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 1149,
+   "cost_usd": "0.00006524",
+   "prompt_tokens": 409,
+   "completion_tokens": 19
+  },
+  {
+   "task": "placement",
+   "case": "p01",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "user-prefs",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 4924,
+   "cost_usd": "0.0000586",
+   "prompt_tokens": 514,
+   "completion_tokens": 30
+  },
+  {
+   "task": "placement",
+   "case": "p02",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "episode",
+    "topic_id": "infra-vps",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 13080,
+   "cost_usd": "0.00003178",
+   "prompt_tokens": 565,
+   "completion_tokens": 31
+  },
+  {
+   "task": "placement",
+   "case": "p03",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "lesson",
+    "topic_id": "infra-vps",
+    "importance": 9,
+    "stability": "stable"
+   },
+   "latency_ms": 2438,
+   "cost_usd": "0.00003099",
+   "prompt_tokens": 561,
+   "completion_tokens": 30
+  },
+  {
+   "task": "placement",
+   "case": "p04",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "experience",
+    "topic_id": "librarian-llm",
+    "importance": 6,
+    "stability": "stable"
+   },
+   "latency_ms": 3159,
+   "cost_usd": "0.0000190904",
+   "prompt_tokens": 537,
+   "completion_tokens": 32
+  },
+  {
+   "task": "placement",
+   "case": "p05",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "user-profile",
+    "importance": 8,
+    "stability": "stable"
+   },
+   "latency_ms": 1280,
+   "cost_usd": "0.0000500752",
+   "prompt_tokens": 522,
+   "completion_tokens": 28
+  },
+  {
+   "task": "placement",
+   "case": "p06",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": false
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "episode",
+    "topic_id": "codex-consults",
+    "importance": 6,
+    "stability": "volatile"
+   },
+   "latency_ms": 3223,
+   "cost_usd": "0.00006852",
+   "prompt_tokens": 573,
+   "completion_tokens": 33
+  },
+  {
+   "task": "placement",
+   "case": "p07",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "family-personal",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 1353,
+   "cost_usd": "0.00002955",
+   "prompt_tokens": 492,
+   "completion_tokens": 29
+  },
+  {
+   "task": "placement",
+   "case": "p08",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "lesson",
+    "topic_id": "librarian-llm",
+    "importance": 8,
+    "stability": "stable"
+   },
+   "latency_ms": 9142,
+   "cost_usd": "0.0000577752",
+   "prompt_tokens": 565,
+   "completion_tokens": 32
+  },
+  {
+   "task": "placement",
+   "case": "p09",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "experience",
+    "topic_id": "mcp-server",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 3427,
+   "cost_usd": "0.00003025",
+   "prompt_tokens": 562,
+   "completion_tokens": 29
+  },
+  {
+   "task": "placement",
+   "case": "p10",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "infra-docker",
+    "importance": 6,
+    "stability": "volatile"
+   },
+   "latency_ms": 838,
+   "cost_usd": "0.0000523152",
+   "prompt_tokens": 529,
+   "completion_tokens": 31
+  },
+  {
+   "task": "contradiction",
+   "case": "c01",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Both state Cemal's current residence; B is later and replaces Berlin with Munich."
+   },
+   "latency_ms": 2534,
+   "cost_usd": "0.00005404",
+   "prompt_tokens": 266,
+   "completion_tokens": 40
+  },
+  {
+   "task": "contradiction",
+   "case": "c02",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Same stack cannot run two different Postgres major versions at once; B is later and replaces A."
+   },
+   "latency_ms": 1247,
+   "cost_usd": "0.00005733",
+   "prompt_tokens": 270,
+   "completion_tokens": 42
+  },
+  {
+   "task": "contradiction",
+   "case": "c03",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "Different beverages and contexts; both can be true simultaneously."
+   },
+   "latency_ms": 1572,
+   "cost_usd": "0.00005264",
+   "prompt_tokens": 277,
+   "completion_tokens": 33
+  },
+  {
+   "task": "contradiction",
+   "case": "c04",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "A states the meeting is Monday 10:00; B states it moved to Tuesday 09:00, so both cannot be true at the same time. B has the later t_valid and replaces A."
+   },
+   "latency_ms": 2227,
+   "cost_usd": "0.00008934",
+   "prompt_tokens": 318,
+   "completion_tokens": 64
+  },
+  {
+   "task": "contradiction",
+   "case": "c05",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "A",
+    "reason": "Monthly rotation on the 1st and weekly rotation on Friday cannot both be the rotation schedule; A has the later t_valid."
+   },
+   "latency_ms": 1629,
+   "cost_usd": "0.00005866",
+   "prompt_tokens": 275,
+   "completion_tokens": 48
+  },
+  {
+   "task": "contradiction",
+   "case": "c06",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "Different children (daughter vs son) with different names; both can be true."
+   },
+   "latency_ms": 1241,
+   "cost_usd": "0.0000177352",
+   "prompt_tokens": 261,
+   "completion_tokens": 38
+  },
+  {
+   "task": "contradiction",
+   "case": "c07",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Same production server cannot be both CX22 and CX32; B is later and replaces A."
+   },
+   "latency_ms": 1193,
+   "cost_usd": "0.00005754",
+   "prompt_tokens": 288,
+   "completion_tokens": 41
+  },
+  {
+   "task": "contradiction",
+   "case": "c08",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "A says Cemal eats no fish; B says he now eats fish, so both cannot be true at the same time."
+   },
+   "latency_ms": 1232,
+   "cost_usd": "0.0000255752",
+   "prompt_tokens": 287,
+   "completion_tokens": 48
+  },
+  {
+   "task": "contradiction",
+   "case": "c09",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "B adds index detail; both can be true together."
+   },
+   "latency_ms": 1772,
+   "cost_usd": "0.00006297",
+   "prompt_tokens": 294,
+   "completion_tokens": 33
+  },
+  {
+   "task": "contradiction",
+   "case": "c10",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "A",
+    "reason": "Same daily standup time cannot be both 09:30 and 08:30; A has the later t_valid and replaces B."
+   },
+   "latency_ms": 8723,
+   "cost_usd": "0.00002945",
+   "prompt_tokens": 274,
+   "completion_tokens": 50
+  },
+  {
+   "task": "summary",
+   "case": "s01",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 76,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "On 2026-09-20 production went down for about two hours due to an expired TLS certificate. The root cause was that the certbot renewal cron job had never been installed on the VPS. To prevent recurrence, decision ADR-009 switches to Caddy for automatic TLS renewal, keeping nginx only as a fallback. Other items were minor housekeeping: a variable rename in utils.py, a README comment, a .gitignore update for .venv, a STATUS.md typo fix, and a lunch note.",
+    "clue_ids": [
+     "m1",
+     "m3",
+     "m5"
+    ]
+   },
+   "latency_ms": 6529,
+   "cost_usd": "0.00010678",
+   "prompt_tokens": 427,
+   "completion_tokens": 133
+  },
+  {
+   "task": "summary",
+   "case": "s02",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 56,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Key upcoming dates and obligations: Elif's birthday on 3 October (wants a bicycle as a gift), mother's surgery on 15 October in Ankara requiring leave that week, and a new apartment with 1,450 EUR rent, deposit of three months' rent, and a contract starting 1 November. Routine trivia (groceries, weather, coffee, late bus) is not important.",
+    "clue_ids": [
+     "m3",
+     "m5",
+     "m1"
+    ]
+   },
+   "latency_ms": 2320,
+   "cost_usd": "0.0000503328",
+   "prompt_tokens": 417,
+   "completion_tokens": 105
+  },
+  {
+   "task": "summary",
+   "case": "s03",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 79,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Key decisions: ADR-004 fixes the memory-layer names as fact / episode / lesson / experience. Codex-Consult #3 recommended a 4k token budget per MCP response, accepted and recorded in ADR-005. The Librarian model was set to DeepSeek V4 Flash, roughly 10x cheaper than Gemini Flash with equal JSON reliability in benchmarks. Remaining items are minor: coffee machine repair, whitespace fix in run.py, logo color still open, meeting shifted 10 minutes, doc footnote corrected, editor tab width set to 4.",
+    "clue_ids": [
+     "m1",
+     "m2",
+     "m5"
+    ]
+   },
+   "latency_ms": 3733,
+   "cost_usd": "0.00012404",
+   "prompt_tokens": 463,
+   "completion_tokens": 141
+  },
+  {
+   "task": "summary",
+   "case": "s04",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 66,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Benchmark of model JSON reliability: Gemini Flash wrapped output in ```json fences in 3 of 10 placement calls despite response_format=json_object, while DeepSeek V4 Flash returned parseable JSON in all 33 calls. The smoke run cost $0.12. Decision: every librarian job must strip code fences before json.loads and retry once on parse failure. Minor items: bench/out renamed to bench/results, Slack channel muted, and a pleasant balcony workday.",
+    "clue_ids": [
+     "m5",
+     "m1",
+     "m3"
+    ]
+   },
+   "latency_ms": 6252,
+   "cost_usd": "0.00013816",
+   "prompt_tokens": 382,
+   "completion_tokens": 123
+  },
+  {
+   "task": "summary",
+   "case": "s05",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 56,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Doctor appointment on 12 October at 09:00 with Dr. Weber (Hausarzt) in Schwabing. Blood test shows low vitamin D (18 ng/ml); doctor recommends 2000 IU daily. Flight to Istanbul on 20.12, TK1634, departing 07:15 from MUC, return flight 03.01. Other notes are minor: new headphones and pen purchased, podcast listened to, tea needs buying, parking found.",
+    "clue_ids": [
+     "m1",
+     "m5",
+     "m3"
+    ]
+   },
+   "latency_ms": 1937,
+   "cost_usd": "0.00018401877",
+   "prompt_tokens": 455,
+   "completion_tokens": 118
+  },
+  {
+   "task": "risk",
+   "case": "r01",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L1"
+    ],
+    "message": "L1 applies: `docker compose down -v` on production deletes Postgres volumes (3h restore in 2026-08-12). Avoid -v or use a non-destructive reset."
+   },
+   "latency_ms": 11532,
+   "cost_usd": "0.00008792",
+   "prompt_tokens": 436,
+   "completion_tokens": 64
+  },
+  {
+   "task": "risk",
+   "case": "r02",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 801,
+   "cost_usd": "0.00006552",
+   "prompt_tokens": 411,
+   "completion_tokens": 19
+  },
+  {
+   "task": "risk",
+   "case": "r03",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L3"
+    ],
+    "message": "L3 applies: Gemini Flash may wrap JSON in ```json fences even with response_format=json_object, so parsing directly with json.loads without stripping fences can fail."
+   },
+   "latency_ms": 1664,
+   "cost_usd": "0.00013756743",
+   "prompt_tokens": 473,
+   "completion_tokens": 55
+  },
+  {
+   "task": "risk",
+   "case": "r04",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L6"
+    ],
+    "message": "L6 applies: MCP SSE stream requires proxy_read_timeout >= 3600 and proxy_buffering off; keeping nginx default 60s timeouts will hang clients."
+   },
+   "latency_ms": 1524,
+   "cost_usd": "0.00013756743",
+   "prompt_tokens": 461,
+   "completion_tokens": 58
+  },
+  {
+   "task": "risk",
+   "case": "r05",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L2",
+     "L5"
+    ],
+    "message": "Committing .env would re-leak the OpenRouter key (L2); rotate via secret store/CI instead. Also restart the librarian worker after rotation so the old key isn't cached (L5)."
+   },
+   "latency_ms": 6811,
+   "cost_usd": "0.000091",
+   "prompt_tokens": 446,
+   "completion_tokens": 68
+  },
+  {
+   "task": "risk",
+   "case": "r06",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 1276,
+   "cost_usd": "0.00002125",
+   "prompt_tokens": 424,
+   "completion_tokens": 19
+  },
+  {
+   "task": "risk",
+   "case": "r07",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L4",
+     "L5"
+    ],
+    "message": "Friday evening deploy matches L4 (past Friday deploys caused weekend outages with nobody reachable); Postgres major upgrade matches L5 (pgvector must be rebuilt/reinstalled after major upgrade or HLMemo won't start)."
+   },
+   "latency_ms": 1754,
+   "cost_usd": "0.00014570634",
+   "prompt_tokens": 450,
+   "completion_tokens": 71
+  },
+  {
+   "task": "risk",
+   "case": "r08",
+   "rep": 1,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 2455,
+   "cost_usd": "0.0000130928",
+   "prompt_tokens": 409,
+   "completion_tokens": 19
+  },
+  {
+   "task": "placement",
+   "case": "p01",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "user-prefs",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 1290,
+   "cost_usd": "0.00003052",
+   "prompt_tokens": 514,
+   "completion_tokens": 30
+  },
+  {
+   "task": "placement",
+   "case": "p02",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "episode",
+    "topic_id": "infra-vps",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 1388,
+   "cost_usd": "0.00003178",
+   "prompt_tokens": 565,
+   "completion_tokens": 31
+  },
+  {
+   "task": "placement",
+   "case": "p03",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "lesson",
+    "topic_id": "infra-vps",
+    "importance": 9,
+    "stability": "stable"
+   },
+   "latency_ms": 1234,
+   "cost_usd": "0.00003099",
+   "prompt_tokens": 561,
+   "completion_tokens": 30
+  },
+  {
+   "task": "placement",
+   "case": "p04",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "experience",
+    "topic_id": "librarian-llm",
+    "importance": 6,
+    "stability": "stable"
+   },
+   "latency_ms": 3780,
+   "cost_usd": "0.0000190904",
+   "prompt_tokens": 537,
+   "completion_tokens": 32
+  },
+  {
+   "task": "placement",
+   "case": "p05",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "user-profile",
+    "importance": 8,
+    "stability": "stable"
+   },
+   "latency_ms": 991,
+   "cost_usd": "0.0000153104",
+   "prompt_tokens": 522,
+   "completion_tokens": 28
+  },
+  {
+   "task": "placement",
+   "case": "p06",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": false
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "episode",
+    "topic_id": "codex-consults",
+    "importance": 6,
+    "stability": "volatile"
+   },
+   "latency_ms": 1397,
+   "cost_usd": "0.00003336",
+   "prompt_tokens": 573,
+   "completion_tokens": 33
+  },
+  {
+   "task": "placement",
+   "case": "p07",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "family-personal",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 2057,
+   "cost_usd": "0.00002955",
+   "prompt_tokens": 492,
+   "completion_tokens": 29
+  },
+  {
+   "task": "placement",
+   "case": "p08",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "lesson",
+    "topic_id": "librarian-llm",
+    "importance": 8,
+    "stability": "stable"
+   },
+   "latency_ms": 815,
+   "cost_usd": "0.0000230104",
+   "prompt_tokens": 565,
+   "completion_tokens": 32
+  },
+  {
+   "task": "placement",
+   "case": "p09",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "experience",
+    "topic_id": "mcp-server",
+    "importance": 7,
+    "stability": "stable"
+   },
+   "latency_ms": 1247,
+   "cost_usd": "0.00003025",
+   "prompt_tokens": 562,
+   "completion_tokens": 29
+  },
+  {
+   "task": "placement",
+   "case": "p10",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "layer_ok": true,
+    "topic_ok": true,
+    "importance_ok": true,
+    "stability_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "layer": "fact",
+    "topic_id": "infra-docker",
+    "importance": 6,
+    "stability": "volatile"
+   },
+   "latency_ms": 1062,
+   "cost_usd": "0.0000175504",
+   "prompt_tokens": 529,
+   "completion_tokens": 31
+  },
+  {
+   "task": "contradiction",
+   "case": "c01",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Cannot live in both Berlin and Munich; B is later and states the move."
+   },
+   "latency_ms": 1463,
+   "cost_usd": "0.0000184352",
+   "prompt_tokens": 266,
+   "completion_tokens": 38
+  },
+  {
+   "task": "contradiction",
+   "case": "c02",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Same stack cannot run both Postgres 16 and 17; B is later and replaces A."
+   },
+   "latency_ms": 2096,
+   "cost_usd": "0.000164625",
+   "prompt_tokens": 271,
+   "completion_tokens": 42
+  },
+  {
+   "task": "contradiction",
+   "case": "c03",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "Different beverages at different times; both can be true simultaneously."
+   },
+   "latency_ms": 3685,
+   "cost_usd": "0.0000182952",
+   "prompt_tokens": 277,
+   "completion_tokens": 34
+  },
+  {
+   "task": "contradiction",
+   "case": "c04",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "A states Monday 10:00, B states the meeting moved to Tuesday 09:00; both cannot hold at the same time, and B has the later t_valid."
+   },
+   "latency_ms": 1832,
+   "cost_usd": "0.0000310352",
+   "prompt_tokens": 296,
+   "completion_tokens": 58
+  },
+  {
+   "task": "contradiction",
+   "case": "c05",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "A",
+    "reason": "Monthly rotation on the 1st and weekly Friday rotation cannot both be the rotation schedule; A has the later t_valid."
+   },
+   "latency_ms": 3915,
+   "cost_usd": "0.0000234752",
+   "prompt_tokens": 275,
+   "completion_tokens": 47
+  },
+  {
+   "task": "contradiction",
+   "case": "c06",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "Different children (daughter vs son) with different names; both can be true."
+   },
+   "latency_ms": 1621,
+   "cost_usd": "0.0000525",
+   "prompt_tokens": 261,
+   "completion_tokens": 38
+  },
+  {
+   "task": "contradiction",
+   "case": "c07",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "Same production server cannot be both CX22 and CX32; B is later and replaces A."
+   },
+   "latency_ms": 1179,
+   "cost_usd": "0.0000227752",
+   "prompt_tokens": 288,
+   "completion_tokens": 41
+  },
+  {
+   "task": "contradiction",
+   "case": "c08",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "B",
+    "reason": "A says Cemal eats no fish; B says he now eats fish, so both cannot be true at the same time."
+   },
+   "latency_ms": 1388,
+   "cost_usd": "0.0000255752",
+   "prompt_tokens": 287,
+   "completion_tokens": 48
+  },
+  {
+   "task": "contradiction",
+   "case": "c09",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": false,
+    "supersedes": "none",
+    "reason": "B adds index detail; both can be true together."
+   },
+   "latency_ms": 1578,
+   "cost_usd": "0.0000171752",
+   "prompt_tokens": 272,
+   "completion_tokens": 33
+  },
+  {
+   "task": "contradiction",
+   "case": "c10",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "contradicts_ok": true,
+    "supersedes_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "contradicts": true,
+    "supersedes": "A",
+    "reason": "Same daily standup time cannot be both 09:30 and 08:30; A has the later t_valid and replaces B."
+   },
+   "latency_ms": 4869,
+   "cost_usd": "0.00002846",
+   "prompt_tokens": 274,
+   "completion_tokens": 50
+  },
+  {
+   "task": "summary",
+   "case": "s01",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 77,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "On 2026-09-20 production went down for about two hours due to an expired TLS certificate. The root cause was that the certbot renewal cron job had never been installed on the VPS. To prevent recurrence, decision ADR-009 switches to Caddy for automatic TLS renewal, keeping nginx only as a fallback. Other items were minor housekeeping: a variable rename in utils.py, a README comment, a .gitignore update for .venv, a typo fix in STATUS.md, and a lunch note.",
+    "clue_ids": [
+     "m1",
+     "m3",
+     "m5"
+    ]
+   },
+   "latency_ms": 3893,
+   "cost_usd": "0.00010753",
+   "prompt_tokens": 427,
+   "completion_tokens": 134
+  },
+  {
+   "task": "summary",
+   "case": "s02",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 52,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Key upcoming dates: Elif's birthday on 3 October (wants a bicycle as a gift), and mother's surgery on 15 October in Ankara, requiring leave that week. New apartment: rent 1,450 EUR, contract starts 1 November, deposit is three months' rent. Other items (groceries, weather, coffee, late bus) are routine and not significant.",
+    "clue_ids": [
+     "m3",
+     "m5",
+     "m1"
+    ]
+   },
+   "latency_ms": 2768,
+   "cost_usd": "0.00010164",
+   "prompt_tokens": 417,
+   "completion_tokens": 103
+  },
+  {
+   "task": "summary",
+   "case": "s03",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 55,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "ADR-004 verbindlich: Memory-Layer heißen fact / episode / lesson / experience. Codex-Consult #3 empfahl 4k Token-Budget pro MCP-Antwort, angenommen in ADR-005. Librarian-Modell wurde DeepSeek V4 Flash, da rund 10x günstiger als Gemini Flash bei gleicher JSON-Zuverlässigkeit im Bench. Logo-Farbe noch offen. Rest sind Kleinigkeiten: Kaffeemaschine repariert, Whitespace-Fix in run.py, Meeting verschoben, Doku-Fußnote korrigiert, Tab-Breite 4.",
+    "clue_ids": [
+     "m1",
+     "m2",
+     "m5"
+    ]
+   },
+   "latency_ms": 3989,
+   "cost_usd": "0.0000798728",
+   "prompt_tokens": 463,
+   "completion_tokens": 160
+  },
+  {
+   "task": "summary",
+   "case": "s04",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 58,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Bench results: Gemini Flash wrapped output in ```json fences in 3 of 10 placement calls despite response_format=json_object, while DeepSeek V4 Flash returned parseable JSON in all 33 calls. The smoke bench run cost $0.12. Decision: every librarian job strips code fences before json.loads and retries once on parse failure. Also renamed bench/out to bench/results; Slack notifications were muted.",
+    "clue_ids": [
+     "m5",
+     "m1",
+     "m3"
+    ]
+   },
+   "latency_ms": 6281,
+   "cost_usd": "0.00010812",
+   "prompt_tokens": 404,
+   "completion_tokens": 111
+  },
+  {
+   "task": "summary",
+   "case": "s05",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "jaccard": 1.0,
+    "words": 55,
+    "length_ok": true
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "summary": "Doctor appointment on 12 October at 09:00 with Dr. Weber (Hausarzt) in Schwabing. Blood test shows low vitamin D (18 ng/ml); doctor recommends 2000 IU daily. Flight to Istanbul on 20.12, TK1634, departing 07:15 from MUC, return 03.01. Other items are minor: new headphones and pen purchased, podcast listened to, tea to buy, parking found.",
+    "clue_ids": [
+     "m1",
+     "m5",
+     "m3"
+    ]
+   },
+   "latency_ms": 1994,
+   "cost_usd": "0.0001085214468",
+   "prompt_tokens": 455,
+   "completion_tokens": 117
+  },
+  {
+   "task": "risk",
+   "case": "r01",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L1"
+    ],
+    "message": "L1 applies: `docker compose down -v` on production deletes Postgres volumes (2026-08-12 incident, 3h restore). Avoid -v or back up volumes first."
+   },
+   "latency_ms": 1993,
+   "cost_usd": "0.00014014806",
+   "prompt_tokens": 458,
+   "completion_tokens": 62
+  },
+  {
+   "task": "risk",
+   "case": "r02",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 1989,
+   "cost_usd": "0.00010024755",
+   "prompt_tokens": 433,
+   "completion_tokens": 18
+  },
+  {
+   "task": "risk",
+   "case": "r03",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L3"
+    ],
+    "message": "L3 applies: Gemini Flash may wrap JSON in ```json fences even with response_format=json_object, so parsing directly with json.loads without stripping fences can fail."
+   },
+   "latency_ms": 3726,
+   "cost_usd": "0.0000628641468",
+   "prompt_tokens": 473,
+   "completion_tokens": 55
+  },
+  {
+   "task": "risk",
+   "case": "r04",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L6"
+    ],
+    "message": "L6 applies: MCP SSE stream requires proxy_read_timeout >= 3600 and proxy_buffering off; keeping nginx default 60s timeouts will hang clients."
+   },
+   "latency_ms": 2322,
+   "cost_usd": "0.0000628641468",
+   "prompt_tokens": 461,
+   "completion_tokens": 58
+  },
+  {
+   "task": "risk",
+   "case": "r05",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L2",
+     "L5"
+    ],
+    "message": "Committing .env would leak the OpenRouter key (L2: leaked March 2026). Also restart the librarian worker after rotating the key (L5)."
+   },
+   "latency_ms": 1643,
+   "cost_usd": "0.0000350728",
+   "prompt_tokens": 446,
+   "completion_tokens": 59
+  },
+  {
+   "task": "risk",
+   "case": "r06",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 1093,
+   "cost_usd": "0.00002125",
+   "prompt_tokens": 424,
+   "completion_tokens": 19
+  },
+  {
+   "task": "risk",
+   "case": "r07",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": true,
+    "matched_lesson_ids": [
+     "L4",
+     "L5"
+    ],
+    "message": "Friday evening deploy matches L4 (no Friday deploys; weekend outages, nobody reachable). Postgres major upgrade matches L5 (rebuild/reinstall pgvector after major upgrade or HLMemo won't start)."
+   },
+   "latency_ms": 2771,
+   "cost_usd": "0.0000371728",
+   "prompt_tokens": 428,
+   "completion_tokens": 70
+  },
+  {
+   "task": "risk",
+   "case": "r08",
+   "rep": 2,
+   "score": 1.0,
+   "detail": {
+    "warn_ok": true,
+    "jaccard": 1.0
+   },
+   "json_fail": false,
+   "infra_error": false,
+   "output": {
+    "warn": false,
+    "matched_lesson_ids": [],
+    "message": ""
+   },
+   "latency_ms": 1365,
+   "cost_usd": "0.0000130928",
+   "prompt_tokens": 409,
+   "completion_tokens": 19
+  }
+ ]
+}

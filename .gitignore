@@ -46,6 +46,7 @@ models/
 hlm.log
 # local dev secrets for the compose stack (admin token)
 .hlm-dev.env
+.hlm-llm.env
 # this machine's private dev config (D-018); public template is hlm.example.toml
 hlm.toml
 # judge harness logs + generated secret env files (docs/bakeoff/r2/judge)
