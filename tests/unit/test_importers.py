@@ -182,7 +182,7 @@ def test_export_format_round_trip() -> None:
     }
     other = dict(item, logical_id=18, version_id=904, title="Other", source=None, links=[])
     names = exportfmt.file_names([item, other])
-    text = exportfmt.render_item(item, names)
+    text = exportfmt.render_item(item, names, "fx")
     meta, body = common.parse_frontmatter(text)
     assert body == item["body"] and exportfmt.is_export(meta)
     rec = exportfmt.record_from_export("markdown", names[17], meta, body)
@@ -190,10 +190,23 @@ def test_export_format_round_trip() -> None:
     assert rec.export["logical_id"] == 17 and rec.export["links"] == [
         {"rel": "relates_to", "target": names[18]}
     ]
-    assert rec.key == "serena:retry.md" and rec.source() == item["source"]
+    assert rec.key == "serena:retry.md" and rec.source() == item["source"] and "origin" not in text
     # ids are the only lines that differ between two projects
-    moved = exportfmt.render_item(dict(item, logical_id=99, version_id=1000), {99: names[17], 18: names[18]})
+    moved = exportfmt.render_item(
+        dict(item, logical_id=99, version_id=1000), {99: names[17], 18: names[18]}, "other-project"
+    )
     assert exportfmt.strip_ids(moved) == exportfmt.strip_ids(text) and moved != text
+    # an item without a real provenance is identified by its origin; imported elsewhere it keeps it
+    native = exportfmt.render_item(other, names, "fx")
+    assert 'origin: "fx/18"' in native and "source:" not in native
+    meta2, body2 = common.parse_frontmatter(native)
+    rec2 = exportfmt.record_from_export("markdown", names[18], meta2, body2)
+    assert rec2 is not None and rec2.key == "hlm:fx/18"
+    assert rec2.source() == {"system": "hlm", "path": "fx/18", "sha256": common.sha256_text(body2)}
+    copy = dict(other, logical_id=500, version_id=501, source=rec2.source())
+    assert exportfmt.strip_ids(
+        exportfmt.render_item(copy, {500: names[18]}, "fx-copy")
+    ) == exportfmt.strip_ids(native)
     index = exportfmt.render_index([item, other], names)
     assert exportfmt.is_index(index) and "v903" not in index
 
@@ -237,9 +250,91 @@ def test_classification_ignores_mtime(meter: Meter) -> None:
     plan = classify("fx", "markdown", parsed, manifest, meter)
     got = {e.record.path: (e.action, e.logical_id, e.head_version_id) for e in plan.entries}
     assert got == {"a.md": ("unchanged", 1, 10), "b.md": ("changed", 2, 20), "c.md": ("new", None, None)}
-    assert plan.missing == ["markdown:gone.md"]
-    assert request_id("fx", "markdown:a.md", same.sha256) == request_id("fx", "markdown:a.md", same.sha256)
-    assert request_id("fx", "markdown:a.md", same.sha256) != request_id("fx", "markdown:a.md", edited.sha256)
+    assert [it["logical_id"] for it in plan.missing] == [3]
+    rid = request_id("fx", "markdown:a.md", same.sha256)
+    assert rid == request_id("fx", "markdown:a.md", same.sha256)
+    assert rid != request_id("fx", "markdown:a.md", edited.sha256)
+    # Sol 42 #4: the same content revising another head is another request (A->B->A->B cycles)
+    assert request_id("fx", "k", same.sha256, 10) != request_id("fx", "k", same.sha256, 12) != rid
+
+
+def test_negative_date_evidence_is_ignored() -> None:
+    """Sol 42 #3: only dated-RECORD forms are evidence; dates in headings' text, tables and prose
+    are not."""
+    for heading in (
+        "Prices as of 2026-09-22",
+        "Round 10 (2026-09-22)",
+        "Changes since 2026-01-01",
+        "2026-02-30 impossible date",
+        "v2026-09-22",
+    ):
+        text = f"# Notes\n\n## {heading}\n\nbody\n\n## Other {heading}\n\nmore\n"
+        assert common.dated_sections(text, UTC) == (None, None), heading
+        assert common.heading_date(heading, UTC) is None, heading
+    table = "# Log\n\n| date | event |\n|---|---|\n| 2026-09-22 | deploy |\n\nOn 2026-09-23 we shipped.\n"
+    assert common.dated_sections(table, UTC) == (None, None)
+    for heading, want in (
+        ("2026-09-24", "2026-09-24T00:00:00Z"),
+        ("2026-09-24 — Queue introduced", "2026-09-24T00:00:00Z"),
+        ("SESSION 2026-05-01 — cache rollout", "2026-05-01T00:00:00Z"),
+        ("session 2026-05-01: notes", "2026-05-01T00:00:00Z"),
+    ):
+        assert common.heading_date(heading, UTC) == want, heading
+
+
+def test_body_similarity_and_remap(meter: Meter) -> None:
+    """Sol 42 #6: a renamed heading keeps its logical item (re-map), a removed section is closed."""
+    from hlmemo.importers.plan import body_similarity, remap
+
+    body = "## Setup\n\n" + " ".join(f"word{i}" for i in range(60)) + "\n"
+    renamed = body.replace("## Setup", "## Installation")
+    assert (
+        body_similarity(body, renamed) == 1.0 and body_similarity(body, "## X\n\nother text here now\n") < 0.1
+    )
+    new = _rec("a.md#installation", renamed)
+    new.file = "a.md"
+    gone = {"logical_id": 7, "version_id": 70, "kind": "fact", "source": _rec("a.md#setup", body).source()}
+    dropped = {"logical_id": 8, "version_id": 80, "kind": "fact", "source": _rec("a.md#old", "x").source()}
+    plan = classify(
+        "fx", "markdown", common.ParseResult(records=[new], scopes=["a.md"]), [gone, dropped], meter
+    )
+    assert sorted(it["logical_id"] for it in plan.missing) == [7, 8]
+    remap(plan, [dict(gone, body=body), dict(dropped, body="## Old\n\nentirely different words\n")])
+    (e,) = plan.entries
+    assert (e.action, e.logical_id, e.expected, e.remapped_from) == ("changed", 7, 70, "markdown:a.md#setup")
+    assert [it["logical_id"] for it in plan.closes] == [8]
+    rep = report(plan, dry_run=True)
+    assert rep["closed"] == ["markdown:a.md#old"] and rep["remapped"][0]["to"] == "markdown:a.md#installation"
+
+
+def _export_rec(meta: dict, body: str = "text\n") -> ImportRecord:
+    rec = exportfmt.record_from_export("markdown", "fact/x.md", {"hlm_export": 1, **meta}, body)
+    assert rec is not None
+    return rec
+
+
+def test_export_origin_mapping_is_ownership_checked(meter: Meter) -> None:
+    """Sol 42 #5: a crafted logical_id never binds; origin maps back only in its own project, only
+    onto a same-kind item without foreign provenance, and only if the file's version is the head."""
+    unrelated = {"logical_id": 5, "version_id": 50, "kind": "fact", "title": "t", "source": None}
+    base = {"kind": "fact", "title": "t", "valid_from": "2026-01-01T00:00:00.000000Z"}
+    # a file from project "aa" whose logical_id line names project bb's item 5
+    crafted = _export_rec({**base, "origin": "aa/77", "logical_id": 5, "version_id": 50})
+    plan = classify("bb", "markdown", common.ParseResult(records=[crafted]), [unrelated], meter)
+    assert [(e.action, e.logical_id) for e in plan.entries] == [("new", None)]
+    assert crafted.source()["path"] == "aa/77"
+    # an origin naming b/5 with a version that is not the head: rejected, never applied
+    stale = _export_rec({**base, "origin": "bb/5", "version_id": 49}, "changed text\n")
+    plan = classify("bb", "markdown", common.ParseResult(records=[stale]), [unrelated], meter)
+    assert plan.entries == [] and [r.reason for r in plan.rejected] == ["stale_or_foreign_export"]
+    # the right head version: a native revision (no source is written onto the item)
+    ok = _export_rec({**base, "origin": "bb/5", "version_id": 50}, "changed text\n")
+    (e,) = classify("bb", "markdown", common.ParseResult(records=[ok]), [unrelated], meter).entries
+    assert (e.action, e.logical_id, e.expected, e.native) == ("changed", 5, 50, True)
+    # kind mismatch or foreign provenance: rejected
+    sourced = dict(unrelated, source={"system": "serena", "path": "x.md", "sha256": "0" * 64})
+    plan = classify("bb", "markdown", common.ParseResult(records=[ok]), [sourced], meter)
+    assert [r.reason for r in plan.rejected] == ["origin_mismatch"]
 
 
 def test_source_key_expression_is_pinned() -> None:

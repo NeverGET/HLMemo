@@ -886,6 +886,9 @@ def import_cmd(
     section_chars: Annotated[
         int, typer.Option("--section-chars", help="split longer files into heading sections")
     ] = 8000,
+    keep_missing: Annotated[
+        bool, typer.Option("--keep-missing", help="report items no longer in the source; do not close")
+    ] = False,
 ) -> None:
     """Import legacy memories with provenance (idempotent: unchanged content makes 0 writes)."""
     from hlmemo.importers.cli import SOURCES, human_summary, run_import_command
@@ -907,6 +910,7 @@ def import_cmd(
             progress=not json_out,
             tz=tz,
             section_chars=section_chars,
+            close=not keep_missing,
         )
     except ValueError as exc:
         raise CliError(str(exc), EX_USAGE) from None

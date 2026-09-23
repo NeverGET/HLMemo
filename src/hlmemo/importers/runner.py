@@ -2,9 +2,12 @@
 
 Everything goes through one injected ``call(tool, arguments) -> dict`` (an MCP session in the CLI,
 an in-process caller in tests), which raises ``ToolCallError`` for tool errors. Writes are one
-``memory.write`` per record with ``request_id = uuid5(project ‖ source_key ‖ sha256)``, so an
-interrupted run simply resumes (re-sent content replays). Export-format records with links are
-written targets-first; links that close a cycle are added by a second revision.
+``memory.write`` per record with ``request_id = uuid5(project ‖ source_key ‖ sha256 ‖
+expected_version_id ‖ action)`` (``plan.request_id``), so an interrupted run resumes (a re-sent
+step replays) and an A→B→A content cycle never reuses an id. Export-format records with links are
+written targets-first; links that close a cycle are added by a second revision. Missing items are
+re-mapped or closed (``plan.remap``); a close is a ``close`` revision of the item's own content
+whose validity ends now.
 """
 
 from __future__ import annotations
@@ -17,12 +20,14 @@ from typing import Any
 
 from hlmemo.cli.mcp_client import ToolCallError
 from hlmemo.importers import exportfmt
-from hlmemo.importers.plan import CLIENT, Entry, Plan, classify, request_id
+from hlmemo.importers.common import ParseResult
+from hlmemo.importers.plan import CLIENT, Entry, Plan, classify, remap, request_id, source_key, split_origin
 
 Call = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 EXPORT_TOOL = "hlm.export"
 PAGE_BUDGET = 32000
 WRITE_BUDGET = 2000
+LOOKUP_BATCH = 200
 
 
 async def fetch_items(
@@ -33,6 +38,7 @@ async def fetch_items(
     kinds: list[str] | None = None,
     valid_at: str | None = None,
     known_at: str | None = None,
+    logical_ids: list[int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Every page of ``hlm.export``; continued bodies (``body_range``) are joined."""
     items: list[dict[str, Any]] = []
@@ -46,6 +52,8 @@ async def fetch_items(
             args["valid_at"] = valid_at
         if known_at:
             args["known_at"] = known_at
+        if logical_ids:
+            args["logical_ids"] = logical_ids
         if cursor:
             args["cursor"] = cursor
         page = await call(EXPORT_TOOL, args)
@@ -67,6 +75,26 @@ async def fetch_items(
             return items, as_of
 
 
+async def fetch_full(call: Call, project: str, logical_ids: list[int]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for i in range(0, len(logical_ids), LOOKUP_BATCH):
+        part, _ = await fetch_items(call, project, view="full", logical_ids=logical_ids[i : i + LOOKUP_BATCH])
+        out += part
+    return out
+
+
+async def resolve_missing(call: Call, plan: Plan) -> None:
+    """Re-map missing items onto new records, else close them (bodies fetched by id)."""
+    if not plan.missing:
+        return
+    full = await fetch_full(call, plan.project, sorted({it["logical_id"] for it in plan.missing}))
+    heads: dict[int, dict[str, Any]] = {}
+    for it in full:  # one logical item may have several live segments: the head version
+        if heads.get(it["logical_id"], {}).get("version_id", 0) < it["version_id"]:
+            heads[it["logical_id"]] = it
+    remap(plan, list(heads.values()))
+
+
 # --------------------------------------------------------------------------- import
 def _item(e: Entry, links: list[dict[str, Any]] | None) -> dict[str, Any]:
     rec = e.record
@@ -77,9 +105,8 @@ def _item(e: Entry, links: list[dict[str, Any]] | None) -> dict[str, Any]:
         "tags": list(rec.tags),
     }
     ex = rec.export
-    src = rec.source() if (ex is None or ex.get("source") is not None) else None
-    if src is not None:
-        item["source"] = src
+    if not e.native:  # a native item mapped back onto itself keeps having no source
+        item["source"] = rec.source()
     if rec.describes:
         item["describes"] = list(rec.describes)
     if ex is not None:
@@ -99,12 +126,36 @@ def _item(e: Entry, links: list[dict[str, Any]] | None) -> dict[str, Any]:
             item["links"] = links
     elif rec.evidenced_valid_from:
         item["valid_from"] = rec.evidenced_valid_from
-    if e.action == "changed":
-        if rec.kind_guess != "project_card":
-            item["logical_id"] = e.logical_id
-        item["expected_version_id"] = e.head_version_id
-    elif rec.kind_guess == "project_card":
-        item["expected_version_id"] = e.head_version_id
+    if e.action == "changed" and rec.kind_guess != "project_card":
+        item["logical_id"] = e.logical_id
+    if e.action == "changed" or rec.kind_guess == "project_card":
+        item["expected_version_id"] = e.expected
+    return item
+
+
+def _close_item(project: str, old: dict[str, Any]) -> dict[str, Any]:
+    """A ``close`` revision: the item's own content, validity [valid_from, server now)."""
+    item: dict[str, Any] = {
+        "kind": old["kind"],
+        "title": old["title"],
+        "body": old["body"],
+        "tags": list(old.get("tags") or []),
+        "logical_id": old["logical_id"],
+        "expected_version_id": old["version_id"],
+        "valid_from": old["valid_from"],
+        "close": True,
+    }
+    if old.get("source") is not None:
+        item["source"] = old["source"]
+    if old.get("describes"):
+        item["describes"] = list(old["describes"])
+    for key, default in (("pinned", False), ("stability", "volatile"), ("importance", None)):
+        if old.get(key, default) != default:
+            item[key] = old[key]
+    if old.get("device_scope", "all") != "all":
+        item["device_scope"] = old["device_scope"]
+    if old.get("also_in"):
+        item["project_ids"] = [project, *old["also_in"]]
     return item
 
 
@@ -132,12 +183,16 @@ def _export_order(entries: list[Entry]) -> list[Entry]:
 
 
 def _resolve_links(
-    e: Entry, file_lid: dict[str, int], known_lids: set[int]
+    project: str, e: Entry, file_lid: dict[str, int], known_lids: set[int]
 ) -> tuple[list[dict[str, Any]], bool, int]:
-    """(links, complete, dropped): targets written in this run or already present by id."""
+    """(links, complete, dropped): targets written in this run, or — only when the file comes from
+    this very project — targets named by id that exist here (Sol 42 #5: a foreign id never binds)."""
     out: list[dict[str, Any]] = []
     complete, dropped = True, 0
-    for ln in (e.record.export or {}).get("links") or []:
+    ex = e.record.export or {}
+    origin = split_origin(ex.get("origin") or "")
+    home = origin is not None and origin[0] == project
+    for ln in ex.get("links") or []:
         if "target" in ln:
             lid = file_lid.get(ln["target"])
             if lid is None:
@@ -145,7 +200,7 @@ def _resolve_links(
                 continue
         else:
             lid = ln.get("target_logical_id")
-            if lid not in known_lids:
+            if not home or lid not in known_lids:
                 dropped += 1
                 continue
         if lid == e.logical_id:
@@ -161,56 +216,60 @@ async def run_import(
     manifest: list[dict[str, Any]],
     meter: Any,
     progress: bool = False,
+    close: bool = True,
 ) -> dict[str, Any]:
-    """Write every new/changed record; returns write statistics (merged into the report)."""
+    """Write every new/changed record and close the removed ones; returns write statistics."""
     project = plan.project
-    stats: dict[str, Any] = {"written": 0, "replayed": 0, "revisions": 0, "link_revisions": 0}
+    stats: dict[str, Any] = {"written": 0, "replayed": 0, "revisions": 0, "closed": 0, "link_revisions": 0}
     failures: list[dict[str, Any]] = []
     link_dropped = 0
     known_lids = {it["logical_id"] for it in manifest}
     file_lid: dict[str, int] = {}
-    heads: dict[str, int] = {}
     for e in plan.entries:
         if e.logical_id is not None:
             file_lid[e.record.file] = e.logical_id
-            heads[e.record.file] = e.head_version_id or 0
     exports = [e for e in plan.entries if e.record.export is not None]
     plain = sorted((e for e in plan.entries if e.record.export is None), key=lambda e: e.record.key)
     todo = [e for e in plain + _export_order(exports) if e.action != "unchanged"]
     second: list[Entry] = []
 
-    async def send(e: Entry, links: list[dict[str, Any]] | None, salt: str = "") -> dict[str, Any] | None:
+    async def send(
+        key: str, sha: str, item: dict[str, Any], expected: int | None, action: str
+    ) -> dict[str, Any] | ToolCallError:
         args = {
             "project": project,
-            "request_id": request_id(project, e.record.key, e.record.sha256, salt),
+            "request_id": request_id(project, key, sha, expected, action),
             "client": CLIENT,
-            "items": [_item(e, links)],
+            "items": [item],
             "token_budget": WRITE_BUDGET,
         }
         try:
             return await call("memory.write", args)
         except ToolCallError as exc:
-            if exc.code in ("E_VERSION_CONFLICT", "E_REQUEST_ID_CONFLICT") and not salt.endswith("#retry"):
-                # another writer moved the item: re-read the manifest once and re-classify (Sol 40 #3)
-                fresh, _ = await fetch_items(call, project)
-                again = classify(project, plan.system, _single(plan, e), fresh, meter).entries[0]
-                if again.action == "unchanged":
-                    return {"versions": [], "replayed": True, "unchanged": True}
-                e.action, e.logical_id, e.head_version_id = (
-                    again.action,
-                    again.logical_id,
-                    again.head_version_id,
-                )
-                return await send(e, links, salt + "#retry")
-            failures.append({"key": e.record.key, "code": exc.code, "message": exc.message[:300]})
+            return exc
+
+    async def write_entry(e: Entry, links: list[dict[str, Any]] | None, action: str = "write") -> dict | None:
+        res = await send(e.record.key, e.record.sha256, _item(e, links), e.expected, action)
+        if isinstance(res, ToolCallError) and res.code == "E_VERSION_CONFLICT" and e.remapped_from is None:
+            # another writer moved the item: re-read the manifest once and re-classify (Sol 40 #3)
+            fresh, _ = await fetch_items(call, project)
+            again = classify(project, plan.system, ParseResult(records=[e.record]), fresh, meter).entries
+            if not again or again[0].action == "unchanged":
+                return {"versions": [], "replayed": True, "unchanged": True}
+            e.action, e.logical_id, e.expected = again[0].action, again[0].logical_id, again[0].expected
+            e.native = again[0].native
+            res = await send(e.record.key, e.record.sha256, _item(e, links), e.expected, action)
+        if isinstance(res, ToolCallError):
+            failures.append({"key": e.record.key, "code": res.code, "message": res.message[:300]})
             return None
+        return res
 
     for n, e in enumerate(todo, 1):
         links, complete, dropped = (None, True, 0)
         if e.record.export is not None:
-            links, complete, dropped = _resolve_links(e, file_lid, known_lids)
+            links, complete, dropped = _resolve_links(project, e, file_lid, known_lids)
             link_dropped += dropped
-        ack = await send(e, links)
+        ack = await write_entry(e, links)
         if ack is None or ack.get("unchanged"):
             continue
         stats["replayed" if ack.get("replayed") else "written"] += 1
@@ -218,28 +277,29 @@ async def run_import(
             stats["revisions"] += 1
         v = ack["versions"][0]
         file_lid[e.record.file] = v["logical_id"]
-        e.logical_id, e.head_version_id = v["logical_id"], v["version_id"]
+        e.logical_id, e.expected = v["logical_id"], v["version_id"]
         known_lids.add(v["logical_id"])
         if not complete:
             second.append(e)
         if progress and n % 25 == 0:
             sys.stderr.write(f"hlm import: {n}/{len(todo)} written\n")
     for e in second:  # links that closed a cycle: one revision with the full link set
-        links, _complete, _dropped = _resolve_links(e, file_lid, known_lids)
+        links, _complete, _dropped = _resolve_links(project, e, file_lid, known_lids)
         e.action = "changed"
-        ack = await send(e, links, "#links")
+        ack = await write_entry(e, links, "links")
         if ack is not None and not ack.get("unchanged"):
             stats["link_revisions"] += 1
-            e.head_version_id = ack["versions"][0]["version_id"]
+    if close:
+        for old in plan.closes:
+            key = source_key(old.get("source")) or f"lid:{old['logical_id']}"
+            res = await send(key, old["body_sha256"], _close_item(project, old), old["version_id"], "close")
+            if isinstance(res, ToolCallError):
+                failures.append({"key": key, "code": res.code, "message": res.message[:300]})
+            else:
+                stats["closed"] += 1
     stats["failed"] = failures
     stats["links_dropped"] = link_dropped
     return stats
-
-
-def _single(plan: Plan, e: Entry) -> Any:
-    from hlmemo.importers.common import ParseResult
-
-    return ParseResult(records=[e.record], scopes=[])
 
 
 # --------------------------------------------------------------------------- export
@@ -250,7 +310,9 @@ async def run_export(
         call, project, view="full", kinds=kinds, valid_at=as_of, known_at=as_of
     )
     names = exportfmt.file_names(items)
-    wanted: dict[str, str] = {names[it["logical_id"]]: exportfmt.render_item(it, names) for it in items}
+    wanted: dict[str, str] = {
+        names[it["logical_id"]]: exportfmt.render_item(it, names, project) for it in items
+    }
     wanted["INDEX.md"] = exportfmt.render_index(items, names)
     removed = await asyncio.to_thread(write_export_dir, out, wanted)
     return {
@@ -284,4 +346,4 @@ def write_export_dir(out: Path, wanted: dict[str, str]) -> list[str]:
     return removed
 
 
-__all__ = ["Call", "fetch_items", "run_export", "run_import"]
+__all__ = ["Call", "fetch_full", "fetch_items", "resolve_missing", "run_export", "run_import"]

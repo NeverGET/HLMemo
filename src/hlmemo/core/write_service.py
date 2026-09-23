@@ -320,6 +320,14 @@ class _Batch:
     occurred_at_raw: str | None
     expected_versions: list[tuple[int, int]]
     resolved_extra: dict[str, Any]
+    #: W2d write context: the librarian job priority this write asks for (None = the enqueue
+    #: path's default, 3). Recorded as ``payload.resolved.librarian_priority`` when set.
+    librarian_priority: int | None = None
+
+
+#: W1.5: an import (every item carries ``source``) asks the librarian for priority 6 (roadmap
+#: W2b: imports after live work). Server-derived from the request, never a client argument.
+IMPORT_LIBRARIAN_PRIORITY = 6
 
 
 # --------------------------------------------------------------------------- public API
@@ -330,9 +338,15 @@ async def write(
     *,
     deps: WriteDeps | None = None,
     raw: dict[str, Any] | None = None,
+    librarian_priority: int | None = None,
 ) -> WriteResult:
+    """``librarian_priority`` is server-side write context, never a client argument (W2d:
+    ``memory.register_lesson`` sets 2; W1.5: a batch whose items all carry ``source`` is an
+    import and gets 6)."""
     request_payload = verbatim_args(req, raw)
     request = parse_request(WriteRequest, req)
+    if librarian_priority is None and all(it.source is not None for it in request.items):
+        librarian_priority = IMPORT_LIBRARIAN_PRIORITY
     deps = deps or default_deps()
     try:
         budget = validate_budget(request.token_budget, default=DEFAULT_WRITE_BUDGET)
@@ -359,6 +373,7 @@ async def write(
                         "items": [it.model_dump(mode="json", exclude_none=True) for it in request.items]
                     }
                 },
+                librarian_priority=librarian_priority,
             ),
         )
     return WriteResult.model_validate(result)
@@ -782,14 +797,16 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         it = p.item
         vf = parse_opt_ts(it.valid_from, field=f"items[{p.index}].valid_from")
         vt = parse_opt_ts(it.valid_to, field=f"items[{p.index}].valid_to")
+        if it.close and vt is None:
+            vt = occurred_at  # W1.5 `close` without valid_to: the fact ended at occurred_at (server now)
         p.interval = validate_interval(vf if vf is not None else occurred_at, vt, now=now, index=p.index)
+        cut = None if it.close else p.interval.end  # W1.5 `close`: nothing survives after valid_to
         for r in p.old_rows:
-            if overlaps(r.valid_from, r.valid_to, p.interval.start, p.interval.end):
+            if overlaps(r.valid_from, r.valid_to, p.interval.start, cut):
                 p.superseded.append(r)
                 superseded_recorded.append(r.recorded_at)
                 p.survivors.extend(
-                    (r, seg)
-                    for seg in surviving_segments(r.valid_from, r.valid_to, p.interval.start, p.interval.end)
+                    (r, seg) for seg in surviving_segments(r.valid_from, r.valid_to, p.interval.start, cut)
                 )
         if p.logical_id is not None and (p.links or p.is_card):
             existing = await q.current_links_from(
@@ -1069,6 +1086,8 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         "jobs": jobs,
         **batch.resolved_extra,
     }
+    if batch.librarian_priority is not None:  # W2d/W1.5: replayable for the W2b enqueue
+        resolved["librarian_priority"] = batch.librarian_priority
 
     ack: dict[str, Any] = {
         "request_id": batch.request_id,
@@ -1117,7 +1136,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     try:
         for v in versions:
             await q.insert_version(conn, v)
-    except pgerrors.ExclusionViolation as exc:
+    except pgerrors.UniqueViolation as exc:
         mapped = ic.owner_violation(exc)
         if mapped is None:
             raise

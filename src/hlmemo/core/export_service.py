@@ -50,6 +50,15 @@ class ExportRequest(_Strict):
     known_at: str | None = None
     include_archived: bool = False
     cursor: str | None = None
+    #: W1.5 lookup of given items (the importer's re-map/close of missing sources)
+    logical_ids: list[int] | None = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("logical_ids")
+    @classmethod
+    def _ids(cls, v: list[int] | None) -> list[int] | None:
+        if v is not None and (len(set(v)) != len(v) or any(i < 1 for i in v)):
+            raise ValueError("logical_ids must be unique positive integers")
+        return v
 
     @field_validator("kinds")
     @classmethod
@@ -71,6 +80,7 @@ INPUT_SCHEMA: dict[str, Any] = {
         "known_at": {"type": "string", "format": "date-time"},
         "include_archived": {"type": "boolean", "default": False},
         "cursor": {"type": "string"},
+        "logical_ids": {"type": "array", "items": {"type": "integer"}, "minItems": 1, "maxItems": 200},
     },
     "required": ["project", "token_budget"],
     "additionalProperties": False,
@@ -126,6 +136,7 @@ async def export(
             "archived": request.include_archived,
             "valid_at": request.valid_at,
             "known_at": request.known_at,
+            "logical_ids": sorted(request.logical_ids) if request.logical_ids else None,
         }
     )
     async with conn.transaction():
@@ -201,6 +212,7 @@ async def export(
             after=after,
             limit=fetch + 1,
             with_body=full,
+            logical_ids=request.logical_ids,
         )
         more_rows = len(rows) > fetch
         rows = rows[:fetch]

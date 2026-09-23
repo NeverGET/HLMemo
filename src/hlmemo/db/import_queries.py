@@ -26,8 +26,8 @@ class SourceOwner:
 
 
 async def source_owners(conn: AsyncConnection, project_id: int, source_keys: list[str]) -> list[SourceOwner]:
-    """The current logical items holding each key in the project (EXCLUDE ``mv_one_source_owner``
-    allows one logical item per key, possibly with several current valid-time segments)."""
+    """The logical item holding each key in the project: its OPEN current row (the UNIQUE index
+    ``mv_source_owner`` allows one per key; one logical item has at most one open current row)."""
     if not source_keys:
         return []
     cur = await conn.execute(
@@ -36,6 +36,7 @@ async def source_owners(conn: AsyncConnection, project_id: int, source_keys: lis
                device_scope
           FROM memory_versions
          WHERE project_id = %s AND source_key = ANY(%s) AND superseded_at = 'infinity'
+           AND valid_to = 'infinity'
          ORDER BY source_key, logical_id, version_id DESC
         """,
         (project_id, list(set(source_keys))),
@@ -106,6 +107,7 @@ async def export_rows(
     after: tuple[int, int] | None,
     limit: int,
     with_body: bool,
+    logical_ids: list[int] | None = None,
 ) -> list[ExportRow]:
     """Versions live at ``(valid_at, known_at)`` that pass (a), keyset-paged by
     ``(logical_id, version_id)`` (the project card included; the caller splits it off)."""
@@ -117,10 +119,13 @@ async def export_rows(
         "statuses": statuses,
         "kinds": kinds,
         "limit": limit,
+        "lids": logical_ids,
     }
     where = f"{AUTHZ_MV} AND {TEMPORAL_MV} AND mv.status = ANY(%(statuses)s)"
     if kinds is not None:
         where += " AND (mv.kind = ANY(%(kinds)s) OR mv.kind = 'project_card')"
+    if logical_ids is not None:
+        where += " AND mv.logical_id = ANY(%(lids)s)"
     if after is not None:
         where += " AND (mv.logical_id, mv.version_id) > (%(a_lid)s, %(a_vid)s)"
         params["a_lid"], params["a_vid"] = after

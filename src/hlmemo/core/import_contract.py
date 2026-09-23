@@ -1,10 +1,12 @@
 """Write-path rules for the W1.5 item fields ``source`` and ``describes`` (PHASE2-4-ROADMAP W1.5).
 
 * ``source`` is provenance (``{system, path, sha256, mtime?, commit?, commit_date?}``); the
-  database derives ``source_key = system || ':' || path``. At most one CURRENT logical item per
-  (home project, source_key) — enforced by EXCLUDE ``mv_one_source_owner`` (migration 0007, Sol 40
-  #2) for every write path; :func:`check_source_owners` reports it first with details, after
-  authorization and the head comparison, so an importer can re-classify.
+  database derives ``source_key = system || ':' || path``. At most one logical item per (home
+  project, source_key) holds the key with an OPEN current row (``superseded_at`` and ``valid_to``
+  infinite) — enforced by the UNIQUE index ``mv_source_owner`` (migration 0007, Sol 40 #2 / 42 #1)
+  for every write path; :func:`check_source_owners` reports it first with details, after
+  authorization and the head comparison, so an importer can re-classify. A closed item
+  (``close``: its validity ended) releases the key.
 * ``describes`` (≤ 16 paths ≤ 256 chars) projects to ``code_refs(version_id, path, commit)``;
   ``commit`` is the item's ``source.commit`` (the tree the importer read), else NULL. Surviving
   valid-time segments copy their base version's rows, like their text.
@@ -25,7 +27,7 @@ from hlmemo.core.errors import ToolError, invalid_arg
 from hlmemo.core.write_models import Item
 from hlmemo.db import import_queries as iq
 
-SOURCE_OWNER_CONSTRAINT = "mv_one_source_owner"
+SOURCE_OWNER_CONSTRAINT = "mv_source_owner"
 
 
 def source_json(item: Item | dict[str, Any]) -> dict[str, Any] | None:
@@ -101,7 +103,7 @@ async def check_source_owners(
 
 def owner_violation(exc: BaseException) -> ToolError | None:
     """The EXCLUDE backstop (a concurrent writer won the race) as the same client error."""
-    if isinstance(exc, pgerrors.ExclusionViolation) and exc.diag.constraint_name == SOURCE_OWNER_CONSTRAINT:
+    if isinstance(exc, pgerrors.UniqueViolation) and exc.diag.constraint_name == SOURCE_OWNER_CONSTRAINT:
         return ToolError(
             "E_VERSION_CONFLICT",
             "another current item owns this source (concurrent write); re-read and revise it",

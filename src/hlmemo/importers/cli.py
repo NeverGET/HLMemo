@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from hlmemo.importers import automemory, context, markdown, serena
 from hlmemo.importers.common import SECTION_CHARS, ParseResult
 from hlmemo.importers.plan import classify, report
-from hlmemo.importers.runner import Call, fetch_items, run_export, run_import
+from hlmemo.importers.runner import Call, fetch_items, resolve_missing, run_export, run_import
 
 SOURCES = ("markdown", "automemory", "serena", "context")
 
@@ -66,8 +66,10 @@ async def import_async(
     dry_run: bool,
     meter: Any = None,
     progress: bool = False,
+    close: bool = True,
 ) -> dict[str, Any]:
-    """Classify against the server manifest (empty when ``call`` is None: ``--offline``) and write."""
+    """Classify against the server manifest (empty when ``call`` is None: ``--offline``), re-map or
+    close the items no longer produced (``close=False``: report them only), and write."""
     if meter is None:
         from hlmemo.core.budget import Meter
 
@@ -76,6 +78,14 @@ async def import_async(
     if call is not None:
         manifest, _as_of = await fetch_items(call, project)
     plan = classify(project, source, parsed, manifest, meter)
+    if call is not None:
+        await resolve_missing(call, plan)
+        if not close:
+            plan.kept += [
+                {"key": f"{it['source']['system']}:{it['source']['path']}", "reason": "keep-missing"}
+                for it in plan.closes
+            ]
+            plan.closes = []
     out = report(plan, dry_run=dry_run or call is None)
     if call is None or dry_run:
         return out
@@ -88,8 +98,8 @@ def human_summary(rep: dict[str, Any]) -> str:
     mode = " (dry-run)" if rep["dry_run"] else ""
     lines = [
         f"hlm import {rep['source']} -> project {rep['project']}{mode}",
-        f"  new {c['new']}  changed {c['changed']}  unchanged {c['unchanged']}  skipped {c['skipped']}  "
-        f"rejected {c['rejected']}  missing {c['missing']}",
+        f"  new {c['new']}  changed {c['changed']}  unchanged {c['unchanged']}  closed {c['closed']}  "
+        f"skipped {c['skipped']}  rejected {c['rejected']}  missing {c['missing']}",
         f"  token estimate {rep['token_estimate']['tokens']} (o200k) for "
         f"{rep['token_estimate']['items']} item(s)",
     ]
@@ -97,8 +107,12 @@ def human_summary(rep: dict[str, Any]) -> str:
         lines.append(f"  rejected {r['key']}: {r['reason']} {r['date'] or ''}".rstrip())
     for g in rep["duplicate_groups"]:
         lines.append(f"  duplicates ({g['reason']}): {', '.join(g['paths'])}")
+    for r in rep["remapped"]:
+        lines.append(f"  remapped {r['from']} -> {r['to']} (similarity {r['score']})")
+    for k in rep["closed"]:
+        lines.append(f"  close (no longer in the source; validity ends now): {k}")
     for m in rep["missing"]:
-        lines.append(f"  missing (no longer produced; not closed): {m}")
+        lines.append(f"  missing, kept open ({m['reason']}): {m['key']}")
     w = rep.get("writes")
     if w:
         lines.append(
@@ -124,6 +138,7 @@ def run_import_command(
     progress: bool,
     tz: str | None = None,
     section_chars: int = SECTION_CHARS,
+    close: bool = True,
 ) -> dict[str, Any]:
     parsed = parse_source(
         source,
@@ -140,7 +155,13 @@ def run_import_command(
             return await import_async(None, source=source, parsed=parsed, project=project, dry_run=True)
         async with memory.session() as call:
             return await import_async(
-                call, source=source, parsed=parsed, project=project, dry_run=dry_run, progress=progress
+                call,
+                source=source,
+                parsed=parsed,
+                project=project,
+                dry_run=dry_run,
+                progress=progress,
+                close=close,
             )
 
     return asyncio.run(go())
