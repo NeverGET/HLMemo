@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# Usage: deploy.sh hlmdeploy@SERVER GIT_REF [REPOSITORY_URL]
+# Usage: deploy.sh [--accept-compose-change=SHA256] hlmdeploy@SERVER GIT_REF [REPOSITORY_URL]
 # Secrets stay on the server; every child receives EOF, never script input.
+# --accept-compose-change: explicit operator acknowledgement of a release whose
+# deploy/compose.prod.yaml differs from the running one. The value must be the sha256 of the
+# requested ref's compose file (`git show REF:deploy/compose.prod.yaml | shasum -a 256`); the
+# runner re-checks it before build, backup or writer shutdown and refuses on any mismatch.
 # shellcheck disable=SC2217
 set -Eeuo pipefail
 
+accept_compose=
+if [[ ${1:-} == --accept-compose-change=* ]]; then
+  accept_compose=${1#--accept-compose-change=}
+  shift
+  [[ $accept_compose =~ ^[a-f0-9]{64}$ ]] || { echo '--accept-compose-change needs a sha256 hex digest' >&2; exit 64; }
+fi
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo 'Usage: deploy.sh USER@HOST GIT_REF [REPOSITORY_URL]' >&2
+  echo 'Usage: deploy.sh [--accept-compose-change=SHA256] USER@HOST GIT_REF [REPOSITORY_URL]' >&2
   exit 64
 fi
 host=$1
@@ -59,6 +69,8 @@ bootstrap=$(cat <<'BOOTSTRAP'
 set -Eeuo pipefail
 umask 077
 ref=$1 repository=$2 app_dir=$3 remote_env=$4 run_dir=$5
+# Protocol 3 runners that know it read the acknowledgement from the environment.
+export HLM_ACCEPT_COMPOSE_SHA256=${6:-}
 printf '%s\n' "$$" > "$run_dir/pid"
 finish() {
   result=$?
@@ -116,8 +128,8 @@ fi
 exec bash "$run_dir/deploy.sh" "$HLM_DEPLOY_PREPARED_REVISION" "$repository" "$app_dir" "$remote_env" "$run_dir"
 BOOTSTRAP
 )
-printf -v launch 'nohup setsid bash -c %q deploy-bootstrap %q %q %q %q %q </dev/null >%q/log 2>&1 &' \
-  "$bootstrap" "$ref" "$repository" "$remote_dir" "$remote_env" "$run_dir" "$run_dir"
+printf -v launch 'nohup setsid bash -c %q deploy-bootstrap %q %q %q %q %q %q </dev/null >%q/log 2>&1 &' \
+  "$bootstrap" "$ref" "$repository" "$remote_dir" "$remote_env" "$run_dir" "$accept_compose" "$run_dir"
 # shellcheck disable=SC2016
 printf -v command 'umask 077; for required in nohup setsid bash git flock ps grep; do command -v "$required" >/dev/null || { echo "Missing required remote command: $required" >&2; exit 1; }; done; : >%q/log; %s launcher=$!; printf "%%s\n" "$launcher" >%q/launcher.pid; attempts=0; while ! test -s %q/pid && ! test -f %q/status; do attempts=$((attempts + 1)); if ! kill -0 "$launcher" 2>/dev/null || test "$attempts" -ge 50; then echo "Detached deployment runner failed to start; inspect the remote log" >&2; exit 1; fi; sleep 0.1; done' \
   "$run_dir" "$launch" "$run_dir" "$run_dir" "$run_dir"

@@ -5,6 +5,7 @@ G-W0-8 `test_token_never_in_argv_or_logs`: minted tokens travel through stdout/e
 Plus `hlm_ops.sh` quoting (printf %q, ssh -n, closed stdin) and the post-cutover route checks.
 """
 
+import hashlib
 import json
 import os
 import stat
@@ -56,11 +57,12 @@ class W0DeployTest(unittest.TestCase):
         env.update(extra_env)
         return root, env
 
-    def deploy(self, root, env):
+    def deploy(self, root, env, *flags):
         result = subprocess.run(
             [
                 "bash",
                 str(ROOT / "deploy/scripts/deploy.sh"),
+                *flags,
                 "local",
                 "next",
                 "https://example.invalid/repo.git",
@@ -156,6 +158,90 @@ class W0DeployTest(unittest.TestCase):
         self.assertNotIn(token, (root / "events.routes-argv").read_text())
         self.assertNotIn(token, (root / "events").read_text())  # every docker/git argv
         self.assertNotIn(token, output)
+
+    # ------------------------------------------------------------------ accepted Compose change
+
+    def prepare_compose_change(self, failure=""):
+        root, env = self.prepare_split(failure, COMPOSE_CHANGE="1")
+        # The previous release's own model (the fake git serves it for the previous SHA).
+        (root / "app/deploy/compose.previous.yaml").write_text("# previous release model\nname: old\n")
+        digest = hashlib.sha256((root / "app/deploy/compose.prod.yaml").read_bytes()).hexdigest()
+        return root, env, f"--accept-compose-change={digest}"
+
+    @staticmethod
+    def rows(root):
+        return [json.loads(line) for line in (root / "events").read_text().splitlines()]
+
+    def test_compose_change_accepted_happy_path(self):
+        root, env, accept = self.prepare_compose_change()
+        result, output = self.deploy(root, env, accept)
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("Compose model change accepted: sha256 " + accept.split("=")[1], output)
+        # Recovery would run the PREVIOUS model, rendered before anything stopped.
+        self.assertIn("previous release model", (root / "events.previous-model").read_text())
+        rows = self.rows(root)
+        stop = next(i for i, r in enumerate(rows) if "stop" in r)
+        dumps = [i for i, r in enumerate(rows) if "pg_dump" in r[-1]]
+        migrate = next(i for i, r in enumerate(rows) if "run" in r and "migrate" in r)
+        self.assertEqual(2, len(dumps))
+        self.assertTrue(
+            dumps[0] < stop < dumps[1] < migrate, "live dump, stop writers, quiesced dump, migrate"
+        )
+        # Markers move together, only on success.
+        self.assertEqual(NEXT, (root / "current-ref").read_text().strip())
+        self.assertEqual(PREVIOUS, (root / "previous-ref").read_text().strip())
+        dump = Path((root / "previous-dump").read_text().strip())
+        self.assertTrue(dump.is_file())
+        self.assertIn(f"Quiesced pre-upgrade dump: {dump}", output)
+        self.assertEqual(1, len(list((root / "backups/pre-upgrade").glob("*.dump"))), "live dump superseded")
+        self.assertIn("Device inventory after cutover", output)
+        self.assertIn("g7-mac", output)
+        # Re-run (idempotent): same acknowledgement, env already migrated, same result.
+        (root / "current-ref").write_text(PREVIOUS + "\n")
+        backups = sorted(p.name for p in root.glob("*.pre-w0-*"))
+        again, output = self.deploy(root, env, accept)
+        self.assertEqual(0, again.returncode, output)
+        self.assertIn("migrate_env_w0: done (0 file(s) changed)", output)
+        self.assertEqual(backups, sorted(p.name for p in root.glob("*.pre-w0-*")))
+        self.assertEqual(NEXT, (root / "current-ref").read_text().strip())
+        self.assertEqual(PREVIOUS, (root / "previous-ref").read_text().strip())
+
+    def test_compose_change_missing_or_wrong_hash_refused_before_stopping_anything(self):
+        for flags in ((), ("--accept-compose-change=" + "0" * 64,)):
+            with self.subTest(flags=flags):
+                root, env, _ = self.prepare_compose_change()
+                result, output = self.deploy(root, env, *flags)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("refusing" if not flags else "does not match", output)
+                rows = self.rows(root)
+                self.assertFalse(any("build" in r or "stop" in r or "pg_dump" in r[-1] for r in rows))
+                self.assertEqual(API_ENV, (root / "api.env").read_text(), "env untouched")
+                self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
+                self.assertEqual("c" * 40, (root / "previous-ref").read_text().strip())
+        result = subprocess.run(
+            ["bash", str(ROOT / "deploy/scripts/deploy.sh"), "--accept-compose-change=abc", "local", "next"],
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(64, result.returncode)
+
+    def test_compose_change_migration_failure_starts_previous_image_with_restored_env(self):
+        root, env, accept = self.prepare_compose_change("migration")
+        result, output = self.deploy(root, env, accept)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("Rollback image verified: sha256:old-image (hlmemo:" + PREVIOUS + ")", output)
+        self.assertIn("Previous stack restored", output)
+        self.assertEqual("sha256:old-image", (root / "events.running-image").read_text())
+        self.assertEqual(API_ENV, (root / "api.env").read_text(), "retired secrets restored")
+        rows = self.rows(root)
+        up = [r for r in rows if "up" in r and "api" in r]
+        self.assertIn(".rollback-compose.", " ".join(up[-1]), "recovery used the captured previous model")
+        # Markers untouched on failure.
+        self.assertEqual(PREVIOUS, (root / "current-ref").read_text().strip())
+        self.assertEqual("c" * 40, (root / "previous-ref").read_text().strip())
+        self.assertEqual("older-marker.dump", (root / "previous-dump").read_text().strip())
+        self.assertIn(f"HLM_IMAGE=hlmemo:{PREVIOUS}\n", (root / "prod.env").read_text())
 
 
 def _fake_ssh(bin_dir: Path) -> None:

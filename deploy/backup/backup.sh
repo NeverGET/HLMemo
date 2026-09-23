@@ -25,7 +25,10 @@ mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/pre-upgrade" </de
 BACKUP_DIR=$(cd "$BACKUP_DIR" && pwd)
 # Advisory fd locks are released by the kernel, including after SIGKILL/reboot.
 # A different filename also ignores legacy stale .operation.lock directories.
-exec 8>"$BACKUP_DIR/.operation.flock"
+# The deploy runner already holds this lock on an inherited fd 8 for its final quiesced dump.
+if [[ ${HLM_OPERATION_LOCK_HELD:-} != 1 ]] || ! { true >&8; } 2>/dev/null; then
+    exec 8>"$BACKUP_DIR/.operation.flock"
+fi
 flock -n 8 </dev/null || { echo 'Another backup/restore is active; stack remains running.' >&2; exit 1; }
 if [[ $mode == prune ]]; then
     keep=${HLM_PRE_UPGRADE_KEEP:-$(backup_value HLM_PRE_UPGRADE_KEEP)}

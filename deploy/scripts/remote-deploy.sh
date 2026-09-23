@@ -167,6 +167,18 @@ deployment_failed() {
       fi
     fi
     checkout_release "$previous" >&2 || recovery_ok=0
+    # Never let this shell's new-release image selection leak into recovery: select the
+    # previous release explicitly and prove the rendered rollback model runs its pinned image.
+    export HLM_IMAGE=${previous_image:-} HLM_IMAGE_REVISION=$previous
+    if [[ $recovery_ok == 1 ]]; then
+      rendered_image=$(rollback config --format json </dev/null | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; print(s["api"]["image"] if s["api"]["image"] == s["worker"]["image"] else "MISMATCH")') || rendered_image=
+      if [[ -n ${previous_id:-} && $rendered_image == "$previous_id" ]]; then
+        printf 'Rollback image verified: %s (%s)\n' "$rendered_image" "$HLM_IMAGE" >&2
+      else
+        printf 'Rollback model selects %s, expected previous image %s; not starting it.\n' "${rendered_image:-<unrendered>}" "${previous_id:-<unknown>}" >&2
+        recovery_ok=0
+      fi
+    fi
     if [[ $recovery_ok == 1 ]] && rollback up -d --no-deps --wait --wait-timeout 300 db api worker caddy </dev/null >&2; then
       echo "Previous stack restored: $previous" >&2
     else
@@ -183,9 +195,24 @@ deployment_failed() {
 trap deployment_failed ERR
 trap 'deployment_failed 130' INT
 trap 'deployment_failed 143' TERM
+# A Compose model change needs the operator's explicit acknowledgement naming the exact new
+# model (deploy.sh --accept-compose-change=<sha256>). Everything is validated here, before
+# build, backup or writer shutdown; recovery then runs the PREVIOUS model (rendered below).
+compose_changed=0
+compose_hash=$(git show "$revision:deploy/compose.prod.yaml" </dev/null | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')
 if [[ -n $previous ]] && ! git diff --quiet "$previous" "$revision" -- deploy/compose.prod.yaml </dev/null; then
-  echo 'Compose model changed between releases; refusing automatic deployment before build/stop. Follow RUNBOOK staged Compose upgrade procedure.' >&2
-  false
+  compose_changed=1
+  if [[ -z ${HLM_ACCEPT_COMPOSE_SHA256:-} ]]; then
+    echo "Compose model changed between releases; refusing automatic deployment before build/stop. Re-run deploy.sh --accept-compose-change=$compose_hash after reviewing the change (RUNBOOK \"Compose model changes\")." >&2
+    false
+  fi
+fi
+if [[ -n ${HLM_ACCEPT_COMPOSE_SHA256:-} ]]; then
+  [[ $HLM_ACCEPT_COMPOSE_SHA256 == "$compose_hash" ]] || {
+    echo "Accepted compose sha256 $HLM_ACCEPT_COMPOSE_SHA256 does not match $revision's compose.prod.yaml ($compose_hash); refusing before build/stop." >&2
+    false
+  }
+  echo "Compose model change accepted: sha256 $compose_hash (changed=$compose_changed)"
 fi
 checkout_release "$revision"
 test -f deploy/compose.prod.yaml || { echo 'Requested ref has no production compose file' >&2; false; }
@@ -198,7 +225,16 @@ dc config -q </dev/null
 rollback_config=$(mktemp "$parent_dir/.rollback-compose.XXXXXX")
 chmod 600 "$rollback_config"
 if [[ -n $previous ]]; then
-  dc config --format json </dev/null > "$rollback_config"
+  if [[ $compose_changed == 1 ]]; then
+    # Recovery must run the previous release's own Compose model, rendered with the current
+    # (not yet migrated) env files, next to this checkout so relative paths resolve alike.
+    previous_model=$(mktemp "$PWD/deploy/.compose-previous.XXXXXX")
+    git show "$previous:deploy/compose.prod.yaml" </dev/null > "$previous_model"
+    docker compose -p "$COMPOSE_PROJECT" -f "$previous_model" --env-file "$HLM_ENV_FILE" config --format json </dev/null > "$rollback_config"
+    rm -f -- "$previous_model"
+  else
+    dc config --format json </dev/null > "$rollback_config"
+  fi
   python3 - "$rollback_config" <<'PYCONFIG'
 import json, subprocess, sys
 path = sys.argv[1]
@@ -281,6 +317,17 @@ migrate_env_w0
 # Mark first so even a partially failed stop restarts the previous stack.
 writers_stopped=1
 dc stop caddy api worker </dev/null
+# Final, quiesced snapshot (Sol 34 #3): no write can commit between it and the migration, so a
+# recovery restores everything the old release acknowledged. It becomes the rollback dump; the
+# live snapshot above proved backups work before any downtime. We already hold the operation lock.
+if [[ -n $pre_upgrade_dump ]]; then
+  live_dump=$pre_upgrade_dump
+  pre_upgrade_dump=$(HLM_OPERATION_LOCK_HELD=1 bash deploy/backup/backup.sh --pre-upgrade "${previous:-$revision}" </dev/null)
+  [[ -f $pre_upgrade_dump ]] || { echo 'Final pre-upgrade dump missing' >&2; false; }
+  # The quiesced dump supersedes the live one (a strict superset of acknowledged writes).
+  rm -f -- "$live_dump" </dev/null
+  printf 'Quiesced pre-upgrade dump: %s\n' "$pre_upgrade_dump"
+fi
 dc up -d --wait --wait-timeout 180 db </dev/null
 verify_release_image
 migration_started=1
@@ -327,6 +374,10 @@ if ! HLM_ROUTES_TOKEN=$routes_token python3 deploy/scripts/check_edge.py --route
   exit 1
 fi
 unset routes_token
+# Cutover review (Sol 34): every device that still holds a token, with status, expiry and grants
+# (never tokens). RUNBOOK: rotate g7-*, revoke stale gates-*/deploy-* with hlm_ops.sh.
+echo 'Device inventory after cutover (python -m hlmemo.ops device list):'
+dc exec -T api python -m hlmemo.ops device list </dev/null || echo 'WARNING: device inventory unavailable; run hlm_ops.sh device list' >&2
 # Release the operation lock before the pruning helper acquires it again.
 exec 8>&-
 if ! bash deploy/backup/backup.sh --prune-pre-upgrade </dev/null; then

@@ -375,7 +375,8 @@ selects another repository URL; private repositories need read credentials insta
 the server. Do not embed credentials into the URL. Defaults: `/opt/hlmemo/app`, `/etc/hlmemo/prod.env`;
 override with `HLM_REMOTE_DIR` / `HLM_REMOTE_ENV`. The script fetches the requested ref, resolves an
 immutable commit, builds including model assets, takes a snapshot-consistent pre-upgrade dump while
-the DB and writers are live, runs the idempotent `migrate_env_w0` step (removes the retired
+the DB and writers are live (and, after stopping writers, a final quiesced dump that becomes the
+rollback dump), runs the idempotent `migrate_env_w0` step (removes the retired
 `HLM_ADMIN_TOKEN` / `HLM_REGISTRATION_SECRET` from `prod.env`, `app.env` and `api.env` after a
 0600 `<file>.pre-w0-<stamp>` backup; only key names are logged; a failed deployment restores the
 backups), then stops writers and runs `alembic upgrade main@head`, starts with
@@ -470,58 +471,46 @@ Codex's MCP entry stores the env-var name, so launch with `hlm codex` to inject 
 Claude and agy adapters store the bearer in their user configurations; protect those files.
 See [the exact supported CLI commands](../docs/USAGE.md). `hlm doctor` also checks local DB/model
 settings and may report those local checks absent on a remote-only workstation; `/ready` is the
-server's authoritative DB/model readiness check.
+server's authoritative DB/model readiness check. Publicly `/ready` answers only
+`{"status": "ready"|"not_ready"}` (200/503); the per-check diagnostics are served to loopback peers
+only (container healthcheck, `docker exec`) and printed by `hlm_ops.sh status` (D-061, Sol 34 #6).
 
 Local development (`compose.yaml`) keeps the Phase-0 flow (`HLM_REGISTRATION_MODE=open`,
 `HLM_ADMIN_HTTP=enabled`, `HLM_ADMIN_TOKEN` from `.hlm-dev.env`): see docs/USAGE.md.
 
 ## Upgrade and rollback
 
-### Staged Compose upgrade
+### Compose model changes (`--accept-compose-change`)
 
-Automatic deployment requires `deploy/compose.prod.yaml` to be byte-identical between the previous
-and requested release. A change to commands, healthchecks, mounts or any other Compose model field
-is rejected **before build, backup or writer shutdown**. There is no bypass flag: automatic
-recovery must never run previous images with a different release's Compose model. The supported
-guard intentionally also rejects formatting-only changes.
-
-For an intentional Compose change, stage and validate the target in a disposable local stack
-first. Schedule a maintenance window, retain the previous checkout, rendered Compose model,
-immutable images and verified dump, and stop writers with the previous model. Switch checkout
-and configuration together, build a new immutable image, migrate and validate internal readiness
-before publishing its image/ref. On failure restore the previous checkout/model and dump together.
-Treat PostgreSQL major-version or volume-layout changes as a separate migration. This manual
-procedure needs a release-specific plan; `deploy.sh` does not automate it.
-
-#### Release-specific plan: W0a access hardening (D-061)
-
-W0a changes `compose.prod.yaml` (access environment, `alembic upgrade main@head`), so
-`deploy.sh` refuses it by design. On the server, in a maintenance window (`R` = the W0a commit,
-`P` = `cat /opt/hlmemo/current-ref`):
+`deploy.sh` refuses a release whose `deploy/compose.prod.yaml` differs from the running one
+**before build, backup or writer shutdown**, unless the operator acknowledges that exact model:
 
 ```sh
-cd /opt/hlmemo/app && export HLM_ENV_FILE=/etc/hlmemo/prod.env
-dump=$(bash deploy/backup/backup.sh --pre-upgrade "$(cat /opt/hlmemo/current-ref)")   # keep it
-docker image inspect "hlmemo:$(cat /opt/hlmemo/current-ref)" >/dev/null              # rollback image
-(umask 077; bash deploy/scripts/stack.sh config > /opt/hlmemo/.rollback-model-P.yaml)
-for f in /etc/hlmemo/{prod,app,api}.env; do cp -p "$f" "$f.pre-w0-manual"; done
-bash deploy/scripts/stack.sh stop caddy api worker
-git fetch origin R && git checkout --detach R
-for f in /etc/hlmemo/{prod,app,api}.env; do sed -i -E '/^[[:space:]]*(export[[:space:]]+)?HLM_(ADMIN_TOKEN|REGISTRATION_SECRET)[[:space:]]*=/d' "$f"; done
-export HLM_IMAGE=hlmemo:R HLM_IMAGE_REVISION=R
-bash deploy/scripts/stack.sh build api worker migrate
-bash deploy/scripts/stack.sh run --rm --no-deps migrate                    # main@head (0005)
-bash deploy/scripts/stack.sh up -d --no-deps --wait --wait-timeout 300 db api worker caddy
-bash deploy/scripts/stack.sh exec -T api python - --routes --base http://127.0.0.1:8765 --mint-ops < deploy/scripts/check_edge.py
-python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "hlmemo:R"
-printf '%s\n' R > /opt/hlmemo/current-ref
+git show REF:deploy/compose.prod.yaml | shasum -a 256      # review the diff first
+bash deploy/scripts/deploy.sh --accept-compose-change=<that sha256> hlmdeploy@SERVER REF
 ```
 
-Then, from the workstation: `bash deploy/scripts/remote_gates.sh --url https://FQDN --no-drill`
-(RG-routes must pass) and mint the owner's device ("Adding a device"). Rollback: stop writers,
-restore the `*.pre-w0-manual` env files, `git checkout --detach P`, `release_env.py` back to
-`hlmemo:P`, `restore.sh "$dump" --yes`, start. Delete the `*.pre-w0-*` backups (they hold the
-retired secrets) once the release is accepted.
+A missing or different hash is refused before anything stops. With the acknowledgement the normal
+detached runner does, in order: validate the full new and previous refs and the previous image
+(before any stop); render the **previous** release's own Compose model with the current env files
+as the rollback model; take a live pre-upgrade dump (proves backups work); `migrate_env_w0`; stop
+caddy/api/worker; take the final **quiesced** dump (no write can commit after it; it replaces the
+live one and is the rollback dump); build; `alembic upgrade main@head`; `up --wait`; internal
+readiness, Caddy loopback and the W0a route table; publish the image; write `current-ref`,
+`previous-ref` and `previous-dump` together; public readiness + route table; print the device
+inventory. On any internal failure it restores the quiesced dump if migration began, restores the
+env-file backups (retired secrets included), selects the previous image explicitly
+(`HLM_IMAGE=repository:<previous>`), verifies the rendered rollback model runs the pinned previous
+image ID, and only then starts the previous stack; markers are not touched. Re-running the same
+command is idempotent. PostgreSQL major-version or volume-layout changes remain separate migrations.
+
+**W0a (D-061)** is such a release: `deploy.sh --accept-compose-change=<sha256 of R's compose.prod.yaml>
+hlmdeploy@SERVER R`, then from the workstation `remote_gates.sh --url https://FQDN --no-drill` and,
+from the printed device inventory, rotate the g7 device (`remote_gates.sh ... --g7`, or
+`hlm_ops.sh device rotate g7-<host> | hlm device login --name g7-<host> --token-stdin` followed by
+`hlm mcp add claude|codex|agy`) and revoke stale pre-W0a devices (`gates-*`, `deploy-*`, `judge-*`)
+with `hlm_ops.sh device revoke <name>`. Pre-W0a tokens have no expiry and keep working until then.
+Delete `/etc/hlmemo/*.pre-w0-*` (they hold the retired secrets) once the release is accepted.
 
 ### Application releases
 

@@ -398,6 +398,16 @@ if ((g7)); then
   echo "G7 RESTORE (undo CLI registration): $restore_cmd"
 fi
 
+# ------------------------------------------------------------------ device inventory (Sol 34)
+# Tokens that pre-date W0a (g7-*, old gates-*/deploy-*/judge-*) keep working: review them here.
+# Rotate g7 with --g7 (or: hlm_ops.sh device rotate g7-<host> | hlm device login ...), revoke the
+# rest with hlm_ops.sh device revoke <name>. Readiness details (never public): hlm_ops.sh status.
+if ((have_ssh)); then
+  echo 'device inventory (hlm_ops.sh device list):'
+  ops device list 2>&1 | sed 's/^/    /' || true
+  ops status 2>&1 | sed 's/^/    /' || true
+fi
+
 # ------------------------------------------------------------------ summary
 echo
 printf '%-22s %-5s %s\n' GATE RESULT DETAIL
