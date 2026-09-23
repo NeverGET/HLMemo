@@ -27,6 +27,7 @@ from psycopg import Error as DatabaseError
 
 from hlmemo.auth.errors import HlmError
 from hlmemo.config import get_settings
+from hlmemo.core.errors import ToolError
 from hlmemo.ops import service
 
 EX_REFUSED = 1
@@ -71,7 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--exists-ok", action="store_true", help="succeed if the project already exists")
     psub.add_parser("list").add_argument("--json", action="store_true")
 
-    st = sub.add_parser("status", help="jobs ledger, worker progress, devices, migration")
+    st = sub.add_parser(
+        "status", help="jobs ledger, worker progress, librarian heartbeat, devices, migration"
+    )
     st.add_argument("--json", action="store_true")
     return ap
 
@@ -203,6 +206,13 @@ async def _status(args: argparse.Namespace, settings: Any) -> int:
         f"worker      ready={w['ready_jobs']} oldest_ready_age_s={w['oldest_ready_age_s']} "
         f"last_done_at={w['last_done_at']} expired_leases={w['expired_leases']}\n"
     )
+    lib = st["librarian"]
+    sys.stdout.write(
+        f"librarian   ready={lib['ready']} in_flight={lib['in_flight']} role={lib['role']} "
+        f"breaker={lib['breaker_state']} ({lib['breaker_source']}) failed_24h={lib['failed_24h']} "
+        f"spend_today_usd={lib['spend_today_usd']} spend_hour_usd={lib['spend_hour_usd']} "
+        f"reserved_usd={lib['reserved_usd']}\n"
+    )
     for j in st["jobs"]:
         sys.stdout.write(f"jobs        {j['kind']:<14} {j['status']:<8} {j['count']}\n")
     return rc
@@ -212,11 +222,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return asyncio.run(run(args))
-    except HlmError as exc:
+    except (HlmError, ToolError) as exc:
         sys.stderr.write(f"error {exc.code}: {exc.message}\n")
         if exc.details:
             _meta({"code": exc.code, "details": exc.details})
         return EX_USAGE if exc.code == "E_INVALID_ARG" else EX_REFUSED
+    except FileNotFoundError as exc:  # the D-015 skeleton card needs the e5 tokenizer (HLM_MODELS_DIR)
+        sys.stderr.write(f"error E_UNAVAILABLE: model files not found ({exc})\n")
+        return EX_UNAVAILABLE
     except (DatabaseError, OSError) as exc:
         sys.stderr.write(f"error E_UNAVAILABLE: database unavailable ({type(exc).__name__})\n")
         return EX_UNAVAILABLE

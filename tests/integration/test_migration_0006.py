@@ -56,7 +56,7 @@ GIN_SQL = (
 
 
 def test_migration_0006_reserved_rows_and_round_trip(fresh_dsn: str) -> None:
-    _alembic(fresh_dsn, "upgrade", "main@head")
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")
     with psycopg.connect(fresh_dsn) as conn:
         # D-063: no GIN pending list on the chunk/title indexes
         assert conn.execute(GIN_SQL).fetchall() == [
@@ -111,7 +111,7 @@ def test_migration_0006_reserved_rows_and_round_trip(fresh_dsn: str) -> None:
             " occurred_at) VALUES (1, 't', gen_random_uuid(), 'device_minted', '{}', 'x', now())"
         )
         conn.rollback()
-    _alembic(fresh_dsn, "upgrade", "main@head")
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")
     with psycopg.connect(fresh_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM devices WHERE is_system").fetchone() == (1,)
 
@@ -134,7 +134,7 @@ def test_migration_0006_fails_fast_behind_an_index_reader_then_retries(fresh_dsn
         assert held == (1,)  # the reader's open transaction keeps AccessShare on the index
         t0 = time.monotonic()
         proc = subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "main@head"],
+            [sys.executable, "-m", "alembic", "upgrade", "0006_librarian"],
             cwd=ROOT,
             env={**os.environ, "HLM_DB_DSN": fresh_dsn},
             text=True,
@@ -153,7 +153,7 @@ def test_migration_0006_fails_fast_behind_an_index_reader_then_retries(fresh_dsn
         holder.rollback()
         holder.close()
     t0 = time.monotonic()
-    _alembic(fresh_dsn, "upgrade", "main@head")  # retry
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")  # retry
     with psycopg.connect(fresh_dsn) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0006_librarian",)]
         assert [opt for _, opt in conn.execute(GIN_SQL).fetchall()] == ["fastupdate=off"] * 3
@@ -187,25 +187,25 @@ def test_migration_0006_upgrade_recovers_after_the_flush_failed(fresh_dsn: str) 
     """Sol 38 #4a: the pending-list flush fails AFTER the table DDL committed; version stays 0005;
     a plain re-run completes (every DDL step is idempotent) and reaches head."""
     _alembic(fresh_dsn, "upgrade", "0005_w0_access")
-    proc = _alembic_fault(fresh_dsn, "0006:flush", "upgrade", "main@head")
+    proc = _alembic_fault(fresh_dsn, "0006:flush", "upgrade", "0006_librarian")
     assert proc.returncode != 0 and "injected fault at flush" in proc.stderr
     version, (tables, _role_index), gin, _dev = _state(fresh_dsn)
     assert version == [("0005_w0_access",)] and tables  # the half-applied state
-    _alembic(fresh_dsn, "upgrade", "main@head")  # recovery
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")  # recovery
     assert _state(fresh_dsn) == ([("0006_librarian",)], (True, True), ["fastupdate=off"] * 3, (1,))
 
 
 def test_migration_0006_failed_downgrade_leaves_head_and_reruns(fresh_dsn: str) -> None:
     """Sol 38 #4b: a downgrade failing midway rolls back as one transaction: the database is
     exactly at 0006, re-running upgrade (no-op) or downgrade succeeds, and upgrade again works."""
-    _alembic(fresh_dsn, "upgrade", "main@head")
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")
     head = _state(fresh_dsn)
     proc = _alembic_fault(fresh_dsn, "0006:downgrade", "downgrade", "0005_w0_access")
     assert proc.returncode != 0 and "injected fault at downgrade" in proc.stderr
     assert _state(fresh_dsn) == head  # nothing half-applied (fastupdate still off, index present)
-    _alembic(fresh_dsn, "upgrade", "main@head")
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")
     assert _state(fresh_dsn) == head
     _alembic(fresh_dsn, "downgrade", "0005_w0_access")
     assert _state(fresh_dsn) == ([("0005_w0_access",)], (False, False), [""] * 3, (0,))
-    _alembic(fresh_dsn, "upgrade", "main@head")
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")
     assert _state(fresh_dsn) == head

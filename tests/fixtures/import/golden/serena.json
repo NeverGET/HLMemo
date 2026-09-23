@@ -1,0 +1,57 @@
+{
+ "counts": {
+  "changed": 0,
+  "missing": 0,
+  "new": 3,
+  "rejected": 0,
+  "skipped": 0,
+  "unchanged": 0
+ },
+ "dry_run": true,
+ "duplicate_groups": [],
+ "items": [
+  {
+   "action": "new",
+   "describes": [
+    "src/app/main.py"
+   ],
+   "evidence": "none",
+   "key": "serena:01_auth_flow.md",
+   "kind": "fact",
+   "sha256": "4a59a365e0d742f676b976e8d19f7de7e325cf5c5c402130d00290b3b81d10db",
+   "title": "Auth flow · 01_auth_flow.md",
+   "tokens": 24,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "serena:lessons_learned.md",
+   "kind": "lesson",
+   "sha256": "41fd2c814480ac792f974498a45dcf7ddc4e0a9098e57d083b6961cb58a14611",
+   "title": "Lessons learned · lessons_learned.md",
+   "tokens": 47,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "dated-heading",
+   "key": "serena:session_2026_05_01.md",
+   "kind": "episode",
+   "sha256": "5562745c7fef49676edddf78349db4fc9ad976d8c5738d666698bfaf28ea9ea4",
+   "title": "SESSION 2026-05-01 — cache rollout · session_2026_05_01.md",
+   "tokens": 36,
+   "valid_from": "2026-05-01T00:00:00Z"
+  }
+ ],
+ "missing": [],
+ "project": "fx",
+ "rejected": [],
+ "skipped": [],
+ "source": "serena",
+ "token_estimate": {
+  "items": 3,
+  "tokenizer": "o200k_base",
+  "tokens": 107
+ }
+}

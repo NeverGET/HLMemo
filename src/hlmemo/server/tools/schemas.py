@@ -70,6 +70,26 @@ DEFS: dict[str, Any] = {
                     "additionalProperties": False,
                 },
             },
+            # W1.5 (additive, optional): import provenance and the code paths an item describes.
+            "source": {
+                "type": "object",
+                "properties": {
+                    "system": {"type": "string", "pattern": r"^[a-z][a-z0-9_-]{0,31}$"},
+                    "path": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    "mtime": {"$ref": "#/$defs/Ts"},
+                    "commit": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"},
+                    "commit_date": {"$ref": "#/$defs/Ts"},
+                },
+                "required": ["system", "path", "sha256"],
+                "additionalProperties": False,
+            },
+            "describes": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1, "maxLength": 256},
+                "maxItems": 16,
+                "uniqueItems": True,
+            },
         },
         "required": ["kind", "title", "body"],
         "additionalProperties": False,

@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from psycopg import AsyncConnection
+from psycopg import errors as pgerrors
 
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.core import (
@@ -50,6 +51,7 @@ from hlmemo.core import (
     MODEL_REVISION,
     NORMALIZER_VERSION,
 )
+from hlmemo.core import import_contract as ic
 from hlmemo.core.budget import DEFAULT_WRITE_BUDGET, BudgetError, Meter, canonical, validate_budget
 from hlmemo.core.chunker import CHUNK_OVERLAP, CHUNK_TOK, Chunker
 from hlmemo.core.embedder import default_model_dir, sha256_file
@@ -74,6 +76,7 @@ from hlmemo.core.write_models import (
     WriteResult,
     parse_request,
 )
+from hlmemo.db import import_queries as iq
 from hlmemo.db import write_queries as q
 
 PROJECTION_VERSION = 1
@@ -762,6 +765,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                 current_version_id=head,
             )
 
+    await ic.check_source_owners(conn, ctx, home.project_id, plans)  # W1.5: one owner per source
     await _resolve_link_targets(conn, ctx, home, plans, cache)
     await _check_content(conn, deps, plans)
     _pessimistic_ack(batch, deps)
@@ -896,6 +900,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                     source_event_id=event_id,
                     supersedes_version_id=r.version_id,
                     last_access_at=r.last_access_at,
+                    source=r.source,
                 )
             )
             sv_chunks: list[dict[str, Any]] = []
@@ -957,6 +962,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                 recorded_at=T,
                 source_event_id=event_id,
                 supersedes_version_id=p.head,
+                source=ic.source_json(it),
             )
         )
         chunks_json: list[dict[str, Any]] = []
@@ -1108,9 +1114,28 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         raise ToolError("E_VERSION_CONFLICT", "a superseded version changed concurrently")
     if await q.supersede_links(conn, superseded_link_ids, T) != len(superseded_link_ids):
         raise ToolError("E_VERSION_CONFLICT", "a superseded link changed concurrently")
-    for v in versions:
-        await q.insert_version(conn, v)
+    try:
+        for v in versions:
+            await q.insert_version(conn, v)
+    except pgerrors.ExclusionViolation as exc:
+        mapped = ic.owner_violation(exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
     await q.insert_chunks(conn, chunks)
+    # W1.5 describes → code_refs (new versions), survivors copy their base's rows
+    await iq.insert_code_refs(
+        conn,
+        [row for p in plans for row in ic.code_ref_rows(p.version_id, p.item)]  # type: ignore[arg-type]
+        + await ic.survivor_code_refs(
+            conn,
+            [
+                (svid, r.version_id)
+                for p in plans
+                for (r, _seg), svid in zip(p.survivors, survivor_vids[p.index], strict=True)
+            ],
+        ),
+    )
     for ln in links:
         await q.insert_link(conn, ln)
     for job in jobs:

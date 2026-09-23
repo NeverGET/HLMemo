@@ -5,6 +5,7 @@ hlm device register|login|approve|revoke|grant|ungrant|list|whoami
 hlm project create|list
 hlm mcp add claude|codex|agy
 hlm query "<q>" [--budget N]
+hlm import markdown|automemory|serena|context <paths> --project P [--dry-run] [--json] | hlm export --out DIR
 hlm close --notes ... [--decision ...] [--lesson "title::body"] [--card FILE]
 hlm claude|codex|agy [--task ...] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]
 """
@@ -860,6 +861,76 @@ def close(
         token_budget=budget,
     )
     typer.echo(compact(res))
+
+
+# --------------------------------------------------------------------------- import / export (W1.5)
+
+
+@app.command("import")
+@_guard
+def import_cmd(
+    ctx: typer.Context,
+    source: Annotated[str, typer.Argument(help="markdown | automemory | serena | context")],
+    paths: Annotated[list[Path], typer.Argument(help="files or directories")],
+    project: Annotated[str | None, typer.Option("--project", help="target project slug")] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="classify against the server; write nothing")
+    ] = False,
+    offline: Annotated[
+        bool, typer.Option("--offline", help="dry-run without a server (all items new)")
+    ] = False,
+    json_out: Annotated[bool, typer.Option("--json", help="print the full JSON report")] = False,
+    base: Annotated[Path | None, typer.Option("--base", help="key paths relative to this dir")] = None,
+    repo: Annotated[Path | None, typer.Option("--repo", help="repository for `describes` paths")] = None,
+    tz: Annotated[str | None, typer.Option("--tz", help="zone of date-only evidence (default local)")] = None,
+) -> None:
+    """Import legacy memories with provenance (idempotent: unchanged content makes 0 writes)."""
+    from hlmemo.importers.cli import SOURCES, human_summary, run_import_command
+
+    c = _ctx(ctx)
+    if source not in SOURCES:
+        raise CliError(f"source must be one of {SOURCES}", EX_USAGE)
+    slug = project or c.config().require_project()
+    try:
+        rep = run_import_command(
+            source=source,
+            paths=paths,
+            project=slug,
+            dry_run=dry_run,
+            offline=offline,
+            base=base,
+            repo=repo,
+            memory=None if offline else c.memory(),
+            progress=not json_out,
+            tz=tz,
+        )
+    except ValueError as exc:
+        raise CliError(str(exc), EX_USAGE) from None
+    typer.echo(compact(rep) if (json_out or c.as_json) else human_summary(rep))
+    if (rep.get("writes") or {}).get("failed"):
+        raise typer.Exit(1)
+
+
+@app.command("export")
+@_guard
+def export_cmd(
+    ctx: typer.Context,
+    out: Annotated[Path, typer.Option("--out", help="output directory")],
+    project: Annotated[str | None, typer.Option("--project", help="project slug")] = None,
+    kinds: Annotated[list[str] | None, typer.Option("--kinds", help="item kinds (repeatable)")] = None,
+    as_of: Annotated[str | None, typer.Option("--as-of", help="valid_at = known_at = T (ISO)")] = None,
+) -> None:
+    """Export current items as re-importable Markdown (+ CARD.md, INDEX.md): the D-021 fallback."""
+    from hlmemo.importers.cli import run_export_command
+
+    c = _ctx(ctx)
+    slug = project or c.config().require_project()
+    res = run_export_command(project=slug, out=out, kinds=kinds or None, as_of=as_of, memory=c.memory())
+    _out(
+        res,
+        as_json=c.as_json,
+        human=f"exported {res['items']} item(s) to {res['out']} ({res['files']} files)",
+    )
 
 
 # --------------------------------------------------------------------------- claude / codex / agy
