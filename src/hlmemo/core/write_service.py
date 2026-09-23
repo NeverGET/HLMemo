@@ -30,7 +30,10 @@ passes the verbatim tool arguments as ``req`` (a dict is used as-is for hashing)
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
@@ -81,6 +84,33 @@ CARD_MAX_TOKENS = 512
 CHUNKER_NAME = "e5-window"
 JOB_KIND_EMBED = "embed"
 _PESSIMISTIC_ID = 10**15
+#: Bodies at least this long are tokenized/chunked/normalized OFF the event loop (Sol 35 #3): a
+#: 64k-character body costs tens of milliseconds of pure CPU that would otherwise stall every
+#: concurrent query on the API loop. Short bodies stay inline (a thread hop costs more).
+OFFLOAD_MIN_CHARS = 2048
+#: Bounded: at most this many write-path CPU tasks run at once; more wait in the executor queue
+#: (the queue itself is bounded by the API's request admission).
+OFFLOAD_WORKERS = 2
+_CPU_POOL: ThreadPoolExecutor | None = None
+
+
+def _cpu_pool() -> ThreadPoolExecutor:
+    global _CPU_POOL
+    if _CPU_POOL is None:
+        _CPU_POOL = ThreadPoolExecutor(max_workers=OFFLOAD_WORKERS, thread_name_prefix="hlm-write-cpu")
+    return _CPU_POOL
+
+
+async def _cpu(fn: Callable[..., Any], text: str, *args: Any) -> Any:
+    """Run a pure CPU step inline for short text, else on the bounded write-CPU pool."""
+    if len(text) < OFFLOAD_MIN_CHARS:
+        return fn(text, *args)
+    return await asyncio.get_running_loop().run_in_executor(_cpu_pool(), fn, text, *args)
+
+
+def _chunk_and_normalize(body: str, chunker: Chunker) -> tuple[list[Any], list[str]]:
+    chunks = chunker.chunk(body)
+    return chunks, [normalize(c.text) for c in chunks]
 
 
 # --------------------------------------------------------------------------- dependencies
@@ -270,6 +300,7 @@ class _Plan:
     version_id: int | None = None
     token_count: int = 0
     chunks: list[Any] = field(default_factory=list)  # core.chunker.Chunk
+    chunk_norms: list[str] = field(default_factory=list)  # normalize(chunk.text), computed with the chunks
     links: list[dict[str, Any]] = field(default_factory=list)  # resolved link specs (pre-id)
 
 
@@ -616,7 +647,7 @@ async def _resolve_link_targets(
 async def _check_content(conn: AsyncConnection, deps: WriteDeps, plans: list[_Plan]) -> None:
     for p in plans:
         it = p.item
-        p.token_count = deps.meter.count_text(it.body)
+        p.token_count = await _cpu(deps.meter.count_text, it.body)
         if p.is_card and p.token_count > CARD_MAX_TOKENS:
             raise ToolError(
                 "E_CARD_TOO_LARGE",
@@ -790,7 +821,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     # ---- chunking + id allocation ---------------------------------------------------------
     old_chunks: dict[int, list[q.ChunkRow]] = {}
     for p in plans:
-        p.chunks = deps.chunker.chunk(p.item.body)
+        p.chunks, p.chunk_norms = await _cpu(_chunk_and_normalize, p.item.body, deps.chunker)
         for r, _seg in p.survivors:
             if r.version_id not in old_chunks:
                 old_chunks[r.version_id] = await q.chunks_of_version(conn, r.version_id)
@@ -929,7 +960,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
             )
         )
         chunks_json: list[dict[str, Any]] = []
-        for c in p.chunks:
+        for c, c_norm in zip(p.chunks, p.chunk_norms, strict=True):
             cid = chunk_ids.pop(0)
             chunks.append(
                 q.ChunkRow(
@@ -941,7 +972,7 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                     char_start=c.char_start,
                     char_end=c.char_end,
                     text=c.text,
-                    text_norm=normalize(c.text),
+                    text_norm=c_norm,
                     e5_tokens=c.e5_tokens,
                 )
             )
