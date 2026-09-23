@@ -4,7 +4,7 @@ Runs on the loaded G3 retrieval world (a CLONE of ``hlm_retr``: this test writes
 librarian worker running in the same event loop against a stub provider:
 
 1. the stub STALLS 30 s per request: 100 writes are acked (each enqueues a librarian job in its
-   own transaction) and the G4 query load (3 callers, fixture queries) runs concurrently;
+   own transaction), then the G4 query load (3 callers, fixture queries) runs while it stalls;
 2. the stub returns 503: the breaker opens, jobs are handed back without consuming attempts,
    and the same query load runs again;
 3. recovery: the stub answers; every job completes — 0 lost (none failed, none left queued) and
@@ -120,7 +120,7 @@ async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWor
     runner = asyncio.create_task(worker.run_forever(stop))
     candidates = sorted(world.version_to_logical)[:50]
     try:
-        # phase 1: stalled provider; writes + query load concurrently
+        # phase 1: stalled provider; 100 writes, then the timed query load
         deps = default_deps()
         write_ms: list[float] = []
 
@@ -159,9 +159,11 @@ async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWor
                     acked += 1
             return acked
 
-        acked, lat1 = await asyncio.gather(
-            writes(), _query_load(connect, world, read_deps, QUERIES_PER_PHASE)
-        )
+        # The writes run first: their chunking is CPU work in THIS event loop, which would otherwise
+        # be charged to the timed queries (in production writes run in the api process). The
+        # stalled librarian keeps running (lease renewal, heartbeat) while the queries are timed.
+        acked = await writes()
+        lat1 = await _query_load(connect, world, read_deps, QUERIES_PER_PHASE)
         assert acked == N_WRITES
         assert llm.calls >= 1 and worker.stats.jobs_done == 0  # the librarian is stuck in the stall
 
