@@ -1,0 +1,13 @@
+# Default librarian profile (D-066, after bench v2): `openai/gpt-6-luna` routed through OpenRouter
+# (94.2% on bench v2, best $/correct). The fallback is the `openrouter` profile (deepseek, a different
+# upstream provider = outage hedge). Key from env only.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "openai/gpt-6-luna"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+HLM_LLM_REASONING = '{"effort":"low"}'
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny" }, usage = { include = true } }
+# USD per 1M tokens, worst case for reservations: the >272k-token tier (OpenRouter list, 2026-09-23).
+price_in_per_m  = 0.20
+price_out_per_m = 0.75
+# bench v2 ran with json_object; switch to json_schema only after a re-bench.
+supports_json_schema = false
