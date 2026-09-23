@@ -364,6 +364,62 @@
      "source": "20260923-194459-v2.json"
     },
     {
+     "model_id": "openai/gpt-6-luna",
+     "reasoning": {
+      "effort": "low"
+     },
+     "run": "hlm-bench port check",
+     "reps": 1,
+     "gold": "adj-1+565f9d71",
+     "score": 0.9442,
+     "overall_mean": 0.9352,
+     "correct_rate": 0.9146,
+     "macro_error_rate": 0.0756,
+     "error_rates": {
+      "T5": 0.0,
+      "T6": 0.125,
+      "T7": 0.2667,
+      "T8": 0.0333,
+      "T9": 0.08,
+      "T10": 0.0,
+      "T11": 0.0,
+      "T12": 0.1
+     },
+     "task_means": {
+      "T5": 1.0,
+      "T6": 0.9042,
+      "T7": 0.8749,
+      "T8": 0.9073,
+      "T9": 0.92,
+      "T10": 1.0,
+      "T11": 0.99,
+      "T12": 0.9572
+     },
+     "metrics": {
+      "T6_false_supersede_rate": 0.0,
+      "T9_catch_rate": 1.0,
+      "T9_false_warn_rate": 0.2857,
+      "T10_false_answer_rate": 0.0,
+      "T11_complied": "0/10",
+      "T7_identifier_hit_rate": 0.963,
+      "T8_avg_hallucinated_tokens": 2.17,
+      "T8_coverage": 0.9747
+     },
+     "n": 199,
+     "json_fail_first": 1,
+     "json_fail_final": 0,
+     "cost_usd": 0.05593674,
+     "usd_per_correct": 0.00030734,
+     "usd_per_month": 0.51,
+     "latency_p50_ms": 2912,
+     "latency_p95_ms": 7658,
+     "commit": "bb03629",
+     "prompt_version": "bench-v2-p1 (sha256 be426d40e385)",
+     "schema_version": "bench-v2-s1",
+     "harness": "hlm bench",
+     "source": "20260923-223833-hlm-v2-openai_gpt-6-luna.json"
+    },
+    {
      "model_id": "deepseek/deepseek-v4.1-flash",
      "reasoning": {
       "bench_run_reasoning": "off"
@@ -698,6 +754,62 @@
      "schema_version": "bench-v2-s1",
      "harness": "bench/run.py (legacy raw API)",
      "source": "20260923-194459-v2.json"
+    },
+    {
+     "model_id": "openai/gpt-6-luna",
+     "reasoning": {
+      "effort": "low"
+     },
+     "run": "hlm-bench port check",
+     "reps": 1,
+     "gold": "raw",
+     "score": 0.9379,
+     "overall_mean": 0.9281,
+     "correct_rate": 0.895,
+     "macro_error_rate": 0.0923,
+     "error_rates": {
+      "T5": 0.0,
+      "T6": 0.125,
+      "T7": 0.4,
+      "T8": 0.0333,
+      "T9": 0.08,
+      "T10": 0.0,
+      "T11": 0.0,
+      "T12": 0.1
+     },
+     "task_means": {
+      "T5": 1.0,
+      "T6": 0.9042,
+      "T7": 0.8281,
+      "T8": 0.9054,
+      "T9": 0.92,
+      "T10": 1.0,
+      "T11": 0.99,
+      "T12": 0.9555
+     },
+     "metrics": {
+      "T6_false_supersede_rate": 0.0,
+      "T9_catch_rate": 1.0,
+      "T9_false_warn_rate": 0.2857,
+      "T10_false_answer_rate": 0.0,
+      "T11_complied": "0/10",
+      "T7_identifier_hit_rate": 0.8667,
+      "T8_avg_hallucinated_tokens": 2.17,
+      "T8_coverage": 0.9719
+     },
+     "n": 200,
+     "json_fail_first": 1,
+     "json_fail_final": 0,
+     "cost_usd": 0.05609316,
+     "usd_per_correct": 0.00031337,
+     "usd_per_month": 0.5,
+     "latency_p50_ms": 2912,
+     "latency_p95_ms": 7596,
+     "commit": "bb03629",
+     "prompt_version": "bench-v2-p1 (sha256 be426d40e385)",
+     "schema_version": "bench-v2-s1",
+     "harness": "hlm bench",
+     "source": "20260923-223833-hlm-v2-openai_gpt-6-luna.json"
     },
     {
      "model_id": "deepseek/deepseek-v4.1-flash",
