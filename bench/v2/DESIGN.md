@@ -1,6 +1,6 @@
 # bench v2 — librarian model benchmark (design)
 
-bench v1 (`bench/tasks/t1..t4`) saturates: 4-5 candidate models score 98-100% on 33 short cases.
+bench v1 (`src/hlmemo/bench/tasks/v1/t1..t4`) saturates: 4-5 candidate models score 98-100% on 33 short cases.
 v2 keeps the v1 harness (same OpenRouter client, temperature 0, seed 42, JSON-object mode,
 real cost from `usage`) and adds eight harder task families that mirror what the librarian really
 does in Phase 2-3 (PHASE2-4-ROADMAP.md §2 W2b-W2f, §3 W3a-W3b) and the failure modes measured on real
@@ -57,7 +57,7 @@ Every case carries `tier ∈ {easy, medium, hard}` (target mix ≈ 30/40/30):
   inversion, implicit change without change words, distractor lessons sharing keywords, injected
   instructions that mimic the job's own output).
 
-## 2. Scoring (deterministic, `bench/v2/tasks_v2.py`)
+## 2. Scoring (deterministic, `src/hlmemo/bench/v2.py`)
 
 A response that does not parse (after fence strip) or violates the schema scores 0 and counts as a
 JSON fail (same rule as v1). Provider/HTTP failures after retries are `infra_error` and excluded.
@@ -96,6 +96,12 @@ score ≥ 0.8).
    wording removed) or dropped. The agreement rate before adjudication is reported.
 4. Packs are versioned (`"version"` in each file). A gold change bumps the version and is noted in the
    file's `changelog`.
+5. **Post-hoc adjudication (W2f, D-067).** Cases that a strong model misses are adjudicated with a first
+   judgment and a second, blind judgment (inputs + rules only, answer before candidates). Verdicts are applied
+   as a gold overlay (`src/hlmemo/bench/adjudication_v2.json`, operations only, no case text, so private
+   cases can be adjusted without touching the private pack). Reports name the effective gold version
+   (`raw` or `adj-N+<sha8>`). Record: `ADJUDICATION.md`. Authoring rule added by adj-1: a T7 gold identifier
+   must be derivable from the question + vocabulary, like the key terms; if it is not, it is optional.
 
 ## 4. Anti-contamination rules
 
@@ -121,16 +127,21 @@ score ≥ 0.8).
 ## 5. Files
 
 ```
-bench/v2/DESIGN.md          this file
-bench/v2/tasks_v2.py        system prompt, message builders, validators, scorers for T5-T12
-bench/v2/check_packs.py     lint + sealed-exclusion + privacy scan
-bench/v2/gen_t12.py         deterministic generator for the T12 documents and gold
-bench/v2/tasks/*.json       public pack
-docs/private/bench-v2/*.json private pack (gitignored)
+bench/v2/DESIGN.md                      this file
+bench/v2/ADJUDICATION.md                gold adjudication record (adj-1)
+src/hlmemo/bench/v2.py                  system prompt, message builders, validators, scorers for T5-T12
+src/hlmemo/bench/adjudication_v2.json   gold overlay (hlm bench --gold adjusted, the default)
+src/hlmemo/bench/tasks/v2/*.json        public pack (moved from bench/v2/tasks/ in W2f)
+bench/v2/tasks_v2.py                    shim over hlmemo.bench.v2 for the legacy bench/run.py
+bench/v2/check_packs.py                 lint + sealed-exclusion + privacy scan
+bench/v2/gen_t12.py                     deterministic generator for the T12 documents and gold
+docs/private/bench-v2/*.json            private pack (gitignored)
 ```
 
-Run: `bench/.venv/bin/python bench/run.py --suite v2 --models <m> [--pack PATH ...] --runs 3`.
-Without `--pack`, `--suite v2` loads the public pack plus the private pack if present.
+Run (production path): `hlm bench --suite v2 --profile <profile> [--pack docs/private/bench-v2] --runs 3`.
+`hlm bench` never loads the private pack implicitly. Legacy raw-API harness:
+`bench/.venv/bin/python bench/run.py --suite v2 --models <m> [--pack PATH ...] --runs 3`. Without `--pack` it
+loads the public pack plus the private pack if present.
 
 ## 6. Pack file format
 

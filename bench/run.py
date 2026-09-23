@@ -30,6 +30,8 @@ from dotenv import load_dotenv
 
 HERE = Path(__file__).resolve().parent
 load_dotenv(HERE.parent / ".env")
+# v1 fixtures moved into the package (W2f); hlm bench and eval/live/run.py read the same files.
+V1_TASK_DIR = HERE.parent / "src" / "hlmemo" / "bench" / "tasks" / "v1"
 
 API = "https://openrouter.ai/api/v1"
 TASK_FILES = {
@@ -325,7 +327,7 @@ def load_tasks(only: set[str] | None) -> list[tuple[str, dict]]:
     for task, fn in TASK_FILES.items():
         if only and task not in only:
             continue
-        cfg = json.loads((HERE / "tasks" / fn).read_text())
+        cfg = json.loads((V1_TASK_DIR / fn).read_text())
         if task == "placement":  # expand candidate ids into {topic_id, summary}
             for c in cfg["cases"]:
                 c["_candidates"] = [{"topic_id": t, "summary": cfg["topics"][t]} for t in c["candidates"]]
@@ -417,7 +419,7 @@ def run_model(name: str, args, models_json: dict, client: "Client", tasks, guard
 
 
 def _v2():
-    """Lazy import of the bench v2 module (bench/v2/tasks_v2.py)."""
+    """Lazy import of the bench v2 module (bench/v2/tasks_v2.py, a shim over hlmemo.bench.v2)."""
     sys.path.insert(0, str(HERE / "v2"))
     import tasks_v2  # noqa: E402
     return tasks_v2
@@ -782,7 +784,7 @@ def main():
     ap.add_argument("--runs", type=int, default=1, help="repetitions per case")
     ap.add_argument("--suite", choices=["v1", "v2"], default="v1", help="v1 = tasks/t1-t4 (default); v2 = bench/v2 packs T5-T12")
     ap.add_argument("--pack", action="append", default=[],
-                    help="v2: pack file (repeatable); default = bench/v2/tasks/*.json + docs/private/bench-v2/*.json if present")
+                    help="v2: pack file (repeatable); default = src/hlmemo/bench/tasks/v2/*.json + docs/private/bench-v2/*.json if present")
     ap.add_argument("--no-private", action="store_true", help="v2: skip the private pack when --pack is not given")
     ap.add_argument("--tasks", default="", help="v1: comma-separated subset: placement,contradiction,summarization,risk_check; "
                                                 "v2: families, e.g. T5,T9")
