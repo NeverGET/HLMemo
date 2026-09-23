@@ -282,6 +282,39 @@ async def readable_projects(
     return True, str(device_class), [int(r[0]) for r in await cur.fetchall()]
 
 
+async def superseded_among(
+    conn: AsyncConnection,
+    logical_ids: list[int],
+    *,
+    pid: int,
+    scopes: list[str],
+    valid_at: datetime,
+    known_at: datetime,
+) -> set[int]:
+    """D-057 read side: the logical ids in ``logical_ids`` that another id in ``logical_ids``
+    supersedes through a live ``supersedes`` link (the link row passes authz (a) and is live at
+    ``(valid_at, known_at)``). Links exist only once applied (a proposal is a question row)."""
+    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L
+
+    if len(logical_ids) < 2:
+        return set()
+    cur = await conn.execute(
+        f"""
+        SELECT DISTINCT l.dst_logical_id FROM links l
+         WHERE l.rel = 'supersedes' AND l.src_logical_id = ANY(%(lids)s) AND l.dst_logical_id = ANY(%(lids)s)
+           AND l.src_logical_id <> l.dst_logical_id AND {AUTHZ_L} AND {TEMPORAL_L}
+        """,  # noqa: S608 - fixed fragments
+        {
+            "lids": sorted(set(logical_ids)),
+            "pid": pid,
+            "scopes": scopes,
+            "valid_at": valid_at,
+            "known_at": known_at,
+        },
+    )
+    return {int(r[0]) for r in await cur.fetchall()}
+
+
 async def project_slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[int, str]:
     if not project_ids:
         return {}
@@ -303,5 +336,6 @@ __all__ = [
     "project_slugs",
     "readable_projects",
     "subject_vectors",
+    "superseded_among",
     "vector_list",
 ]

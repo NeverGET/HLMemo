@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from hlmemo.server.tools import handlers, schemas
+from hlmemo.server.tools import answer, handlers, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
 
@@ -59,6 +59,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         schemas.CALL_THE_DAY_INPUT,
         handlers.memory_call_the_day,
     ),
+    ToolSpec(answer.NAME, answer.DESCRIPTION, answer.INPUT_SCHEMA, answer.memory_answer),  # W2c
 )
 
 TOOL_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in TOOLS}
