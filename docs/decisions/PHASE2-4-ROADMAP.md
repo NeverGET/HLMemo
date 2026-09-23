@@ -426,6 +426,8 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 
 ---
 
+**Model tiers (D-066, owner):** Phase 5 runs a two-tier librarian: gpt-6-luna (routine) + gpt-6-luna-pro (hard tasks), mapping chosen on migration data. Before Phase 5 starts: bench-v2 the non-OpenAI pro-fallback candidates (deepseek-v4-pro-0813 first; glm-5.3, kimi-k2.6, qwen3.8-27b) and pick one. MCP responses expose the librarian status (degraded/active tier) during a provider outage so the project LLM can adapt.
+
 ## Workstream summary
 
 | WS | Phase | id | Depends on | Parallel? |
