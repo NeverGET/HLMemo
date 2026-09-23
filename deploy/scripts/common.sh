@@ -20,6 +20,13 @@ for _name in HLM_APP_ENV_FILE HLM_API_ENV_FILE HLM_DB_ENV_FILE HLM_BACKUP_ENV_FI
   printf -v "$_name" '%s/%s' "$(cd -- "$(dirname -- "$_path")" && pwd)" "$(basename -- "$_path")"
 done
 export HLM_APP_ENV_FILE HLM_API_ENV_FILE HLM_DB_ENV_FILE HLM_BACKUP_ENV_FILE
+# W2a librarian provider key/settings: OPTIONAL (absent in R1; compose marks it required: false).
+# Lives next to the other secrets, never inside the checkout.
+HLM_LLM_ENV_FILE=${HLM_LLM_ENV_FILE:-$_env_dir/llm.env}
+if [[ -d $(dirname -- "$HLM_LLM_ENV_FILE") ]]; then
+  printf -v HLM_LLM_ENV_FILE '%s/%s' "$(cd -- "$(dirname -- "$HLM_LLM_ENV_FILE")" && pwd)" "$(basename -- "$HLM_LLM_ENV_FILE")"
+fi
+export HLM_LLM_ENV_FILE
 # Resolve project from the env file as well as explicit overrides without eval/source.
 _file_project=$(docker compose -f "$DEPLOY_DIR/compose.prod.yaml" --env-file "$HLM_ENV_FILE" config --environment </dev/null | python3 -c 'import sys; d=dict(line.rstrip("\n").partition("=")[::2] for line in sys.stdin if "=" in line); print(d.get("BAKE_PROJECT") or d.get("HLM_COMPOSE_PROJECT") or "hlmemo-prod")')
 COMPOSE_PROJECT=${BAKE_PROJECT:-${HLM_COMPOSE_PROJECT:-$_file_project}}

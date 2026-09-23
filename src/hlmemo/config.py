@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     worker_memory_profile: bool = False
     hosting_target: str = "compose"
 
-    # --- librarian LLM: parsed and validated in Phase 0, never called (D-017/D-019) ---
+    # --- librarian LLM primary profile (D-017/D-019); the fallback is loaded by librarian.profiles ---
     profile: str = DEFAULT_PROFILE
     fallback_profile: str | None = None
     llm_base_url: str | None = None
@@ -155,6 +155,38 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
     llm_reasoning: dict[str, Any] | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
+    # Profile economics + capabilities (W2a). USD per million tokens; a profile without prices
+    # refuses live calls unless llm_budget_disabled (atomic reservation needs a worst case).
+    price_in_per_m: float | None = Field(default=None, ge=0)
+    price_out_per_m: float | None = Field(default=None, ge=0)
+    supports_json_schema: bool = False
+    # Model quirks live only here (D-017): {task: {"system_append": str}}.
+    prompt_overrides: dict[str, Any] = Field(default_factory=dict)
+
+    # --- librarian runtime (PHASE2-4-ROADMAP W2a) ---
+    librarian_enabled: bool = False  # off until R2
+    librarian_role: str = Field(default="observer", pattern="^(observer|assistant|autonomous)$")
+    librarian_lease_s: int = Field(default=120, gt=0)
+    librarian_lease_renew_s: float = Field(default=30.0, gt=0)
+    librarian_poll_s: float = Field(default=1.0, gt=0)
+    librarian_heartbeat_s: float = Field(default=10.0, gt=0)
+    librarian_heartbeat_file: Path | None = Path("/tmp/hlm-librarian-heartbeat.json")
+    librarian_memory_rules: int = Field(default=8, gt=0)
+    librarian_memory_tokens: int = Field(default=1500, gt=0)
+    llm_mode: str = Field(default="live", pattern="^(live|record|replay|off)$")
+    llm_cassette_dir: Path | None = None
+    llm_timeout_s: float = Field(default=60.0, gt=0)
+    llm_breaker_threshold: int = Field(default=5, gt=0)
+    llm_breaker_open_s: float = Field(default=60.0, gt=0)
+    llm_breaker_max_open_s: float = Field(default=900.0, gt=0)
+    llm_budget_disabled: bool = False
+    llm_budget_hour_usd: float = Field(default=3.0, ge=0)
+    llm_budget_day_usd: float = Field(default=10.0, ge=0)
+    llm_budget_month_usd: float = Field(default=60.0, ge=0)
+    llm_reservation_ttl_s: int = Field(default=600, gt=0)
+    llm_job_call_cap: int = Field(default=20, gt=0)
+    llm_redact_email: bool = False
+    llm_redact_phone: bool = False
 
     # --- server / auth (§2) ---
     admin_token: SecretStr | None = None
@@ -206,7 +238,7 @@ class Settings(BaseSettings):
     client: dict[str, Any] = Field(default_factory=dict)
     preflight: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("llm_reasoning", "extra", mode="before")
+    @field_validator("llm_reasoning", "extra", "prompt_overrides", mode="before")
     @classmethod
     def _json_string(cls, v: Any) -> Any:
         if isinstance(v, str):

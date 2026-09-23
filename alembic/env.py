@@ -2,8 +2,10 @@
 
 Revision graph (see alembic/versions/*):
   branch `phase0`/`main`: 0001_phase0 -> 0003_title_lexical -> 0004_title_norm_fold (D-055)
-                   -> 0005_w0_access (label `main`, D-061) -> applied by `alembic upgrade main@head`
-                   (`main@head` also upgrades a database at 0001 or 0004; `phase0@head` is the same head)
+                   -> 0005_w0_access (label `main`, D-061) -> 0006_librarian (W2a, D-062)
+                   -> applied by `alembic upgrade main@head`
+                   (`main@head` also upgrades a database at 0001, 0004 or 0005;
+                   `phase0@head` is the same head)
   branch `hnsw`:   0002_hnsw (own base)   -> NEVER applied automatically; `alembic upgrade hnsw@head`
 Because two heads exist, a bare `alembic upgrade head` is refused by Alembic on purpose.
 """
