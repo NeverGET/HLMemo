@@ -28,13 +28,14 @@ apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py
 > (1) **Invalidation is the actor's bi-temporal close** (`version_close`: supersede every current row overlapping `[cut, ∞)`, re-insert the part before the cut with the same content/chunks, embed jobs recorded; nothing after the cut, nothing deleted), not "through the write service": a write-service correction re-creates a survivor after the cut. `widen_scope` accept does go through the write service (a revision widening `project_ids`, same content, same `valid_from`).
 > (2) **Proposal-time capability is `question(P)` only**; `annotate`/`correct` are checked where a mutation is applied (autonomous direct apply, `apply_batch` per question under THAT question's capabilities, `memory.answer` against the answering device). W2a checked `annotate` at proposal time, which would turn every cross-project proposal from a read-only project into `authority_lost`.
 > (3) **Batches**: one `open` batch per project collects ≤ 25 open questions (then `ready`); a decision closes it (`decided`), `apply_batch` marks it `applied`. Question status `applied` added (accepted AND applied). `widen_scope` is never applied by the librarian, even from an approved batch (D-058 propose-only): it stays `approved` until `memory.answer` by a writer on both projects.
-> (4) **`query/2`**: `contract_version: "query/2"` on every response; the optional `librarian` block (pending count + ≤ 3 deterministic notices, never model text) is budgeted to ≤ 10 % of `token_budget` and packed BEFORE the hits (not after), so the preflight reliably shows open questions.
+> (4) **`query/2`**: `contract_version: "query/2"` on every response; the optional `librarian` block (pending count + ≤ 3 deterministic notices, never model text) is packed AFTER the hits into what they left, at most 10 % of `token_budget` (notices dropped from the end, then the block). Consequence: with a full hit list the block is often absent; the preflight (W2d) should query with room to spare or show questions another way.
 > (5) **Candidates**: the drop rule (cosine < 0.80 and no lexical hit) is applied before the top-8/top-5 cut; a lexical hit = ≥ 2 shared distinctive terms (pool-local DF ≤ 30 %, no stop lists) or 1 shared identifier. Candidates are restricted to projects the device reads NOW ∩ the enqueue-time `question` set ∩ policy on, with a visible non-device scope (the privacy gate's rule, applied in SQL).
 > (6) **Tasks/prompts**: W2b uses new task names `place`, `relate` (≤ 8 candidates per call), `relate_verify` (v1), leaving the bench tasks `placement`/`contradiction` v1 to G-LIVE-A; `max_tokens` 700/1400/700 (batched, reasoning included).
 > (7) **Verifier**: production = the OTHER profile of the chain (`HLM_LIBRARIAN_VERIFIER=cross`); G-LIVE-B measures each profile alone (verifier = same profile, different prompt).
 > (8) **Enqueue**: gated by `HLM_LIBRARIAN_ENABLED` in the api process (R2 mounts llm.env into api + librarian); jobs ≤ 4 versions; relation reviews start 3 s after the write and wait up to 300 s for the embed worker, then run lexical-only.
 > (9) W2a fix: `actor.recheck` now treats an EXPIRED device as untrusted at apply time (the privacy gate already did).
-> (10) Custom answers re-plan with a `write_review` job of the still-current subjects under the answering device's capabilities (priority 4); every answer is a `librarian-rule` fact (the note is dropped from the rule when it reproduces item text).
+> (10) Custom answers re-plan with a `write_review` job of the still-current subjects under the answering device's capabilities (priority 4). Every answer is a `librarian-rule` fact built only from the structured decision (template text + clue refs); the free-text note stays in the question's `answer` and reaches only that project's re-plan job (as a one-job rule). Rules whose clue refs are not all readable by the triggering device are not loaded into its prompts.
+> (11) One pending question per (kind, subject versions): a pair reviewed again from its other side is counted as `duplicate_proposals`, not asked twice.
 
 ## D-067 guard design (5 lines)
 1. Reference guard: only ids from the call's candidate set count (unknown/duplicate dropped, missing = abstention).
@@ -42,3 +43,17 @@ apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py
 3. Temporal guard: a supersession must point to the later `t_valid`; the calibrated tier table makes low confidence at most a question, weak link guesses an abstention.
 4. High-impact (contradicts+supersedes, cross-project dup/refine → widen) needs an independent verifier call (decomposed same_subject/conflict/current, other profile) to agree before anything is raised; disagreement downgrades or drops, both calls audited.
 5. Abstention is the prompts' default ("none" when unsure), counted in the audit and scored in G-LIVE-B.
+
+## Consult 41 (gpt-6-sol, verdict NO) — resolution (commit 78b25d5 + 6d2c247)
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | answer note leaks into global working memory | rule text is template-only; note only in `answer` + the re-plan job; `readable_rules` filters rules by ref readability (`test_sol41_rules_with_unreadable_refs_are_not_loaded`, `test_gq1_*`) |
+| 2 | expired questions approvable | `batch_questions` never returns an expired open question; `memory.answer` checks expiry for every status (`test_sol41_expired_questions_cannot_be_approved`, `test_sol41_approved_widen_expires_too`) |
+| 3 | conflicting approved questions abort the batch | shared `planned` state in `materialize`; a question whose subject an earlier one closed is `superseded` (`test_sol41_conflicting_batch_questions`) |
+| 4 | role demotion race | `lock_role_order`: apply holds advisory (4,0) SHARED, `set_role` EXCLUSIVE (`test_sol41_role_decision_waits_for_an_apply_in_flight`) |
+| 5 | equal `valid_from` with supersedes=old | only the NEW item may replace on a tie (unit test) |
+| 6 | verifier blind to scope; no-answer kept as a question | verifier items carry `project` same/other + prompt rule; no answer → dropped (`verifier_no_answer`) |
+| 7 | early approval stranded under observer | `role_denied` hands approvals back (questions open, batch ready) (`test_sol41_observer_hands_approvals_back`) |
+| B | G-LIVE-B dominated by `none` | per-class worst-over-reps bars: positive recall ≥ .85, positive precision ≥ .90, direction ≥ .90, false cross raise ≤ .02; plus the production chain (luna + deepseek verifier) |
+| C1 | answer close skips actor checks | `memory.answer` materializes with the answering device's ctx + capability set (check_link/check_correct) |
+| C2 | notices before hits | now after hits (deviation 4 above) |
