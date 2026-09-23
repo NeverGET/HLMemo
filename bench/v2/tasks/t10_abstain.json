@@ -1,0 +1,516 @@
+{
+ "task": "answer_or_abstain",
+ "family": "T10",
+ "version": 1,
+ "pack": "public",
+ "description": "Question + retrieved snippets; answer only when the snippets contain the answer, otherwise null. 10 unanswerable cases (same entity other attribute, other environment, undecided proposal, undated plan, other component's metric, superseded-without-value) + 5 answerable controls.",
+ "changelog": [],
+ "cases": [
+  {
+   "id": "T10-01",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Only the frequency (monthly) is given; no weekday anywhere.",
+   "question": "On which day of the week does the Tessera restore drill take place?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-04-02",
+     "text": "A restore drill is expected once a month."
+    },
+    {
+     "id": "r2",
+     "date": "2026-04-02",
+     "text": "The last drill took 11 minutes for a 3 GB dump."
+    },
+    {
+     "id": "r3",
+     "date": "2026-04-01",
+     "text": "Tessera nightly backups are produced by tessera-backup.timer at 02:30."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-02",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Only the staging value exists; production value is never stated.",
+   "question": "What is DB_POOL_MAX set to for the Kestrel API in production?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-05-12",
+     "text": "The kestrel-api README describes DB_POOL_MAX as the per-replica connection pool limit."
+    },
+    {
+     "id": "r2",
+     "date": "2026-05-14",
+     "text": "In staging, DB_POOL_MAX is 8 so the small staging database is not exhausted."
+    },
+    {
+     "id": "r3",
+     "date": "2026-05-15",
+     "text": "Load test in staging: with DB_POOL_MAX 8 the p95 latency stayed under 200 ms."
+    },
+    {
+     "id": "r4",
+     "date": "2026-05-16",
+     "text": "Production runs 6 API replicas behind the gateway."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-03",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "p99 is given for a different component (Flink); ingest only has p95.",
+   "question": "What is the p99 latency of the Wren ingest service?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-06-03",
+     "text": "Ingest p95 is 20 ms at the current load."
+    },
+    {
+     "id": "r2",
+     "date": "2026-06-03",
+     "text": "The Flink enrichment job has a p99 processing delay of 120 ms."
+    },
+    {
+     "id": "r3",
+     "date": "2026-06-04",
+     "text": "Ingest throughput peaks at 4k events per second."
+    },
+    {
+     "id": "r4",
+     "date": "2026-06-05",
+     "text": "Consumer lag alert fires at 100k messages."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-04",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Only a comparison and a pending proposal; the email provider is a different channel.",
+   "question": "Which vendor was chosen for the SMS dunning reminders?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-05-02",
+     "text": "Proposal: send SMS reminders in addition to dunning emails; legal review pending."
+    },
+    {
+     "id": "r2",
+     "date": "2026-05-09",
+     "text": "Vendor comparison for SMS: vendor A is cheaper per message, vendor B has better delivery reports in Turkey. No decision yet."
+    },
+    {
+     "id": "r3",
+     "date": "2026-05-10",
+     "text": "Dunning emails go through the transactional email provider, not the marketing one."
+    },
+    {
+     "id": "r4",
+     "date": "2026-05-20",
+     "text": "Legal review of SMS reminders is still open."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-05",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "The SLA shown belongs to German; the Turkish snippet says who translates, not how fast; 30 days is a staleness flag.",
+   "question": "What is the turnaround time (SLA) for Turkish translations of the Quillstack docs?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-06-20",
+     "text": "Türkçe çeviriler artık destek ekibi tarafından şirket içinde yapılıyor."
+    },
+    {
+     "id": "r2",
+     "date": "2026-06-21",
+     "text": "The German translation agency commits to 5 business days per batch."
+    },
+    {
+     "id": "r3",
+     "date": "2026-06-22",
+     "text": "Translations older than the English page by 30 days are flagged as stale."
+    },
+    {
+     "id": "r4",
+     "date": "2026-06-22",
+     "text": "Machine translation is used only for first drafts and must be reviewed."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-06",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Ports are given for the exporter and pgbouncer, not the dashboard.",
+   "question": "Which port does the orbitq web dashboard listen on?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-03-02",
+     "text": "The orbitq dashboard shows queue depth, oldest job age and dead-letter counts."
+    },
+    {
+     "id": "r2",
+     "date": "2026-03-02",
+     "text": "The dashboard requires an admin login."
+    },
+    {
+     "id": "r3",
+     "date": "2026-03-03",
+     "text": "The Prometheus exporter serves metrics on port 9464."
+    },
+    {
+     "id": "r4",
+     "date": "2026-03-04",
+     "text": "Workers connect to Postgres through pgbouncer on port 6432."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-07",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "A plan without a date; the start date is explicitly unscheduled.",
+   "question": "From which date will Kestrel partner API keys start expiring?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-05-28",
+     "text": "Partner API keys will expire after 365 days once the key migration is done."
+    },
+    {
+     "id": "r2",
+     "date": "2026-05-29",
+     "text": "The key migration is not scheduled yet; it depends on the partner portal release."
+    },
+    {
+     "id": "r3",
+     "date": "2026-05-30",
+     "text": "API_KEY_TTL controls partner key expiry."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-08",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "The change and its reason are present; no approver is named.",
+   "question": "Who approved the switch of ledgerd's rounding mode to ROUND_HALF_EVEN?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-04-15",
+     "text": "Switched to ROUND_HALF_EVEN to follow the tax office's guidance."
+    },
+    {
+     "id": "r2",
+     "date": "2026-04-15",
+     "text": "Rounding happens per line, not on the invoice total."
+    },
+    {
+     "id": "r3",
+     "date": "2026-04-16",
+     "text": "Kuruş farkları banker's rounding yüzünden normal."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-09",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "1 MB is the JSON body limit, a different attribute than attachment size.",
+   "question": "What is the maximum size of an attachment uploaded to Tessera?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-06-11",
+     "text": "Attachments are indexed by filename only."
+    },
+    {
+     "id": "r2",
+     "date": "2026-06-11",
+     "text": "Attachments are synced separately with rclone to offsite storage."
+    },
+    {
+     "id": "r3",
+     "date": "2026-06-12",
+     "text": "The Tessera JSON API rejects request bodies larger than 1 MB."
+    },
+    {
+     "id": "r4",
+     "date": "2026-06-12",
+     "text": "Private pages are filtered by space permissions at query time."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-10",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "300 was superseded by an unstated new value; the current threshold is not in the snippets.",
+   "question": "What is the current alert threshold for the Tessera indexer lag?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-06-15",
+     "text": "An alert fires when indexer_lag_seconds exceeds 300."
+    },
+    {
+     "id": "r2",
+     "date": "2026-07-01",
+     "text": "The search backend switched from Meilisearch to Postgres full-text search."
+    },
+    {
+     "id": "r3",
+     "date": "2026-07-03",
+     "text": "After the switch to Postgres FTS the indexer lag alert threshold was changed; see the alerting repo."
+    },
+    {
+     "id": "r4",
+     "date": "2026-07-04",
+     "text": "indexer_lag_seconds exposes the indexing delay."
+    }
+   ],
+   "gold": {
+    "answerable": false,
+    "answer_keys": [],
+    "evidence_ids": []
+   }
+  },
+  {
+   "id": "T10-11",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Directly stated in r1.",
+   "question": "Which header makes POST /payments safe to retry?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-03-10",
+     "text": "POST /payments accepts an Idempotency-Key header; a retry with the same key returns the stored response instead of charging again."
+    },
+    {
+     "id": "r2",
+     "date": "2026-03-10",
+     "text": "A retry with the same key but a different body is rejected with 422."
+    },
+    {
+     "id": "r3",
+     "date": "2026-03-11",
+     "text": "Webhooks are signed with a shared secret."
+    }
+   ],
+   "gold": {
+    "answerable": true,
+    "answer_keys": [
+     "Idempotency-Key",
+     "idempotency key"
+    ],
+    "evidence_ids": [
+     "r1"
+    ]
+   }
+  },
+  {
+   "id": "T10-12",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "'Published' = present in the JWKS; 90/30 days are distractor durations.",
+   "question": "How long do old signing keys remain published after a Kestrel key rotation?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-04-22",
+     "text": "Signing uses ES256; signing keys rotate every 90 days."
+    },
+    {
+     "id": "r2",
+     "date": "2026-04-22",
+     "text": "Old signing keys stay in the JWKS for 7 days after rotation."
+    },
+    {
+     "id": "r3",
+     "date": "2026-04-23",
+     "text": "Refresh tokens are valid 30 days and rotate on every use."
+    }
+   ],
+   "gold": {
+    "answerable": true,
+    "answer_keys": [
+     "7 days",
+     "seven days",
+     "one week",
+     "1 week"
+    ],
+    "evidence_ids": [
+     "r2"
+    ]
+   }
+  },
+  {
+   "id": "T10-13",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "The later update (30 min) supersedes 15 min.",
+   "question": "What is the Kestrel access token lifetime now?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-04-20",
+     "text": "Kestrel issues access tokens as JWTs valid for 15 minutes."
+    },
+    {
+     "id": "r2",
+     "date": "2026-05-05",
+     "text": "Access token lifetime increased to 30 minutes to reduce refresh traffic."
+    },
+    {
+     "id": "r3",
+     "date": "2026-05-06",
+     "text": "Password reset links expire after 1 hour."
+    }
+   ],
+   "gold": {
+    "answerable": true,
+    "answer_keys": [
+     "30 minutes",
+     "30 min",
+     "half an hour"
+    ],
+    "evidence_ids": [
+     "r2"
+    ]
+   }
+  },
+  {
+   "id": "T10-14",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "The answer is only in the German snippet; webhooks still retries (3).",
+   "question": "Which orbitq queue does not retry failed jobs at all?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-02-02",
+     "text": "After the payment outage, max_attempts was raised to 8 for the payments queue only."
+    },
+    {
+     "id": "r2",
+     "date": "2026-02-12",
+     "text": "Die Warteschlange 'emails' hat keine Retries, weil der Provider selbst wiederholt."
+    },
+    {
+     "id": "r3",
+     "date": "2026-04-10",
+     "text": "The webhooks queue uses max_attempts 3 because callers retry themselves."
+    },
+    {
+     "id": "r4",
+     "date": "2026-01-10",
+     "text": "max_attempts defaults to 5."
+    }
+   ],
+   "gold": {
+    "answerable": true,
+    "answer_keys": [
+     "emails"
+    ],
+    "evidence_ids": [
+     "r2"
+    ]
+   }
+  },
+  {
+   "id": "T10-15",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Scope exception: TRY invoices have no fee; 5 EUR applies to EUR invoices only.",
+   "question": "What late fee is charged on a TRY invoice after the second dunning reminder?",
+   "snippets": [
+    {
+     "id": "r1",
+     "date": "2026-02-10",
+     "text": "The second reminder follows 14 days after the due date, with a 5 EUR late fee."
+    },
+    {
+     "id": "r2",
+     "date": "2026-03-01",
+     "text": "Late fee removed for customers in Turkey because of local rules: TRY invoices get no fee."
+    },
+    {
+     "id": "r3",
+     "date": "2026-03-05",
+     "text": "The late fee for EUR invoices is still 5 EUR."
+    }
+   ],
+   "gold": {
+    "answerable": true,
+    "answer_keys": [
+     "no fee",
+     "none",
+     "no late fee",
+     "not charged",
+     "waived",
+     "no charge"
+    ],
+    "evidence_ids": [
+     "r2"
+    ]
+   }
+  }
+ ]
+}

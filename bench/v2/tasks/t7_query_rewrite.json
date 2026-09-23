@@ -1,0 +1,860 @@
+{
+ "task": "query_rewrite",
+ "family": "T7",
+ "version": 2,
+ "pack": "public",
+ "description": "Turkish developer question + project vocabulary -> up to 3 English search queries plus key terms. The English source passage is hidden; gold key terms and the identifier occur in it.",
+ "changelog": [
+  "v2: key_terms rewritten after blind pass: every group is an English rendering of a concept present in the Turkish question (no passage-only details); dual identifiers accepted where the question supports two equally"
+ ],
+ "cases": [
+  {
+   "id": "T7-01",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "'kaç kere yeniden denenir' = retry count; the cap is max_attempts, not lease/visibility settings.",
+   "question": "orbitq'da bir job en fazla kaç kere yeniden denenir, bunu hangi ayar belirliyor?",
+   "vocabulary": [
+    "max_attempts",
+    "retry_delay_s",
+    "visibility_timeout",
+    "jobs_dead",
+    "lease_seconds",
+    "priority",
+    "run_after",
+    "orbitq.toml",
+    "worker_concurrency",
+    "heartbeat_interval",
+    "@job",
+    "backoff_factor",
+    "dedupe_key",
+    "cron_schedule",
+    "queue_name",
+    "cron_timezone",
+    "cron_dedupe",
+    "reap_stale",
+    "sweep_on_start",
+    "drain",
+    "auto_extend",
+    "next_fire_at"
+   ],
+   "passage": "Retry policy. A job that raises is retried with exponential backoff (2 s, 4 s, 8 s and so on). The number of tries is capped by `max_attempts` (default 5) in the queue section of orbitq.toml; after the last attempt the job moves to the dead-letter table `jobs_dead` and an alert fires. Per-job overrides are possible with the `@job(max_attempts=...)` decorator argument.",
+   "passage_ref": "orbitq docs/retries.md",
+   "gold": {
+    "identifier": [
+     "max_attempts"
+    ],
+    "key_terms": [
+     "retry|retried|retries|tries|attempt",
+     "job",
+     "max|capped",
+     "orbitq"
+    ],
+    "distractors": [
+     "visibility_timeout",
+     "lease_seconds",
+     "worker_concurrency"
+    ]
+   }
+  },
+  {
+   "id": "T7-02",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "The bucket named in the runbook is invoices-archive; staging/export buckets are look-alikes.",
+   "question": "ledgerd'de üretilen fatura PDF'leri nerede saklanıyor, hangi bucket'a yazılıyor?",
+   "vocabulary": [
+    "invoices-archive",
+    "invoices-staging",
+    "receipts-export",
+    "/var/lib/ledgerd/tmp",
+    "pdf_renderer",
+    "lifecycle_days",
+    "cold tier",
+    "ledgerd.yaml",
+    "s3_endpoint",
+    "render_queue",
+    "tax_rates",
+    "WeasyPrint",
+    "INV-YYYY-NNNNN",
+    "fx_rates",
+    "credit_notes",
+    "public-assets"
+   ],
+   "passage": "Storage layout. Generated invoice PDFs are written to the object-storage bucket `invoices-archive` under the prefix `yyyy/mm/`. A lifecycle rule moves objects older than 400 days to the cold tier. Temporary renders live in `/var/lib/ledgerd/tmp` and are deleted after upload. The bucket is versioned, so an overwritten PDF can be restored.",
+   "passage_ref": "ledgerd RUNBOOK section 4",
+   "gold": {
+    "identifier": [
+     "invoices-archive"
+    ],
+    "key_terms": [
+     "invoice",
+     "PDF",
+     "bucket",
+     "ledgerd",
+     "stored|written|storage"
+    ],
+    "distractors": [
+     "invoices-staging",
+     "receipts-export",
+     "public-assets"
+    ]
+   }
+  },
+  {
+   "id": "T7-03",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "'yedekten geri dönmek' = restore from backup; the command is tessera-admin restore.",
+   "question": "Tessera'da yedekten geri dönmek için hangi komutu çalıştırıyoruz?",
+   "vocabulary": [
+    "tessera-admin restore",
+    "tessera-admin migrate",
+    "tessera-admin export",
+    "tessera-admin reindex",
+    "tessera-backup.timer",
+    "pg_dump",
+    "/srv/tessera/backups",
+    "tessera.env",
+    "WAL archive",
+    "snapshot",
+    "retention_days",
+    "web service",
+    "rclone",
+    "cache_ttl",
+    "indexer_lag_seconds"
+   ],
+   "passage": "Restoring from backup. Nightly dumps are written by the `tessera-backup.timer` unit to /srv/tessera/backups as compressed pg_dump files. To restore, stop the web service, then run `tessera-admin restore --from <dump-file>`; it drops and recreates the schema, replays the dump and runs pending migrations before the service starts again. A restore drill is expected once a month.",
+   "passage_ref": "Tessera ops guide, Backups",
+   "gold": {
+    "identifier": [
+     "tessera-admin restore"
+    ],
+    "key_terms": [
+     "restore|restoring",
+     "backup",
+     "tessera",
+     "command|run"
+    ],
+    "distractors": [
+     "tessera-admin export",
+     "WAL archive",
+     "snapshot"
+    ]
+   }
+  },
+  {
+   "id": "T7-04",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "'dakikada kaç istek' = requests per minute; configured by RATE_LIMIT_PER_MIN.",
+   "question": "Kestrel API'de dakikada kaç istek atabiliyoruz, bu limit nerede tanımlı?",
+   "vocabulary": [
+    "RATE_LIMIT_PER_MIN",
+    "BURST_SECONDS",
+    "API_KEY_TTL",
+    "Retry-After",
+    "MAX_BODY_BYTES",
+    "CORS_ORIGINS",
+    "REQUEST_TIMEOUT_MS",
+    "token-bucket",
+    "kestrel-gateway",
+    "JWT_AUDIENCE",
+    "DB_POOL_MAX",
+    "APNS_ENV",
+    "ratelimit_rejected_total",
+    "Redis",
+    "/health"
+   ],
+   "passage": "Rate limiting. Each API key is limited to 120 requests per minute by the token-bucket middleware. The value comes from the environment variable `RATE_LIMIT_PER_MIN`; bursts up to 2x are allowed for 10 seconds. Clients that exceed the limit receive HTTP 429 with a Retry-After header.",
+   "passage_ref": "kestrel-api README, Rate limiting",
+   "gold": {
+    "identifier": [
+     "RATE_LIMIT_PER_MIN"
+    ],
+    "key_terms": [
+     "requests per minute|per minute",
+     "rate limit|rate-limit|rate limiting|limited|limit",
+     "API"
+    ],
+    "distractors": [
+     "MAX_BODY_BYTES",
+     "REQUEST_TIMEOUT_MS",
+     "API_KEY_TTL"
+    ]
+   }
+  },
+  {
+   "id": "T7-05",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "Launch default is the local e5-small; the hosted models are opt-in profiles only.",
+   "question": "HLMemo varsayılan olarak hangi embedding modelini kullanıyor, bulut API'si mi lokal mi?",
+   "vocabulary": [
+    "multilingual-e5-small",
+    "gemini-embedding-2",
+    "pplx-embed-v1-4b",
+    "pgvector",
+    "HNSW",
+    "HLM_EMBED_MODEL",
+    "RRF",
+    "trigram",
+    "ONNX",
+    "memory.query",
+    "drilldown",
+    "librarian",
+    "token_budget",
+    "chunks",
+    "valid_at"
+   ],
+   "passage": "Embeddings in the launch configuration use the local embedder intfloat/multilingual-e5-small (384 dimensions) executed through ONNX on the CPU. A hosted embedding API was measured as well; inside the hybrid retrieval path it did not beat the local model and added network latency, so it stays an opt-in profile. Each vector row records its model id and revision, which turns a model switch into a re-embed job.",
+   "passage_ref": "HLMemo design notes, embeddings (paraphrase)",
+   "gold": {
+    "identifier": [
+     "multilingual-e5-small",
+     "e5-small"
+    ],
+    "key_terms": [
+     "embedding|embedder|embed",
+     "local",
+     "hosted|API|cloud",
+     "model"
+    ],
+    "distractors": [
+     "gemini-embedding-2",
+     "pplx-embed-v1-4b"
+    ]
+   }
+  },
+  {
+   "id": "T7-06",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "The minimum version is enforced by engines.node in package.json.",
+   "question": "Quillstack docs build'i Node 18'de patlıyor; minimum Node sürümü ne ve nerede zorunlu kılınıyor?",
+   "vocabulary": [
+    "engines.node",
+    ".nvmrc",
+    "packageManager",
+    "pnpm-lock.yaml",
+    "build:docs",
+    "NODE_OPTIONS",
+    "vite.config.ts",
+    "structuredClone",
+    "tsconfig.json",
+    "Cache-Control",
+    "dist/",
+    "link-check",
+    "search.json",
+    "cdn purge",
+    "i18n/"
+   ],
+   "passage": "Build requirements. The static site generator uses the fetch API and structuredClone at build time, so the minimum runtime is Node 20.11. This is enforced through the `engines.node` field in package.json, and CI fails fast on older versions. Use the version pinned in `.nvmrc` locally.",
+   "passage_ref": "Quillstack CONTRIBUTING, Build requirements",
+   "gold": {
+    "identifier": [
+     "engines.node"
+    ],
+    "key_terms": [
+     "Node",
+     "minimum",
+     "build",
+     "enforced|enforce|required|requirement"
+    ],
+    "distractors": [
+     "NODE_OPTIONS",
+     "packageManager",
+     "tsconfig.json"
+    ]
+   }
+  },
+  {
+   "id": "T7-07",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Double processing of long jobs comes from the lease expiring (visibility_timeout), not from dedupe keys.",
+   "question": "Worker bazen aynı job'u iki kere işliyor gibi görünüyor, özellikle uzun süren işlerde. Bu neden oluyor?",
+   "vocabulary": [
+    "max_attempts",
+    "retry_delay_s",
+    "visibility_timeout",
+    "jobs_dead",
+    "lease_seconds",
+    "priority",
+    "run_after",
+    "orbitq.toml",
+    "worker_concurrency",
+    "heartbeat_interval",
+    "@job",
+    "backoff_factor",
+    "dedupe_key",
+    "cron_schedule",
+    "queue_name",
+    "cron_timezone",
+    "cron_dedupe",
+    "reap_stale",
+    "sweep_on_start",
+    "drain",
+    "auto_extend",
+    "next_fire_at"
+   ],
+   "passage": "Duplicate execution. A leased job becomes visible to other workers again when its `visibility_timeout` expires (default 60 s). Long-running handlers must call `job.extend()` periodically, otherwise a second worker picks up the same job while the first is still running. Set the timeout above the p99 handler duration or enable automatic lease renewal with `auto_extend = true`.",
+   "passage_ref": "orbitq FAQ, Duplicate execution",
+   "gold": {
+    "identifier": [
+     "visibility_timeout"
+    ],
+    "key_terms": [
+     "job",
+     "worker",
+     "twice|duplicate|same job|second worker",
+     "long-running|long running|long"
+    ],
+    "distractors": [
+     "max_attempts",
+     "dedupe_key",
+     "worker_concurrency"
+    ]
+   }
+  },
+  {
+   "id": "T7-08",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "Stale-first is fixed by applied supersedes links on the read side, not by other link kinds.",
+   "question": "Sorgu sonuçlarında artık geçersiz olmuş eski bilgi yenisinden önce çıkıyor; bunu hangi mekanizma düzeltecek?",
+   "vocabulary": [
+    "supersedes",
+    "relates_to",
+    "contradicts",
+    "derived_from",
+    "member_of",
+    "valid_to",
+    "known_at",
+    "RRF",
+    "version_signals",
+    "drilldown",
+    "memory.raw",
+    "call_the_day",
+    "importance",
+    "token_budget",
+    "topic"
+   ],
+   "passage": "Temporal supersession, read side. When two hits are joined by an applied `supersedes` link, memory.query drops the older one from the hits; it stays reachable through drilldown and through historical valid_at queries. If two near-duplicates differ only in valid_from and have no link, the newer one wins an exact rank-fusion tie. On the write side the librarian proposes those links.",
+   "passage_ref": "HLMemo roadmap, W2b temporal supersession (paraphrase)",
+   "gold": {
+    "identifier": [
+     "supersedes"
+    ],
+    "key_terms": [
+     "older|stale|outdated|old",
+     "newer",
+     "query|hits|results"
+    ],
+    "distractors": [
+     "relates_to",
+     "derived_from",
+     "member_of"
+    ]
+   }
+  },
+  {
+   "id": "T7-09",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Staging works but prod fails -> environment selector APNS_ENV (sandbox vs production).",
+   "question": "Mobil uygulamada push bildirimleri staging'de geliyor ama prod'da gelmiyor; hangi ayar farklı olabilir?",
+   "vocabulary": [
+    "APNS_ENV",
+    "APNS_KEY_ID",
+    "APNS_TEAM_ID",
+    "FCM_PROJECT",
+    "push_queue",
+    "device_tokens",
+    "BadDeviceToken",
+    "NOTIF_BATCH_SIZE",
+    "quiet_hours",
+    "RATE_LIMIT_PER_MIN",
+    "JWT_AUDIENCE",
+    "CORS_ORIGINS",
+    "Redis",
+    "last_seen_at"
+   ],
+   "passage": "Push delivery. iOS pushes use token-based auth against Apple's service. The target environment is selected by `APNS_ENV`: `sandbox` for staging builds, `production` for App Store builds. A production build talking to the sandbox endpoint gets BadDeviceToken errors and notifications are silently dropped. Android uses FCM with one project for both environments.",
+   "passage_ref": "kestrel notifications runbook",
+   "gold": {
+    "identifier": [
+     "APNS_ENV"
+    ],
+    "key_terms": [
+     "push|notification",
+     "staging",
+     "production|prod",
+     "environment|setting"
+    ],
+    "distractors": [
+     "APNS_KEY_ID",
+     "FCM_PROJECT",
+     "NOTIF_BATCH_SIZE"
+    ]
+   }
+  },
+  {
+   "id": "T7-10",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Refreshing the index manually = tessera-admin reindex; not a cache TTL or a restore.",
+   "question": "Arama sonuçları yeni eklenen sayfaları göstermiyor; index'i elle nasıl tazeleyebiliriz?",
+   "vocabulary": [
+    "tessera-admin restore",
+    "tessera-admin reindex",
+    "tessera-admin migrate",
+    "tessera-admin export",
+    "indexer_lag_seconds",
+    "search_backend",
+    "cache_ttl",
+    "ts_rank_cd",
+    "unaccent",
+    "tessera-backup.timer",
+    "web service",
+    "permissions",
+    "attachments"
+   ],
+   "passage": "Search index. Page edits are pushed to the search index asynchronously by the indexer worker. If the worker was down, new pages are missing from results until they are re-indexed. Run `tessera-admin reindex --since 2d` to rebuild entries changed in the last two days, or omit `--since` for a full rebuild (slow on large wikis). Check the delay with the `indexer_lag_seconds` metric.",
+   "passage_ref": "Tessera ops guide, Search index",
+   "gold": {
+    "identifier": [
+     "tessera-admin reindex"
+    ],
+    "key_terms": [
+     "search",
+     "index|reindex|re-index",
+     "new page|new pages|pages",
+     "rebuild|refresh"
+    ],
+    "distractors": [
+     "tessera-admin restore",
+     "cache_ttl"
+    ]
+   }
+  },
+  {
+   "id": "T7-11",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "The rule is banker's rounding ROUND_HALF_EVEN per line; HALF_UP is what spreadsheets do.",
+   "question": "Faturalarda kuruş farkı çıkıyor, Excel'le tutmuyor; yuvarlama hangi kurala göre yapılıyor?",
+   "vocabulary": [
+    "ROUND_HALF_EVEN",
+    "ROUND_HALF_UP",
+    "ROUND_DOWN",
+    "tax_rates",
+    "minor_units",
+    "currency_code",
+    "invoice_total",
+    "fx_rates",
+    "Decimal",
+    "credit_notes",
+    "recon_monthly.csv",
+    "render_queue"
+   ],
+   "passage": "Rounding. All monetary amounts are stored as integer minor units. Line totals are computed with Python Decimal and rounded with ROUND_HALF_EVEN (banker's rounding) at the line level, not at the invoice total; tax is computed per line as well. This follows the tax office's guidance and explains one-cent differences against spreadsheets that round half up.",
+   "passage_ref": "ledgerd accounting notes, Rounding",
+   "gold": {
+    "identifier": [
+     "ROUND_HALF_EVEN"
+    ],
+    "key_terms": [
+     "rounding|round",
+     "cent|one-cent",
+     "spreadsheet|Excel",
+     "invoice"
+    ],
+    "distractors": [
+     "ROUND_HALF_UP",
+     "fx_rates",
+     "ROUND_DOWN"
+    ]
+   }
+  },
+  {
+   "id": "T7-12",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "The guarantee is the wrapper's preflight query, not instruction files or hooks.",
+   "question": "Ajan ilk işe başlamadan önce hafızayı sorgulamasını garanti eden şey ne? Sadece CLAUDE.md'ye yazmak yetmiyor mu?",
+   "vocabulary": [
+    "preflight",
+    "call_the_day",
+    "memory.write",
+    "register_lesson",
+    "risk_check",
+    "CLAUDE.md",
+    "hooks",
+    "drilldown",
+    "token_budget",
+    "memory.query",
+    "project_card",
+    "device_scope",
+    "evidence"
+   ],
+   "passage": "Proactive recall. Instruction files alone do not guarantee that a coding agent calls the memory tool. The `hlm` wrapper therefore runs a memory.query preflight before it launches the CLI and injects the bounded result as the first prompt; if the query fails, the wrapper blocks instead of starting silently. The server phrases an empty result as no matching evidence, never as no risk.",
+   "passage_ref": "HLMemo design, proactive recall (paraphrase)",
+   "gold": {
+    "identifier": [
+     "preflight"
+    ],
+    "key_terms": [
+     "memory",
+     "instruction file|instruction files|CLAUDE.md",
+     "guarantee",
+     "agent",
+     "before|first"
+    ],
+    "distractors": [
+     "call_the_day",
+     "register_lesson",
+     "hooks"
+    ]
+   }
+  },
+  {
+   "id": "T7-13",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "'yaz saati' = daylight saving; the zone is cron_timezone.",
+   "question": "Gece yarısı çalışması gereken zamanlanmış görev yaz saati değişince iki kere çalıştı; saat dilimi nerede ayarlanıyor?",
+   "vocabulary": [
+    "max_attempts",
+    "retry_delay_s",
+    "visibility_timeout",
+    "jobs_dead",
+    "lease_seconds",
+    "priority",
+    "run_after",
+    "orbitq.toml",
+    "worker_concurrency",
+    "heartbeat_interval",
+    "@job",
+    "backoff_factor",
+    "dedupe_key",
+    "cron_schedule",
+    "queue_name",
+    "cron_timezone",
+    "cron_dedupe",
+    "reap_stale",
+    "sweep_on_start",
+    "drain",
+    "auto_extend",
+    "next_fire_at"
+   ],
+   "passage": "Scheduled jobs. Cron expressions are evaluated in the zone given by `cron_timezone` (default UTC). With a local zone such as Europe/Berlin, the daylight-saving switch can skip or repeat a run between 02:00 and 03:00; orbitq deduplicates by fire time only when `cron_dedupe = true`. Keep production schedules in UTC unless business hours matter.",
+   "passage_ref": "orbitq docs/cron.md",
+   "gold": {
+    "identifier": [
+     "cron_timezone"
+    ],
+    "key_terms": [
+     "timezone|time zone|zone",
+     "daylight|DST|daylight-saving",
+     "twice|repeat|duplicate|dedup",
+     "scheduled|schedule|cron"
+    ],
+    "distractors": [
+     "heartbeat_interval",
+     "max_attempts",
+     "run_after"
+    ]
+   }
+  },
+  {
+   "id": "T7-14",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "'havuz boyutu' = pool size, set by DB_POOL_MAX.",
+   "question": "Yük altında 'too many connections' hatası alıyoruz; havuz boyutunu nereden değiştiriyoruz?",
+   "vocabulary": [
+    "DB_POOL_MAX",
+    "DB_STATEMENT_TIMEOUT",
+    "REQUEST_TIMEOUT_MS",
+    "max_connections",
+    "pgbouncer",
+    "replicas",
+    "RATE_LIMIT_PER_MIN",
+    "prepare_threshold",
+    "read replica",
+    "MAX_BODY_BYTES",
+    "Redis"
+   ],
+   "passage": "Database connections. Each API replica opens a pool of up to `DB_POOL_MAX` connections (default 20). With 6 replicas that is 120 connections against a Postgres limit of 100, which is why bursts fail with too many connections. Lower the pool, raise max_connections on the server, or route through the pgbouncer sidecar in transaction mode.",
+   "passage_ref": "kestrel-api README, Database",
+   "gold": {
+    "identifier": [
+     "DB_POOL_MAX"
+    ],
+    "key_terms": [
+     "too many connections",
+     "pool",
+     "connection",
+     "load|burst"
+    ],
+    "distractors": [
+     "DB_STATEMENT_TIMEOUT",
+     "REQUEST_TIMEOUT_MS",
+     "MAX_BODY_BYTES"
+    ]
+   }
+  },
+  {
+   "id": "T7-15",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "The question never mentions stdin; the cause is stdin swallowing, fixed with ssh -n.",
+   "question": "Sunucuya ssh ile yolladığımız heredoc script yarıda kesiliyor, sonraki satırlar hiç çalışmıyor ama çıkış kodu 0. Neden?",
+   "vocabulary": [
+    "ssh -n",
+    "set -e",
+    "pipefail",
+    "nohup",
+    "BatchMode",
+    "ControlMaster",
+    "ServerAliveInterval",
+    "tmux",
+    "sudo -E",
+    "trap",
+    "exit code",
+    "scp",
+    "rsync",
+    "timeout"
+   ],
+   "passage": "Remote scripts. When a script is fed to a remote shell through standard input, any command inside it that reads stdin (ssh itself, docker compose exec without -T, a migration runner) consumes the remaining lines of the script, so everything after it never runs and the exit code can still be 0. Inside loops or heredocs call `ssh -n` (or redirect from /dev/null) and pass -T to docker compose exec.",
+   "passage_ref": "ops lessons, remote scripts",
+   "gold": {
+    "identifier": [
+     "ssh -n"
+    ],
+    "key_terms": [
+     "ssh",
+     "heredoc",
+     "exit code|exit status",
+     "script",
+     "remaining lines|rest of the script|lines"
+    ],
+    "distractors": [
+     "set -e",
+     "pipefail",
+     "ControlMaster"
+    ]
+   }
+  },
+  {
+   "id": "T7-16",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Double charging on client retry is prevented by the Idempotency-Key header; the question never says 'idempotent'.",
+   "question": "Mobil taraf timeout yiyince isteği baştan yolluyor ve bazen müşterinin kartından iki kez çekiliyor; bizde buna karşı ne var?",
+   "vocabulary": [
+    "Idempotency-Key",
+    "X-Request-Id",
+    "payment_intent",
+    "dedupe_window",
+    "webhook_secret",
+    "refund_id",
+    "3DS",
+    "capture_later",
+    "POST /payments",
+    "422",
+    "chargeback",
+    "settlement_job"
+   ],
+   "passage": "Payments API. POST /payments accepts an `Idempotency-Key` header. The first request with a given key is executed and its response stored for 24 hours; a retry with the same key returns the stored response instead of charging again. A retry with the same key but a different body is rejected with 422. Clients must generate one key per checkout attempt.",
+   "passage_ref": "ledgerd API reference, Payments",
+   "gold": {
+    "identifier": [
+     "Idempotency-Key"
+    ],
+    "key_terms": [
+     "retry|resend|retried",
+     "charge|charging|charged",
+     "payment|payments",
+     "twice|again|duplicate"
+    ],
+    "distractors": [
+     "X-Request-Id",
+     "dedupe_window",
+     "webhook_secret"
+    ]
+   }
+  },
+  {
+   "id": "T7-17",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Old version after deploy = CDN-cached HTML (Cache-Control max-age) not purged; ETag/service worker are look-alikes.",
+   "question": "Deploy olmasına rağmen sitede hâlâ eski sürüm görünüyor, kullanıcılar sayfayı yenilese de değişmiyor. Nereye bakmalıyım?",
+   "vocabulary": [
+    "Cache-Control",
+    "cdn purge",
+    "ETag",
+    "service worker",
+    "Last-Modified",
+    "stale-while-revalidate",
+    "immutable",
+    "build:docs",
+    "engines.node",
+    "dist/",
+    "link-check",
+    ".nvmrc"
+   ],
+   "passage": "Stale pages after deploy. HTML is served with `Cache-Control: max-age=3600` by the CDN, while hashed assets are immutable. After a deploy the old HTML can be served for up to an hour unless the pipeline purges the CDN. The deploy job calls `cdn purge --paths '/*'` only on the main branch; manual deploys from a laptop skip it. Lower max-age for HTML to 60 or purge manually.",
+   "passage_ref": "Quillstack hosting notes",
+   "gold": {
+    "identifier": [
+     "Cache-Control",
+     "cdn purge"
+    ],
+    "key_terms": [
+     "deploy",
+     "old|stale",
+     "page|pages|HTML"
+    ],
+    "distractors": [
+     "ETag",
+     "service worker",
+     "Last-Modified"
+    ]
+   }
+  },
+  {
+   "id": "T7-18",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Root cause is the checkout umask making mounted files unreadable; SELinux is the tempting wrong guess.",
+   "question": "Yeni sunucuda container sürekli restart oluyor, loglarda permission denied var ama dosya yerinde duruyor; lokalde hiç sorun yok.",
+   "vocabulary": [
+    "umask",
+    "chmod",
+    "USER directive",
+    "restart policy",
+    "read_only",
+    "entrypoint.sh",
+    "SELinux",
+    "fsGroup",
+    "tmpfs",
+    "cap_drop",
+    "healthcheck",
+    "no-new-privileges"
+   ],
+   "passage": "Crash loop on fresh hosts. The deploy runner checks out the release under `umask 077`, so bind-mounted files become readable only by the deploy user. The web container runs as uid 1500 and cannot read its mounted entrypoint, which shows up as permission denied and a restart loop. The runner now resets file modes to 0644 after every checkout, including rollbacks.",
+   "passage_ref": "Tessera deploy notes, incident log",
+   "gold": {
+    "identifier": [
+     "umask"
+    ],
+    "key_terms": [
+     "restart|restarting|crash loop",
+     "permission denied",
+     "container",
+     "file|files",
+     "host|hosts|server"
+    ],
+    "distractors": [
+     "SELinux",
+     "read_only",
+     "fsGroup"
+    ]
+   }
+  },
+  {
+   "id": "T7-19",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Stuck 'running' jobs after deploy are orphans; the fix is reap_stale / the startup sweeper, not dead-letter or drain.",
+   "question": "Kuyruk boşalmıyor ama worker'lar boşta görünüyor; deploy'dan beri bir sürü iş 'running' diye takılı kalmış.",
+   "vocabulary": [
+    "max_attempts",
+    "retry_delay_s",
+    "visibility_timeout",
+    "jobs_dead",
+    "lease_seconds",
+    "priority",
+    "run_after",
+    "orbitq.toml",
+    "worker_concurrency",
+    "heartbeat_interval",
+    "@job",
+    "backoff_factor",
+    "dedupe_key",
+    "cron_schedule",
+    "queue_name",
+    "cron_timezone",
+    "cron_dedupe",
+    "reap_stale",
+    "sweep_on_start",
+    "drain",
+    "auto_extend",
+    "next_fire_at"
+   ],
+   "passage": "Orphaned jobs. When a worker is killed during a deploy, jobs it had leased stay in state running. They keep occupying the per-queue concurrency counters, so the scheduler thinks capacity is full while workers idle. Run `orbitq reap_stale --older-than 15m` or enable the startup sweeper (`sweep_on_start = true`) so a restarting worker returns orphaned jobs to ready.",
+   "passage_ref": "orbitq FAQ, Orphaned jobs",
+   "gold": {
+    "identifier": [
+     "reap_stale",
+     "sweep_on_start"
+    ],
+    "key_terms": [
+     "running",
+     "deploy",
+     "idle",
+     "queue",
+     "stuck|orphan|orphaned"
+    ],
+    "distractors": [
+     "jobs_dead",
+     "max_attempts",
+     "drain"
+    ]
+   }
+  },
+  {
+   "id": "T7-20",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Cross-language matching is the synonym_map stage; stemming/fuzzy matching cannot map TR words to EN catalog terms.",
+   "question": "Uygulamada 'ayakkabı' yazınca arama hiçbir şey bulmuyor ama 'shoe' yazınca buluyor; katalog İngilizce. Hangi bileşen bunu çözmeli?",
+   "vocabulary": [
+    "synonym_map",
+    "stemmer",
+    "fuzzy_match",
+    "search_index",
+    "locale",
+    "analyzer",
+    "stopwords",
+    "boost_rules",
+    "catalog_sync",
+    "autocomplete",
+    "spellcheck",
+    "tokenizer"
+   ],
+   "passage": "Search. The product catalog is authored in English only. Localized queries go through the `synonym_map` stage before the full-text lookup: it maps localized terms to catalog vocabulary per locale (tr, de) and is rebuilt nightly from the translation memory. Without an entry the query falls back to the English index and returns nothing for Turkish words.",
+   "passage_ref": "kestrel catalog notes, Search",
+   "gold": {
+    "identifier": [
+     "synonym_map"
+    ],
+    "key_terms": [
+     "search",
+     "catalog",
+     "English",
+     "Turkish|localized|locale",
+     "nothing"
+    ],
+    "distractors": [
+     "stemmer",
+     "fuzzy_match",
+     "stopwords"
+    ]
+   }
+  }
+ ]
+}

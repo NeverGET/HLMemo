@@ -70,3 +70,27 @@ no cache discount) | whether the low-reasoning request was honored (reasoning to
 - Columns: `variance` = |run1 - run2| per case averaged over T1-T4 (needs `--runs 2`); `monthly list` vs
   `monthly cached` (observed OpenRouter cache-hit ratio billed at the model's cache-read price);
   `reasoning param` says whether `--reasoning low|off` was honored (reasoning tokens reported by usage).
+
+## bench v2 (harder librarian suite, T5-T12)
+
+v1 saturates (4-5 models at 98-100%). `--suite v2` runs eight harder families built around what the
+librarian does in Phase 2-3: supersession choice (T5), contradiction vs compatible relations (T6),
+Turkish→English query rewrite (T7), long consolidation with hallucination penalty (T8), risk_check over a
+30-lesson library with silent cases (T9), abstain on unanswerable questions (T10), prompt-injection
+resistance (T11) and strict long nested JSON (T12). Design, label rules, scoring, gold protocol and
+anti-contamination rules: `v2/DESIGN.md`.
+
+```bash
+.venv/bin/python run.py --suite v2 --models openai/gpt-6-luna --runs 3 --max-spend 2
+.venv/bin/python run.py --suite v2 --models m1,m2 --tasks T5,T9 --no-private          # subset, public pack only
+.venv/bin/python run.py --suite v2 --models m1 --pack v2/tasks/t12_extract_review.json  # one pack
+python3 v2/check_packs.py        # lint + sealed hold-out exclusion + privacy scan of all packs
+python3 v2/gen_t12.py            # regenerate the T12 pack (deterministic)
+```
+
+Without `--pack`, v2 loads `v2/tasks/*.json` plus the private pack `../docs/private/bench-v2/*.json` when it
+exists (owner machine only; gitignored). The v2 report (`results/<ts>-v2.md`) has, per model: macro mean,
+per-family and per-tier means, public vs private, min across reps, rep std-dev, per-case rep difference,
+JSON fails, latency, real cost and cost per correct answer (score >= 0.8), plus gate metrics
+(T6 false-supersede rate, T9 catch / false-warn rate, T10 false-answer rate, T11 complied count,
+T7 identifier hit rate, T8 coverage and hallucinated tokens). v1 behaviour is unchanged.

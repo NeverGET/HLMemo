@@ -1,0 +1,446 @@
+{
+ "task": "risk_check_v2",
+ "family": "T9",
+ "version": 1,
+ "pack": "public",
+ "description": "Planned action + a fixed library of 30 lessons (paraphrased real HLMemo footguns) -> the 0-3 lessons that clearly apply; stay silent when none applies.",
+ "changelog": [],
+ "library": [
+  {
+   "id": "L01",
+   "text": "When a local script is piped into `ssh host bash -s`, any command inside it that reads stdin (for example `docker compose exec -T`, `docker compose run --rm`, `psql` without -f) consumes the rest of the piped script; the remote run then ends early and still exits 0. Give such commands `</dev/null` or run them with -n style flags."
+  },
+  {
+   "id": "L02",
+   "text": "Inside a `while read ...; do ...; done < file` loop, an `ssh` call reads the loop's own stdin and the loop stops after the first line. Use `ssh -n` (or `< /dev/null`) for every ssh inside a read loop or heredoc."
+  },
+  {
+   "id": "L03",
+   "text": "Never run the pytest suite without HLM_TEST_DSN pointing at a disposable database: the autouse fixture truncates every table, and a run against the dev database wiped a full corpus import once."
+  },
+  {
+   "id": "L04",
+   "text": "The deploy runner uses a strict umask (077). Files it checks out are 0600, so a container running as an unprivileged uid cannot read bind-mounted files and crash-loops. Any new bind-mounted file must be made group/other-readable after checkout (and after rollback)."
+  },
+  {
+   "id": "L05",
+   "text": "zsh does not word-split unquoted parameter expansions: `cmd $FLAGS` passes one argument containing spaces. Use an array (`cmd \"${flags[@]}\"`) or `${=FLAGS}` in zsh scripts and zsh one-liners."
+  },
+  {
+   "id": "L06",
+   "text": "In zsh an unquoted glob that matches nothing is an error (`no matches found`) and the command does not run at all; quote patterns meant for the program, e.g. `--include='*.md'`."
+  },
+  {
+   "id": "L07",
+   "text": "The pre-commit secret scanner flags high-entropy fixtures (fake tokens, hashes) as leaks. Fix false positives with a narrow allowlist entry for that fixture path; never bypass the hook with --no-verify and never disable the scanner."
+  },
+  {
+   "id": "L08",
+   "text": "The sealed hold-out corpus is for the final confirmation only: do not open it, tune thresholds or prompts on it, or print its questions/answers. Tune on the dev split; the sealed set may be scored only in aggregate, once."
+  },
+  {
+   "id": "L09",
+   "text": "Implementer agents never run migrations or tests against the shared dev database (hlm) or the verification databases; each workstream uses its own hlm_test_<ws> database. A migration applied to the shared dev DB once broke the running dev API for hours."
+  },
+  {
+   "id": "L10",
+   "text": "`docker compose down -v` also deletes named volumes. On any stack whose database matters (production, or the dev stack holding an expensive import) use `down` without -v."
+  },
+  {
+   "id": "L11",
+   "text": "`pkill -f <pattern>` run through ssh can match the ssh command line itself (the pattern appears in it) and kill the session; use `pgrep -f` with an anchored pattern, a pidfile, or `systemctl`/`docker` to stop the process."
+  },
+  {
+   "id": "L12",
+   "text": "The Postgres driver silently starts preparing a statement server-side after it has run a few times; the cached generic plan can stop using the trigram index and make the query an order of magnitude slower. Turn automatic preparation off for hot candidate-retrieval queries."
+  },
+  {
+   "id": "L13",
+   "text": "Keep pg_trgm word_similarity_threshold high (0.9): at low values the GIN recheck touches every chunk and a single term took 3-7 s, with no recall gain."
+  },
+  {
+   "id": "L14",
+   "text": "In a pipeline like `cmd | tee log` or `cmd | tail`, `$?` is the status of the last command, so a failing cmd looks successful. Use `set -o pipefail` or write to a file and check the command's own status."
+  },
+  {
+   "id": "L15",
+   "text": "Response-buffering middleware must pass streaming responses (the MCP SSE stream) through unbuffered; buffering an endless stream means headers and pings never flush and clients hang."
+  },
+  {
+   "id": "L16",
+   "text": "Long remote deploys must run detached on the host (nohup/systemd-run) with a status file to poll; a laptop that sleeps drops the SSH session, and the client must not be the process that keeps the deploy alive."
+  },
+  {
+   "id": "L17",
+   "text": "On a first deploy, TLS certificate issuance can take minutes; a public /ready check right after start-up can time out and report a false failure. Wait for issuance (or check the local endpoint) before declaring failure or rolling back."
+  },
+  {
+   "id": "L18",
+   "text": "A stale project- or local-scope MCP entry (e.g. still pointing at 127.0.0.1) shadows the user-scope registration of the same server name; check every scope when a CLI cannot reach the remote memory server."
+  },
+  {
+   "id": "L19",
+   "text": "The production database port must never be published on a public interface; compose binds Postgres to 127.0.0.1 locally and not at all in production. Reach it through an SSH tunnel instead."
+  },
+  {
+   "id": "L20",
+   "text": "ONNX Runtime's telemetry thread can abort the process at interpreter shutdown (native abort, exit 134). Set ORT_DISABLE_TELEMETRY=1 in every process that loads the local embedder, including CLIs and test runs."
+  },
+  {
+   "id": "L21",
+   "text": "Changing how the idempotency request hash is computed breaks retries of events written before the upgrade (the retry no longer matches). Version the hash algorithm and accept the recorded version on replay."
+  },
+  {
+   "id": "L22",
+   "text": "The hosting account also runs other production machines (including a mail server). Firewall, snapshot, restart or recreate operations through the provider API must name the HLMemo VM explicitly; never use account-wide or apply-to-all operations."
+  },
+  {
+   "id": "L23",
+   "text": "Very large writes (tens of MB) must be processed with keyset-paged chunk reads and token-capped embedding batches; loading every chunk at once got the worker OOM-killed."
+  },
+  {
+   "id": "L24",
+   "text": "The migration history has a second branch head for the vector index, so plain `alembic upgrade head` is ambiguous and fails; always upgrade to the labelled head of the main branch."
+  },
+  {
+   "id": "L25",
+   "text": "A deploy must take and verify the backup BEFORE it stops the writers; stopping first means a failed backup upload (or a stale lock) leaves production down."
+  },
+  {
+   "id": "L26",
+   "text": "Backup retention must never prune the pre-upgrade dumps that the rollback path depends on, even when they are from the same day as newer dumps."
+  },
+  {
+   "id": "L27",
+   "text": "Some models wrap JSON in ``` fences or add a prose preamble even in JSON mode; strip fences and validate against the schema before using a librarian response, and count failures instead of crashing."
+  },
+  {
+   "id": "L28",
+   "text": "A 'reasoning off' request parameter can be silently ignored by a provider; when benchmarking or budgeting a model, read reasoning_tokens from the usage block instead of trusting the parameter."
+  },
+  {
+   "id": "L29",
+   "text": "Private deployment config (hlm.toml, .env, device tokens, admin token) never goes into the public repo; do not `git add -A` in a tree that contains them, and keep only the example files tracked."
+  },
+  {
+   "id": "L30",
+   "text": "Switching the embedding model is a re-embed job, never a column-type change: vectors are stored untyped with dims and model@revision per row, and the ANN index is a per-model partial index."
+  }
+ ],
+ "cases": [
+  {
+   "id": "T9-01",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "stdin-reading compose commands inside a script piped into ssh bash -s",
+   "task": "Deploy the new release: pipe deploy/remote-deploy.sh into `ssh prod bash -s`. The script first runs `docker compose exec -T db pg_dump -U hlm hlm > /srv/backup/pre.sql`, then `docker compose run --rm migrate`, then `docker compose up -d api worker`.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L01"
+    ]
+   }
+  },
+  {
+   "id": "T9-02",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "down -v on the dev stack that holds the expensive import",
+   "task": "Reset the local dev stack before re-running the corpus import: `docker compose -p hlmemo down -v && docker compose -p hlmemo up -d`.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L10"
+    ]
+   }
+  },
+  {
+   "id": "T9-03",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "pytest without HLM_TEST_DSN in a fresh shell",
+   "task": "Quick check before pushing: open a new terminal in the repo and run `uv run pytest tests/unit -q` to make sure the refactor did not break anything.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L03"
+    ]
+   }
+  },
+  {
+   "id": "T9-04",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "DSN set to the workstream's own disposable DB; L03/L09 keywords overlap but both rules are satisfied",
+   "task": "Workstream W2a verification: `HLM_TEST_DSN=$W2A_DSN uv run pytest -q` (W2A_DSN names the hlm_test_w2a database) on the agent's own database, then report the pass count to the orchestrator.",
+   "gold": {
+    "warn": false,
+    "lesson_ids": []
+   }
+  },
+  {
+   "id": "T9-05",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "new bind-mounted file under the strict-umask checkout",
+   "task": "Add a bind-mounted `deploy/librarian.toml` to the librarian service in compose.prod.yaml (container runs as uid 10001); the runner checks the release out on the host as usual.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L04"
+    ]
+   }
+  },
+  {
+   "id": "T9-06",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "unquoted multi-word parameter in zsh is not split",
+   "task": "Add to the zsh helper script: `SYNC_FLAGS=\"--frozen --extra dev\"; uv sync $SYNC_FLAGS`.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L05"
+    ]
+   }
+  },
+  {
+   "id": "T9-07",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "unquoted glob in zsh",
+   "task": "Find every doc that mentions the budget sweeper, from the zsh prompt: `grep -rn sweeper docs --include=*.md`.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L06"
+    ]
+   }
+  },
+  {
+   "id": "T9-08",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "bypassing the secret hook for fixture false positives",
+   "task": "Commit the new fixture file of fake API tokens for the redaction tests. The pre-commit hook rejects it, so commit this one with `git commit --no-verify`.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L07"
+    ]
+   }
+  },
+  {
+   "id": "T9-09",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "tuning a threshold on the sealed hold-out",
+   "task": "To choose between DF thresholds 0.15, 0.20 and 0.25, run run_eval.py on both corpus-B files (dev and sealed) and keep the threshold with the best combined L2 score.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L08"
+    ]
+   }
+  },
+  {
+   "id": "T9-10",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "migration on the shared dev DB AND plain head is ambiguous",
+   "task": "As the W2b implementer, test migration 0007 by running `alembic upgrade head` against the running dev stack's database, then hit the dev API to see that /ready is still 200.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L09",
+     "L24"
+    ]
+   }
+  },
+  {
+   "id": "T9-11",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "ssh inside a read loop eats the host list; pkill -f over ssh matches its own command line",
+   "task": "Restart the stuck workers on both hosts: `while read h; do ssh $h 'pkill -f hlmemo.worker'; done < hosts.txt`.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L02",
+     "L11"
+    ]
+   }
+  },
+  {
+   "id": "T9-12",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "low trigram threshold makes the GIN recheck scan everything",
+   "task": "Improve fuzzy identifier recall: lower pg_trgm word_similarity_threshold from 0.9 to 0.3 in the candidate query settings.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L13"
+    ]
+   }
+  },
+  {
+   "id": "T9-13",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "buffering the MCP SSE stream",
+   "task": "Add a middleware that reads the full response body of every /mcp response to compute an ETag header before sending it.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L15"
+    ]
+   }
+  },
+  {
+   "id": "T9-14",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "client-held long deploy + public /ready right after first start",
+   "task": "First production deploy from the laptop: run first_deploy.sh over SSH (image build takes ~10 minutes, keep the terminal open), then gate on `curl https://<domain>/ready` with a 60 s timeout and roll back if it fails.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L16",
+     "L17"
+    ]
+   }
+  },
+  {
+   "id": "T9-15",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "writers stopped before the backup",
+   "task": "Nightly deploy order: stop api and worker, run backup.sh (dump + S3 upload), apply migrations, start api and worker.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L25"
+    ]
+   }
+  },
+  {
+   "id": "T9-16",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "model switch done as DDL instead of a re-embed job",
+   "task": "Move to a 768-dimension embedding model: write migration 0009 that ALTERs embeddings.vec to vector(768) and rebuilds the HNSW index.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L30"
+    ]
+   }
+  },
+  {
+   "id": "T9-17",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "new process loading the ONNX embedder exits at shutdown (Turkish task)",
+   "task": "Planlanan iş: yeni bir `hlm embed-check` alt komutu ekle; yerel ONNX embedder'ı yükleyip bir cümleyi gömüyor ve çıkıyor. CI'da da çalıştırılacak.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L20"
+    ]
+   }
+  },
+  {
+   "id": "T9-18",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "account-wide provider operation",
+   "task": "Apply the new inbound rules with the provider's firewall sync to all VMs assigned to the account, so every machine gets 22/80/443 in one call.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L22"
+    ]
+   }
+  },
+  {
+   "id": "T9-19",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "huge write processed in one batch (German task)",
+   "task": "Geplante Aufgabe: den Import eines 40 MB großen PDF-Exports als ein einziges memory.write einspielen; der Worker lädt dafür alle Chunks auf einmal und bettet sie in einem Batch ein.",
+   "gold": {
+    "warn": true,
+    "lesson_ids": [
+     "L23"
+    ]
+   }
+  },
+  {
+   "id": "T9-20",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "docs-only change; no lesson applies",
+   "task": "Add a CI status badge and a short 'Quick start' section to README.md.",
+   "gold": {
+    "warn": false,
+    "lesson_ids": []
+   }
+  },
+  {
+   "id": "T9-21",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "cosmetic change in the bench report; JSON/benchmark lessons do not apply",
+   "task": "In bench/run.py, rename the markdown column 'variance' to 'rep variance' and update the footnote text.",
+   "gold": {
+    "warn": false,
+    "lesson_ids": []
+   }
+  },
+  {
+   "id": "T9-22",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "down without -v on a disposable rehearsal VM; L10 keyword overlap but the rule is followed",
+   "task": "On the lima rehearsal VM, run `docker compose down` (without -v) and then `docker compose up -d` so the stack picks up the rebuilt image.",
+   "gold": {
+    "warn": false,
+    "lesson_ids": []
+   }
+  },
+  {
+   "id": "T9-23",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "ssh already uses -n and the loop does not read stdin; L01/L02 overlap but do not apply",
+   "task": "Check the logs of all three services: `for s in api worker db; do ssh -n prod \"docker logs --tail 20 hlmemo-$s-1\"; done`.",
+   "gold": {
+    "warn": false,
+    "lesson_ids": []
+   }
+  },
+  {
+   "id": "T9-24",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "translation of docs; no lesson applies (Turkish task)",
+   "task": "Kullanım kılavuzundaki (USAGE.md) hızlı başlangıç bölümünü Türkçeye çevir ve README'den bağlantı ver.",
+   "gold": {
+    "warn": false,
+    "lesson_ids": []
+   }
+  },
+  {
+   "id": "T9-25",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "new output flag; L14 pipe keyword is about exit status and does not apply",
+   "task": "Add a `--json` output flag to `hlm.ops librarian audit` so the proposal list can be piped into jq.",
+   "gold": {
+    "warn": false,
+    "lesson_ids": []
+   }
+  }
+ ]
+}

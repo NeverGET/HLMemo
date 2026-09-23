@@ -6,6 +6,7 @@ risk_check) against candidate models on OpenRouter and scores JSON reliability,
 correctness and cost.
 
     python run.py --models deepseek-v4-flash,gemini-flash --runs 1
+    python run.py --suite v2 --models openai/gpt-6-luna --runs 3        # bench v2 (T5-T12), see v2/DESIGN.md
 
 --models accepts aliases from models.json or raw OpenRouter ids.
 Outputs bench/results/<timestamp>.json (raw, per call) and .md (summary table).
@@ -217,13 +218,14 @@ class Client:
             pass
         return self.pricing.get(model_id)
 
-    def chat(self, model_id: str, user_msg: str, use_rf: bool) -> dict:
+    def chat(self, model_id: str, user_msg: str, use_rf: bool, system_prompt: str | None = None,
+             max_tokens: int = 1024) -> dict:
         body = {
             "model": model_id,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_msg}],
+            "messages": [{"role": "system", "content": system_prompt or SYSTEM_PROMPT}, {"role": "user", "content": user_msg}],
             "temperature": 0,
             "seed": 42,
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
             "usage": {"include": True},
         }
         if use_rf:
@@ -414,6 +416,190 @@ def run_model(name: str, args, models_json: dict, client: "Client", tasks, guard
     return calls
 
 
+def _v2():
+    """Lazy import of the bench v2 module (bench/v2/tasks_v2.py)."""
+    sys.path.insert(0, str(HERE / "v2"))
+    import tasks_v2  # noqa: E402
+    return tasks_v2
+
+
+def run_model_v2(name: str, args, models_json: dict, client: "Client", packs, guard: SpendGuard) -> list[dict]:
+    v2 = _v2()
+    model_id, meta = resolve_model(name, models_json)
+    p = client.price_for(model_id) or {}
+    use_rf = p.get("supports_response_format", True)
+    print(f"== {name} -> {model_id}  (suite v2, response_format={'on' if use_rf else 'off'}, reasoning={args.reasoning})", flush=True)
+    calls: list[dict] = []
+    for fam, pack in packs:
+        cases = pack["cases"][: args.limit] if args.limit else pack["cases"]
+        for run_i in range(args.runs):
+            for case in cases:
+                if guard.stop:
+                    return calls
+                user_msg = v2.build_user_message(fam, case, pack)
+                rec = {"model": name, "model_id": model_id, "suite": "v2", "task": fam, "family": fam,
+                       "job": v2.job_of(fam, case, pack), "pack": pack.get("pack"), "tier": case.get("tier"),
+                       "case_id": case["id"], "run": run_i, "prompt_chars": len(v2.SYSTEM_PROMPT_V2) + len(user_msg)}
+                if args.dry_run:
+                    rec.update({"dry_run": True, "parse_ok": None, "score": None})
+                    calls.append(rec)
+                    continue
+                resp = client.chat(model_id, user_msg, use_rf, system_prompt=v2.SYSTEM_PROMPT_V2,
+                                   max_tokens=v2.max_tokens_for(fam, case))
+                rec.update(resp)
+                rec["infra_error"] = bool(resp.get("error"))
+                obj, perr = v2.parse_json(resp.get("content")) if not resp.get("error") else (None, resp["error"])
+                verr = v2.validate(fam, obj, case, pack) if obj is not None else None
+                rec["parse_ok"] = obj is not None
+                rec["schema_ok"] = obj is not None and verr is None
+                rec["json_fail"] = not rec["infra_error"] and not (rec["parse_ok"] and rec["schema_ok"])
+                rec["fail_reason"] = perr or verr
+                rec["parsed"] = obj
+                if rec["json_fail"] or rec["infra_error"]:
+                    rec["score"], rec["detail"] = 0.0, {}
+                else:
+                    rec["score"], rec["detail"] = v2.score(fam, obj, case, pack, raw=resp.get("content"))
+                calls.append(rec)
+                _record(rec)
+                flag = "ERR" if rec["infra_error"] else ("OK " if not rec["json_fail"] else "BAD")
+                print(f"  [{name}] {flag} {fam} {case['id']} ({rec['tier']}) run{run_i} score={rec['score']:.2f} "
+                      f"{rec.get('latency_ms', '?')}ms tok={rec.get('prompt_tokens')}/{rec.get('completion_tokens')}"
+                      f"{' r=' + str(rec['reasoning_tokens']) if rec.get('reasoning_tokens') else ''} "
+                      f"${(rec.get('cost_usd') or 0):.5f}" + (f"  <- {rec['fail_reason']}" if rec["json_fail"] else ""),
+                      flush=True)
+                guard.add(rec.get("cost_usd") or 0.0)
+    return calls
+
+
+def _group_stats(cs: list[dict], runs: int) -> dict:
+    """mean, min across reps, std of per-rep means, mean |rep_i - rep_j| per case, json fails, latency, cost."""
+    scored = [c for c in cs if not c.get("infra_error")]
+    out = {"n": len(scored), "mean": None, "min_rep": None, "rep_std": None, "case_rep_diff": None,
+           "json_fail": sum(1 for c in cs if c.get("json_fail")), "infra_error": sum(1 for c in cs if c.get("infra_error"))}
+    if scored:
+        out["mean"] = round(sum(c["score"] for c in scored) / len(scored), 4)
+        per_rep = {}
+        for c in scored:
+            per_rep.setdefault(c["run"], []).append(c["score"])
+        rep_means = [sum(v) / len(v) for v in per_rep.values()]
+        out["min_rep"] = round(min(rep_means), 4)
+        mu = sum(rep_means) / len(rep_means)
+        out["rep_std"] = round((sum((x - mu) ** 2 for x in rep_means) / len(rep_means)) ** 0.5, 4)
+        by_case: dict[str, list[float]] = {}
+        for c in scored:
+            by_case.setdefault(c["case_id"], []).append(c["score"])
+        diffs = [abs(a - b) for v in by_case.values() for i, a in enumerate(v) for b in v[i + 1:]]
+        out["case_rep_diff"] = round(sum(diffs) / len(diffs), 4) if diffs else None
+    lat = [c["latency_ms"] for c in cs if c.get("latency_ms") is not None]
+    out["avg_latency_ms"] = round(sum(lat) / len(lat)) if lat else None
+    out["p95_latency_ms"] = sorted(lat)[max(0, int(round(0.95 * len(lat))) - 1)] if lat else None
+    out["cost_usd"] = round(sum(c.get("cost_usd") or 0 for c in cs), 6)
+    correct = sum(1 for c in scored if c["score"] >= 0.8)
+    out["correct"] = correct
+    out["cost_per_correct_usd"] = round(out["cost_usd"] / correct, 6) if correct else None
+    return out
+
+
+def summarize_v2(models, models_json, client, calls, runs: int) -> list[dict]:
+    v2 = _v2()
+    rows = []
+    for name in models:
+        model_id, meta = resolve_model(name, models_json)
+        mc = [c for c in calls if c["model"] == name and not c.get("dry_run")]
+        row = {"model": name, "model_id": model_id, "calls": len(mc), "overall": _group_stats(mc, runs),
+               "families": {}, "tiers": {}, "family_tier": {}, "packs": {}, "metrics": {}}
+        for fam in v2.FAMILIES:
+            fc = [c for c in mc if c["family"] == fam]
+            if fc:
+                row["families"][fam] = _group_stats(fc, runs)
+                for t in ("easy", "medium", "hard"):
+                    ft = [c for c in fc if c.get("tier") == t]
+                    if ft:
+                        row["family_tier"][f"{fam}/{t}"] = _group_stats(ft, runs)
+        for t in ("easy", "medium", "hard"):
+            tc = [c for c in mc if c.get("tier") == t]
+            if tc:
+                row["tiers"][t] = _group_stats(tc, runs)
+        for pk in sorted({c.get("pack") for c in mc}):
+            row["packs"][pk] = _group_stats([c for c in mc if c.get("pack") == pk], runs)
+        fam_means = [v["mean"] for v in row["families"].values() if v["mean"] is not None]
+        row["macro_mean"] = round(sum(fam_means) / len(fam_means), 4) if fam_means else None
+        ok = [c for c in mc if not c.get("infra_error") and not c.get("json_fail")]
+        m = row["metrics"]
+        t6 = [c for c in ok if c["job"] == "relation" and c["family"] == "T6"]
+        pairs = sum(c["detail"].get("pairs", 0) for c in t6)
+        m["T6_false_supersede_rate"] = round(sum(c["detail"].get("false_supersede", 0) for c in t6) / pairs, 4) if pairs else None
+        t9 = [c for c in ok if c["family"] == "T9"]
+        pos = [c for c in t9 if c["detail"].get("caught") is not None]
+        neg = [c for c in t9 if c["detail"].get("false_warn") is not None]
+        m["T9_catch_rate"] = round(sum(1 for c in pos if c["detail"]["caught"]) / len(pos), 4) if pos else None
+        m["T9_false_warn_rate"] = round(sum(1 for c in neg if c["detail"]["false_warn"]) / len(neg), 4) if neg else None
+        t10 = [c for c in ok if c["family"] == "T10"]
+        neg10 = [c for c in t10 if not c["detail"].get("answerable")]
+        m["T10_false_answer_rate"] = round(sum(1 for c in neg10 if c["detail"]["false_answer"]) / len(neg10), 4) if neg10 else None
+        t11 = [c for c in ok if c["family"] == "T11"]
+        m["T11_complied"] = f"{sum(1 for c in t11 if c['detail'].get('complied'))}/{len(t11)}" if t11 else None
+        t7 = [c for c in ok if c["family"] == "T7"]
+        m["T7_identifier_hit_rate"] = round(sum(1 for c in t7 if c["detail"]["identifier_hit"]) / len(t7), 4) if t7 else None
+        t8 = [c for c in ok if c["family"] == "T8"]
+        m["T8_avg_hallucinated_tokens"] = round(sum(len(c["detail"]["hallucinated"]) for c in t8) / len(t8), 2) if t8 else None
+        m["T8_coverage"] = round(sum(c["detail"]["coverage"] for c in t8) / len(t8), 4) if t8 else None
+        row["reasoning_tokens"] = sum(c.get("reasoning_tokens") or 0 for c in mc)
+        row["prompt_tokens"] = sum(c.get("prompt_tokens") or 0 for c in mc)
+        row["completion_tokens"] = sum(c.get("completion_tokens") or 0 for c in mc)
+        row["cached_tokens"] = sum(c.get("cached_tokens") or 0 for c in mc)
+        row["json_fail_examples"] = [
+            {"case": f"{c['family']}/{c['case_id']}/run{c['run']}", "reason": c.get("fail_reason"),
+             "raw": "<private case: raw omitted>" if c.get("pack") == "private" else (c.get("content") or "")[:200]}
+            for c in mc if c.get("json_fail")][:3]
+        rows.append(row)
+    return rows
+
+
+def _pct(v):
+    return "-" if v is None else f"{v * 100:.1f}%"
+
+
+def render_md_v2(ts, args, summary, runs: int) -> str:
+    v2 = _v2()
+    lines = [f"# Librarian bench v2 {ts}" + (" (PARTIAL: interrupted, only completed calls)" if "partial" in ts else ""), "",
+             f"models=`{args.models}` runs={runs} reasoning={args.reasoning} families={args.tasks or 'all'} "
+             f"packs={', '.join(Path(p).name for p in args.pack) if args.pack else 'default (public + private if present)'}"
+             + (f" limit={args.limit}" if args.limit else ""), "",
+             "Score definitions: bench/v2/DESIGN.md §2. mean = mean case score; min-rep = lowest per-rep mean; "
+             "rep-sd = std-dev of per-rep means; JSON = JSON/schema fails (scored 0); $/correct = cost / calls scoring >= 0.8.", "",
+             "## Overview", "",
+             "| model | macro mean | " + " | ".join(v2.FAMILIES) + " | easy | medium | hard | public | private | JSON fail | infra | avg lat | p95 lat | cost USD | $/correct |",
+             "|---|---|" + "---|" * len(v2.FAMILIES) + "---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in summary:
+        o = r["overall"]
+        fams = " | ".join(_pct(r["families"].get(f, {}).get("mean")) for f in v2.FAMILIES)
+        tiers = " | ".join(_pct(r["tiers"].get(t, {}).get("mean")) for t in ("easy", "medium", "hard"))
+        packs = " | ".join(_pct(r["packs"].get(pk, {}).get("mean")) for pk in ("public", "private"))
+        lines.append(f"| {r['model']} | {_pct(r['macro_mean'])} | {fams} | {tiers} | {packs} | {o['json_fail']}/{o['n']} | "
+                     f"{o['infra_error']} | {o['avg_latency_ms']} ms | {o['p95_latency_ms']} ms | {o['cost_usd']:.4f} | "
+                     f"{o['cost_per_correct_usd'] if o['cost_per_correct_usd'] is not None else '-'} |")
+    for r in summary:
+        lines += ["", f"## {r['model']} (`{r['model_id']}`)", "",
+                  "| family | n | mean | min-rep | rep-sd | case rep diff | JSON fail | infra | avg lat | cost USD | $/correct | easy | medium | hard |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for fam, st in r["families"].items():
+            ft = " | ".join(_pct(r["family_tier"].get(f"{fam}/{t}", {}).get("mean")) for t in ("easy", "medium", "hard"))
+            lines.append(f"| {fam} | {st['n']} | {_pct(st['mean'])} | {_pct(st['min_rep'])} | {_pct(st['rep_std'])} | "
+                         f"{_pct(st['case_rep_diff'])} | {st['json_fail']} | {st['infra_error']} | {st['avg_latency_ms']} ms | "
+                         f"{st['cost_usd']:.4f} | {st['cost_per_correct_usd'] if st['cost_per_correct_usd'] is not None else '-'} | {ft} |")
+        for t, st in r["tiers"].items():
+            lines.append(f"| all/{t} | {st['n']} | {_pct(st['mean'])} | {_pct(st['min_rep'])} | {_pct(st['rep_std'])} | "
+                         f"{_pct(st['case_rep_diff'])} | {st['json_fail']} | {st['infra_error']} | {st['avg_latency_ms']} ms | "
+                         f"{st['cost_usd']:.4f} | {st['cost_per_correct_usd'] if st['cost_per_correct_usd'] is not None else '-'} | | | |")
+        lines += ["", "Gate metrics: " + ", ".join(f"{k}={v}" for k, v in r["metrics"].items()),
+                  f"Tokens: prompt {r['prompt_tokens']}, completion {r['completion_tokens']} (reasoning {r['reasoning_tokens']}), cached {r['cached_tokens']}."]
+        for ex in r["json_fail_examples"]:
+            raw = ex["raw"].replace("\n", "\\n").replace("|", "\\|")
+            lines.append(f"- JSON fail {ex['case']} ({ex['reason']}): `{raw or '<empty>'}`")
+    return "\n".join(lines) + "\n"
+
+
 def run(args) -> Path:
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key and not args.dry_run:
@@ -429,7 +615,16 @@ def run(args) -> Path:
         for v in models_json.values() if v.get("found")
     }
     client = Client(key or "", pricing, args.reasoning, args.timeout)
-    tasks = load_tasks(set(args.tasks.split(",")) if args.tasks else None)
+    if args.suite == "v2":
+        v2 = _v2()
+        paths = [Path(p) for p in args.pack] or v2.default_packs(include_private=not args.no_private)
+        tasks = v2.load_packs(paths, set(args.tasks.split(",")) if args.tasks else None)
+        print(f"suite v2: {len(tasks)} packs, {sum(len(p['cases'][: args.limit] if args.limit else p['cases']) for _, p in tasks)} cases "
+              f"x {args.runs} runs", flush=True)
+        runner = run_model_v2
+    else:
+        tasks = load_tasks(set(args.tasks.split(",")) if args.tasks else None)
+        runner = run_model
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     guard = SpendGuard(args.max_spend)
     _PROGRESS["ctx"] = (args, models, models_json, client)
@@ -446,7 +641,7 @@ def run(args) -> Path:
     todo = [m for m in models if m not in reused]
 
     with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:
-        per_model = dict(zip(todo, ex.map(lambda n: run_model(n, args, models_json, client, tasks, guard), todo)))
+        per_model = dict(zip(todo, ex.map(lambda n: runner(n, args, models_json, client, tasks, guard), todo)))
     calls = [c for m in models for c in (reused.get(m) or per_model.get(m) or [])]
     ck = HERE / "results" / "checkpoint.json"
     if ck.exists():
@@ -458,14 +653,20 @@ def finish(args, models, models_json, client, calls, partial: bool = False) -> P
     ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + ("-partial" if partial else "")
     outdir = HERE / "results"
     outdir.mkdir(exist_ok=True)
-    summary = summarize(models, models_json, client, calls)
+    v2_suite = getattr(args, "suite", "v1") == "v2"
+    if v2_suite:
+        summary = summarize_v2(models, models_json, client, calls, args.runs)
+        ts += "-v2"
+    else:
+        summary = summarize(models, models_json, client, calls)
     raw = {
-        "timestamp": ts, "partial": partial, "args": vars(args), "system_prompt": SYSTEM_PROMPT,
+        "timestamp": ts, "partial": partial, "args": vars(args),
+        "system_prompt": _v2().SYSTEM_PROMPT_V2 if v2_suite else SYSTEM_PROMPT,
         "cost_model": {"jobs_per_day": JOBS_PER_DAY, "days": DAYS, "in_tokens": JOB_IN_TOKENS, "out_tokens": JOB_OUT_TOKENS},
         "summary": summary, "calls": calls,
     }
     (outdir / f"{ts}.json").write_text(json.dumps(raw, indent=2, ensure_ascii=False))
-    md = render_md(ts, args, summary)
+    md = render_md_v2(ts, args, summary, args.runs) if v2_suite else render_md(ts, args, summary)
     (outdir / f"{ts}.md").write_text(md)
     print("\n" + md)
     print(f"raw -> {outdir / (ts + '.json')}")
@@ -579,7 +780,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", required=True, help="comma-separated aliases from models.json or raw OpenRouter ids")
     ap.add_argument("--runs", type=int, default=1, help="repetitions per case")
-    ap.add_argument("--tasks", default="", help="comma-separated subset: placement,contradiction,summarization,risk_check")
+    ap.add_argument("--suite", choices=["v1", "v2"], default="v1", help="v1 = tasks/t1-t4 (default); v2 = bench/v2 packs T5-T12")
+    ap.add_argument("--pack", action="append", default=[],
+                    help="v2: pack file (repeatable); default = bench/v2/tasks/*.json + docs/private/bench-v2/*.json if present")
+    ap.add_argument("--no-private", action="store_true", help="v2: skip the private pack when --pack is not given")
+    ap.add_argument("--tasks", default="", help="v1: comma-separated subset: placement,contradiction,summarization,risk_check; "
+                                                "v2: families, e.g. T5,T9")
     ap.add_argument("--limit", type=int, default=0, help="only first N cases per task (smoke)")
     ap.add_argument("--reasoning", choices=["low", "off", "default"], default="low",
                     help="reasoning param sent to OpenRouter (low -> {effort:low}, off -> {enabled:false}, default -> none)")

@@ -1,0 +1,1093 @@
+{
+ "task": "supersession",
+ "family": "T5",
+ "version": 1,
+ "pack": "public",
+ "description": "Given a topic and 3-6 dated snippets, label each snippet current, superseded or unrelated.",
+ "changelog": [],
+ "cases": [
+  {
+   "id": "T5-01",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "s2 explicitly raises 30 s to 60 s later; s3 is about the CI cache, not the gateway.",
+   "topic": "Request timeout of the Kestrel API gateway in production",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-03-02",
+     "origin": "runbook",
+     "text": "Kestrel prod gateway: request timeout is 30 s."
+    },
+    {
+     "id": "s2",
+     "date": "2026-05-11",
+     "origin": "commit msg",
+     "text": "Raise the Kestrel prod gateway timeout from 30 s to 60 s after large uploads kept failing."
+    },
+    {
+     "id": "s3",
+     "date": "2026-04-01",
+     "origin": "chat",
+     "text": "Kestrel's CI pipeline cache is kept for 7 days."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-02",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "s2 replaces Astra with Sol; s3 is about embeddings.",
+   "topic": "Which codex model is HLMemo's standing co-architect",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-22",
+     "origin": "DECISIONS",
+     "text": "The codex CLI running gpt-6-astra acts as permanent co-architect; each non-trivial design step gets a written consult."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-23",
+     "origin": "DECISIONS",
+     "text": "gpt-6-sol takes over from gpt-6-astra as the codex coworker, because Astra exhausted the weekly quota too quickly; Sol is consulted in fewer, denser rounds."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "status note",
+     "text": "The launch embedder is the local multilingual e5-small model."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-03",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "s2 moves the backup from 02:00 to 03:30; s3 is the staging restore drill, not the backup time.",
+   "topic": "Nightly backup time of the Pelikan database",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-01-10",
+     "origin": "runbook",
+     "text": "Pelikan veritabanı yedeği her gece 02:00'de alınıyor."
+    },
+    {
+     "id": "s2",
+     "date": "2026-02-20",
+     "origin": "chat",
+     "text": "Moved the Pelikan backup to 03:30 because it collided with the log rotation job."
+    },
+    {
+     "id": "s3",
+     "date": "2026-02-21",
+     "origin": "status note",
+     "text": "The Pelikan staging database is restored from a backup every Monday as a drill."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-04",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "s2 bumps to 3.12; s3 restates 3.12 (restatement, not a change), so both are current.",
+   "topic": "Python version pinned for the Otter service",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2025-11-03",
+     "origin": "commit msg",
+     "text": "Pin Otter to Python 3.11."
+    },
+    {
+     "id": "s2",
+     "date": "2026-04-18",
+     "origin": "commit msg",
+     "text": "Otter: bump the pinned interpreter 3.11 -> 3.12; all tests green."
+    },
+    {
+     "id": "s3",
+     "date": "2026-06-01",
+     "origin": "status note",
+     "text": "Otter is still pinned to Python 3.12; the 3.13 upgrade was postponed to Q4."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "current"
+    }
+   }
+  },
+  {
+   "id": "T5-05",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "s2 fixes the local binding; s3 is newer but about production, another scope.",
+   "topic": "How the Postgres port is published in HLMemo's local compose stack",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-21",
+     "origin": "review finding",
+     "text": "The local compose file publishes Postgres on every interface with the default hlm/hlm credentials."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-22",
+     "origin": "fix verification",
+     "text": "Local compose now binds the database to 127.0.0.1:5432 only; a connection attempt from the LAN is refused."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "deploy note",
+     "text": "In production the database port is not published at all; Caddy is the only listener at the edge."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-06",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "s2 (German) extends retention to 30 days; s3 is about metrics downsampling.",
+   "topic": "Log retention period of the Falke cluster",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-02-01",
+     "origin": "runbook",
+     "text": "Falke logs are retained for 14 days."
+    },
+    {
+     "id": "s2",
+     "date": "2026-03-15",
+     "origin": "chat",
+     "text": "Die Log-Aufbewahrung für Falke wurde wegen einer Audit-Anforderung auf 30 Tage verlängert."
+    },
+    {
+     "id": "s3",
+     "date": "2026-03-20",
+     "origin": "status note",
+     "text": "Falke metrics are downsampled to 5-minute resolution after 7 days."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-07",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "s2 renames to main; s3 is another repository.",
+   "topic": "Default branch of the 'harbor' repository",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2025-08-01",
+     "origin": "repo settings",
+     "text": "harbor's default branch is master."
+    },
+    {
+     "id": "s2",
+     "date": "2026-01-12",
+     "origin": "commit msg",
+     "text": "Renamed harbor's default branch master -> main and updated the CI triggers."
+    },
+    {
+     "id": "s3",
+     "date": "2026-01-12",
+     "origin": "repo settings",
+     "text": "The harbor-docs repository keeps gh-pages as its default branch."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-08",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "s2 (German) raises the public limit to 120/min; s3 is the internal admin API.",
+   "topic": "Rate limit of the Lynx public search API",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-04-01",
+     "origin": "API docs",
+     "text": "Lynx public search API: 60 requests per minute per key."
+    },
+    {
+     "id": "s2",
+     "date": "2026-06-10",
+     "origin": "changelog",
+     "text": "Das Limit der öffentlichen Lynx-Such-API liegt nach dem Cache-Rollout jetzt bei 120 Anfragen pro Minute und Schlüssel."
+    },
+    {
+     "id": "s3",
+     "date": "2026-06-12",
+     "origin": "chat",
+     "text": "The internal Lynx admin API has no rate limit at all."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-09",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "s1 and s2 are proposals that never took effect (KVM 2 was accepted, not CX43 or KVM 4); s3 is the accepted state.",
+   "topic": "Which VPS HLMemo production runs on",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-22",
+     "origin": "DECISIONS (PROPOSED)",
+     "text": "Proposed: a Hetzner Cloud CX43 as the production VPS; waiting for the owner's confirmation."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-22",
+     "origin": "DECISIONS (PROPOSED)",
+     "text": "Owner idea: a Hostinger KVM 4 on a 24-month term; the orchestrator recommends it, the owner decides."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "DECISIONS (ACCEPTED)",
+     "text": "Production target is a Hostinger KVM 2 VPS (2 vCPU / 8 GiB) in the Vilnius datacenter."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "unrelated",
+     "s2": "unrelated",
+     "s3": "current"
+    }
+   }
+  },
+  {
+   "id": "T5-10",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "Revert chain: s3 reverses s2 back to local e5-small, so s1's claim holds again and s2 is superseded.",
+   "topic": "Embedding model HLMemo launches with",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-20",
+     "origin": "DECISIONS",
+     "text": "Embeddings: multilingual-e5-small run locally on CPU via ONNX, 384 dimensions."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-22",
+     "origin": "DECISIONS",
+     "text": "Embeddings move to a cloud API: gemini-embedding-2 through OpenRouter at 1536 dimensions, pplx-embed as fallback."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "DECISIONS",
+     "text": "Reversed after measuring the hybrid read path: HLMemo launches with the local e5-small embedder again; gemini-embedding-2 remains only an opt-in profile."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "current",
+     "s2": "superseded",
+     "s3": "current"
+    }
+   }
+  },
+  {
+   "id": "T5-11",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "s2 replaces 0.1 with 0.9; s3 is the DF term filter threshold, a different mechanism.",
+   "topic": "pg_trgm word_similarity_threshold used by HLMemo's trigram leg",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-21",
+     "origin": "spec",
+     "text": "The trigram candidate leg uses word_similarity_threshold 0.1."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-22",
+     "origin": "deviation log",
+     "text": "Set the trigram word_similarity_threshold to 0.9 instead of 0.1: at 0.1 the GIN recheck scanned every chunk for seconds per term, and recall is identical between 0.7 and 0.9."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "DECISIONS",
+     "text": "The query-term filter drops non-identifier terms that occur in more than 20% of chunks."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-12",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "Only s2 states the librarian profile; s1 is the bench script default and s3 is one bench run's flags.",
+   "topic": "Reasoning setting of HLMemo's default librarian profile",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-21",
+     "origin": "bench README",
+     "text": "The bench script's --reasoning flag defaults to 'low'."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-22",
+     "origin": "DECISIONS",
+     "text": "Default librarian profile: deepseek-v4.1-flash via OpenRouter with reasoning disabled, JSON object mode and temperature 0."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "bench results",
+     "text": "A comparison run on 2026-09-23 used --reasoning off for gpt-6-luna and deepseek-v4.1-flash."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "unrelated",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-13",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "s2 raises to 200 MB; s3 restates it (current, not a change); s4 is the thumbnail service.",
+   "topic": "Maximum upload size of the Heron file service",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-02-02",
+     "origin": "API docs",
+     "text": "Heron: maximum upload size 50 MB."
+    },
+    {
+     "id": "s2",
+     "date": "2026-03-09",
+     "origin": "changelog",
+     "text": "Heron max upload raised to 200 MB for video customers."
+    },
+    {
+     "id": "s3",
+     "date": "2026-05-20",
+     "origin": "onboarding doc",
+     "text": "Reminder for new developers: Heron accepts uploads up to 200 MB."
+    },
+    {
+     "id": "s4",
+     "date": "2026-05-21",
+     "origin": "chat",
+     "text": "The Heron thumbnail service caps source images at 10 MB."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "current",
+     "s4": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-14",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "s2 is newer but about staging; prod stays 30 minutes in s1 (Turkish) and s3.",
+   "topic": "Session timeout of the Tern web app in production",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-01-05",
+     "origin": "runbook",
+     "text": "Tern prod oturum zaman aşımı 30 dakika."
+    },
+    {
+     "id": "s2",
+     "date": "2026-04-02",
+     "origin": "chat",
+     "text": "Lowered the Tern staging session timeout to 5 minutes for the QA load tests."
+    },
+    {
+     "id": "s3",
+     "date": "2026-02-10",
+     "origin": "security review",
+     "text": "Tern prod session timeout is 30 minutes; the security review confirmed it."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "current",
+     "s2": "unrelated",
+     "s3": "current"
+    }
+   }
+  },
+  {
+   "id": "T5-15",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "s2 replaces RabbitMQ with NATS for Ibis; s3 is newer but about another project (Egret).",
+   "topic": "Message broker used by the Ibis event pipeline",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2025-10-01",
+     "origin": "architecture doc",
+     "text": "Ibis pipeline events flow through RabbitMQ."
+    },
+    {
+     "id": "s2",
+     "date": "2026-05-02",
+     "origin": "status note",
+     "text": "Since the April migration Ibis events go through NATS JetStream; RabbitMQ was shut down on 2026-04-28."
+    },
+    {
+     "id": "s3",
+     "date": "2026-05-03",
+     "origin": "chat",
+     "text": "The Egret team, a separate project, evaluated Kafka in May and decided to stay on RabbitMQ."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-16",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "s2 implicitly changes the schedule to Mondays only; s3 is a different job.",
+   "topic": "Schedule of the Wren report cron job",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-01-15",
+     "origin": "crontab",
+     "text": "wren-report: 0 6 * * *  (every day at 06:00)"
+    },
+    {
+     "id": "s2",
+     "date": "2026-03-01",
+     "origin": "commit msg",
+     "text": "wren-report: schedule '0 6 * * 1' to cut compute costs"
+    },
+    {
+     "id": "s3",
+     "date": "2026-03-02",
+     "origin": "crontab",
+     "text": "wren-cleanup: 0 4 * * *"
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-17",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Revert chain: s3 returns to Node 20, so s1 holds again, s2 is superseded, s4 restates Node 20.",
+   "topic": "Node.js version used to build the Magpie frontend",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-02-01",
+     "origin": "README",
+     "text": "Magpie builds on Node 20."
+    },
+    {
+     "id": "s2",
+     "date": "2026-03-10",
+     "origin": "commit msg",
+     "text": "Move the Magpie build to Node 22."
+    },
+    {
+     "id": "s3",
+     "date": "2026-03-12",
+     "origin": "commit msg",
+     "text": "Revert 'Move the Magpie build to Node 22': back on Node 20, Node 22 broke the image optimizer plugin."
+    },
+    {
+     "id": "s4",
+     "date": "2026-04-01",
+     "origin": "CI config",
+     "text": "Magpie CI matrix: Node 20 only."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "current",
+     "s2": "superseded",
+     "s3": "current",
+     "s4": "current"
+    }
+   }
+  },
+  {
+   "id": "T5-18",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "The Postgres proposal was rejected (never took effect); Kite stays on MySQL 8; the analytics replica is another component.",
+   "topic": "Primary database engine of the Kite service",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2025-12-01",
+     "origin": "architecture doc",
+     "text": "Kite runs on MySQL 8."
+    },
+    {
+     "id": "s2",
+     "date": "2026-02-14",
+     "origin": "RFC",
+     "text": "Proposal: migrate Kite to Postgres 16 in Q2."
+    },
+    {
+     "id": "s3",
+     "date": "2026-04-02",
+     "origin": "RFC decision",
+     "text": "RFC rejected: Kite stays on MySQL 8; the migration budget goes to the search rewrite."
+    },
+    {
+     "id": "s4",
+     "date": "2026-04-10",
+     "origin": "status note",
+     "text": "The Kite analytics replica was moved to ClickHouse."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "current",
+     "s2": "unrelated",
+     "s3": "current",
+     "s4": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-19",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "s3 is the latest change: Claude subagents implement, which overrides Astra as implementer in s1 and s2; s4 is about the librarian.",
+   "topic": "Who implements code changes in HLMemo",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-22",
+     "origin": "DECISIONS",
+     "text": "Bake-off verdict: gpt-6-astra remains the implementer; Claude Opus 5.5 orchestrates, reviews adversarially and judges."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-23",
+     "origin": "DECISIONS",
+     "text": "The codex quota was restored; gpt-6-astra is available again as implementer."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-24",
+     "origin": "DECISIONS",
+     "text": "Coworker becomes gpt-6-sol as co-architect and adversarial reviewer only; the default implementers are now Claude Opus 5.5 subagents."
+    },
+    {
+     "id": "s4",
+     "date": "2026-09-24",
+     "origin": "status note",
+     "text": "The default librarian model is deepseek-v4.1-flash."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "superseded",
+     "s3": "current",
+     "s4": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-20",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Latest prod state is 10% (s3); the 100% (s1) and disabled (s2) states were both changed; s4 is staging.",
+   "topic": "Whether feature flag fast_checkout is enabled in production (Albatross shop)",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-05-01",
+     "origin": "release note",
+     "text": "fast_checkout enabled in production for 100% of users."
+    },
+    {
+     "id": "s2",
+     "date": "2026-05-09",
+     "origin": "incident note",
+     "text": "fast_checkout in Produktion deaktiviert, nachdem Zahlungen doppelt gebucht wurden."
+    },
+    {
+     "id": "s3",
+     "date": "2026-05-20",
+     "origin": "release note",
+     "text": "fast_checkout re-enabled in production for 10% of users, now behind the fixed idempotency key."
+    },
+    {
+     "id": "s4",
+     "date": "2026-05-21",
+     "origin": "chat",
+     "text": "fast_checkout is on for 100% of users in staging."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "superseded",
+     "s3": "current",
+     "s4": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-21",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "s2 lowers the rate; s3 is only an idea that never took effect.",
+   "topic": "Minimum upload rate enforced on request bodies by HLMemo's API",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-22",
+     "origin": "spec",
+     "text": "Request bodies must sustain at least 128 KiB/s or the connection is dropped."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-23",
+     "origin": "DECISIONS",
+     "text": "The default minimum body rate is lowered to 8 KiB/s after a 256 KiB grace, because slow uplinks and pauses were being cut off."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "review note",
+     "text": "Idea for later: make the minimum rate configurable per device class."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-22",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "s2 changes weekly to two-week rotations; s3 is the standup time.",
+   "topic": "On-call rotation length of team Puffin",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2025-12-01",
+     "origin": "team wiki",
+     "text": "Puffin on-call rotates weekly."
+    },
+    {
+     "id": "s2",
+     "date": "2026-03-01",
+     "origin": "team wiki",
+     "text": "Puffin switched to two-week on-call rotations."
+    },
+    {
+     "id": "s3",
+     "date": "2026-03-02",
+     "origin": "chat",
+     "text": "Puffin's daily standup is at 09:15."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-23",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "s2 moves staging deploys from Tuesday to Thursday; s3 is production.",
+   "topic": "Staging deploy day of project Martı",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-01-10",
+     "origin": "runbook",
+     "text": "Martı staging deploy'ları her Salı yapılıyor."
+    },
+    {
+     "id": "s2",
+     "date": "2026-02-15",
+     "origin": "chat",
+     "text": "Martı staging deploy'ları Perşembe gününe taşındı."
+    },
+    {
+     "id": "s3",
+     "date": "2026-02-16",
+     "origin": "runbook",
+     "text": "Martı production deploys stay on Mondays."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-24",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "s2 raises the indexer limit to 2 GiB; s3 is the API container.",
+   "topic": "Memory limit of the Gannet indexer container",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-02-01",
+     "origin": "compose file",
+     "text": "gannet-indexer: mem_limit 1g"
+    },
+    {
+     "id": "s2",
+     "date": "2026-02-20",
+     "origin": "commit msg",
+     "text": "gannet-indexer was OOM-killed on large PDFs; raise its memory limit to 2 GiB."
+    },
+    {
+     "id": "s3",
+     "date": "2026-02-21",
+     "origin": "compose file",
+     "text": "gannet-api: mem_limit 512m"
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-25",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "s2 adds a fourth list so 'exactly three' no longer holds; s3 is a plan without effect.",
+   "topic": "Number of ranked lists HLMemo fuses with RRF",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-22",
+     "origin": "DECISIONS",
+     "text": "Retrieval fuses exactly three ranked lists with RRF: lexical, trigram and vector."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-23",
+     "origin": "DECISIONS",
+     "text": "A fourth fused list now ranks titles and paths (migrations 0003 and 0004)."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "roadmap",
+     "text": "Plan: tune kind, recency and usage weights in Phase 3 against the G3 fixture."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-26",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "s2 (German) switches to de-DE; s3 restates it; s4 is the customer portal.",
+   "topic": "Default locale of the Kranich admin UI",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-01-01",
+     "origin": "config",
+     "text": "Kranich admin UI defaults to en-US."
+    },
+    {
+     "id": "s2",
+     "date": "2026-02-01",
+     "origin": "changelog",
+     "text": "Standardsprache der Kranich-Admin-Oberfläche ist jetzt de-DE."
+    },
+    {
+     "id": "s3",
+     "date": "2026-03-01",
+     "origin": "team wiki",
+     "text": "Kranich admin UI: default locale de-DE, unchanged since February."
+    },
+    {
+     "id": "s4",
+     "date": "2026-03-05",
+     "origin": "chat",
+     "text": "The Kranich customer portal follows the browser locale."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "current",
+     "s4": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-27",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "s2 replaces the fixed 3 replicas with an HPA; s3 is dev.",
+   "topic": "Replica count of the stork-api deployment in production",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-02-10",
+     "origin": "shell history",
+     "text": "kubectl -n prod scale deploy/stork-api --replicas=3"
+    },
+    {
+     "id": "s2",
+     "date": "2026-04-22",
+     "origin": "commit msg",
+     "text": "stork-api prod: HPA with minReplicas 4 and maxReplicas 10; drop the fixed replica count."
+    },
+    {
+     "id": "s3",
+     "date": "2026-04-23",
+     "origin": "chat",
+     "text": "stork-api in dev runs a single replica."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-28",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "s2 closes public registration in production; s3 is a future idea; s4 is the local dev scope.",
+   "topic": "Whether public device self-registration is open on HLMemo production",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-09-22",
+     "origin": "spec",
+     "text": "Devices self-register using the registration secret and wait as 'pending' until an admin approves them."
+    },
+    {
+     "id": "s2",
+     "date": "2026-09-23",
+     "origin": "DECISIONS",
+     "text": "Owner decision: production turns off public self-registration; device tokens are minted only by a script run on the server over SSH."
+    },
+    {
+     "id": "s3",
+     "date": "2026-09-23",
+     "origin": "DECISIONS",
+     "text": "An admin panel might take over device minting at some point in the future."
+    },
+    {
+     "id": "s4",
+     "date": "2026-09-23",
+     "origin": "test notes",
+     "text": "The local dev stack still allows registration with the registration secret so the integration tests keep working."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated",
+     "s4": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-29",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Revert chain in Turkish: s3 returns prod to INFO, so s1 holds again and s2 is superseded; s4 is the sandbox.",
+   "topic": "Log level of the Sığırcık payment service in production",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2026-03-01",
+     "origin": "config",
+     "text": "Sığırcık prod log seviyesi INFO."
+    },
+    {
+     "id": "s2",
+     "date": "2026-03-05",
+     "origin": "incident note",
+     "text": "Set the Sığırcık prod log level to DEBUG while chasing the refund bug."
+    },
+    {
+     "id": "s3",
+     "date": "2026-03-06",
+     "origin": "incident note",
+     "text": "Debug bitti; Sığırcık prod log seviyesi tekrar INFO'ya alındı."
+    },
+    {
+     "id": "s4",
+     "date": "2026-03-07",
+     "origin": "chat",
+     "text": "The Sığırcık sandbox environment stays on DEBUG permanently."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "current",
+     "s2": "superseded",
+     "s3": "current",
+     "s4": "unrelated"
+    }
+   }
+  },
+  {
+   "id": "T5-30",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "s2 implicitly moves the exporter to 9200; s3 is node_exporter (same port, other component); s4 restates 9200.",
+   "topic": "HTTP port of the robin-exporter metrics endpoint",
+   "snippets": [
+    {
+     "id": "s1",
+     "date": "2025-11-01",
+     "origin": "README",
+     "text": "robin-exporter listens on :9100."
+    },
+    {
+     "id": "s2",
+     "date": "2026-02-03",
+     "origin": "config diff",
+     "text": "robin-exporter: listen_addr=':9200'   # 9100 collides with node_exporter"
+    },
+    {
+     "id": "s3",
+     "date": "2026-02-10",
+     "origin": "host inventory",
+     "text": "node_exporter on the Robin hosts listens on :9100."
+    },
+    {
+     "id": "s4",
+     "date": "2026-02-12",
+     "origin": "Grafana config",
+     "text": "Scrape job robin-exporter targets port 9200."
+    }
+   ],
+   "gold": {
+    "labels": {
+     "s1": "superseded",
+     "s2": "current",
+     "s3": "unrelated",
+     "s4": "current"
+    }
+   }
+  }
+ ]
+}

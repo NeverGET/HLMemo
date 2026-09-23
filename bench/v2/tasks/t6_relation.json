@@ -1,0 +1,1368 @@
+{
+ "task": "relation",
+ "family": "T6",
+ "version": 2,
+ "pack": "public",
+ "description": "For each requested pair of dated, scoped memory items decide contradicts | supersedes | refines | compatible | unrelated and which item supersedes.",
+ "changelog": [
+  "v2: T6-15 rewritten as a same-day conflicting report (date-inversion wording was ambiguous in the blind pass); T6-21 C made an explicit detail of B's rotation"
+ ],
+ "cases": [
+  {
+   "id": "T6-01",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Same prod database, B is an explicit later upgrade.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-01-10",
+     "scope": "prod",
+     "text": "The Stork API runs on Postgres 15."
+    },
+    {
+     "id": "B",
+     "date": "2026-06-02",
+     "scope": "prod",
+     "text": "Stork API was upgraded to Postgres 16 last night."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-02",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Upload limit vs a team's standup time: no shared subject.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-05-20",
+     "scope": null,
+     "text": "Heron file service accepts uploads up to 200 MB."
+    },
+    {
+     "id": "B",
+     "date": "2026-05-21",
+     "scope": null,
+     "text": "Puffin ekibinin günlük toplantısı 09:15'te."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "unrelated",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-03",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "B adds the shipper and batch window without changing A.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-02-01",
+     "scope": "prod",
+     "text": "Falke logs are shipped to Loki."
+    },
+    {
+     "id": "B",
+     "date": "2026-02-03",
+     "scope": "prod",
+     "text": "Falke logs are shipped to Loki by promtail with a 5 s batch window."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "refines",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-04",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Different scopes (dev vs prod); both hold.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-03-01",
+     "scope": "dev",
+     "text": "Kestrel uses a local SQLite file as its database."
+    },
+    {
+     "id": "B",
+     "date": "2026-03-01",
+     "scope": "prod",
+     "text": "Kestrel uses Postgres 16 as its database."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-05",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Two same-day reports give different ship dates for the same release.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-04-10",
+     "scope": null,
+     "text": "Otter release 2.3 shipped on Tuesday, 2026-04-07."
+    },
+    {
+     "id": "B",
+     "date": "2026-04-10",
+     "scope": null,
+     "text": "Otter release 2.3 shipped on Thursday, 2026-04-09."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "contradicts",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-06",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "30 s == 30000 ms: equivalent restatement in other units, not a change.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-03-01",
+     "scope": "prod",
+     "text": "Lynx gateway request timeout: 30 s."
+    },
+    {
+     "id": "B",
+     "date": "2026-05-01",
+     "scope": "prod",
+     "text": "Lynx gateway request timeout is set to 30000 ms."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-07",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Numeric near-miss 6432 vs 5432; B (German) is an explicit later change.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-01-10",
+     "scope": "prod",
+     "text": "Wren connects to the database through pgbouncer on port 6432."
+    },
+    {
+     "id": "B",
+     "date": "2026-03-02",
+     "scope": "prod",
+     "text": "Wren: pgbouncer lauscht jetzt auf Port 5432, damit der App-Standard passt."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-08",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Negation on the same day and scope; nothing says which replaced the other.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-05-02",
+     "scope": "prod",
+     "text": "TLS certificate auto-renewal is enabled on the Ibis edge proxy."
+    },
+    {
+     "id": "B",
+     "date": "2026-05-02",
+     "scope": "prod",
+     "text": "Ibis edge proxy: certificate auto-renewal is NOT enabled; certificates are renewed by hand."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "contradicts",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-09",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Per-device settings on two different devices can both hold.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-06-01",
+     "scope": "device: work laptop",
+     "text": "The memory wrapper on this device runs with a token budget of 1500."
+    },
+    {
+     "id": "B",
+     "date": "2026-06-03",
+     "scope": "device: home desktop",
+     "text": "The memory wrapper on this device runs with a token budget of 3000."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-10",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "B adds region, encryption and lifecycle to A's 'backups go to S3' (Turkish).",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-02-01",
+     "scope": "prod",
+     "text": "Martı servisi yedeklerini S3'e yazıyor."
+    },
+    {
+     "id": "B",
+     "date": "2026-02-05",
+     "scope": "prod",
+     "text": "Martı backups go to S3 in eu-central-1, encrypted with SSE-KMS, with a 30-day lifecycle rule."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "refines",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-11",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "B explicitly drops 0731 and sets a new default later.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-20",
+     "scope": null,
+     "text": "Librarian model candidate for HLMemo: DeepSeek V4 Flash 0731."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "V4 Flash 0731 is not viable since it was retired upstream; the default librarian becomes deepseek-v4.1-flash with reasoning disabled."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-12",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "Different scopes: production vs local dev.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-23",
+     "scope": "production",
+     "text": "HLMemo production does not publish the Postgres port; only Caddy listens on 80 and 443."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-22",
+     "scope": "local dev stack",
+     "text": "HLMemo's local compose stack publishes Postgres on 127.0.0.1:5432."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-13",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "Domain registration vs ranking constant: no shared subject.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-23",
+     "scope": null,
+     "text": "HLMemo's domain was registered at the VPS provider's registrar and is renewal-locked."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "HLMemo's rank fusion uses RRF with k = 60."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "unrelated",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-14",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "B (German) is an explicit later change of the deploy branch.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-01-15",
+     "scope": "prod",
+     "text": "Kranich deploys to production only from the 'release' branch."
+    },
+    {
+     "id": "B",
+     "date": "2026-04-01",
+     "scope": "prod",
+     "text": "Kranich deployt ab sofort direkt aus 'main'; der 'release'-Branch wird abgeschafft."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-15",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Same day, same scope: one report says it was raised to 2 GiB today, the other says 1 GiB and unchanged; nothing establishes which replaced the other -> contradicts.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-05-20",
+     "scope": "prod",
+     "text": "Gannet indexer memory limit in prod is now 2 GiB (raised from 1 GiB this morning)."
+    },
+    {
+     "id": "B",
+     "date": "2026-05-20",
+     "scope": "prod",
+     "text": "Gannet indexer prod memory limit is 1 GiB; nobody has changed it this month."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "contradicts",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-16",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "B qualifies A's archive rule with exemptions and reversibility; no conflict.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "Decay archives volatile, unpinned items whose retention stays below 0.1 for three consecutive daily cycles."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "Stable facts and lessons are exempt from decay archiving, and archived items can be restored."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "refines",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-17",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "200 MB == 0.2 GB, Turkish vs English: equivalent restatement.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-05-20",
+     "scope": "prod",
+     "text": "Heron'un maksimum yükleme boyutu 200 MB."
+    },
+    {
+     "id": "B",
+     "date": "2026-05-22",
+     "scope": "prod",
+     "text": "Heron accepts uploads of up to 0.2 GB."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-18",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Implicit change: a minimum of 4 is incompatible with a fixed 3; B is the later configuration.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-02-10",
+     "scope": "prod",
+     "text": "stork-api in production runs a fixed 3 replicas."
+    },
+    {
+     "id": "B",
+     "date": "2026-04-22",
+     "scope": "prod",
+     "text": "stork-api production autoscaling: minReplicas 4, maxReplicas 10."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-19",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "B violates a standing invariant; it is not an intentional update of the rule.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-01-01",
+     "scope": "all services",
+     "text": "Invariant: no Albatross service may store card numbers; payments are tokenized by the payment provider."
+    },
+    {
+     "id": "B",
+     "date": "2026-06-03",
+     "scope": "checkout",
+     "text": "Albatross checkout stores the full card number in the orders table to support refunds."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "contradicts",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-20",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "B reverses A's switch later.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "HLMemo embeddings switch to gemini-embedding-2 through the cloud API."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-23",
+     "scope": null,
+     "text": "Measured on the hybrid path, the switch did not pay off: HLMemo launches with the local e5-small embedder, and the cloud embedder becomes opt-in."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-21",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "B changes the rotation length later (supersedes A); C adds the handover time to B's two-week rotation without conflict (refines).",
+   "items": [
+    {
+     "id": "A",
+     "date": "2025-12-01",
+     "scope": null,
+     "text": "Puffin on-call rotates weekly."
+    },
+    {
+     "id": "B",
+     "date": "2026-03-01",
+     "scope": null,
+     "text": "Puffin switched to two-week on-call rotations."
+    },
+    {
+     "id": "C",
+     "date": "2026-03-02",
+     "scope": null,
+     "text": "Puffin's two-week on-call rotations hand over on Mondays at 10:00."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "B",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     },
+     {
+      "pair": [
+       "B",
+       "C"
+      ],
+      "relation": "refines",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-22",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "A (Turkish, dev) and B (prod) are different scopes; C upgrades prod later.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-01-05",
+     "scope": "dev",
+     "text": "Tern dev ortamında veritabanı olarak SQLite kullanılıyor."
+    },
+    {
+     "id": "B",
+     "date": "2026-01-05",
+     "scope": "prod",
+     "text": "Tern prod runs on Postgres 16."
+    },
+    {
+     "id": "C",
+     "date": "2026-06-02",
+     "scope": "prod",
+     "text": "Tern prod moved from Postgres 16 to Postgres 17."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "B",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     },
+     {
+      "pair": [
+       "B",
+       "C"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "C"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-23",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "B later reverses the exclusion; C is about repository hosting.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-21",
+     "scope": null,
+     "text": "DeepSeek's first-party API fails the EU privacy bar, so the librarian shortlist excludes DeepSeek."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "Owner decision: cloud models are acceptable for all projects for now, so DeepSeek variants are candidates again."
+    },
+    {
+     "id": "C",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "The HLMemo repository is public on GitHub under the owner's personal account."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "A",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     },
+     {
+      "pair": [
+       "A",
+       "C"
+      ],
+      "relation": "unrelated",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-24",
+   "tier": "easy",
+   "source": "hlmemo-docs",
+   "rationale": "B changes the fallback later; C is about the TLS edge.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "When HLM_TEST_DSN is unset, the test suite falls back to the compose 'hlm' database."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-23",
+     "scope": null,
+     "text": "The test fallback now uses a dedicated 'hlm_test' database, and any DSN that names 'hlm' is refused before truncation."
+    },
+    {
+     "id": "C",
+     "date": "2026-09-23",
+     "scope": null,
+     "text": "The public endpoint terminates TLS in Caddy with automatic certificates."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "A",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     },
+     {
+      "pair": [
+       "A",
+       "C"
+      ],
+      "relation": "unrelated",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-25",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "B replaces 0.1 later; C narrows when the 0.9 trigram leg applies.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-21",
+     "scope": null,
+     "text": "The trigram leg uses a pg_trgm word_similarity_threshold of 0.1."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "The trigram threshold is set to 0.9: at 0.1 the GIN recheck scanned every chunk, and recall is the same at 0.7-0.9."
+    },
+    {
+     "id": "C",
+     "date": "2026-09-22",
+     "scope": null,
+     "text": "The trigram leg with its 0.9 threshold is used only for identifier-like query terms."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "B",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     },
+     {
+      "pair": [
+       "B",
+       "C"
+      ],
+      "relation": "refines",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-26",
+   "tier": "medium",
+   "source": "hlmemo-docs",
+   "rationale": "A and B are different machines; C adds tooling detail to the same production OS.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-22",
+     "scope": "rehearsal VM",
+     "text": "The deploy rehearsal VM runs Ubuntu 24.04 with 2 vCPU and 8 GiB."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-23",
+     "scope": "production",
+     "text": "The production host runs Ubuntu 26.04 LTS on x86_64."
+    },
+    {
+     "id": "C",
+     "date": "2026-09-23",
+     "scope": "production",
+     "text": "Production runs Ubuntu 26.04 LTS; the tooling was adapted to its sudo-rs and uutils coreutils."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "B",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     },
+     {
+      "pair": [
+       "B",
+       "C"
+      ],
+      "relation": "refines",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-27",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "B (German) changes the admin locale later; C is an export job with no shared subject.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-01-01",
+     "scope": "admin UI",
+     "text": "Kranich admin UI defaults to the en-US locale."
+    },
+    {
+     "id": "B",
+     "date": "2026-02-01",
+     "scope": "admin UI",
+     "text": "Standardsprache der Kranich-Admin-Oberfläche ist jetzt de-DE."
+    },
+    {
+     "id": "C",
+     "date": "2026-02-01",
+     "scope": "export job",
+     "text": "Kranich's nightly export job writes CSV files to the 'exports' bucket."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "B",
+     "C"
+    ],
+    [
+     "A",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     },
+     {
+      "pair": [
+       "B",
+       "C"
+      ],
+      "relation": "unrelated",
+      "superseding_id": "none"
+     },
+     {
+      "pair": [
+       "A",
+       "C"
+      ],
+      "relation": "unrelated",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-28",
+   "tier": "hard",
+   "source": "hlmemo-docs",
+   "rationale": "B later adds a provider firewall; C gives a conflicting rule set for the same VM on the same day.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-09-22",
+     "scope": "production VM",
+     "text": "The production VPS has no provider-level firewall; all filtering happens in ufw on the host."
+    },
+    {
+     "id": "B",
+     "date": "2026-09-23",
+     "scope": "production VM",
+     "text": "A provider firewall is now active on the production VM: inbound 22/tcp, 80/tcp, 443/tcp and 443/udp, everything else dropped."
+    },
+    {
+     "id": "C",
+     "date": "2026-09-23",
+     "scope": "production VM",
+     "text": "The provider firewall on the production VM allows inbound 22/tcp only; web traffic arrives through a tunnel."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "B",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     },
+     {
+      "pair": [
+       "B",
+       "C"
+      ],
+      "relation": "contradicts",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-29",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "B changes INFO to DEBUG, C (Turkish) reverts to INFO; A and C state the same value.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-03-01",
+     "scope": "prod",
+     "text": "Sığırcık prod log seviyesi INFO."
+    },
+    {
+     "id": "B",
+     "date": "2026-03-05",
+     "scope": "prod",
+     "text": "Sığırcık prod log level switched to DEBUG to chase the refund bug."
+    },
+    {
+     "id": "C",
+     "date": "2026-03-06",
+     "scope": "prod",
+     "text": "Debug bitti; Sığırcık prod log seviyesi tekrar INFO."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "B",
+     "C"
+    ],
+    [
+     "A",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "B"
+     },
+     {
+      "pair": [
+       "B",
+       "C"
+      ],
+      "relation": "supersedes",
+      "superseding_id": "C"
+     },
+     {
+      "pair": [
+       "A",
+       "C"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  },
+  {
+   "id": "T6-30",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "15 s == 15000 ms; 1.5 s is a numeric near-miss conflict on the same day and scope.",
+   "items": [
+    {
+     "id": "A",
+     "date": "2026-04-01",
+     "scope": "prod",
+     "text": "Albatross checkout timeout: 15 s."
+    },
+    {
+     "id": "B",
+     "date": "2026-04-01",
+     "scope": "prod",
+     "text": "Albatross checkout timeout is 15000 ms."
+    },
+    {
+     "id": "C",
+     "date": "2026-04-01",
+     "scope": "prod",
+     "text": "Albatross checkout timeout is 1.5 s."
+    }
+   ],
+   "pairs": [
+    [
+     "A",
+     "B"
+    ],
+    [
+     "A",
+     "C"
+    ],
+    [
+     "B",
+     "C"
+    ]
+   ],
+   "gold": {
+    "judgments": [
+     {
+      "pair": [
+       "A",
+       "B"
+      ],
+      "relation": "compatible",
+      "superseding_id": "none"
+     },
+     {
+      "pair": [
+       "A",
+       "C"
+      ],
+      "relation": "contradicts",
+      "superseding_id": "none"
+     },
+     {
+      "pair": [
+       "B",
+       "C"
+      ],
+      "relation": "contradicts",
+      "superseding_id": "none"
+     }
+    ]
+   }
+  }
+ ]
+}
