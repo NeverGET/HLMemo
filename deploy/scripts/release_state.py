@@ -4,7 +4,9 @@
     release_state.py publish DIR --current SHA [--previous SHA --previous-dump PATH
                      --previous-image REPO:SHA --previous-image-id ID] [--env-backup FILE=BACKUP ...]
     release_state.py rolled-back DIR          # after a rollback: current <- previous, no rollback pair
-    release_state.py accept DIR               # delete the recorded env backups; mark accepted
+    release_state.py accept DIR               # delete every recorded env backup; mark accepted
+    release_state.py begin-rollback DIR SHA   # record an attempt (an interrupted rollback re-runs)
+    release_state.py end-rollback DIR         # clear an aborted attempt
     release_state.py get DIR KEY              # one field ('' if absent); env_backups: FILE=BACKUP lines
 
 `publish` writes DIR/release-state.json through tmp + fsync + rename + directory fsync, then derives
@@ -53,10 +55,14 @@ def store(directory: Path, state: dict) -> None:
 
 
 def derive(directory: Path) -> None:
+    """Legacy markers mirror the state exactly: written when present, DELETED when absent, so a
+    crash between the state rename and this step is repaired by simply deriving again."""
     state = load(directory)
     for marker, key in LEGACY.items():
         if state.get(key):
             _atomic_write(directory / marker, f"{state[key]}\n")
+        else:
+            (directory / marker).unlink(missing_ok=True)
 
 
 def publish(directory: Path, args: argparse.Namespace) -> None:
@@ -71,6 +77,9 @@ def publish(directory: Path, args: argparse.Namespace) -> None:
             env_backups=dict(pair.split("=", 1) for pair in args.env_backup),
             accepted=False,
         )
+    # Every retired-secret backup ever recorded stays listed until --accept-release deletes it.
+    retired = set(state.get("retired_backups") or []) | set((state.get("env_backups") or {}).values())
+    state["retired_backups"] = sorted(retired)
     store(directory, state)
 
 
@@ -85,8 +94,11 @@ def main(argv: list[str]) -> int:
     p.add_argument("--previous-image")
     p.add_argument("--previous-image-id")
     p.add_argument("--env-backup", action="append", default=[])
-    for name in ("rolled-back", "accept", "derive"):
+    for name in ("rolled-back", "accept", "derive", "end-rollback"):
         sub.add_parser(name).add_argument("dir", type=Path)
+    b = sub.add_parser("begin-rollback")
+    b.add_argument("dir", type=Path)
+    b.add_argument("target")
     g = sub.add_parser("get")
     g.add_argument("dir", type=Path)
     g.add_argument("key")
@@ -104,10 +116,19 @@ def main(argv: list[str]) -> int:
             print(value)
     elif args.cmd == "accept":
         state = load(directory)
-        for backup in (state.get("env_backups") or {}).values():
+        backups = set((state.get("env_backups") or {}).values()) | set(state.get("retired_backups") or [])
+        for backup in sorted(backups):
             Path(backup).unlink(missing_ok=True)
             print(f"deleted env backup {backup}")
-        state.update(accepted=True, env_backups={})
+        state.update(accepted=True, env_backups={}, retired_backups=[])
+        store(directory, state)
+    elif args.cmd == "begin-rollback":
+        state = load(directory)
+        state["rollback_in_progress"] = args.target
+        store(directory, state)
+    elif args.cmd == "end-rollback":
+        state = load(directory)
+        state.pop("rollback_in_progress", None)
         store(directory, state)
     elif args.cmd == "rolled-back":
         state = load(directory)
@@ -116,12 +137,11 @@ def main(argv: list[str]) -> int:
             "rolled_back_from": state["current_ref"],
             "accepted": True,
             "env_backups": {},
+            "retired_backups": state.get("retired_backups") or [],
         }
-        _atomic_write(directory / STATE, json.dumps(new, indent=2, sort_keys=True) + "\n")
-        # The consumed rollback pair must not be reused by the legacy manual procedure.
-        for marker in ("previous-ref", "previous-dump"):
-            (directory / marker).unlink(missing_ok=True)
-        derive(directory)
+        # ONE step: the new state (pair consumed, attempt cleared) and the derived markers; the
+        # consumed previous-ref/previous-dump markers disappear in derive.
+        store(directory, new)
     return 0
 
 

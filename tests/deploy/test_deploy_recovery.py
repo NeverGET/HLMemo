@@ -56,12 +56,24 @@ if "run" in args and "migrate" in args:
         labels_path.write_text(json.dumps(labels))
 if "up" in args and "api" in args:
     Path(os.environ["EVENTS"]+".running-image").write_text(images.get(selected, selected))
+    # The api container's org.opencontainers.image.revision label (rollback.sh checks it).
+    tag = selected.rsplit(":", 1)[-1]
+    revision = tag if len(tag) == 40 else labels.get(selected, "")
+    Path(os.environ["EVENTS"]+".running-revision").write_text(revision)
 if "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
     captured=json.loads(Path(args[args.index("-f")+1]).read_text())
     assert captured["services"]["api"]["environment"]["TOKEN"] == "literal$$VAR"
 if args[0] == "ps":
     if fail != "missing-baseline": print("old-container")
+elif args[0] == "inspect" and "image.revision" in " ".join(args):
+    marker = Path(os.environ["EVENTS"]+".running-revision")
+    print(marker.read_text() if marker.exists() else "a"*40)
 elif args[0] == "inspect": print("sha256:old-image")
+elif ("exec" in args and "dropdb" in args[-1] and fail == "rollback-kill"
+      and ".rollback-compose." in " ".join(args)
+      and not Path(os.environ["EVENTS"]+".killed").exists()):
+    Path(os.environ["EVENTS"]+".killed").touch()
+    os.kill(os.getppid(), signal.SIGKILL)  # an uncatchable interruption mid-rollback
 elif "config" in args and "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
     print(Path(args[args.index("-f")+1]).read_text())  # the captured rollback model, as rendered
 elif "config" in args:
@@ -121,6 +133,8 @@ elif "run" in args:
     if fail == "migration": sys.exit(9)
 elif "up" in args and "api" in args and fail == "health" and ".rollback-compose." not in " ".join(args):
     sys.exit(10)
+elif "up" in args and "api" in args and fail == "rollback-up" and ".rollback-compose." in " ".join(args):
+    sys.exit(10)
 """
 
 GIT = r"""#!/usr/bin/env python3
@@ -134,12 +148,15 @@ if args[0] == "show":
         path = Path(os.environ["HLM_REMOTE_DIR"])/"deploy"/name
         if not path.exists(): path = Path(os.environ["HLM_REMOTE_DIR"])/"deploy/compose.prod.yaml"
         sys.stdout.write(path.read_text())
-    elif args[-1].endswith(":deploy/scripts/rollback.sh"):
-        sys.stdout.write((Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/rollback.sh").read_text())
+    elif ":deploy/scripts/" in args[-1] and not args[-1].endswith("remote-deploy.sh"):
+        sys.stdout.write((Path(os.environ["HLM_REMOTE_DIR"])/args[-1].split(":", 1)[1]).read_text())
     else:
         print((Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
     sys.exit()
 changed = os.environ.get("FAIL") == "compose-change" or os.environ.get("COMPOSE_CHANGE") == "1"
+if args[:2] == ["cat-file", "-e"]:
+    # PREW0_TARGET=1: the previous release (a*40) predates W0a (no 0005 migration, no ops package).
+    sys.exit(1 if os.environ.get("PREW0_TARGET") == "1" and args[2].startswith("a"*40) else 0)
 if args[0] == "diff" and changed: sys.exit(1)
 if args[:2] == ["checkout", "--detach"] and args[-1] == "b"*40 and os.environ.get("FAIL") == "legacy":
     from pathlib import Path

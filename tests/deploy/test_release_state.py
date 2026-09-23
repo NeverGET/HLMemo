@@ -115,9 +115,40 @@ class ReleaseStateTests(unittest.TestCase):
         rs.main(["accept", str(self.dir)])
         self.assertFalse(backup.exists())
         self.assertTrue(json.loads((self.dir / rs.STATE).read_text())["accepted"])
+        rs.main(["begin-rollback", str(self.dir), OLD])
+        self.assertEqual(OLD, json.loads((self.dir / rs.STATE).read_text())["rollback_in_progress"])
         rs.main(["rolled-back", str(self.dir)])
         state = json.loads((self.dir / rs.STATE).read_text())
         self.assertEqual((state["current_ref"], state["rolled_back_from"]), (OLD, NEW))
+        self.assertNotIn("rollback_in_progress", state)
+        self.assertEqual(self.markers(), {"current-ref": OLD})
+
+    def test_backups_of_every_publication_stay_listed_until_acceptance(self):
+        first, second = self.dir / "api.env.pre-w0-1", self.dir / "api.env.pre-w0-2"
+        for backup, (current, previous) in ((first, (NEW, OLD)), (second, (NEWER, NEW))):
+            backup.write_text("x\n")
+            rs.main(
+                ["publish", str(self.dir), "--current", current, "--previous", previous,
+                 "--previous-dump", "/d", "--env-backup", f"{self.dir / 'api.env'}={backup}"]
+            )  # fmt: skip
+        state = json.loads((self.dir / rs.STATE).read_text())
+        self.assertEqual(state["retired_backups"], sorted([str(first), str(second)]))
+        rs.main(["accept", str(self.dir)])
+        self.assertFalse(first.exists() or second.exists())
+
+    def test_crash_while_consuming_the_pair_is_repaired_by_derive(self):
+        """D-065 item 5: state consumption + marker removal is one derive; a crash in between leaves
+        a consistent state, and deriving again deletes the stale previous-ref/previous-dump."""
+        self.publish(NEW, OLD, "/b/old.dump")
+        with (
+            mock.patch.object(rs.Path, "unlink", side_effect=OSError("crash while pruning markers")),
+            self.assertRaises(OSError),
+        ):
+            rs.main(["rolled-back", str(self.dir)])
+        state = json.loads((self.dir / rs.STATE).read_text())
+        self.assertEqual((state["current_ref"], state.get("previous_ref")), (OLD, None))
+        self.assertEqual(self.markers()["previous-ref"], OLD)  # stale until derived again
+        rs.main(["derive", str(self.dir)])
         self.assertEqual(self.markers(), {"current-ref": OLD})
 
 
