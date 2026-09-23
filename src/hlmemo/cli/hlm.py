@@ -7,6 +7,7 @@ hlm mcp add claude|codex|agy
 hlm query "<q>" [--budget N]
 hlm close --notes ... [--decision ...] [--lesson "title::body"] [--card FILE]
 hlm claude|codex|agy [--task ...] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]
+hlm bench [--profile|--model] [--suite v1|v2] [--runs N] [--max-usd X] [--compare A B] | rescore | leaderboard
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import typer
 
 from hlmemo import __version__
 from hlmemo.auth.tokens import looks_like_token
+from hlmemo.bench.cli import bench_app
 from hlmemo.cli import credentials, mcp_register
 from hlmemo.cli.client_config import (
     EX_NOPERM,
@@ -80,6 +82,7 @@ mcp_app = typer.Typer(help="Register the HLMemo MCP server with a coding CLI.", 
 app.add_typer(device_app, name="device")
 app.add_typer(project_app, name="project")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(bench_app, name="bench")  # W2f: hlm bench (heavy imports are inside the commands)
 
 
 # --------------------------------------------------------------------------- shared state / helpers

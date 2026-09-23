@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Release-blocking live gate runner (CC-5; G-LIVE-A for W2a).
 
-Runs every LLM task fixture (``bench/tasks/t1..t4``, pinned by sha256) through the PRODUCTION
-path — versioned prompts (``hlmemo.librarian.prompts``), the redactor, the provider with its
-retry/schema/backoff logic and the atomic reservation — once per profile (default, then the
+Runs every LLM task fixture (``src/hlmemo/bench/tasks/v1/t1..t4``, pinned by sha256) through the
+PRODUCTION path — versioned prompts (``hlmemo.librarian.prompts``), the redactor, the provider with
+its retry/schema/backoff logic and the atomic reservation — once per profile (default, then the
 fallback profile, each alone: the gate measures each model, not the fallback chain), ``--reps``
-times. Scoring follows ``eval/live/RUBRIC.md`` (the D-019 bench scoring). Pass rule per task and
+times. The fixtures, payloads, semantic checks, scoring and the call loop are ``hlm bench``'s
+(``hlmemo.bench.v1`` / ``hlmemo.bench.runner``, W2f); this file keeps only the gate policy.
+Scoring follows ``eval/live/RUBRIC.md`` (the D-019 bench scoring). Pass rule per task and
 profile: the MINIMUM over reps of the per-rep mean score ≥ the rubric threshold; the mean is
 reported. ``--max-usd`` is a runaway guard shared by the whole run: a reservation the guard
 refuses aborts the run as a FAIL, never a skip.
@@ -34,39 +36,46 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+from hlmemo.bench import v1  # noqa: E402
+from hlmemo.bench.runner import Item, run_items  # noqa: E402
 from hlmemo.librarian.budget import MemoryBudget  # noqa: E402
 from hlmemo.librarian.cassette import CassetteStore  # noqa: E402
-from hlmemo.librarian.errors import BudgetDeferred, LibrarianError, SchemaFail  # noqa: E402
 from hlmemo.librarian.ledger import MemoryLedger  # noqa: E402
 from hlmemo.librarian.profiles import named_profile  # noqa: E402
 from hlmemo.librarian.prompts import load_task  # noqa: E402
 from hlmemo.librarian.provider import Provider  # noqa: E402
 from hlmemo.librarian.redact import Redactor  # noqa: E402
-from hlmemo.librarian.tasks import user_message  # noqa: E402
+from hlmemo.librarian.tasks import JOB_NAMES, user_message  # noqa: E402
 
 #: task -> (fixture path, pinned sha256). A fixture edit is a gate change: update the pin in the
 #: same commit and re-run the gate for every profile.
 FIXTURES: dict[str, tuple[str, str]] = {
     "placement": (
-        "bench/tasks/t1_placement.json",
+        "src/hlmemo/bench/tasks/v1/t1_placement.json",
         "c64f73a603282490223f70e24de175c3db4ec5a72dfe192c0994e9ebe299d390",
     ),
     "contradiction": (
-        "bench/tasks/t2_contradiction.json",
+        "src/hlmemo/bench/tasks/v1/t2_contradiction.json",
         "d5b710200d02b03e4ba5e4388abeb0715e18ef7f98739a9fd975dd4abef3c8a9",
     ),
     "summary": (
-        "bench/tasks/t3_summarization.json",
+        "src/hlmemo/bench/tasks/v1/t3_summarization.json",
         "10aa5896c62c2f04e6f100eef689f8ae9ed16d1ee40c6453d1a1363f4f9cbbd2",
     ),
     "risk": (
-        "bench/tasks/t4_risk_check.json",
+        "src/hlmemo/bench/tasks/v1/t4_risk_check.json",
         "01be797f1c1c6fbdd8bfc1883ef3a50afc64c6c87f9d0fc7f135042d7ec34ace",
     ),
 }
 #: RUBRIC.md thresholds (minimum over reps of the per-rep mean score)
 THRESHOLDS = {"placement": 0.90, "contradiction": 0.90, "summary": 0.80, "risk": 0.85}
 MAX_JSON_FAIL_RATE = 0.02
+
+# The rubric pieces are hlm bench's (one implementation, W2f); re-exported for callers of this file.
+case_payload = v1.case_payload
+semantic_check = v1.semantic_check
+jaccard = v1.jaccard
+score = v1.score
 
 
 class GateAbort(RuntimeError):
@@ -80,71 +89,35 @@ def load_fixture(task: str, *, verify: bool = True) -> dict[str, Any]:
     digest = hashlib.sha256(raw).hexdigest()
     if verify and digest != pin:
         raise GateAbort(f"fixture {rel} sha256 {digest} != pinned {pin}")
-    cfg = json.loads(raw)
-    if task == "placement":
-        for c in cfg["cases"]:
-            c["_candidates"] = [{"topic_id": t, "summary": cfg["topics"][t]} for t in c["candidates"]]
-    return cfg
+    return v1.load_fixture(task, raw)
 
 
-def case_payload(task: str, case: dict[str, Any]) -> dict[str, Any]:
-    if task == "placement":
-        return {"memory": case["memory"], "candidates": case["_candidates"]}
-    if task == "contradiction":
-        return {"A": case["a"], "B": case["b"]}
-    if task == "summary":
-        return {"items": case["items"]}
-    return {"task": case["task"], "lessons": case["lessons"]}
-
-
-def semantic_check(task: str, case: dict[str, Any]):  # noqa: ANN201 - returns a validator
-    def check(obj: dict[str, Any]) -> str | None:
-        if task == "placement" and obj.get("topic_id") not in case["candidates"]:
-            return f"topic_id not a candidate: {obj.get('topic_id')!r}"
-        if task == "summary":
-            known = {i["id"] for i in case["items"]}
-            if unknown := [x for x in obj.get("clue_ids", []) if x not in known]:
-                return f"clue_ids unknown: {unknown}"
-        if task == "risk":
-            known = {lesson["id"] for lesson in case["lessons"]}
-            if unknown := [x for x in obj.get("matched_lesson_ids", []) if x not in known]:
-                return f"matched_lesson_ids unknown: {unknown}"
-        return None
-
-    return check
-
-
-def jaccard(a: list[str], b: list[str]) -> float:
-    sa, sb = set(a), set(b)
-    return 1.0 if not sa and not sb else len(sa & sb) / len(sa | sb)
-
-
-def score(
-    task: str, obj: dict[str, Any], case: dict[str, Any], cfg: dict[str, Any]
-) -> tuple[float, dict[str, Any]]:
-    g = case["gold"]
-    if task == "placement":
-        d = {
-            "layer_ok": obj["layer"] == g["layer"],
-            "topic_ok": obj["topic_id"] == g["topic_id"],
-            "importance_ok": abs(obj["importance"] - g["importance"]) <= 2,
-            "stability_ok": obj["stability"] == g["stability"],
-        }
-        return float(d["layer_ok"] and d["topic_ok"] and d["importance_ok"]), d
-    if task == "contradiction":
-        d = {
-            "contradicts_ok": obj["contradicts"] == g["contradicts"],
-            "supersedes_ok": obj["supersedes"] == g["supersedes"],
-        }
-        return float(d["contradicts_ok"] and d["supersedes_ok"]), d
-    if task == "summary":
-        words = len(obj["summary"].split())
-        j = jaccard(obj["clue_ids"], g["clue_ids"])
-        ok = words <= cfg.get("max_words", 120)
-        return round(0.7 * j + 0.3 * float(ok), 4), {"jaccard": j, "words": words, "length_ok": ok}
-    warn_ok = obj["warn"] == g["warn"]
-    j = jaccard(obj["matched_lesson_ids"], g["matched_lesson_ids"])
-    return round(0.5 * float(warn_ok) + 0.5 * j, 4), {"warn_ok": warn_ok, "jaccard": j}
+def gate_items(tasks: list[str], reps: int, limit: int) -> list[Item]:
+    """rep -> task -> case, exactly the order of the pre-W2f loop (recorded cassettes stay valid)."""
+    items: list[Item] = []
+    fixtures = {t: load_fixture(t) for t in tasks}
+    for rep in range(reps):
+        for task in tasks:
+            cfg = fixtures[task]
+            spec = load_task(task)
+            cases = cfg["cases"][:limit] if limit else cfg["cases"]
+            for case in cases:
+                items.append(
+                    Item(
+                        suite="v1",
+                        task=task,
+                        job=JOB_NAMES[task],
+                        case_id=case["id"],
+                        tier=None,
+                        pack="v1",
+                        rep=rep,
+                        spec=spec,
+                        user=user_message(task, case_payload(task, case)),
+                        validate=semantic_check(task, case),
+                        scorer=lambda obj, t=task, c=case, f=cfg: score(t, obj, c, f),
+                    )
+                )
+    return items
 
 
 # --------------------------------------------------------------------------- run
@@ -170,48 +143,38 @@ async def run_profile(
         redactor=redactor,
         timeout_s=120,
     )
-    calls: list[dict[str, Any]] = []
+
+    def show(o: Any) -> None:
+        flag = {"ok": "OK ", "json_fail": "BAD"}.get(o.status, "ERR")
+        s = 0.0 if o.score is None else o.score
+        print(f"  [{profile_name}] rep{o.item.rep} {flag} {o.item.task}/{o.item.case_id} score={s:.2f}", flush=True)
+
     try:
-        for rep in range(reps):
-            for task in tasks:
-                cfg = load_fixture(task)
-                spec = load_task(task)
-                cases = cfg["cases"][:limit] if limit else cfg["cases"]
-                for case in cases:
-                    rec: dict[str, Any] = {"task": task, "case": case["id"], "rep": rep}
-                    try:
-                        res = await provider.complete(
-                            spec,
-                            user_message(task, case_payload(task, case)),
-                            validate=semantic_check(task, case),
-                        )
-                    except BudgetDeferred as exc:
-                        raise GateAbort(f"MAX_USD runaway guard tripped: {exc}") from exc
-                    except SchemaFail as exc:
-                        rec.update(score=0.0, json_fail=True, infra_error=False, error=str(exc)[:200])
-                    except LibrarianError as exc:
-                        rec.update(score=0.0, json_fail=False, infra_error=True, error=str(exc)[:200])
-                    else:
-                        s, detail = score(task, res.output, case, cfg)
-                        rec.update(
-                            score=s,
-                            detail=detail,
-                            json_fail=False,
-                            infra_error=False,
-                            output=redactor.value(res.output),
-                            latency_ms=res.latency_ms,
-                            cost_usd=str(res.cost_usd),
-                            prompt_tokens=res.usage.get("prompt_tokens"),
-                            completion_tokens=res.usage.get("completion_tokens"),
-                        )
-                    calls.append(rec)
-                    flag = "ERR" if rec["infra_error"] else ("BAD" if rec["json_fail"] else "OK ")
-                    print(
-                        f"  [{profile_name}] rep{rep} {flag} {task}/{case['id']} score={rec['score']:.2f}",
-                        flush=True,
-                    )
+        outcomes = await run_items(gate_items(tasks, reps, limit), provider, ledger, concurrency=1, progress=show)
     finally:
         await provider.aclose()
+    calls: list[dict[str, Any]] = []
+    for o in outcomes:
+        if o.status in ("budget_deferred", "not_run"):
+            raise GateAbort(f"MAX_USD runaway guard tripped: {o.error}")
+        rec: dict[str, Any] = {"task": o.item.task, "case": o.item.case_id, "rep": o.item.rep}
+        if o.status == "json_fail":
+            rec.update(score=0.0, json_fail=True, infra_error=False, error=(o.error or "")[:200])
+        elif o.status == "infra_error":
+            rec.update(score=0.0, json_fail=False, infra_error=True, error=(o.error or "")[:200])
+        else:
+            rec.update(
+                score=o.score,
+                detail=o.detail,
+                json_fail=False,
+                infra_error=False,
+                output=redactor.value(o.output),
+                latency_ms=o.latency_ms,
+                cost_usd=str(o.cost_usd),  # every attempt of the call (ledger), incl. a schema retry
+                prompt_tokens=o.usage.get("prompt_tokens"),
+                completion_tokens=o.usage.get("completion_tokens"),
+            )
+        calls.append(rec)
     return summarize(profile, tasks, reps, calls, ledger)
 
 
