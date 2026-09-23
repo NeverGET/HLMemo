@@ -11,6 +11,11 @@ the span) and ``item`` (the right file section is among the top-5 items). Gate: 
 History (results/): first run 0.559 with one item per file; heading sections (``--section-chars``,
 default 8000) + the adjudicated ``alt`` spans (8, added for misses whose fact another file states
 too) + one corrected question (q07 said "first" verdict; that is round 4) → 0.794 / drill 0.853.
+The two right-item/wrong-chunk misses (Sol 42 #8) were examined: in both the answer sits in chunk
+N+1 of the returned item (q33: a 146-token tail chunk of a 1,466-char section; q26: chunk 2 of a
+6.7k-char file without ATX headings), so one drilldown reaches it. Smaller sections (3000/5000)
+did not fix them and lost other questions; no import-side granularity fix exists — the choice of
+the representative chunk is the read path's (D-072 keeps G-I4 open as a retrieval gap).
 
     HLM_MODELS_DIR=... uv run python eval/import_recall/run_gi4.py --dsn postgresql://.../hlm_test_a
 
