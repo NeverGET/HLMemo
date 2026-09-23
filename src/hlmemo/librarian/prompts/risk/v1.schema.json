@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "risk/v1",
+  "type": "object",
+  "properties": {
+    "warn": {"type": "boolean"},
+    "matched_lesson_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+    "message": {"type": "string", "maxLength": 1000}
+  },
+  "required": ["warn", "matched_lesson_ids", "message"]
+}

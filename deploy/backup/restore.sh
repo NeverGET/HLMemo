@@ -24,7 +24,7 @@ writers_stopped=0
 cleanup() {
     status=$?
     if [[ $status -ne 0 && $writers_stopped == 1 ]]; then
-        dc stop caddy api worker </dev/null >&2 || true
+        dc stop caddy api worker librarian </dev/null >&2 || true
         echo 'Restore failed; writers remain stopped. Use the printed safety dump to recover.' >&2
     fi
     exit "$status"
@@ -32,7 +32,7 @@ cleanup() {
 trap cleanup EXIT
 # Mark before stop so even a partial stop failure is handled fail-closed.
 writers_stopped=1
-dc stop caddy api worker </dev/null
+dc stop caddy api worker librarian </dev/null
 echo "Writers stopped; creating the pre-restore safety dump." >&2
 mkdir -p "$safety_dir" </dev/null
 safety=$(mktemp "$safety_dir/hlmemo-$(date -u +%Y-%m-%dT%H%M%SZ </dev/null).dump.XXXXXX" </dev/null)
@@ -47,5 +47,5 @@ dc exec -T db sh -eu -c 'pg_restore --username="$POSTGRES_USER" --dbname="$POSTG
 # Restore can move the schema backwards. Upgrade with the checked-out release before
 # any writer restarts; a migration failure deliberately leaves all writers stopped.
 dc run --rm --no-deps migrate </dev/null
-dc up -d --no-deps --wait --wait-timeout 180 db api worker caddy </dev/null
+dc up -d --no-deps --wait --wait-timeout 180 db api worker librarian caddy </dev/null
 echo "Restore completed; stack healthy. Safety dump retained: $safety"

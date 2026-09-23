@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "placement/v1",
+  "type": "object",
+  "properties": {
+    "layer": {"enum": ["fact", "episode", "lesson", "experience"]},
+    "topic_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "importance": {"type": "integer", "minimum": 1, "maximum": 10},
+    "stability": {"enum": ["stable", "volatile"]}
+  },
+  "required": ["layer", "topic_id", "importance", "stability"]
+}

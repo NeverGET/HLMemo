@@ -151,7 +151,12 @@ deployment_failed() {
   if [[ $writers_stopped == 1 && -n $previous && -s $rollback_config ]]; then
     echo 'Deployment failed; recovering the previous stack.' >&2
     recovery_ok=1
-    dc stop caddy api worker </dev/null >&2 || recovery_ok=0
+    dc stop caddy api worker librarian </dev/null >&2 || recovery_ok=0
+    # W2a: a previous model without the librarian must not keep this release's librarian
+    # container around (it would run new code against the restored, older schema).
+    if [[ " ${rollback_services[*]} " != *" librarian "* ]]; then
+      dc rm -f librarian </dev/null >&2 || recovery_ok=0
+    fi
     if [[ $migration_started == 0 ]]; then
       # No schema mutation happened: even a failed cleanup stop must not prevent
       # restarting the old services that were already stopped successfully.
@@ -176,7 +181,7 @@ deployment_failed() {
     # previous release explicitly and prove the rendered rollback model runs its pinned image.
     export HLM_IMAGE=${previous_image:-} HLM_IMAGE_REVISION=$previous
     if [[ $recovery_ok == 1 ]]; then
-      rendered_image=$(rollback config --format json </dev/null | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; print(s["api"]["image"] if s["api"]["image"] == s["worker"]["image"] else "MISMATCH")') || rendered_image=
+      rendered_image=$(rollback config --format json </dev/null | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; i={s[n]["image"] for n in ("api","worker","librarian") if n in s}; print(s["api"]["image"] if len(i) == 1 else "MISMATCH")') || rendered_image=
       if [[ -n ${previous_id:-} && $rendered_image == "$previous_id" ]]; then
         printf 'Rollback image verified: %s (%s)\n' "$rendered_image" "$HLM_IMAGE" >&2
       else
@@ -184,7 +189,7 @@ deployment_failed() {
         recovery_ok=0
       fi
     fi
-    if [[ $recovery_ok == 1 ]] && rollback up -d --no-deps --wait --wait-timeout 300 db api worker caddy </dev/null >&2; then
+    if [[ $recovery_ok == 1 ]] && rollback up -d --no-deps --wait --wait-timeout 300 "${rollback_services[@]}" </dev/null >&2; then
       echo "Previous stack restored: $previous" >&2
     else
       echo "Automatic recovery failed; recovery ref=$previous dump=$pre_upgrade_dump (see $run_dir/log)." >&2
@@ -197,6 +202,8 @@ deployment_failed() {
   fi
   exit "$status"
 }
+# Services the rollback model runs (W2a: the librarian only when the previous model defines it).
+rollback_services=(db api worker caddy)
 trap deployment_failed ERR
 trap 'deployment_failed 130' INT
 trap 'deployment_failed 143' TERM
@@ -246,7 +253,9 @@ path = sys.argv[1]
 with open(path) as stream:
     config = json.load(stream)
 project = config["name"]
-for service in ("db", "api", "worker", "caddy"):
+# W2a: the librarian is captured only when the previous model defines it (the first W2a
+# deployment runs over a model without it); where defined, exactly one container must exist.
+for service in [s for s in ("db", "api", "worker", "librarian", "caddy") if s in config["services"]]:
     ids = subprocess.check_output(["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}", "--filter", f"label=com.docker.compose.service={service}"], text=True, stdin=subprocess.DEVNULL).split()
     if len(ids) != 1:
         sys.exit(f"Cannot capture rollback: expected one existing {service} container")
@@ -258,6 +267,8 @@ for service in ("db", "api", "worker", "caddy"):
 with open(path, "w") as stream:
     json.dump(config, stream)
 PYCONFIG
+  rollback_list=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["services"]; print(" ".join(n for n in ("db","api","worker","librarian","caddy") if n in s))' "$rollback_config" </dev/null)
+  read -ra rollback_services <<< "$rollback_list"
 fi
 # Use a separate immutable tag for each release, shared by migrate/api/worker.
 # The persistent env stays on the baseline until the internal cutover succeeds.
@@ -272,8 +283,8 @@ import json, sys
 with open(sys.argv[1]) as stream:
     services = json.load(stream)["services"]
 image = services["api"]["image"]
-if services["worker"]["image"] != image:
-    sys.exit("Cannot adopt baseline: api and worker run different images")
+if any(services[n]["image"] != image for n in ("worker", "librarian") if n in services):
+    sys.exit("Cannot adopt baseline: api, worker and librarian run different images")
 print(image)
 PYIMAGE
 )
@@ -299,6 +310,7 @@ domain=$(env_value HLM_DOMAIN)
 [[ $domain =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'HLM_DOMAIN must be a DNS hostname' >&2; exit 1; }
 dc pull db caddy </dev/null
 if ! docker image inspect "$HLM_IMAGE" >/dev/null 2>&1 </dev/null; then
+  # The librarian (W2a) runs the same ${HLM_IMAGE} tag as api/worker/migrate: no separate build.
   dc build --pull api worker migrate </dev/null
 fi
 # Existence alone is never evidence that a release tag contains the right code.
@@ -321,7 +333,7 @@ fi
 migrate_env_w0
 # Mark first so even a partially failed stop restarts the previous stack.
 writers_stopped=1
-dc stop caddy api worker </dev/null
+dc stop caddy api worker librarian </dev/null
 # Final, quiesced snapshot (Sol 34 #3): no write can commit between it and the migration, so a
 # recovery restores everything the old release acknowledged. It becomes the rollback dump; the
 # live snapshot above proved backups work before any downtime. We already hold the operation lock.
@@ -338,11 +350,13 @@ verify_release_image
 migration_started=1
 dc run --rm --no-deps migrate </dev/null
 verify_release_image
-dc up -d --no-deps --wait --wait-timeout 300 db api worker caddy </dev/null
+dc up -d --no-deps --wait --wait-timeout 300 db api worker librarian caddy </dev/null
 # Test application readiness and Caddy routing without public DNS/ACME. Only
 # failures before this boundary may restore the snapshot automatically.
 dc exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()" </dev/null
 dc exec -T caddy wget -q -O /dev/null http://127.0.0.1:8081/ready </dev/null
+# W2a librarian: fresh heartbeat (it idles without provider calls while HLM_LIBRARIAN_ENABLED=false).
+dc exec -T librarian python -m hlmemo.librarian.health 120 </dev/null
 # W0a route table on the API's own loopback listener (the route filter applies to any listener).
 # The checker mints a 10-minute ci device with hlmemo.ops inside the container and revokes it
 # through the public self-revoke route. A failure here restores the previous stack.

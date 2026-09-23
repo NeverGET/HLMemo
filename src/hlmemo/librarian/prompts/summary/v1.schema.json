@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "summary/v1",
+  "type": "object",
+  "properties": {
+    "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "clue_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 10}
+  },
+  "required": ["summary", "clue_ids"]
+}

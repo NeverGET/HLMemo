@@ -26,7 +26,7 @@ from hlmemo.core.normalize import normalize
 from hlmemo.core.temporal import parse_opt_ts, parse_ts
 from hlmemo.db import write_queries as q
 
-PROJECTION_TABLES = ("jobs", "links", "embeddings", "chunks", "memory_versions")
+PROJECTION_TABLES = ("librarian_questions", "jobs", "links", "embeddings", "chunks", "memory_versions")
 
 
 @dataclass(slots=True)
@@ -70,7 +70,12 @@ async def rebuild_projections(conn: AsyncConnection) -> RebuildStats:
                 await _replay_write(conn, stats, event_id, project_id, payload)
             elif kind == "access":
                 await _replay_access(conn, payload)
-            # device/project/grant events have no projection rows
+            elif kind in ("import", "ingest") and "items" in (payload.get("resolved") or {}):
+                # write-shaped batches (W1.5 / W3d record the write resolution)
+                await _replay_write(conn, stats, event_id, project_id, payload)
+            elif kind in SYSTEM_EVENT_KINDS:
+                await _replay_system(conn, stats, event_id, payload)
+            # device/project/grant/device_minted events have no projection rows
         await _reset_sequences(conn)
     return stats
 
@@ -223,6 +228,48 @@ async def _replay_write(
         stats.jobs += 1
 
 
+#: CC-2 kinds whose ``payload.resolved`` records applied mutations / enqueued jobs (schema_version 2,
+#: proposed D-062). ``import``/``ingest`` without write-shaped items land here too.
+SYSTEM_EVENT_KINDS = frozenset(
+    {"librarian", "question", "answer", "consolidation", "pack_import", "import", "ingest"}
+)
+
+
+async def _replay_system(
+    conn: AsyncConnection, stats: RebuildStats, event_id: int, payload: dict[str, Any]
+) -> None:
+    """System-actor events: ``resolved.mutations`` (ids recorded), ``resolved.questions`` (question
+        rows) and ``resolved.question_status`` (decisions, supersession), ``resolved.jobs`` (full
+        descriptors, ``run_after = created_at = T``), ``resolved.done`` (the job this event completed,
+        with its completion time and attempts), ``resolved.deferred`` (a job handed back or backed off:
+    its status, attempts, run_after and last_error). Never calls a provider: the LLM output lives only in
+        the audit ``request``."""
+    from hlmemo.librarian.actor import (
+        apply_mutations,
+        insert_questions,
+        mark_done_by_key,
+        restore_deferred,
+        set_question_status,
+    )
+    from hlmemo.librarian.jobs import insert_recorded_jobs
+
+    res = payload.get("resolved") or {}
+    if not res.get("recorded_at"):
+        return
+    T = parse_ts(res["recorded_at"], field="resolved.recorded_at")
+    mutations = list(res.get("mutations") or [])
+    stats.links += sum(1 for m in mutations if m.get("op") == "link_insert")
+    await apply_mutations(conn, mutations, event_id, T)
+    await insert_questions(conn, list(res.get("questions") or []), event_id, T)
+    await set_question_status(conn, list(res.get("question_status") or []), T)
+    jobs = list(res.get("jobs") or [])
+    stats.jobs += await insert_recorded_jobs(conn, jobs, event_id, T)
+    if res.get("deferred"):  # a handed-back / backed-off / failed job (Sol 38 #6)
+        await restore_deferred(conn, res["deferred"])
+    if res.get("done"):
+        await mark_done_by_key(conn, res["done"], T)
+
+
 def _chunk_rows(
     recorded: list[dict[str, Any]], version_id: int, body: str, project_ids: list[int], device_scope: str
 ) -> list[q.ChunkRow]:
@@ -276,4 +323,4 @@ async def _reset_sequences(conn: AsyncConnection) -> None:
     )
 
 
-__all__ = ["PROJECTION_TABLES", "RebuildStats", "ReplayError", "rebuild_projections"]
+__all__ = ["PROJECTION_TABLES", "SYSTEM_EVENT_KINDS", "RebuildStats", "ReplayError", "rebuild_projections"]

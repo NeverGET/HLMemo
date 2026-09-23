@@ -135,8 +135,14 @@ async def test_title_folding_is_identical_on_both_sides(connect) -> None:  # noq
             assert same and folded == "strasse i i a"
 
 
-async def test_df_cache_sees_a_small_write_on_the_next_query(connect) -> None:  # noqa: ANN001
-    """Review 33 #1: a write far below any size threshold invalidates the project's DF."""
+async def test_df_cache_sees_a_small_write_within_max_staleness(connect) -> None:  # noqa: ANN001
+    """D-063 (replaces Sol 33 #1 "next query"): a small write is seen once the background refresh
+    it triggered completes (≤ MAX_STALENESS_S); the query right after it is served the old DF
+    without blocking."""
+    import asyncio
+
+    from hlmemo.core.term_stats import MAX_STALENESS_S
+
     async with await connect() as conn:
         world = await seed_world(conn)
         await _write(conn, world, [item(f"n{i}", f"plain filler text {i}") for i in range(DF_MIN_DOCS + 5)])
@@ -145,6 +151,11 @@ async def test_df_cache_sees_a_small_write_on_the_next_query(connect) -> None:  
             before = await cache.get(conn, world.main_id)
         assert before.chunks.prefix_df("quokka") == 0
         await _write(conn, world, [item("one more", "quokka sighting")])
+        async with conn.transaction():
+            assert await cache.get(conn, world.main_id) is before  # served stale, never blocked
+        await asyncio.wait_for(
+            asyncio.gather(*[t for t in cache._tasks.values() if not t.done()]), timeout=MAX_STALENESS_S
+        )
         async with conn.transaction():
             after = await cache.get(conn, world.main_id)
         assert after is not before and after.chunks.prefix_df("quokka") == 1
