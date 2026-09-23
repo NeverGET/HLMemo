@@ -110,9 +110,9 @@ class Oracle:
                         current = (
                             ("B" if new_is_b else "A") if rel[1] == "new" else ("A" if new_is_b else "B")
                         )
-                        custom = {"same_subject": True, "both_true": False, "current": current}
+                        custom = {"same_subject": True, "conflict": True, "current": current}
                     else:
-                        custom = {"same_subject": True, "both_true": True, "current": "both"}
+                        custom = {"same_subject": True, "conflict": False, "current": "both"}
                 results.append({"id": p["id"], **custom})
             return {"results": results}
         return {}

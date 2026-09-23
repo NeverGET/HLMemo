@@ -13,7 +13,13 @@ librarian's proposals. Runs in the ops transaction (``ops/cli.py``); nothing pri
     librarian role set observer|assistant|autonomous --decision D-NNN [--project P]
         the D-062 ``set_role`` event (a ``librarian`` event); a per-project role can only lower;
     librarian expire
-        expires open questions older than 30 days now (the worker also sweeps periodically).
+        expires open questions older than 30 days now (the worker also sweeps periodically);
+    librarian backfill --project P [--device REF] [--limit N]
+        enqueues the W2b review (``librarian_write:<event_id>``, priority 6) for the committed
+        write/call_the_day/import events of P that have none yet — history written before the
+        librarian was enabled (roadmap §5: ``hlm.ops librarian backfill --project hlmemo``). The
+        capabilities are those of each event's device NOW, or of ``--device`` (e.g. the owner's
+        current device when the importer device was revoked).
 """
 
 from __future__ import annotations
@@ -62,6 +68,10 @@ def add_parser(sub: Any) -> None:
     rs.add_argument("--decision", required=True, help="the D-entry that authorizes the role")
     rs.add_argument("--project")
     lsub.add_parser("expire", help="expire questions past their 30 days now")
+    bf = lsub.add_parser("backfill", help="enqueue the W2b review for history written before the librarian")
+    bf.add_argument("--project", required=True)
+    bf.add_argument("--device", help="device id or name whose capabilities the jobs carry")
+    bf.add_argument("--limit", type=int, default=None, help="at most N source events")
 
 
 def _ops_ctx(owner: str = "owner") -> AuthContext:
@@ -181,6 +191,91 @@ async def audit(
     return {"project": project, "batches": batches, "proposals": proposals, "summary": summary}
 
 
+async def backfill(
+    conn: AsyncConnection, project: str, *, device: str | None = None, limit: int | None = None
+) -> dict[str, Any]:
+    """Enqueue ``write_review`` for the project's committed write-shaped events that have no
+    ``librarian_write:<event_id>`` job yet (only their still-current versions). One ``librarian``
+    enqueue event per source event (idempotent: the same keys never enqueue twice)."""
+    from hlmemo.librarian.jobs import enqueue, job_spec
+    from hlmemo.librarian.tasks.write_review import MAX_VERSIONS, OP
+
+    pid = await _project_id(conn, project)
+    override: int | None = None
+    if device is not None:
+        cur = await conn.execute(
+            "SELECT device_id FROM devices WHERE device_id::text = %s OR name = %s", (device, device)
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise HlmError("E_NOT_FOUND", "unknown device", {"device": device})
+        override = int(row[0])
+    cur = await conn.execute(
+        """
+        SELECT e.event_id, e.kind, e.device_id, e.payload FROM events e
+         WHERE e.project_id = %s AND e.kind IN ('write', 'call_the_day', 'import')
+           AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.dedupe_key = 'librarian_write:' || e.event_id)
+         ORDER BY e.event_id LIMIT %s
+        """,
+        (pid, limit),
+    )
+    events = await cur.fetchall()
+    enqueued = jobs = 0
+    for event_id, kind, device_id, payload in events:
+        res = payload.get("resolved") or {}
+        items = res.get("items") or []
+        raw = (payload.get("request") or {}).get("items") if kind == "write" else None
+        vids = [int(it["version_id"]) for it in items if "version_id" in it]
+        if not vids:
+            continue
+        cur = await conn.execute(
+            "SELECT version_id, kind, importance FROM memory_versions WHERE version_id = ANY(%s)"
+            " AND superseded_at = 'infinity' AND valid_to = 'infinity' AND status = 'active'",
+            (vids,),
+        )
+        current = {int(v): (k, imp) for v, k, imp in await cur.fetchall()}
+        entries = []
+        for it in items:
+            vid = int(it.get("version_id", 0))
+            if vid not in current:
+                continue
+            idx = it.get("index", 0)
+            src = raw[idx] if isinstance(raw, list) and idx < len(raw) and isinstance(raw[idx], dict) else {}
+            vkind, imp = current[vid]
+            entries.append(
+                {
+                    "version_id": vid,
+                    "kind": vkind,
+                    "client_importance": imp if (kind != "write" or "importance" in src) else None,
+                    "client_stability": kind != "write" or "stability" in src or vkind == "project_card",
+                }
+            )
+        if not entries:
+            continue
+        specs = []
+        for k in range(0, len(entries), MAX_VERSIONS):
+            key = (
+                f"librarian_write:{event_id}" if k == 0 else f"librarian_write:{event_id}:{k // MAX_VERSIONS}"
+            )
+            specs.append(
+                job_spec(
+                    kind="librarian_write",
+                    dedupe_key=key,
+                    priority=6,
+                    payload={
+                        "op": OP,
+                        "event_id": event_id,
+                        "trigger": "backfill",
+                        "versions": entries[k : k + MAX_VERSIONS],
+                    },
+                )
+            )
+        if await enqueue(conn, project_id=pid, trigger_device_id=override or int(device_id), specs=specs):
+            enqueued += 1
+            jobs += len(specs)
+    return {"project": project, "source_events": len(events), "enqueued_events": enqueued, "jobs": jobs}
+
+
 async def questions_list(
     conn: AsyncConnection, project: str | None, status: str | None
 ) -> list[dict[str, Any]]:
@@ -265,6 +360,9 @@ async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
                 {"role": args.role, "project": args.project, "decision": args.decision, "event_id": event_id}
             )
             return 0
+        if action == "backfill":
+            _print(await backfill(conn, args.project, device=args.device, limit=args.limit))
+            return 0
         if action == "expire":
             from hlmemo.librarian.questions import expire_due
 
@@ -275,4 +373,4 @@ async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
     raise HlmError("E_INVALID_ARG", f"unknown librarian command {action}")
 
 
-__all__ = ["add_parser", "audit", "dispatch", "questions_list"]
+__all__ = ["add_parser", "audit", "backfill", "dispatch", "questions_list"]

@@ -106,6 +106,84 @@ def _close(item: Any, cut: datetime, assessed: dict[str, int]) -> dict[str, Any]
     }
 
 
+# --------------------------------------------------------------------------- prompt payloads
+# Pure builders shared by the handler and the live gate (eval/live/run_w2b.py), so the gate
+# measures exactly the production prompts. Rows need version_id, kind, title, body, valid_from
+# (and tags for placement).
+def place_payload(rows: list[Any]) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "id": _clue(r.version_id),
+                "kind": r.kind,
+                "title": r.title,
+                "text": _cut(r.body, PLACE_TEXT_CHARS),
+                "tags": list(r.tags),
+            }
+            for r in rows
+        ]
+    }
+
+
+def relate_payload(s: Any, cands: list[tuple[Any, bool]]) -> dict[str, Any]:
+    """``cands`` = ``[(candidate row, cross_project)]`` (≤ ``PAIRS_PER_CALL``)."""
+    return {
+        "new": {
+            "id": _clue(s.version_id),
+            "kind": s.kind,
+            "title": s.title,
+            "text": _cut(s.body, NEW_TEXT_CHARS),
+            "t_valid": fmt_ts(s.valid_from),
+        },
+        "existing": [
+            {
+                "id": _clue(c.version_id),
+                "kind": c.kind,
+                "title": c.title,
+                "text": _cut(c.body, OLD_TEXT_CHARS),
+                "t_valid": fmt_ts(c.valid_from),
+                "project": "other" if cross else "same",
+            }
+            for c, cross in cands
+        ],
+    }
+
+
+def relate_texts(s: Any, cands: list[tuple[Any, bool]]) -> list[guards.PairText]:
+    """What the model saw of each pair (the quote guard checks against exactly this)."""
+    return [
+        guards.PairText(
+            _clue(c.version_id),
+            f"{s.title}\n{_cut(s.body, NEW_TEXT_CHARS)}",
+            f"{c.title}\n{_cut(c.body, OLD_TEXT_CHARS)}",
+            s.valid_from,
+            c.valid_from,
+        )
+        for c, _cross in cands
+    ]
+
+
+def _side(row: Any, is_new: bool) -> dict[str, Any]:
+    return {
+        "title": row.title,
+        "text": _cut(row.body, NEW_TEXT_CHARS if is_new else OLD_TEXT_CHARS),
+        "t_valid": fmt_ts(row.valid_from),
+    }
+
+
+def verify_payload(pairs: list[tuple[Any, Any]], start: int = 0) -> list[dict[str, Any]]:
+    """``relate_verify`` items for ``[(subject, candidate)]``: chronological (A never later than B;
+    on a tie the new subject is B), ids ``p<start+1>`` …"""
+    items = []
+    for k, (s, c) in enumerate(pairs):
+        new_is_b = s.valid_from >= c.valid_from
+        first, second = (c, s) if new_is_b else (s, c)
+        items.append(
+            {"id": f"p{start + k + 1}", "A": _side(first, first is s), "B": _side(second, second is s)}
+        )
+    return items
+
+
 class _Pair:
     __slots__ = ("cand", "cross", "judgement", "judgement_profile", "scored", "subject")
 
@@ -302,16 +380,7 @@ class WriteReview:
         counters: dict[str, int],
     ) -> dict[str, dict[str, Any]]:
         ids = [int(e["version_id"]) for e in entries]
-        items = [
-            {
-                "id": _clue(v),
-                "kind": subjects[v].kind,
-                "title": subjects[v].title,
-                "text": _cut(subjects[v].body, PLACE_TEXT_CHARS),
-                "tags": list(subjects[v].tags),
-            }
-            for v in ids
-        ]
+        items = place_payload([subjects[v] for v in ids])["items"]
         try:
             res = await w.provider.complete(
                 load_task("place"),
@@ -354,26 +423,7 @@ class WriteReview:
             for i in range(0, len(group), PAIRS_PER_CALL):
                 chunk = group[i : i + PAIRS_PER_CALL]
                 ids = [s.version_id, *(pr.cand.version_id for pr in chunk)]
-                payload = {
-                    "new": {
-                        "id": _clue(s.version_id),
-                        "kind": s.kind,
-                        "title": s.title,
-                        "text": _cut(s.body, NEW_TEXT_CHARS),
-                        "t_valid": fmt_ts(s.valid_from),
-                    },
-                    "existing": [
-                        {
-                            "id": _clue(pr.cand.version_id),
-                            "kind": pr.cand.kind,
-                            "title": pr.cand.title,
-                            "text": _cut(pr.cand.body, OLD_TEXT_CHARS),
-                            "t_valid": fmt_ts(pr.cand.valid_from),
-                            "project": "other" if pr.cross else "same",
-                        }
-                        for pr in chunk
-                    ],
-                }
+                payload = relate_payload(s, [(pr.cand, pr.cross) for pr in chunk])
                 try:
                     res = await w.provider.complete(
                         task,
@@ -389,16 +439,7 @@ class WriteReview:
                     counters["relate_schema_fail"] = counters.get("relate_schema_fail", 0) + 1
                     continue
                 plan.calls.append(res.audit(w.provider.redactor))
-                texts = [
-                    guards.PairText(
-                        _clue(pr.cand.version_id),
-                        f"{s.title}\n{_cut(s.body, NEW_TEXT_CHARS)}",
-                        f"{pr.cand.title}\n{_cut(pr.cand.body, OLD_TEXT_CHARS)}",
-                        s.valid_from,
-                        pr.cand.valid_from,
-                    )
-                    for pr in chunk
-                ]
+                texts = relate_texts(s, [(pr.cand, pr.cross) for pr in chunk])
                 judged, counts = guards.check_relations(res.output, texts, redact=w.provider.redactor.text)
                 for k, v in counts.items():
                     counters[k] = counters.get(k, 0) + v
@@ -427,20 +468,10 @@ class WriteReview:
             chain = verifier_chain(w, profile)
             for i in range(0, len(group), PAIRS_PER_CALL):
                 chunk = group[i : i + PAIRS_PER_CALL]
-                items = []
-                ids: list[int] = []
-                for k, (pr, _kind) in enumerate(chunk):
-                    s, c = pr.subject, pr.cand
-                    new_is_b = s.valid_from >= c.valid_from
-                    first, second = (c, s) if new_is_b else (s, c)
-                    items.append(
-                        {
-                            "id": f"p{n + k + 1}",
-                            "A": self._side(first, first is s),
-                            "B": self._side(second, second is s),
-                        }
-                    )
-                    ids += [s.version_id, c.version_id]
+                items = verify_payload([(pr.subject, pr.cand) for pr, _kind in chunk], n)
+                ids: list[int] = [
+                    v for pr, _kind in chunk for v in (pr.subject.version_id, pr.cand.version_id)
+                ]
                 n += len(chunk)
                 answers: dict[str, dict[str, Any]] = {}
                 try:
@@ -466,14 +497,6 @@ class WriteReview:
                         )
                         + 1
                     )
-
-    @staticmethod
-    def _side(row: Any, is_new: bool) -> dict[str, Any]:
-        return {
-            "title": row.title,
-            "text": _cut(row.body, NEW_TEXT_CHARS if is_new else OLD_TEXT_CHARS),
-            "t_valid": fmt_ts(row.valid_from),
-        }
 
     # ------------------------------------------------------------------ plan building
     @staticmethod
@@ -587,4 +610,13 @@ class WriteReview:
         return out
 
 
-__all__ = ["MAX_VERSIONS", "OP", "WriteReview", "verifier_chain"]
+__all__ = [
+    "MAX_VERSIONS",
+    "OP",
+    "WriteReview",
+    "place_payload",
+    "relate_payload",
+    "relate_texts",
+    "verifier_chain",
+    "verify_payload",
+]

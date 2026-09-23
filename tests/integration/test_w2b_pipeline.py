@@ -238,7 +238,7 @@ async def test_verifier_disagreement_downgrades(db_dsn, connect, world: World, e
     await _role(connect, world, "autonomous")
     await _pair(connect, world, embedder)
     oracle = Oracle(
-        relations=CONTRA, verify=lambda a, b: {"same_subject": True, "both_true": False, "current": "unclear"}
+        relations=CONTRA, verify=lambda a, b: {"same_subject": True, "conflict": True, "current": "unclear"}
     )
     await _drain(db_dsn, connect, oracle, role="autonomous")
     async with await connect() as conn:
@@ -252,7 +252,7 @@ async def test_verifier_disagreement_downgrades(db_dsn, connect, world: World, e
 async def test_verifier_rejection_drops_the_proposal(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
     await _pair(connect, world, embedder)
     oracle = Oracle(
-        relations=CONTRA, verify=lambda a, b: {"same_subject": False, "both_true": True, "current": "both"}
+        relations=CONTRA, verify=lambda a, b: {"same_subject": False, "conflict": False, "current": "both"}
     )
     await _drain(db_dsn, connect, oracle)
     async with await connect() as conn:
