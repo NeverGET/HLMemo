@@ -374,7 +374,7 @@ async def list_projects(conn: AsyncConnection) -> list[dict[str, Any]]:
     return [_project_public(r) for r in rows]
 
 
-def _loopback_readiness() -> dict[str, Any]:
+def loopback_readiness() -> dict[str, Any]:
     """The API's detailed /ready, read on its loopback listener (only loopback peers get checks)."""
     import urllib.error
     import urllib.request
@@ -421,7 +421,6 @@ async def status(conn: AsyncConnection) -> dict[str, Any]:
         migration = [r["version_num"] for r in await cur.fetchall()]
     admin = await q.admin_state(conn)
     return {
-        "ready": _loopback_readiness(),
         "jobs": jobs,
         "worker": {
             "ready_jobs": int(ledger.get("ready") or 0),
