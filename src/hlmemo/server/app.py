@@ -8,7 +8,7 @@
               /admin/* · /mcp (MCP streamable HTTP, gated).
 
 Liveness vs readiness (codex review O1): `/health` only says the process answers. `/ready` verifies
-every dependency a write or query needs — DB reachable, migration at `phase0@head`, the pinned
+every dependency a write or query needs — DB reachable, migration at `main@head` (D-061), the pinned
 model files present under `HLM_MODELS_DIR` with sha256 matching `models.lock`, and the tokenizer
 loading — and answers 503 `not_ready` with the failing checks otherwise. The compose healthcheck
 probes `/ready`, so `api` is never "healthy" while `memory.write` / `memory.query` would fail.
@@ -66,8 +66,9 @@ from hlmemo.server.middleware import AuthMiddleware, RateLimiter, _finish_shield
 log = logging.getLogger("hlmemo.server")
 
 ADMIN_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_TOKEN not set"
-PHASE0_BRANCH = "phase0"
-PHASE0_HEAD_FALLBACK = "0004_title_norm_fold"  # used only when alembic/ is not on disk (never in the image)
+ADMIN_HTTP_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_HTTP=disabled ignores HLM_ADMIN_TOKEN (D-061)"
+MIGRATION_BRANCH = "main"  # CC-1 / D-061: label carried by 0005_w0_access; was `phase0` before
+MIGRATION_HEAD_FALLBACK = "0005_w0_access"  # used only when alembic/ is not on disk (never in the image)
 MODELS_LOCK = "models.lock"
 
 
@@ -106,23 +107,25 @@ def parse_models_lock(path: Path) -> dict[str, str]:
 
 
 @lru_cache(maxsize=1)
-def phase0_head() -> str:
-    """The `phase0@head` revision id from the alembic script directory (never bare `head`: the
+def migration_head() -> str:
+    """The `main@head` revision id from the alembic script directory (never bare `head`: the
     deferred `hnsw` branch is a second head by design)."""
     ini = _project_file("alembic.ini")
     if ini is None:
-        return PHASE0_HEAD_FALLBACK
+        return MIGRATION_HEAD_FALLBACK
     try:
         from alembic.config import Config
         from alembic.script import ScriptDirectory
 
         cfg = Config(str(ini))
         cfg.set_main_option("script_location", str(ini.parent / "alembic"))
-        (rev,) = ScriptDirectory.from_config(cfg).get_revisions(f"{PHASE0_BRANCH}@head")
+        (rev,) = ScriptDirectory.from_config(cfg).get_revisions(f"{MIGRATION_BRANCH}@head")
         return rev.revision
     except Exception:  # noqa: BLE001 - readiness must answer, not crash
-        log.warning("could not resolve %s@head from %s; using %s", PHASE0_BRANCH, ini, PHASE0_HEAD_FALLBACK)
-        return PHASE0_HEAD_FALLBACK
+        log.warning(
+            "could not resolve %s@head from %s; using %s", MIGRATION_BRANCH, ini, MIGRATION_HEAD_FALLBACK
+        )
+        return MIGRATION_HEAD_FALLBACK
 
 
 def _files_signature(model_dir: Path) -> tuple[tuple[str, int, int], ...]:
@@ -212,6 +215,10 @@ async def _check_readiness(
     checks: dict[str, Any] = {
         "embed_config": embed_config_check(settings.embed_model, settings.embed_revision)
     }
+    unsafe = settings.unsafe_config()
+    checks["access_config"] = (
+        {"ok": False, "error": "unsafe config", "reasons": unsafe} if unsafe else {"ok": True}
+    )
     try:
         _proxy_networks(settings.trusted_proxy_ips)
         checks["trusted_proxy_ips"] = {"ok": True}
@@ -220,7 +227,7 @@ async def _check_readiness(
             "ok": False,
             "error": f"HLM_TRUSTED_PROXY_IPS must be an empty string or a valid CIDR list: {exc}",
         }
-    head = phase0_head()
+    head = migration_head()
     try:
         # The dedicated permit covers connect, query AND connection close, independently of
         # either traffic pool. Timeout/cancellation cleanup finishes before it can be reused.
@@ -369,9 +376,21 @@ async def bind_admin_device(settings: Settings) -> int:
         await pool.close()
     if settings.admin_enabled:
         log.info("admin device bound from HLM_ADMIN_TOKEN (token_generation=%d)", gen)
+    elif settings.admin_token is not None and not settings.admin_http_enabled:
+        log.warning(ADMIN_HTTP_DISABLED_WARNING)
     else:
         log.warning(ADMIN_DISABLED_WARNING)
     return gen
+
+
+class UnsafeConfigError(RuntimeError):
+    """HLM_DEPLOYMENT=production with public registration or admin HTTP enabled (D-061)."""
+
+
+def check_access_config(settings: Settings) -> None:
+    unsafe = settings.unsafe_config()
+    if unsafe:
+        raise UnsafeConfigError("unsafe config: " + "; ".join(unsafe))
 
 
 def create_app(
@@ -385,6 +404,8 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        # Before the pool, the admin binding or the listener: an unsafe production config never serves.
+        check_access_config(settings)
         require_pinned_embed_config(settings.embed_model, settings.embed_revision)
         model_dir = default_model_dir()
         app.state.embedder = None

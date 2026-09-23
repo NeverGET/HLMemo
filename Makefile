@@ -26,7 +26,7 @@ down-v:
 	$(COMPOSE) down --remove-orphans --volumes
 
 migrate: db      ## apply phase0 migrations from the host against the compose db
-	HLM_DB_DSN=$${HLM_DB_DSN:-postgresql://hlm:hlm@127.0.0.1:$${HLM_DB_PORT:-5432}/hlm} $(UV) run alembic upgrade phase0@head
+	HLM_DB_DSN=$${HLM_DB_DSN:-postgresql://hlm:hlm@127.0.0.1:$${HLM_DB_PORT:-5432}/hlm} $(UV) run alembic upgrade main@head
 
 test:            ## integration tests (starts compose db if needed)
 	$(UV) run pytest -q tests/integration

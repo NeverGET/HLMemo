@@ -1,7 +1,9 @@
 """Alembic environment: psycopg3 engine from HLM_DB_DSN (or `-x dsn=...`); SQL-only revisions.
 
 Revision graph (see alembic/versions/*):
-  branch `phase0`: 0001_phase0 -> 0003_title_lexical -> 0004_title_norm_fold (D-055) -> applied by `alembic upgrade phase0@head`
+  branch `phase0`/`main`: 0001_phase0 -> 0003_title_lexical -> 0004_title_norm_fold (D-055)
+                   -> 0005_w0_access (label `main`, D-061) -> applied by `alembic upgrade main@head`
+                   (`main@head` also upgrades a database at 0001 or 0004; `phase0@head` is the same head)
   branch `hnsw`:   0002_hnsw (own base)   -> NEVER applied automatically; `alembic upgrade hnsw@head`
 Because two heads exist, a bare `alembic upgrade head` is refused by Alembic on purpose.
 """

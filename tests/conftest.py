@@ -5,7 +5,7 @@ Database selection:
   2. else                -> `docker compose up -d --wait db` and use a dedicated `hlm_test`
                             database on it (created if missing), never the dev database `hlm`.
 Tests truncate every table, so a DSN naming a protected database (the dev stack's `hlm`) is refused.
-In both cases `alembic upgrade phase0@head` is applied once per session (idempotent).
+In both cases `alembic upgrade main@head` is applied once per session (idempotent).
 Between tests every table is truncated except `devices` row 1 (reserved admin, §2).
 """
 
@@ -25,6 +25,11 @@ import pytest
 # Before any test module can import onnxruntime (some import it directly): the native 1DS
 # telemetry uploader raced interpreter exit (recursive_mutex abort, rc=134).
 os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+# W0a (D-061): registration and admin HTTP default to closed/disabled (fail-closed). The Phase-0
+# suites exercise the dev contract, so the test fixtures opt in explicitly, like compose.yaml does.
+# Tests of the production contract pass `registration_mode="closed", admin_http="disabled"`.
+os.environ.setdefault("HLM_REGISTRATION_MODE", "open")
+os.environ.setdefault("HLM_ADMIN_HTTP", "enabled")
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_DB_USER = "hlm"
@@ -94,7 +99,7 @@ def _wait_for_postgres(dsn: str, timeout: float = 60.0) -> None:
 def _migrate(dsn: str) -> str:
     env = {**os.environ, "HLM_DB_DSN": dsn}
     proc = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "phase0@head"],
+        [sys.executable, "-m", "alembic", "upgrade", "main@head"],
         cwd=ROOT,
         env=env,
         text=True,

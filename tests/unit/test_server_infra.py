@@ -105,7 +105,7 @@ async def test_readiness_checks_dependencies_and_reuses_starlette_state(monkeypa
         caches.append(cache)
         return {"ok": dependency != "models"}
 
-    monkeypatch.setattr(server, "phase0_head", lambda: "current")
+    monkeypatch.setattr(server, "migration_head", lambda: "current")
     monkeypatch.setattr(server, "_verify_models_blocking", verify)
     ok, checks = await server.readiness(app)
     assert ok == (dependency == "ready")
