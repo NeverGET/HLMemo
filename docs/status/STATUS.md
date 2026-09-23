@@ -14,7 +14,7 @@ Updated: 2026-09-23 — PRODUCTION LIVE at https://mcp.hlmemo.com; e2e COMPLETE 
 
 ## Next
 1. D-021 self-hosting: create the real `hlmemo` project on production, register this Mac's device for it, start using HLMemo's own memory; then migrate legacy memories (NotebookLM/serena/auto-memory), per-project reconstruction (D-020).
-2. Owner: rotate the Hostinger API token (it was pasted into chat); answer KVKK (work-computer memories).
+2. Owner: Hostinger API token has no expiry and was pasted into chat — rotation recommended (owner's call). KVKK deferred (D-049, personal use).
 3. Phase 1: librarian (OpenRouter, D-019) per the deep-research report.
 
 ## Local environment facts
