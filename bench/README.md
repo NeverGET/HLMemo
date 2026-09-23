@@ -1,14 +1,81 @@
 # bench — librarian model benchmark
 
+## `hlm bench` (W2f): the user tool, on the production path
+
+`hlm bench` benchmarks any librarian model with **your own profile and key** (D-017). Every call goes
+through the production code: the versioned prompts (v1) or the fixed bench-v2 prompt, the provider
+(retry-once on schema failure, transient backoff, lineage ceiling), the redactor built from settings, and the
+atomic worst-case reservation against the shared `llm_budget`.
+
+```bash
+hlm bench --suite v2 --profile openrouter-gpt6-luna --runs 3 --max-usd 2 --env-file .env
+hlm bench --suite v2 --model openai/gpt-6-luna --price-in 0.2 --price-out 0.75 --reasoning '{"effort":"low"}'
+hlm bench --suite v2 --pack docs/private/bench-v2 ...          # add the private pack (owner machine only)
+hlm bench --suite v1 --profile openrouter                        # T1-T4 on the production prompts
+hlm bench --budget local ...                                     # no database: a per-run cap, NOT shared
+hlm bench --compare bench/results/A.json bench/results/B.json    # McNemar; A/B may also be profiles or models to run
+hlm bench rescore bench/results/20260923-190032-v2.json --gold raw --pack docs/private/bench-v2
+hlm bench leaderboard add-candidate --result bench/results/<run>.json --pack docs/private/bench-v2
+hlm bench leaderboard add-candidate --retrieval candidate.json [--merge] [--decision D-xxx]
+hlm bench --suite v2 --mode replay --cassette-dir tests/cassettes/w2f --profile openrouter-gpt6-luna --limit 2
+```
+
+- **Tasks.** The packs ship in the package: `src/hlmemo/bench/tasks/v1/` (T1-T4) and `.../v2/` (T5-T12,
+  public). The private pack (`docs/private/bench-v2/`) is never implicit. It loads only with `--pack PATH`.
+- **Gold.** v2 scores with the adjudicated gold by default (`--gold adjusted`, overlay
+  `src/hlmemo/bench/adjudication_v2.json`, see `v2/ADJUDICATION.md`). `--gold raw` reproduces D-066.
+- **Report** (`bench/results/<utc>-hlm-<suite>-<model>.{md,json}`; the `.json` keeps outputs and is
+  gitignored). It shows:
+  - accuracy per task and tier (mean score, and correct = score >= 0.8);
+  - the per-task error rate (D-067);
+  - JSON failures (first attempt / after the production retry);
+  - latency p50/p95, $/task, $/correct, and projected $/month (mean $/call x `--calls-per-day` 60 x 30);
+  - the v2 error metrics: false supersede, T9 false warn, T10 false answer, T11 complied, T7 identifier hit,
+    T8 hallucination;
+  - the budget mode and the config hash.
+
+  The report has no clock, so a replayed run renders byte-identically (G-B1).
+- **Budget (default `--budget db`).** Every network attempt is reserved against the **shared** Postgres
+  `llm_budget`, the same `DbBudget` hour/day/month windows the librarian reserves against. The database
+  comes from `HLM_DB_DSN` or hlm.toml, or `--budget-dsn`. The run's own `--max-usd` cap is chained in front,
+  so concurrent bench runs and the running librarian share one cap. Before each attempt the provider
+  reserves `ceil(input × 1.10) × price_in + max_tokens × price_out` and settles the real cost afterwards.
+  The first refused reservation stops the run: exit code 2, the report is marked PARTIAL, and spend never
+  exceeds either cap (G-B2). Without a reachable, migrated database the run is refused.
+  `--budget local` is the explicit opt-out: an in-process cap for this run only, **not shared across
+  runs**. A profile without prices needs `--price-in/--price-out`.
+- **Redaction.** Built with `Redactor.from_settings`, as in production. `HLM_LLM_REDACT_EMAIL` and
+  `HLM_LLM_REDACT_PHONE` mask both the requests and the recorded cassettes.
+- **Cassettes.** `--mode record|replay --cassette-dir DIR` uses the CC-5 cassette store. A schema retry is
+  recorded under its own attempt-2 key. Cassettes recorded before that change still replay: attempt 1 keeps
+  the old key.
+- **Leaderboard** (`eval/results/`). It is append-only and follows the W-E rules; see
+  `src/hlmemo/bench/leaderboard.py`:
+  - `seed-baseline` only creates boards that do not exist yet;
+  - `add-candidate` appends an iteration with its config hash, prompt/schema versions, commit and pack
+    hashes;
+  - a new best that costs more than 1 point on another corpus, or a `--merge` that drops a corpus, is
+    refused unless `--decision D-xxx` is given;
+  - partial or interrupted runs, runs with missing cases, and runs on other pack hashes are recorded as
+    incomplete and never ranked.
+- `eval/live/run.py` (the CC-5 live gate) uses the same fixtures, payloads, rubric and call loop.
+
+`bench/run.py` below is kept working as the **legacy raw-API harness**: direct OpenRouter requests, seed 42,
+no redaction, the D-019/D-066 system prompts. Use it only to reproduce those historical numbers
+bit-for-bit. It shares the task files and the v2 scorers with `hlm bench` (`v2/tasks_v2.py` is now a
+shim over `hlmemo.bench.v2`).
+
+## Legacy harness (`bench/run.py`)
+
 Deterministic harness that evaluates candidate "librarian" LLMs (via OpenRouter,
 OpenAI-compatible chat API) on the four background jobs HLMemo needs:
 
 | task | fixture | output schema | score |
 |---|---|---|---|
-| T1 placement | `tasks/t1_placement.json` (10) | `{layer, topic_id, importance, stability}` | exact layer+topic_id AND \|importance diff\| <= 2 |
-| T2 contradiction | `tasks/t2_contradiction.json` (10) | `{contradicts, supersedes, reason}` | exact contradicts+supersedes |
-| T3 summarization | `tasks/t3_summarization.json` (5) | `{summary <=120w, clue_ids[3]}` | 0.7*Jaccard(clue_ids) + 0.3*length ok |
-| T4 risk_check | `tasks/t4_risk_check.json` (8) | `{warn, matched_lesson_ids, message}` | 0.5*warn exact + 0.5*Jaccard(ids) |
+| T1 placement | `src/hlmemo/bench/tasks/v1/t1_placement.json` (10) | `{layer, topic_id, importance, stability}` | exact layer+topic_id AND \|importance diff\| <= 2 |
+| T2 contradiction | `.../v1/t2_contradiction.json` (10) | `{contradicts, supersedes, reason}` | exact contradicts+supersedes |
+| T3 summarization | `.../v1/t3_summarization.json` (5) | `{summary <=120w, clue_ids[3]}` | 0.7*Jaccard(clue_ids) + 0.3*length ok |
+| T4 risk_check | `.../v1/t4_risk_check.json` (8) | `{warn, matched_lesson_ids, message}` | 0.5*warn exact + 0.5*Jaccard(ids) |
 | T5 JSON strictness | all calls | — | count of unparseable (after ```json fence strip) or schema-violating responses; those score 0 |
 
 Fixtures are mixed English / Turkish / German.
@@ -83,12 +150,12 @@ anti-contamination rules: `v2/DESIGN.md`.
 ```bash
 .venv/bin/python run.py --suite v2 --models openai/gpt-6-luna --runs 3 --max-spend 2
 .venv/bin/python run.py --suite v2 --models m1,m2 --tasks T5,T9 --no-private          # subset, public pack only
-.venv/bin/python run.py --suite v2 --models m1 --pack v2/tasks/t12_extract_review.json  # one pack
+.venv/bin/python run.py --suite v2 --models m1 --pack ../src/hlmemo/bench/tasks/v2/t12_extract_review.json  # one pack
 python3 v2/check_packs.py        # lint + sealed hold-out exclusion + privacy scan of all packs
 python3 v2/gen_t12.py            # regenerate the T12 pack (deterministic)
 ```
 
-Without `--pack`, v2 loads `v2/tasks/*.json` plus the private pack `../docs/private/bench-v2/*.json` when it
+Without `--pack`, v2 loads `../src/hlmemo/bench/tasks/v2/*.json` plus the private pack `../docs/private/bench-v2/*.json` when it
 exists (owner machine only; gitignored). The v2 report (`results/<ts>-v2.md`) has, per model: macro mean,
 per-family and per-tier means, public vs private, min across reps, rep std-dev, per-case rep difference,
 JSON fails, latency, real cost and cost per correct answer (score >= 0.8), plus gate metrics
