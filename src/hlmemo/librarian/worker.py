@@ -73,6 +73,7 @@ log = logging.getLogger("hlmemo.librarian")
 HANDLED_KINDS = ("librarian_write",)
 BUDGET_PAUSE_S = 60.0
 SWEEP_EVERY_S = 60.0
+EXPIRE_EVERY_S = 600.0
 
 ConnFactory = Callable[[], Awaitable[AsyncConnection]]
 
@@ -163,6 +164,7 @@ class LibrarianWorker:
         self.pause_reason: str | None = None
         self._last_heartbeat = 0.0
         self._last_sweep = 0.0
+        self._last_expire = 0.0
 
     # ------------------------------------------------------------------ state
     @property
@@ -586,6 +588,20 @@ class LibrarianWorker:
         if swept:
             log.warning("librarian: swept %s expired reservation(s) as worst-case spend", swept)
 
+    async def maybe_expire(self) -> None:
+        """W2c: open questions older than 30 days expire (one recorded event per project)."""
+        if time.monotonic() - self._last_expire < EXPIRE_EVERY_S:
+            return
+        self._last_expire = time.monotonic()
+        from hlmemo.librarian.questions import expire_due
+
+        async with await self.connect() as conn:
+            async with conn.transaction():
+                n = await expire_due(conn)
+            await conn.commit()
+        if n:
+            log.info("librarian: expired %s question(s)", n)
+
     async def run_forever(self, stop: asyncio.Event) -> None:
         async with await self.connect() as conn:
             await check_role_at_start(conn, self.settings.librarian_role)
@@ -594,6 +610,7 @@ class LibrarianWorker:
             leased = 0
             try:
                 await self.maybe_sweep()
+                await self.maybe_expire()
                 leased = await self.run_once()
                 await self.heartbeat()
             except Exception as exc:  # noqa: BLE001 - database hiccups: retry after a pause

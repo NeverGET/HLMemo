@@ -145,7 +145,10 @@ async def test_gl8_assistant_applies_only_approved_batches(db_dsn, connect, worl
         await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
     worker, provider, batch_id, proposals = await _proposals_job(db_dsn, connect, world, deps, "assistant")
-    assert len(proposals) == 2 and {p["actions"][0]["rel"] for p in proposals} == {"contradicts", "supersedes"}
+    assert len(proposals) == 2 and {p["actions"][0]["rel"] for p in proposals} == {
+        "contradicts",
+        "supersedes",
+    }
     async with await connect() as conn:
         assert await count(conn, "links") == 0  # assistant: nothing before an approval
         assert await worker.drain() == 0  # no apply job exists without an approval event
