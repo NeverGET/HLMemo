@@ -70,10 +70,10 @@ async def _insert_version(
 async def test_migration_applies_and_device1_reserved(connect) -> None:
     async with await connect() as conn:
         cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
-        # main@head is 0006_librarian (0005_w0_access carries the `main` label, D-061/D-062);
+        # main@head is 0007_import (0005_w0_access carries the `main` label, D-061/D-062/D-069);
         # the hnsw branch must NOT be applied.
         heads = [r[0] for r in await cur.fetchall()]
-        assert heads == ["0006_librarian"], "hnsw branch must NOT be applied"
+        assert heads == ["0007_import"], "hnsw branch must NOT be applied"
         cur = await conn.execute(
             "SELECT indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
             " WHERE c.relname = 'mv_title_tsv'"
@@ -94,6 +94,7 @@ async def test_migration_applies_and_device1_reserved(connect) -> None:
         )
         assert [r[0] for r in await cur.fetchall()] == [
             "chunks",
+            "code_refs",  # W1.5 (0007)
             "device_project_grants",
             "devices",
             "embeddings",

@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from hlmemo.core import export_service
 from hlmemo.server.tools import handlers, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
@@ -61,7 +62,27 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
 )
 
-TOOL_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in TOOLS}
-TOOL_NAMES: tuple[str, ...] = tuple(t.name for t in TOOLS)
+# Client-protocol tools (W1.5; Sol consult 40 #1): dispatched by tools/call for the `hlm` CLI but
+# NEVER advertised on tools/list, so the agent tool surface (CC-4, G-SURF) does not grow.
+CLIENT_TOOLS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        "hlm.export",
+        "hlm CLI only: page every item of a project at one bi-temporal point (manifest or full view).",
+        export_service.INPUT_SCHEMA,
+        handlers.hlm_export,
+    ),
+)
 
-__all__ = ["READ_SERVICE_AVAILABLE", "TOOL_BY_NAME", "TOOL_NAMES", "TOOLS", "ToolSpec"]
+TOOL_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in (*TOOLS, *CLIENT_TOOLS)}
+TOOL_NAMES: tuple[str, ...] = tuple(t.name for t in TOOLS)
+READ_TOOL_NAMES: frozenset[str] = frozenset({"memory.query", "memory.drilldown", "memory.raw", "hlm.export"})
+
+__all__ = [
+    "CLIENT_TOOLS",
+    "READ_SERVICE_AVAILABLE",
+    "READ_TOOL_NAMES",
+    "TOOL_BY_NAME",
+    "TOOL_NAMES",
+    "TOOLS",
+    "ToolSpec",
+]

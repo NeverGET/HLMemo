@@ -57,7 +57,7 @@ from hlmemo.config import get_settings
 from hlmemo.core.budget import BudgetError, canonical
 from hlmemo.core.clues import InvalidClue
 from hlmemo.core.errors import ToolError
-from hlmemo.server.tools import TOOL_BY_NAME, TOOLS
+from hlmemo.server.tools import READ_TOOL_NAMES, TOOL_BY_NAME, TOOLS
 from hlmemo.server.tools.handlers import ReadHandler
 
 log = logging.getLogger("hlmemo.server.mcp")
@@ -195,7 +195,7 @@ async def on_call_tool(
             # Savepoint inside the request transaction: a failing tool leaves the connection
             # usable and the middleware still commits the (read-only) outer transaction.
             async with conn.transaction():
-                if params.name in {"memory.query", "memory.drilldown", "memory.raw"}:
+                if params.name in READ_TOOL_NAMES:
                     # Never enter the standalone service's lazy model path from HTTP.
                     deps = ctx.request.app.state.read_deps
                     if deps is None:

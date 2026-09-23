@@ -24,6 +24,7 @@ from hlmemo import __version__
 from hlmemo.auth.errors import HlmError
 from hlmemo.auth.resolve import lock_device_access
 from hlmemo.auth.tokens import generate_token, hash_token
+from hlmemo.core.skeleton_card import write_skeleton_card
 from hlmemo.db import auth_queries as q
 
 CLIENT = f"hlm-ops/{__version__}"
@@ -356,7 +357,11 @@ async def project_create(
         {"device_id": OPERATOR_DEVICE_ID, "project_id": pid, "via": "project_create"},
         project_id=pid,
     )
-    return {"project": _project_public(row), "created": True}
+    # D-015: the deterministic skeleton card, in the same transaction (a `write` event by device 1)
+    card_vid = await write_skeleton_card(
+        conn, slug=slug, name=name or slug, card_logical_id=int(row["card_logical_id"]), client=CLIENT
+    )
+    return {"project": _project_public(row), "created": True, "card_clue": f"v{card_vid}"}
 
 
 def _project_public(row: dict[str, Any]) -> dict[str, Any]:
@@ -421,6 +426,7 @@ async def status(conn: AsyncConnection) -> dict[str, Any]:
         migration = [r["version_num"] for r in await cur.fetchall()]
     admin = await q.admin_state(conn)
     return {
+        "librarian": await librarian_status(conn),
         "jobs": jobs,
         "worker": {
             "ready_jobs": int(ledger.get("ready") or 0),
@@ -432,3 +438,58 @@ async def status(conn: AsyncConnection) -> dict[str, Any]:
         "admin_device": {"http_token_bound": not admin["disabled"]},
         "migration": migration,
     }
+
+
+#: A fresh heartbeat file is authoritative for the in-process breaker; older ones are ignored.
+HEARTBEAT_MAX_AGE_S = 120.0
+#: Without a readable heartbeat, the breaker is inferred from the ledger's recent outcomes.
+LEDGER_WINDOW = "15 minutes"
+
+
+async def librarian_status(conn: AsyncConnection) -> dict[str, Any]:
+    """The W2a heartbeat fields for the operator (carried item, D-069): ``ready``, ``in_flight``,
+    ``oldest_ready_age_s``, ``failed_24h``, spend (``spend_today_usd``, ``spend_hour_usd``,
+    ``reserved_usd``), the effective ``role`` and ``breaker_state``.
+
+    Everything but the breaker comes from the database (the same ``heartbeat_fields`` the
+    librarian logs). The breaker lives in the librarian process, and ``ops`` runs in the api
+    container: a visible, fresh heartbeat file is used when there is one (``breaker_source =
+    "heartbeat"``), else the breaker is inferred from the ledger (``"ledger"``): the latest
+    ``llm_calls`` outcome of the last 15 minutes — ``breaker_open`` → ``open``,
+    ``budget_deferred`` → ``budget``, any other → ``closed``; no call at all → ``idle``.
+    """
+    import time as _time
+
+    from hlmemo.config import get_settings
+    from hlmemo.librarian.worker import heartbeat_fields
+
+    settings = get_settings()
+    out: dict[str, Any] = dict(await heartbeat_fields(conn, settings.librarian_role))
+    hb = _read_heartbeat(settings.librarian_heartbeat_file)
+    age = _time.time() - float(hb.get("ts", 0)) if hb is not None else None
+    if hb is not None and age is not None and age <= HEARTBEAT_MAX_AGE_S:
+        out["breaker_state"] = str(hb.get("breaker_state", "unknown"))
+        out["breaker_source"] = "heartbeat"
+        out["heartbeat_age_s"] = round(age, 1)
+        out["enabled"] = bool(hb.get("enabled", True))
+        return out
+    cur = await conn.execute(
+        f"SELECT outcome FROM llm_calls WHERE created_at > now() - interval '{LEDGER_WINDOW}'"
+        " ORDER BY created_at DESC, call_id LIMIT 1"
+    )
+    row = await cur.fetchone()
+    state = {"breaker_open": "open", "budget_deferred": "budget"}.get(row[0], "closed") if row else "idle"
+    out["breaker_state"] = state
+    out["breaker_source"] = "ledger"
+    return out
+
+
+def _read_heartbeat(path: Any) -> dict[str, Any] | None:
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None

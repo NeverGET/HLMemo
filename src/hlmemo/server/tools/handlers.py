@@ -107,10 +107,20 @@ async def memory_raw(
     return await _read("raw", conn, ctx, args, deps)
 
 
+async def hlm_export(
+    conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any], *, deps: ReadDeps | None = None
+) -> dict[str, Any]:
+    """W1.5 client-protocol read (unlisted; see ``core/export_service``)."""
+    from hlmemo.core.export_service import export
+
+    return await export(conn, ctx, args, deps=deps)
+
+
 __all__ = [
     "READ_SERVICE_AVAILABLE",
     "Handler",
     "as_result_dict",
+    "hlm_export",
     "memory_call_the_day",
     "memory_drilldown",
     "memory_query",
