@@ -262,7 +262,7 @@ class Provider:
         if mode in ("record", "replay"):
             if settings.llm_cassette_dir is None:
                 raise LlmConfigError(f"HLM_LLM_MODE={mode} needs HLM_LLM_CASSETTE_DIR")
-            cassettes = CassetteStore(settings.llm_cassette_dir)
+            cassettes = CassetteStore(settings.llm_cassette_dir, redactor=Redactor.from_settings(settings))
         budget: BudgetGuard = (
             NoBudget()
             if settings.llm_budget_disabled
@@ -490,10 +490,10 @@ class Provider:
         params: dict[str, Any],
         job_id: int | None,
     ) -> _Attempt:
-        await self._run_precheck()
-        await self._claim_call(job_id)
         request_sha = _sha(canonical(body))
-        if self.mode == "replay":
+        if self.mode == "replay":  # stands in for the HTTP attempt: same gate and ceiling
+            await self._run_precheck()
+            await self._claim_call(job_id)
             assert self.cassettes is not None
             data = self.cassettes.get(key)  # CassetteMiss propagates: strict replay
             return self._response(profile, task, job_id, data, request_sha, Decimal(0), 0, replay=True)
@@ -511,6 +511,17 @@ class Provider:
                 )
             )
             raise BudgetDeferred(f"reservation of ${worst} refused for task {task.name}")
+        # D-062: the privacy/authority precheck runs (and commits) immediately before the send;
+        # the lineage slot is claimed only for an attempt that really goes out (Sol 38 #5):
+        # budget denials, an open breaker and privacy denials never consume the ceiling. An
+        # attempt in flight when a revocation commits may complete; its result is never applied
+        # (the apply transaction re-checks under FOR SHARE and records authority_lost).
+        try:
+            await self._run_precheck()
+            await self._claim_call(job_id)
+        except BaseException:
+            await self.budget.settle(call_id, Decimal(0))  # nothing was sent: release the reservation
+            raise
 
         t0 = time.perf_counter()
         try:

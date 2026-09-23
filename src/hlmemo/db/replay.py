@@ -239,14 +239,16 @@ async def _replay_system(
     conn: AsyncConnection, stats: RebuildStats, event_id: int, payload: dict[str, Any]
 ) -> None:
     """System-actor events: ``resolved.mutations`` (ids recorded), ``resolved.questions`` (question
-    rows) and ``resolved.question_status`` (decisions, supersession), ``resolved.jobs`` (full
-    descriptors, ``run_after = created_at = T``), ``resolved.done`` (the job this event completed,
-    with its completion time and attempts). Never calls a provider: the LLM output lives only in
-    the audit ``request``."""
+        rows) and ``resolved.question_status`` (decisions, supersession), ``resolved.jobs`` (full
+        descriptors, ``run_after = created_at = T``), ``resolved.done`` (the job this event completed,
+        with its completion time and attempts), ``resolved.deferred`` (a job handed back or backed off:
+    its status, attempts, run_after and last_error). Never calls a provider: the LLM output lives only in
+        the audit ``request``."""
     from hlmemo.librarian.actor import (
         apply_mutations,
         insert_questions,
         mark_done_by_key,
+        restore_deferred,
         set_question_status,
     )
     from hlmemo.librarian.jobs import insert_recorded_jobs
@@ -262,6 +264,8 @@ async def _replay_system(
     await set_question_status(conn, list(res.get("question_status") or []), T)
     jobs = list(res.get("jobs") or [])
     stats.jobs += await insert_recorded_jobs(conn, jobs, event_id, T)
+    if res.get("deferred"):  # a handed-back / backed-off / failed job (Sol 38 #6)
+        await restore_deferred(conn, res["deferred"])
     if res.get("done"):
         await mark_done_by_key(conn, res["done"], T)
 

@@ -275,9 +275,13 @@ class _FakeQ:
         self.calls = 0
         self.fail = False
         self.delay = 0.05
+        self.write_age: float | None = 0.0  # seconds since the oldest unseen write (DB clock)
 
     async def term_stats_key(self, conn, pid):  # noqa: ANN001, ANN201
         return "db", "created", self.revision
+
+    async def unseen_write_age(self, conn, pid, since_revision):  # noqa: ANN001, ANN201
+        return self.write_age if self.revision > since_revision else None
 
     async def term_stats(self, conn, pid, *, sample_max, timeout_ms):  # noqa: ANN001, ANN201
         import asyncio
@@ -446,6 +450,26 @@ async def test_swr_unrefreshed_past_30s_runs_unfiltered(fake_q: _FakeQ, monkeypa
     assert await cache.get(None, 1) is None
     await _settle(cache)
     assert (await cache.get(None, 1)) is not None  # the refresh eventually succeeded
+
+
+async def test_swr_staleness_is_measured_from_the_write_not_the_first_query(fake_q: _FakeQ) -> None:
+    """D-064 / Sol 38 #3: the FIRST query that notices a write made 31 s ago runs unfiltered, even
+    with a refresh in flight; a write made 1 s ago still serves the old DF while it refreshes."""
+    from hlmemo.core.term_stats import StatsCache
+
+    cache = StatsCache(connect=_bg_connect)
+    first = await cache.get(None, 1)
+    fake_q.delay = 0.5
+    fake_q.revision = 2
+    fake_q.write_age = 31.0
+    assert await cache.get(None, 1) is None  # first observation, but the write is 31 s old
+    await _settle(cache)
+    fresh = await cache.get(None, 1)
+    assert fresh is not None and fresh is not first
+    fake_q.revision = 3
+    fake_q.write_age = 1.0
+    assert await cache.get(None, 1) is fresh  # recent write: the old DF while the refresh runs
+    await _settle(cache)
 
 
 class _SlowConn:

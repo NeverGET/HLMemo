@@ -200,6 +200,22 @@ async def mark_done_by_key(conn: AsyncConnection, done: dict[str, Any], at: date
     )
 
 
+async def restore_deferred(conn: AsyncConnection, deferred: dict[str, Any]) -> None:
+    """Replay: a job the librarian handed back, backed off or failed (``resolved.deferred``) gets
+    exactly the recorded status, attempts, run_after and last_error (Sol 38 #6)."""
+    await conn.execute(
+        "UPDATE jobs SET status = %s, attempts = %s, run_after = %s, last_error = %s,"
+        " lease_token = NULL, lease_until = NULL WHERE dedupe_key = %s",
+        (
+            deferred["status"],
+            int(deferred["attempts"]),
+            parse_ts(deferred["run_after"], field="run_after"),
+            deferred.get("last_error"),
+            deferred["dedupe_key"],
+        ),
+    )
+
+
 # --------------------------------------------------------------------------- stale proposals (Sol #5)
 async def is_stale(conn: AsyncConnection, mutation: dict[str, Any]) -> bool:
     """Lock every assessed logical item (the write path's per-item lock, sorted) and compare its

@@ -153,3 +153,54 @@ def test_migration_0006_fails_fast_behind_an_index_reader_then_retries(fresh_dsn
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0006_librarian",)]
         assert [opt for _, opt in conn.execute(GIN_SQL).fetchall()] == ["fastupdate=off"] * 3
     print(f"\n0006 upgrade after the reader released: {time.monotonic() - t0:.2f} s (incl. interpreter)")
+
+
+def _alembic_fault(dsn: str, fault: str, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "alembic", *args],
+        cwd=ROOT,
+        env={**os.environ, "HLM_DB_DSN": dsn, "HLM_MIGRATION_FAULT": fault},
+        text=True,
+        capture_output=True,
+    )
+
+
+def _state(dsn: str) -> tuple:
+    with psycopg.connect(dsn) as conn:
+        return (
+            conn.execute("SELECT version_num FROM alembic_version").fetchall(),
+            conn.execute(
+                "SELECT to_regclass('llm_calls') IS NOT NULL,"
+                " to_regclass('events_librarian_role') IS NOT NULL"
+            ).fetchone(),
+            [opt for _, opt in conn.execute(GIN_SQL).fetchall()],
+            conn.execute("SELECT count(*) FROM devices WHERE token_sha256 = 'reserved:librarian'").fetchone(),
+        )
+
+
+def test_migration_0006_upgrade_recovers_after_the_flush_failed(fresh_dsn: str) -> None:
+    """Sol 38 #4a: the pending-list flush fails AFTER the table DDL committed; version stays 0004;
+    a plain re-run completes (every DDL step is idempotent) and reaches head."""
+    _alembic(fresh_dsn, "upgrade", "0004_title_norm_fold")
+    proc = _alembic_fault(fresh_dsn, "0006:flush", "upgrade", "phase0@head")
+    assert proc.returncode != 0 and "injected fault at flush" in proc.stderr
+    version, (tables, _role_index), gin, _dev = _state(fresh_dsn)
+    assert version == [("0004_title_norm_fold",)] and tables  # the half-applied state
+    _alembic(fresh_dsn, "upgrade", "phase0@head")  # recovery
+    assert _state(fresh_dsn) == ([("0006_librarian",)], (True, True), ["fastupdate=off"] * 3, (1,))
+
+
+def test_migration_0006_failed_downgrade_leaves_head_and_reruns(fresh_dsn: str) -> None:
+    """Sol 38 #4b: a downgrade failing midway rolls back as one transaction: the database is
+    exactly at 0006, re-running upgrade (no-op) or downgrade succeeds, and upgrade again works."""
+    _alembic(fresh_dsn, "upgrade", "phase0@head")
+    head = _state(fresh_dsn)
+    proc = _alembic_fault(fresh_dsn, "0006:downgrade", "downgrade", "0004_title_norm_fold")
+    assert proc.returncode != 0 and "injected fault at downgrade" in proc.stderr
+    assert _state(fresh_dsn) == head  # nothing half-applied (fastupdate still off, index present)
+    _alembic(fresh_dsn, "upgrade", "phase0@head")
+    assert _state(fresh_dsn) == head
+    _alembic(fresh_dsn, "downgrade", "0004_title_norm_fold")
+    assert _state(fresh_dsn) == ([("0004_title_norm_fold",)], (False, False), [""] * 3, (0,))
+    _alembic(fresh_dsn, "upgrade", "phase0@head")
+    assert _state(fresh_dsn) == head

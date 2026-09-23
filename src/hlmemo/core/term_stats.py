@@ -23,9 +23,12 @@ refresh for that project (single flight, on its own connection, still capped by
 retried after ``STALE_RETRY_S``. D-064 bounds staleness: past ``MAX_STALENESS_S`` (5 s) after an
 invalidation the old DF is served only while its refresh is in flight; if a refresh failed, or the
 invalidation is more than ``MAX_UNREFRESHED_S`` (30 s) old and still unrefreshed, queries run
-UNFILTERED (no DF) until a refresh succeeds. The cold load has ONE 2 s total budget. Only a cold start (no DF
-yet) blocks, on the single-flight load under the 2 s cap; a cold load that fails yields *no
-filtering* (Phase-0 behaviour) and is not retried for ``RETRY_AFTER_S``. This relaxes Sol 33 #1
+UNFILTERED (no DF) until a refresh succeeds. Both bounds are measured from the WRITE time of the
+oldest write the DF has not seen (its ``recorded_at``, read once per invalidation by a primary-key
+probe), not from the first query that noticed it: a first query 31 s after a write runs
+unfiltered. The cold load has ONE 2 s total budget. Only a cold start (no DF yet) blocks,
+on the single-flight load under the 2 s cap; a cold load that fails yields *no filtering*
+(Phase-0 behaviour) and is not retried for ``RETRY_AFTER_S``. This relaxes Sol 33 #1
 ("the next query sees the write") to "a query ≥ 5 s after the write sees it" by decision D-063.
 """
 
@@ -98,7 +101,9 @@ class _Entry:
     stats: ProjectStats | None  # None: the refresh failed; no filtering until ``at + RETRY_AFTER_S``
     revision: int
     at: float
-    invalid_since: float | None = None  # first query that saw this entry invalidated (D-064)
+    #: monotonic time the staleness clock started (D-064, Sol 38 #3): the WRITE time of the oldest
+    #: write this DF has not seen (database clock, converted), else the first invalid observation
+    invalid_since: float | None = None
     refresh_failed: bool = False  # the last background refresh failed: unfiltered until one succeeds
 
     @property
@@ -214,6 +219,10 @@ class StatsCache:
                 return e.stats
             if e.invalid_since is None:
                 e.invalid_since = now
+                if revision != e.revision:  # a write: the clock runs from the write, not from now
+                    age_s = await q.unseen_write_age(conn, pid, e.revision)
+                    if age_s is not None:
+                        e.invalid_since = min(now, now - age_s)
             self._revalidate(conn, key, pid, revision)  # start or join the single flight
             task = self._tasks.get(key)
             in_flight = task is not None and not task.done()

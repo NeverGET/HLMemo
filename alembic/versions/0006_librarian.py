@@ -18,11 +18,17 @@ Adds, never rewrites (CC-1):
     (cross-project experience). Neither gets any grant here: ``hlm-global`` grants are issued
     explicitly by ops (D-058); the librarian writes ``hlm-librarian`` through its capability only.
 
+Recovery (Sol 38 #4): every upgrade step is idempotent (IF NOT EXISTS, guarded CHECK replacement,
+guarded reserved-row inserts), so an upgrade that failed after the table DDL committed (e.g. in the
+pending-list flush) completes when re-run; the downgrade is one guarded transaction.
+
 Executed as one driver-level batch (``exec_driver_sql``) like 0001: ``'reserved:librarian'`` would
 otherwise be parsed as a ``:librarian`` bind parameter.
 """
 
 from __future__ import annotations
+
+import os
 
 from alembic import op
 
@@ -33,26 +39,27 @@ branch_labels = None
 depends_on = None
 
 UPGRADE = r"""
-ALTER TABLE jobs DROP CONSTRAINT jobs_kind_check;
+ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_kind_check;
 ALTER TABLE jobs ADD CONSTRAINT jobs_kind_check CHECK (kind IN (
   'embed','reembed','archive_cycle',
   'librarian_write','topic_summary','consolidate','ingest_extract','import_postprocess',
   'pack_review','experience_review'));
-ALTER TABLE jobs ADD COLUMN priority smallint NOT NULL DEFAULT 5;
-CREATE INDEX jobs_ready_prio ON jobs (priority, run_after, job_id) WHERE status = 'queued';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS priority smallint NOT NULL DEFAULT 5;
+CREATE INDEX IF NOT EXISTS jobs_ready_prio ON jobs (priority, run_after, job_id) WHERE status = 'queued';
 
-ALTER TABLE events DROP CONSTRAINT events_kind_check;
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_kind_check;
 ALTER TABLE events ADD CONSTRAINT events_kind_check CHECK (kind IN (
   'write','call_the_day','access','archive','restore','project_created',
   'device_registered','device_approved','device_revoked','grant_added','grant_revoked',
   'librarian','question','answer','import','ingest','consolidation','pack_import','device_minted'));
 
-ALTER TABLE devices ADD COLUMN is_system boolean NOT NULL DEFAULT false;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_system boolean NOT NULL DEFAULT false;
 INSERT INTO devices (user_id, name, class, fingerprint, os, status, is_admin, is_system,
                      token_sha256, notes, approved_at, approved_by_device_id)
-VALUES ('owner', 'librarian', 'server', 'reserved:librarian', NULL, 'trusted', false, true,
-        'reserved:librarian', 'reserved by migration 0006: librarian system actor, no usable bearer (CC-3)',
-        now(), 1)
+SELECT 'owner', 'librarian', 'server', 'reserved:librarian', NULL, 'trusted', false, true,
+       'reserved:librarian', 'reserved by migration 0006: librarian system actor, no usable bearer (CC-3)',
+       now(), 1
+ WHERE NOT EXISTS (SELECT 1 FROM devices WHERE token_sha256 = 'reserved:librarian')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO projects (slug, name, policy) VALUES
@@ -62,7 +69,7 @@ ON CONFLICT (slug) DO NOTHING;
 
 -- CC-3 question(P): librarian proposals as rows (a projection of `librarian`/`answer` events;
 -- replay rebuilds it). `proposal` is redacted JSON; decisions come from `answer` events.
-CREATE TABLE librarian_questions (
+CREATE TABLE IF NOT EXISTS librarian_questions (
   question_id         uuid PRIMARY KEY,
   job_key             text NOT NULL,          -- the proposing job's dedupe key (stable across replay)
   batch_id            uuid NOT NULL,
@@ -80,10 +87,10 @@ CREATE TABLE librarian_questions (
   decided_by          bigint REFERENCES devices,
   source_event_id     bigint NOT NULL REFERENCES events
 );
-CREATE INDEX librarian_questions_batch ON librarian_questions (batch_id, status);
-CREATE INDEX librarian_questions_open ON librarian_questions (project_id, created_at) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS librarian_questions_batch ON librarian_questions (batch_id, status);
+CREATE INDEX IF NOT EXISTS librarian_questions_open ON librarian_questions (project_id, created_at) WHERE status = 'open';
 
-CREATE TABLE llm_calls (
+CREATE TABLE IF NOT EXISTS llm_calls (
   call_id             uuid PRIMARY KEY,
   job_id              bigint,                 -- no FK: jobs is a projection truncated by replay
   lineage             uuid,                   -- loop lineage: re-enqueued jobs inherit it (call ceiling)
@@ -105,19 +112,19 @@ CREATE TABLE llm_calls (
                                                        'timeout','budget_deferred','breaker_open')),
   created_at          timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE INDEX llm_calls_job ON llm_calls (job_id) WHERE job_id IS NOT NULL;
-CREATE INDEX llm_calls_lineage ON llm_calls (lineage) WHERE lineage IS NOT NULL;
-CREATE INDEX llm_calls_created ON llm_calls (created_at);
+CREATE INDEX IF NOT EXISTS llm_calls_job ON llm_calls (job_id) WHERE job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS llm_calls_lineage ON llm_calls (lineage) WHERE lineage IS NOT NULL;
+CREATE INDEX IF NOT EXISTS llm_calls_created ON llm_calls (created_at);
 
 -- Loop-lineage call ceiling (Sol 37 #7): one counter row per lineage, claimed atomically
 -- (INSERT … ON CONFLICT DO UPDATE … WHERE calls < cap) before every network attempt.
-CREATE TABLE llm_lineage_calls (
+CREATE TABLE IF NOT EXISTS llm_lineage_calls (
   lineage    uuid PRIMARY KEY,
   calls      integer NOT NULL CHECK (calls >= 0),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
-CREATE TABLE llm_budget (
+CREATE TABLE IF NOT EXISTS llm_budget (
   period_kind  text NOT NULL CHECK (period_kind IN ('hour','day','month')),
   period_start timestamptz NOT NULL,
   cap_usd      numeric(14,8) NOT NULL CHECK (cap_usd >= 0),
@@ -126,7 +133,7 @@ CREATE TABLE llm_budget (
   PRIMARY KEY (period_kind, period_start)
 );
 
-CREATE TABLE llm_reservations (
+CREATE TABLE IF NOT EXISTS llm_reservations (
   call_id     uuid PRIMARY KEY,
   job_id      bigint,
   hour_start  timestamptz NOT NULL,
@@ -136,10 +143,11 @@ CREATE TABLE llm_reservations (
   created_at  timestamptz NOT NULL DEFAULT clock_timestamp(),
   expires_at  timestamptz NOT NULL
 );
-CREATE INDEX llm_reservations_expiry ON llm_reservations (expires_at);
+CREATE INDEX IF NOT EXISTS llm_reservations_expiry ON llm_reservations (expires_at);
 """
 
 DOWNGRADE = r"""
+DROP INDEX IF EXISTS events_librarian_role;
 DROP TABLE IF EXISTS librarian_questions;
 DROP TABLE IF EXISTS llm_lineage_calls;
 DROP TABLE IF EXISTS llm_reservations;
@@ -149,16 +157,16 @@ DELETE FROM projects p WHERE p.slug IN ('hlm-librarian', 'hlm-global')
   AND NOT EXISTS (SELECT 1 FROM events e WHERE e.project_id = p.project_id)
   AND NOT EXISTS (SELECT 1 FROM memory_versions v WHERE v.project_id = p.project_id)
   AND NOT EXISTS (SELECT 1 FROM device_project_grants g WHERE g.project_id = p.project_id);
-DELETE FROM devices d WHERE d.is_system AND d.name = 'librarian'
+DELETE FROM devices d WHERE d.token_sha256 = 'reserved:librarian'
   AND NOT EXISTS (SELECT 1 FROM events e WHERE e.device_id = d.device_id);
-ALTER TABLE devices DROP COLUMN is_system;
-ALTER TABLE events DROP CONSTRAINT events_kind_check;
+ALTER TABLE devices DROP COLUMN IF EXISTS is_system;
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_kind_check;
 ALTER TABLE events ADD CONSTRAINT events_kind_check CHECK (kind IN (
   'write','call_the_day','access','archive','restore','project_created',
   'device_registered','device_approved','device_revoked','grant_added','grant_revoked'));
 DROP INDEX IF EXISTS jobs_ready_prio;
-ALTER TABLE jobs DROP COLUMN priority;
-ALTER TABLE jobs DROP CONSTRAINT jobs_kind_check;
+ALTER TABLE jobs DROP COLUMN IF EXISTS priority;
+ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_kind_check;
 ALTER TABLE jobs ADD CONSTRAINT jobs_kind_check CHECK (kind IN ('embed','reembed','archive_cycle'));
 """
 
@@ -210,11 +218,26 @@ def _set_fastupdate(enabled: bool) -> None:
             bind.exec_driver_sql("RESET lock_timeout")
 
 
+def _fault(step: str) -> None:
+    """Crash injection for the recovery tests ONLY (``HLM_MIGRATION_FAULT=0006:<step>``): proves a
+    failure at that point leaves a state that re-running upgrade/downgrade completes."""
+    if os.environ.get("HLM_MIGRATION_FAULT") == f"0006:{step}":
+        raise RuntimeError(f"0006_librarian: injected fault at {step}")
+
+
 def _flush_pending_lists() -> None:
     with op.get_context().autocommit_block():
         bind = op.get_bind()
-        for name in GIN_NO_FASTUPDATE:
-            bind.exec_driver_sql(f"SELECT gin_clean_pending_list('{name}'::regclass)")
+        _fault("flush")  # the table DDL is already committed here
+        bind.exec_driver_sql(f"SET lock_timeout = '{LOCK_TIMEOUT}'")
+        try:
+            for name in GIN_NO_FASTUPDATE:
+                try:
+                    bind.exec_driver_sql(f"SELECT gin_clean_pending_list('{name}'::regclass)")
+                except Exception as exc:
+                    raise RuntimeError(RETRY_HINT.format(t=LOCK_TIMEOUT, what=f"flushing {name}")) from exc
+        finally:
+            bind.exec_driver_sql("RESET lock_timeout")
 
 
 def upgrade() -> None:
@@ -236,7 +259,18 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Refuses (CHECK violation) if librarian-era job/event kinds exist: a downgrade never drops
     # authoritative events. Reserved rows are removed only while nothing references them.
-    with op.get_context().autocommit_block():
-        op.get_bind().exec_driver_sql("DROP INDEX CONCURRENTLY IF EXISTS events_librarian_role")
-    _set_fastupdate(enabled=True)  # D-063, symmetric
-    op.get_bind().exec_driver_sql(DOWNGRADE)
+    #
+    # ONE transaction, together with alembic's version update (Sol 38 #4): the role index, the
+    # fastupdate reset (D-063, symmetric) and the table DDL either all commit with the version
+    # moving to 0004, or none do and the database is exactly at 0006 — so re-running downgrade,
+    # or upgrade (a no-op at head), always finds a consistent state. Every statement is guarded
+    # (IF EXISTS), and a short lock_timeout makes a busy database fail fast instead of queueing.
+    bind = op.get_bind()
+    bind.exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+    try:
+        for name in GIN_NO_FASTUPDATE:
+            bind.exec_driver_sql(f"ALTER INDEX IF EXISTS {name} RESET (fastupdate)")
+        bind.exec_driver_sql(DOWNGRADE)
+    except Exception as exc:
+        raise RuntimeError(RETRY_HINT.format(t=LOCK_TIMEOUT, what="the downgrade DDL")) from exc
+    _fault("downgrade")  # after every statement, before the commit: the whole downgrade rolls back

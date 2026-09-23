@@ -62,7 +62,7 @@ from hlmemo.librarian.roles import check_role_at_start, effective_role
 from hlmemo.librarian.tasks import Handler, Plan
 from hlmemo.librarian.tasks.apply_batch import ApplyBatch
 from hlmemo.librarian.tasks.pair_check import PairCheck
-from hlmemo.worker.lease import LeasedJob, keep_lease, lease_jobs, mark_done, mark_failed, release
+from hlmemo.worker.lease import BACKOFF_SECONDS, MAX_ATTEMPTS, LeasedJob, keep_lease, lease_jobs, mark_done
 
 log = logging.getLogger("hlmemo.librarian")
 
@@ -204,7 +204,7 @@ class LibrarianWorker:
         await conn.commit()  # never sit "idle in transaction" through a long provider call
         try:
             if handler is None:
-                await mark_failed(conn, job, "E_UNKNOWN_OP", max_attempts=1)
+                await self.defer(conn, job, "E_UNKNOWN_OP", max_attempts=1)
                 self.stats.jobs_failed += 1
                 return
             async with keep_lease(
@@ -231,32 +231,99 @@ class LibrarianWorker:
                     log.warning("job %s: lease lost before commit; nothing applied", job.job_id)
                 except BudgetDeferred:
                     await conn.rollback()
-                    await release(conn, job, delay_s=BUDGET_PAUSE_S, reason="E_BUDGET_DEFERRED")
+                    await self.defer(conn, job, "E_BUDGET_DEFERRED", release_s=BUDGET_PAUSE_S)
                     self.stats.jobs_released += 1
                     self.pause("budget", BUDGET_PAUSE_S)
                 except JobCallCapExceeded as exc:
                     await conn.rollback()
-                    await mark_failed(conn, job, error_code(exc), max_attempts=1)
+                    await self.defer(conn, job, error_code(exc), max_attempts=1)
                     self.stats.jobs_failed += 1
                     self.pause("budget", BUDGET_PAUSE_S)
                 except ProviderUnavailable as exc:
                     await conn.rollback()
-                    await release(conn, job, delay_s=max(1.0, exc.retry_after_s), reason=error_code(exc))
+                    await self.defer(conn, job, error_code(exc), release_s=max(1.0, exc.retry_after_s))
                     self.stats.jobs_released += 1
                 except LlmDisabled:
                     await conn.rollback()
-                    await release(conn, job, delay_s=30.0, reason="E_LLM_DISABLED")
+                    await self.defer(conn, job, "E_LLM_DISABLED", release_s=30.0)
                     self.stats.jobs_released += 1
                 except Exception as exc:  # noqa: BLE001 - one bad job must not stop the queue
                     await conn.rollback()
                     code = error_code(exc)  # content-free: never the exception text
-                    status = await mark_failed(conn, job, code)
+                    status = await self.defer(conn, job, code)
                     if status == "failed":
                         self.stats.jobs_failed += 1
                     log.warning("job %s attempt %s failed: %s", job.job_id, job.attempts, code)
         finally:
             with contextlib.suppress(Exception):
                 await conn.close()
+
+    # ------------------------------------------------------------------ defer
+    async def defer(
+        self,
+        conn: AsyncConnection,
+        job: LeasedJob,
+        reason: str,
+        *,
+        release_s: float | None = None,
+        max_attempts: int = MAX_ATTEMPTS,
+    ) -> str | None:
+        """Hand the job back (``release_s``: systemic, the attempt is not consumed) or back it off /
+        fail it (job-specific, ``lease.mark_failed`` semantics) AND record the resulting job state
+        — status, attempts, run_after, last_error — in a ``librarian`` event (op ``defer``) in the
+        same transaction, so replay restores a deferred or not-yet-completed job exactly
+        (Sol 38 #6). Lease-fenced: a lost lease changes and records nothing. Returns the status."""
+        if release_s is not None:
+            status_sql, attempts_sql, delay = "'queued'", "GREATEST(attempts - 1, 0)", float(release_s)
+        else:
+            permanent = job.attempts >= max_attempts
+            status_sql = "'failed'" if permanent else "'queued'"
+            attempts_sql = "attempts"
+            delay = float(BACKOFF_SECONDS[max(0, min(job.attempts, len(BACKOFF_SECONDS)) - 1)])
+        project_id = job.payload.get("project_id")
+        async with conn.transaction():
+            T = await q.clock_now(conn)
+            cur = await conn.execute(
+                f"""
+                UPDATE jobs SET status = {status_sql}, attempts = {attempts_sql},
+                       run_after = %(T)s + make_interval(secs => %(delay)s), last_error = %(err)s,
+                       lease_token = NULL, lease_until = NULL
+                 WHERE job_id = %(id)s AND lease_token = %(token)s AND status = 'running'
+                RETURNING status, attempts, run_after, last_error
+                """,  # noqa: S608 - fixed fragments
+                {"T": T, "delay": delay, "err": reason[:2000], "id": job.job_id, "token": job.lease_token},
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            status, attempts, run_after, last_error = row
+            deferred = {
+                "dedupe_key": job.dedupe_key,
+                "status": status,
+                "attempts": int(attempts),
+                "run_after": actor.ts(run_after),
+                "last_error": last_error,
+            }
+            ids = await reserved_ids(conn)
+            await insert_system_event(
+                conn,
+                kind="librarian",
+                project_id=project_id,
+                device_id=ids.librarian_device_id,
+                client=CLIENT,
+                request_id=uuid.uuid5(
+                    NS_LIBRARIAN, f"defer:{job.dedupe_key}:{job.lease_token}:{deferred['run_after']}"
+                ),
+                request={"op": "defer", "job_key": job.dedupe_key, "reason": last_error},
+                resolved={
+                    "recorded_at": actor.ts(T),
+                    "outcome": "failed" if status == "failed" else "deferred",
+                    "deferred": deferred,
+                },
+                at=T,
+            )
+        await conn.commit()
+        return str(status)
 
     # ------------------------------------------------------------------ apply
     async def _plan_questions(

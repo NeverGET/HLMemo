@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from hlmemo.librarian.errors import CassetteMiss
+from hlmemo.librarian.redact import Redactor
 
 SEP = "‖"  # ‖
 
@@ -104,12 +105,29 @@ def sanitize_response(body: dict[str, Any], redact: Callable[[str], str] | None 
     }
 
 
-class CassetteStore:
-    """All ``*.jsonl`` files of one directory; ``record`` appends to ``<dir>/<name>.jsonl``."""
+def sanitize_messages(messages: list[dict[str, Any]], redact: Callable[[str], str]) -> list[dict[str, Any]]:
+    """Request messages as persisted: role + normalized, redacted text only (any content shape)."""
+    out = []
+    for m in messages:
+        m = m if isinstance(m, dict) else {"content": m}
+        text = normalize_content(m)
+        out.append({"role": str(m.get("role") or "user"), "content": None if text is None else redact(text)})
+    return out
 
-    def __init__(self, directory: Path, *, record_name: str = "recorded") -> None:
+
+class CassetteStore:
+    """All ``*.jsonl`` files of one directory; ``record`` appends to ``<dir>/<name>.jsonl``.
+
+    ``put`` is the only persistence path and trusts NO caller (Sol 38 #2): it normalizes every
+    message and the response to plain text and runs its own redactor over them, the params and the
+    task/model labels before anything reaches disk."""
+
+    def __init__(
+        self, directory: Path, *, record_name: str = "recorded", redactor: Redactor | None = None
+    ) -> None:
         self.directory = Path(directory)
         self.record_name = record_name
+        self.redactor = redactor or Redactor()
         self._lock = threading.Lock()
         self._index: dict[str, dict[str, Any]] | None = None
 
@@ -150,15 +168,16 @@ class CassetteStore:
             index = self._load()
             if key in index:
                 return
+            red = self.redactor
             rec = {
                 "match": key,  # not named "key": secret scanners flag key=<hex>
-                "task": task,
-                "model_id": model_id,
-                "prompt_version": prompt_version,
-                "schema_version": schema_version,
-                "messages": messages,
-                "params": params,
-                "response": sanitize_response(response),
+                "task": red.text(str(task)),
+                "model_id": red.text(str(model_id)),
+                "prompt_version": red.text(str(prompt_version)),
+                "schema_version": red.text(str(schema_version)),
+                "messages": sanitize_messages(messages, red.text),
+                "params": red.value(params),
+                "response": sanitize_response(response, redact=red.text),
             }
             self.directory.mkdir(parents=True, exist_ok=True)
             with (self.directory / f"{self.record_name}.jsonl").open("a", encoding="utf-8") as fh:
@@ -166,4 +185,11 @@ class CassetteStore:
             index[key] = rec
 
 
-__all__ = ["CassetteStore", "canonical", "cassette_key", "normalize_content", "sanitize_response"]
+__all__ = [
+    "CassetteStore",
+    "canonical",
+    "cassette_key",
+    "normalize_content",
+    "sanitize_messages",
+    "sanitize_response",
+]

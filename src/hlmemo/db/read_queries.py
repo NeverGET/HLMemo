@@ -329,6 +329,19 @@ async def term_stats_key(conn: AsyncConnection, pid: int) -> tuple[str, str | No
     return db, created, int(rev)
 
 
+async def unseen_write_age(conn: AsyncConnection, pid: int, since_revision: int) -> float | None:
+    """Seconds since the OLDEST write the cached DF (``since_revision``) has not seen, by the
+    database clock (``recorded_at`` is the write's transaction time), or ``None`` if there is none.
+    One primary-key range probe; runs once per invalidation, never per query (D-064)."""
+    cur = await conn.execute(
+        "SELECT extract(epoch FROM clock_timestamp() - min(recorded_at))::float8 FROM memory_versions"
+        " WHERE version_id > %(rev)s AND %(pid)s = ANY(project_ids)",
+        {"rev": since_revision, "pid": pid},
+    )
+    row = await cur.fetchone()
+    return None if row is None or row[0] is None else max(0.0, float(row[0]))
+
+
 async def term_stats(
     conn: AsyncConnection, pid: int, *, sample_max: int, timeout_ms: int
 ) -> tuple[int, list[tuple[str, int]], int, list[tuple[str, int]]]:
@@ -745,6 +758,7 @@ __all__ = [
     "source_event",
     "term_stats",
     "term_stats_key",
+    "unseen_write_age",
     "title_candidates",
     "trigram_candidates",
     "vector_candidates",
