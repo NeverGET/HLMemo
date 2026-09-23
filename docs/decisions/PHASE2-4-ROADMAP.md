@@ -145,7 +145,7 @@ Purpose: every quality gate so far (G3) is tuned on our synthetic fixture. W-E m
 - G-W0-2 `test_route_table_production_mode`: parametrized over every `build_routes()` entry (`app.py:283-302`) × {anonymous, trusted, junk, admin-token-shaped bearer} must equal the table above. With `admin_http=enabled` (dev), the Phase-0 G5 cases pass unchanged.
 - G-W0-3 `test_production_refuses_unsafe_config`: `HLM_DEPLOYMENT=production` combined with `registration_mode=open` (or `secret`, or admin HTTP enabled) makes lifespan fail and `/ready` return 503.
 - G-W0-4 `test_ops_mint_roundtrip`: mint → trusted → granted project OK; other project `E_FORBIDDEN_PROJECT`; revoke → 401. Events recorded; replay identical.
-- G-W0-5 `test_expired_device_rejected`: rejected at the gate and in-transaction. A cursor issued before expiry fails after it with `E_INVALID_CURSOR`.
+- G-W0-5 `test_expired_device_rejected`: rejected at the gate and in-transaction. **(D-061, Sol 34 #5)** Authentication precedes cursor verification: a cursor presented with the expired bearer fails with 401 `E_AUTH`; after renewal (operator rotation, generation + 1) the pre-expiry cursor fails with `E_INVALID_CURSOR`.
 - G-W0-6 `test_self_revoke_only`: the caller can revoke only itself. Another device's id gets 404, with no difference between existing and non-existing ids.
 - G-W0-7 `test_env_migration_idempotent`: run `migrate_env_w0` twice under the fake ssh/docker judge harness (D-037b). Env files are correct, a backup exists, and no secret appears in stdout or logs.
 - G-W0-8 `test_token_never_in_argv_or_logs` (fake ssh/docker harness).
