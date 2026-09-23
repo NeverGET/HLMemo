@@ -456,3 +456,19 @@ async def test_sol41_rules_with_unreadable_refs_are_not_loaded(
         if '"Other note"' in content and task == "place":
             assert f"v{m.version_id}" not in content.split("RULES", 1)[-1]
             assert "Prefer none for unrelated deploy notes." in content
+
+
+async def test_same_pair_from_both_sides_is_one_question(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """Both reviews see the pair (the old item's job ran after the new one was written): only one
+    pending question, the second is counted as a duplicate proposal."""
+    await _pair(connect, world, embedder)
+    both = {**CONTRA, (OLD[0], NEW[0]): ("contradicts", "old", "high")}
+    await _drain(db_dsn, connect, Oracle(relations=both))
+    async with await connect() as conn:
+        assert await count(conn, "librarian_questions") == 1
+        cur = await conn.execute(
+            "SELECT sum((payload->'request'->>'duplicate_proposals')::int) FROM events"
+            " WHERE kind = 'librarian'"
+        )
+        assert await cur.fetchone() == (1,)
+    await _replay_identical(connect)

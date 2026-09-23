@@ -110,16 +110,20 @@ async def _project(conn: Any, slug: str) -> int:
 
 
 def _day(d: str) -> str:
-    return f"{d}T00:00:00Z"
+    """Fixture day → valid_from; capped at 2026-09-22 (the write path refuses a valid_from more
+    than 5 min in the future, and the recording ran on 2026-09-23 UTC). Order is preserved."""
+    return f"{min(d, '2026-09-22')}T00:00:00Z"
 
 
-async def _write(conn: Any, ctx: AuthContext, slug: str, items: list[dict[str, Any]], deps: Any) -> list[Any]:
+async def _write(
+    conn: Any, ctx: AuthContext, slug: str, items: list[dict[str, Any]], deps: Any, key: str
+) -> list[Any]:
     res = await write(
         conn,
         ctx,
         {
             "project": slug,
-            "request_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"gp1:{slug}:{items[0]['title']}")),
+            "request_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"gp1:{slug}:{key}")),
             "client": "gp1/0",
             "items": items,
         },
@@ -148,11 +152,11 @@ async def _build(connect: Any) -> dict[str, Any]:
             for e in g["existing"]:
                 slug = other if e["project"] == "other" else same
                 item = {"kind": e["kind"], "title": e["title"], "body": e["text"], "valid_from": _day(e["t"])}
-                (v,) = await _write(conn, ctx, slug, [item], default_deps())  # no review of the old items
+                (v,) = await _write(conn, ctx, slug, [item], default_deps(), e["id"])  # old items: no review
                 olds.append((e, v))
             n = g["new"]
             new_item = {"kind": n["kind"], "title": n["title"], "body": n["text"], "valid_from": _day(n["t"])}
-            (nv,) = await _write(conn, ctx, same, [new_item], review_deps())
+            (nv,) = await _write(conn, ctx, same, [new_item], review_deps(), g["id"])
             for e, v in olds:
                 pair_of[(nv.version_id, v.version_id)] = e
         items = place["items"]
@@ -172,7 +176,7 @@ async def _build(connect: Any) -> dict[str, Any]:
                 if (b + k) % 5 == 0:  # the client set importance itself: never overwritten
                     row["importance"] = 3
                 batch.append(row)
-            versions = await _write(conn, ctx, slug, batch, review_deps())
+            versions = await _write(conn, ctx, slug, batch, review_deps(), slug)
             for k, v in enumerate(versions):
                 if "importance" in batch[k]:
                     client_imp[v.version_id] = batch[k]["importance"]
