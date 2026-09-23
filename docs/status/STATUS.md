@@ -1,9 +1,9 @@
 # STATUS — HLMemo (read this first when resuming)
-Updated: 2026-09-23 — PRODUCTION LIVE at https://mcp.hlmemo.com (D-047). main = 912f2d3+.
+Updated: 2026-09-23 — PRODUCTION LIVE at https://mcp.hlmemo.com; e2e COMPLETE — G7 3/3 CLIs PASS (D-047, D-048). main = 912f2d3+.
 
 ## Where we are
-- Phase 0 (LLM-free core + deploy tooling) is DONE (D-041..D-044). Production deploy DONE (D-047): Hostinger KVM 2, Vilnius, Ubuntu 26.04, release 912f2d3, Let's Encrypt TLS; all 8 remote gates PASS; G7 claude + agy PASS against the remote URL; codex blocked only by its OpenAI quota (resets 2026-09-29).
-- Model strategy (D-036/D-043): gpt-6-astra (codex) = implementer when available (quota back 2026-09-29); until then Claude subagents implement; every change gets a neutral verifier + a separate adversarial review.
+- Phase 0 (LLM-free core + deploy tooling) is DONE (D-041..D-044). Production deploy DONE (D-047): Hostinger KVM 2, Vilnius, Ubuntu 26.04, release 912f2d3, Let's Encrypt TLS; all 8 remote gates PASS; G7 claude + codex + agy all PASS against the remote URL (D-048).
+- Model strategy (D-036/D-043): gpt-6-astra (codex) = implementer; quota restored 2026-09-23 by the owner (D-048); every change gets a neutral verifier + a separate adversarial review.
 - Embeddings (D-042): local e5-small for launch; gemini-embedding-2 is a Phase-1 opt-in profile.
 - Non-blocking issues: docs/status/BACKLOG.md.
 
@@ -13,10 +13,9 @@ Updated: 2026-09-23 — PRODUCTION LIVE at https://mcp.hlmemo.com (D-047). main 
 - The three CLIs on the owner's Mac are registered to production (`hlm` MCP, device g7-<host>, project gates-g7); config backups in deploy/.local/backups/g7-*.
 
 ## Next
-1. 2026-09-29+: re-run `remote_gates.sh ... --no-drill --g7` to close g7-codex (quota only).
-2. D-021 self-hosting: create the real `hlmemo` project on production, register this Mac's device for it, start using HLMemo's own memory; then migrate legacy memories (NotebookLM/serena/auto-memory), per-project reconstruction (D-020).
-3. Owner: rotate the Hostinger API token (it was pasted into chat); answer KVKK (work-computer memories).
-4. Phase 1: librarian (OpenRouter, D-019) per the deep-research report.
+1. D-021 self-hosting: create the real `hlmemo` project on production, register this Mac's device for it, start using HLMemo's own memory; then migrate legacy memories (NotebookLM/serena/auto-memory), per-project reconstruction (D-020).
+2. Owner: rotate the Hostinger API token (it was pasted into chat); answer KVKK (work-computer memories).
+3. Phase 1: librarian (OpenRouter, D-019) per the deep-research report.
 
 ## Local environment facts
 - Dev stack: compose.yaml (project hlmemo). Its image tag `hlmemo:dev` was rebuilt from the fix-auth tree during verification (same code as main now).
