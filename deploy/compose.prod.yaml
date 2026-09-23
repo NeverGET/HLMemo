@@ -135,6 +135,35 @@ services:
       retries: 3
       start_period: 90s
 
+  # Librarian (PHASE2-4-ROADMAP §2/§6, W2a): same image, no ONNX model, no port, no /ready role.
+  # Off until R2 (HLM_LIBRARIAN_ENABLED=false idles with a heartbeat). The provider key lives in
+  # llm.env only (mounted here, never into db/worker/caddy); budget/role defaults in llm.env.example.
+  librarian:
+    <<: *app
+    env_file:
+      - path: ${HLM_APP_ENV_FILE:-./app.env}
+        required: true
+      - path: ${HLM_LLM_ENV_FILE:-./llm.env}
+        required: false
+    environment:
+      <<: *app-environment
+      HLM_LIBRARIAN_HEARTBEAT_FILE: /tmp/hlm-librarian-heartbeat.json
+    command: ["python", "-m", "hlmemo.librarian.worker"]
+    mem_limit: 512m
+    cpus: 0.5
+    stop_grace_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "hlmemo.librarian.health", "120"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   caddy:
     image: ${HLM_CADDY_IMAGE:-caddy:2.11.2-alpine}
     environment:

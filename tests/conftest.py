@@ -27,6 +27,10 @@ import pytest
 os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 
 ROOT = Path(__file__).resolve().parents[1]
+# CC-5: the suite never reaches a real provider. Strict cassette replay unless a test says otherwise
+# (the G-L gates use scripted in-process stubs; recording is a manual, keyed step).
+os.environ.setdefault("HLM_LLM_MODE", "replay")
+os.environ.setdefault("HLM_LLM_CASSETTE_DIR", str(ROOT / "tests" / "cassettes" / "w2a"))
 COMPOSE_DB_USER = "hlm"
 COMPOSE_DB_PASSWORD = "hlm"
 COMPOSE_DB_NAME = "hlm_test"
@@ -135,7 +139,7 @@ def connect(db_dsn: str) -> ConnectFactory:
 # Projection/event tables in FK-safe truncate order; `devices` handled separately (row 1 stays).
 TRUNCATE_SQL = """
 TRUNCATE TABLE jobs, links, embeddings, chunks, memory_versions, events,
-               device_project_grants, projects
+               device_project_grants, projects, llm_calls, llm_budget, llm_reservations
     RESTART IDENTITY CASCADE;
 DELETE FROM devices WHERE device_id <> 1;
 SELECT setval(pg_get_serial_sequence('devices', 'device_id'), 1);

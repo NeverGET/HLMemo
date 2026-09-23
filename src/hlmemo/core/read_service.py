@@ -54,6 +54,7 @@ from hlmemo.db.write_queries import ProjectRef
 PREPROC_VERSION = 1
 MIN_HIT_TOKENS = 40  # lower bound of a rendered hit; bounds how many rows are fetched for packing
 CURSOR_TOKENS = 70  # additive estimate for a signed ``next_cursor`` (exact measure decides)
+RAW_BODY_SEGMENT = 512  # characters per ``payload_body`` unit when raw pages the verbatim body (D-026)
 TOOL_QUERY = "memory.query"
 TOOL_DRILLDOWN = "memory.drilldown"
 TOOL_RAW = "memory.raw"
@@ -547,12 +548,14 @@ async def raw(
         if v is None:
             raise _not_found("version")
         resume = 0
+        body_paged: bool | None = None  # None: decided on the first page (D-026)
         read_hash = _sha({"project": request.project, "version_id": request.version_id})
         if request.cursor is not None:
             p = _verify_cursor(deps, ctx, request.cursor)
             if p.get("tool") != TOOL_RAW or p.get("h") != read_hash:
                 raise ToolError("E_INVALID_CURSOR", "cursor does not belong to this version")
             resume = int(p.get("i", 0))
+            body_paged = bool(p.get("pb", 0))
             _, known_at = await _as_of(conn, None, p.get("known_at"))
         else:
             known_at = await q.clock_now(conn)
@@ -604,9 +607,37 @@ async def raw(
             }
             for ln in links
         ]
+        # D-026: a verbatim payload_item too large for the budget is no longer E_BUDGET_TOO_SMALL.
+        # Its body is moved into the cursor stream as `payload_body` segments (fixed character
+        # windows, deterministic across pages); `payload_item` keeps every other field plus
+        # `"body_paged": true`. The mode is decided on the first page and frozen in the cursor.
+        if body_paged is None:
+            body_paged = (
+                isinstance(payload_item.get("body"), str)
+                and meter.settle(envelope, budget) + CURSOR_TOKENS > budget
+            )
+        body_units: list[tuple[str, dict[str, Any]]] = []
+        if body_paged and isinstance(payload_item.get("body"), str):
+            body = payload_item["body"]
+            envelope["payload_item"] = {
+                **{k: v for k, v in payload_item.items() if k != "body"},
+                "body_paged": True,
+            }
+            envelope["payload_body"] = []
+            body_units = [
+                (
+                    "payload_body",
+                    {
+                        "char_start": a,
+                        "char_end": min(a + RAW_BODY_SEGMENT, len(body)),
+                        "text": body[a : a + RAW_BODY_SEGMENT],
+                    },
+                )
+                for a in range(0, len(body), RAW_BODY_SEGMENT)
+            ]
         # Chunks and links share a single ordered cursor stream; metadata repeats on each
         # page, while the potentially unbounded collections do not.
-        units = [("chunks", r) for r in rendered] + [("links", r) for r in rendered_links]
+        units = body_units + [("chunks", r) for r in rendered] + [("links", r) for r in rendered_links]
         if request.cursor is not None and not 0 <= resume < len(units):
             raise ToolError("E_INVALID_CURSOR", "cursor position is not valid any more")
         page = units[resume:]
@@ -616,16 +647,20 @@ async def raw(
             prefix.append(prefix[-1] + meter.count(r) + 1)
 
         def apply(n: int) -> None:
+            if body_units:
+                envelope["payload_body"] = [r for kind, r in page[:n] if kind == "payload_body"]
             envelope["chunks"] = [r for kind, r in page[:n] if kind == "chunks"]
             envelope["links"] = [r for kind, r in page[:n] if kind == "links"]
+            cursor_payload: dict[str, Any] = {
+                "tool": TOOL_RAW,
+                "h": read_hash,
+                "i": resume + n,
+                "known_at": fmt_ts(known_at),
+            }
+            if body_units:
+                cursor_payload["pb"] = 1
             envelope["next_cursor"] = (
-                None
-                if n >= len(page)
-                else sign_cursor(
-                    deps.cursor_secret,
-                    ctx,
-                    {"tool": TOOL_RAW, "h": read_hash, "i": resume + n, "known_at": fmt_ts(known_at)},
-                )
+                None if n >= len(page) else sign_cursor(deps.cursor_secret, ctx, cursor_payload)
             )
 
         _pack_page(meter, envelope, budget, len(page), apply, lambda k: base + prefix[k])
