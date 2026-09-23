@@ -62,7 +62,11 @@ if "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
 if args[0] == "ps":
     if fail != "missing-baseline": print("old-container")
 elif args[0] == "inspect": print("sha256:old-image")
+elif "config" in args and "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
+    print(Path(args[args.index("-f")+1]).read_text())  # the captured rollback model, as rendered
 elif "config" in args:
+    if "-f" in args and ".compose-previous." in args[args.index("-f")+1]:
+        Path(os.environ["EVENTS"]+".previous-model").write_text(Path(args[args.index("-f")+1]).read_text())
     print(json.dumps({"name":"bake-astra", "services":{
         s:{"image":"mutable:prod", "environment":{"TOKEN":"literal$$VAR"}}
         for s in ("api","worker","db","caddy")}}))
@@ -71,7 +75,10 @@ elif "ps" in args:
 elif "exec" in args and "hlmemo.ops" in args:
     # W0a: server-side minting; the token only ever travels on stdout.
     assert sys.stdin.read() == "", "hlmemo.ops inherited input"
-    print(os.environ.get("ROUTES_TOKEN", "hlm_" + "r" * 43))
+    if "mint" in args:
+        print(os.environ.get("ROUTES_TOKEN", "hlm_" + "r" * 43))
+    elif "list" in args:
+        print("   2  g7-mac   personal trusted  expires=- grants=gates-g7:write")
 elif "exec" in args and "--routes" in args:
     assert "def check_routes" in sys.stdin.read(), "route checker not fed on stdin"
     if fail == "routes-internal": sys.exit(14)
@@ -113,9 +120,17 @@ import json, os, sys
 args=sys.argv[1:]
 with open(os.environ["EVENTS"], "a") as f: f.write(json.dumps(["git", *args])+"\n")
 if args[0] == "show":
-    print((__import__("pathlib").Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
+    from pathlib import Path
+    if args[-1].endswith(":deploy/compose.prod.yaml"):
+        name = "compose.previous.yaml" if args[-1].startswith("a"*40) else "compose.prod.yaml"
+        path = Path(os.environ["HLM_REMOTE_DIR"])/"deploy"/name
+        if not path.exists(): path = Path(os.environ["HLM_REMOTE_DIR"])/"deploy/compose.prod.yaml"
+        sys.stdout.write(path.read_text())
+    else:
+        print((Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
     sys.exit()
-if args[0] == "diff" and os.environ.get("FAIL") == "compose-change": sys.exit(1)
+changed = os.environ.get("FAIL") == "compose-change" or os.environ.get("COMPOSE_CHANGE") == "1"
+if args[0] == "diff" and changed: sys.exit(1)
 if args[:2] == ["checkout", "--detach"] and args[-1] == "b"*40 and os.environ.get("FAIL") == "legacy":
     from pathlib import Path
     import shutil

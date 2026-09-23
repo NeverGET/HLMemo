@@ -104,7 +104,16 @@ def check_routes(client, token):
 
     for label, bearer in (("anonymous", None), ("trusted", token)):
         expect(label, "GET", "/health", bearer, 200)
-        expect(label, "GET", "/ready", bearer, 200)
+        _, ready = expect(label, "GET", "/ready", bearer, 200)
+        # Sol 34 #6: diagnostics only for loopback peers (the --mint-ops run IS loopback).
+        public = urllib.parse.urlsplit(client.parsed.geturl()).hostname not in (
+            "127.0.0.1",
+            "::1",
+            "localhost",
+        )
+        if public and set(json.loads(ready or b"{}")) != {"status"}:
+            failures.append(f"routes {label} GET /ready exposes more than its status")
+            print(f"FAIL routes {label:<12} GET    /ready exposes diagnostics publicly", flush=True)
     for label, bearer in (
         ("anonymous", None),
         ("trusted", token),
