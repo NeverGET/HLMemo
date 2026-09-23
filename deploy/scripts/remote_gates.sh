@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end gates against a deployed HLMemo, run from the operator workstation
 # (RUNBOOK "Two-command deploy"). Prints PASS/FAIL per gate; exits non-zero if any gate fails.
-# Tokens come from files and reach children only through the environment; never printed.
+# W0a (D-061): no admin token. Every gate device is minted over SSH with hlm_ops.sh (tokens
+# travel on stdout into `hlm device login --token-stdin` or a 0600 state file, never argv) and
+# revoked at the end. RG-routes verifies the public route table (check_edge.py --routes).
 # Remote commands are single-quoted on purpose: they expand on the server.
 # shellcheck disable=SC2016
 set -Euo pipefail
@@ -10,10 +12,11 @@ set -Euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: remote_gates.sh --url https://FQDN[:PORT] [--admin-token-file PATH] [options]
+Usage: remote_gates.sh --url https://FQDN[:PORT] [--state DIR] [options]
 
-  --admin-token-file P  admin token (0600). Default: the deploy/.local/<host>/ state whose
-                        deploy.conf URL matches --url (written by first_deploy.sh)
+  --state DIR           deploy/.local/<host>/ state (ssh_config, deploy.conf). Default: the state
+                        whose deploy.conf URL matches --url (written by first_deploy.sh).
+                        No admin token is used or needed (D-061); SSH reaches hlmemo.ops.
   --insecure            server uses Caddy's internal CA (rehearsal); TLS is then verified
                         against that CA (fetched over SSH), never skipped for the hlm CLI
   --tls acme|internal   expected issuer (default: deploy.conf TLS, else acme unless --insecure)
@@ -30,13 +33,13 @@ EOF
 }
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-url='' token_file='' insecure=0 tls='' ssh_config='' latency_n=20 p95_max=3000 drill=1 g7=0
+url='' state_dir='' insecure=0 tls='' ssh_config='' latency_n=20 p95_max=3000 drill=1 g7=0
 while (($#)); do
   case $1 in
-    --url|--admin-token-file|--tls|--ssh-config|--latency-n|--latency-p95-ms)
+    --url|--state|--tls|--ssh-config|--latency-n|--latency-p95-ms)
       (($# >= 2)) || { echo "remote_gates: $1 needs a value" >&2; exit 64; }
       case $1 in
-        --url) url=$2 ;; --admin-token-file) token_file=$2 ;; --tls) tls=$2 ;;
+        --url) url=$2 ;; --state) state_dir=$2 ;; --tls) tls=$2 ;;
         --ssh-config) ssh_config=$2 ;; --latency-n) latency_n=$2 ;; --latency-p95-ms) p95_max=$2 ;;
       esac
       shift 2 ;;
@@ -51,16 +54,14 @@ die() { printf 'remote_gates: %s\n' "$*" >&2; exit 1; }
 [[ $url =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$ ]] || { echo 'remote_gates: --url must be https://HOST[:PORT]' >&2; usage >&2; exit 64; }
 url=${url%/}
 [[ $latency_n =~ ^[1-9][0-9]*$ && $p95_max =~ ^[1-9][0-9]*$ ]] || { echo 'remote_gates: numeric --latency-* values required' >&2; exit 64; }
-if [[ -z $token_file ]]; then
+if [[ -z $state_dir ]]; then
   for conf in "$REPO_ROOT"/deploy/.local/*/deploy.conf; do
-    [[ -f $conf ]] && grep -qxF "URL=$url" "$conf" && token_file=$(dirname "$conf")/admin.token && break
+    [[ -f $conf ]] && grep -qxF "URL=$url" "$conf" && state_dir=$(dirname "$conf") && break
   done
-  [[ -n $token_file ]] || { echo "remote_gates: no deploy/.local/*/deploy.conf with URL=$url; pass --admin-token-file" >&2; exit 64; }
+  [[ -n $state_dir ]] || { echo "remote_gates: no deploy/.local/*/deploy.conf with URL=$url; pass --state" >&2; exit 64; }
 fi
-[[ -f $token_file ]] || die "admin token file not found: $token_file"
-mode=$(stat -f %Lp "$token_file" 2>/dev/null || stat -c %a "$token_file")
-[[ $mode == 600 || $mode == 400 ]] || die "$token_file must be mode 0600 (is $mode)"
-state_dir=$(cd "$(dirname "$token_file")" && pwd)
+[[ -d $state_dir ]] || die "state directory not found: $state_dir"
+state_dir=$(cd "$state_dir" && pwd)
 conf_value() { [[ -f $state_dir/deploy.conf ]] && sed -n "s/^$1=//p" "$state_dir/deploy.conf" | head -1; }
 [[ -n $tls ]] || tls=$(conf_value TLS || true)
 [[ -n $tls ]] || { if ((insecure)); then tls=internal; else tls=acme; fi; }
@@ -81,11 +82,22 @@ work=$(mktemp -d "$state_dir/gates-work.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 exec > >(tee -a "$log") 2>&1
 
-HLM_ADMIN_TOKEN=$(<"$token_file")
-export HLM_ADMIN_TOKEN
-[[ -f $state_dir/registration.secret ]] && { HLM_REGISTRATION_SECRET=$(<"$state_dir/registration.secret"); export HLM_REGISTRATION_SECRET; }
+# Never inherit an old admin token or registration secret from the operator's shell (G-W0-9).
+unset HLM_ADMIN_TOKEN HLM_REGISTRATION_SECRET
 uvrun() { uv run --quiet --frozen --project "$REPO_ROOT" "$@"; }
 rssh() { /usr/bin/ssh -F "$ssh_config" hlm-deploy "$@"; }
+# Operator path (D-061): python -m hlmemo.ops in the api container over SSH.
+ops() { HLM_OPS_SSH_CONFIG=$ssh_config bash "$REPO_ROOT/deploy/scripts/hlm_ops.sh" --state "$state_dir" "$@"; }
+minted_id() { # minted_id META_FILE -> device id from hlmemo.ops mint/rotate stderr metadata
+  python3 -c 'import json,sys
+for line in open(sys.argv[1]):
+    try:
+        d = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(d, dict) and "minted" in d:
+        print(d["minted"]["id"])' "$1" 2>/dev/null
+}
 curl_tls=()
 ((insecure)) && curl_tls=(-k)
 
@@ -168,11 +180,28 @@ tls_env=()
 
 # ------------------------------------------------------------------ G5 neutral probe
 probe_state=$work/probe.json
-probe() { uvrun python "$REPO_ROOT/docs/bakeoff/r2/judge/probe.py" --base "$url" --state "$probe_state" --project gates "${probe_insecure[@]}" "$@"; }
+probe_project=gates-probe
+probe_device="gates-probe-${stamp,,}"
+probe() { uvrun python "$REPO_ROOT/docs/bakeoff/r2/judge/probe.py" --base "$url" --state "$probe_state" --project "$probe_project" "${probe_insecure[@]}" "$@"; }
 probe_insecure=()
 ((insecure)) && probe_insecure=(--insecure)
 marker_a="gates-a-$stamp-$RANDOM"
-out=$(probe --mode smoke 2>&1); rc=$?
+rc=1
+if ((have_ssh)) && ops project create "$probe_project" --name 'Remote gates probe' --exists-ok >/dev/null &&
+  probe_token=$(ops device mint --name "$probe_device" --class ci --grant "$probe_project:write" --expires 30m 2>"$work/probe.meta"); then
+  # The token goes from the ops pipe into a 0600 state file through python's stdin, never argv.
+  printf '%s' "$probe_token" | python3 -c 'import json,os,sys
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump({"base": sys.argv[2], "device_id": int(sys.argv[3]), "device_token": sys.stdin.read().strip(), "project": sys.argv[4]}, f)' \
+    "$probe_state" "$url" "$(minted_id "$work/probe.meta")" "$probe_project" && rc=0
+  unset probe_token
+fi
+if ((rc != 0)); then
+  out='probe device could not be minted over SSH (hlm_ops.sh)'
+else
+  out=$(probe --mode smoke 2>&1); rc=$?
+fi
 printf '%s\n' "$out" | sed 's/^/    /'
 if ((rc == 0)); then
   out=$(probe --mode write-marker --marker "$marker_a" 2>&1 && probe --mode read-marker --marker "$marker_a" 2>&1); rc=$?
@@ -181,6 +210,21 @@ if ((rc == 0)); then
 else
   gate probe FAIL 'smoke failed'
 fi
+
+# ------------------------------------------------------------------ RG-routes (W0a, D-061)
+routes_tls=()
+if ((insecure)); then
+  if [[ -n $ca_file ]]; then routes_tls=(--cafile "$ca_file"); else routes_tls=(--insecure); fi
+fi
+if ((have_ssh)) && routes_token=$(ops device mint --name "gates-routes-${stamp,,}" --class ci --expires 10m 2>/dev/null) &&
+  out=$(HLM_ROUTES_TOKEN=$routes_token python3 "$REPO_ROOT/deploy/scripts/check_edge.py" --routes --base "$url" "${routes_tls[@]}" 2>&1); then
+  printf '%s\n' "$out" | sed 's/^/    /'
+  gate routes PASS "$(tail -1 <<< "$out")"
+else
+  printf '%s\n' "${out:-route check did not run (SSH/mint failed)}" | sed 's/^/    /'
+  gate routes FAIL "$(tail -1 <<< "${out:-mint over SSH failed}")"
+fi
+unset routes_token out
 
 # ------------------------------------------------------------------ G6 real hlm CLI
 cli_dir=$work/hlm-cli
@@ -196,15 +240,26 @@ if ((insecure)) && [[ -z $ca_file ]]; then
 else
   run_cli() { printf '    $ hlm %s\n' "$*"; local o; o=$(hlm "$@" 2>&1); local c=$?; printf '%s\n' "$o" | sed 's/^/      /'; return $c; }
   run_cli init --server "$url/mcp" --project gates-cli --device-name "$cli_device" || cli_ok=0
+  ((cli_ok)) && { ops project create gates-cli --name 'Remote gates' --exists-ok >/dev/null || cli_ok=0; }
+  # Public self-registration must be closed, with the operator hint (exit 77).
   if ((cli_ok)); then
-    hlm --admin project list 2>/dev/null | grep -qw gates-cli || run_cli --admin project create gates-cli --name 'Remote gates' || cli_ok=0
+    printf '    $ hlm device register --name %s (expect refusal)\n' "$cli_device-reg"
+    reg_out=$(hlm device register --name "$cli_device-reg" --class ci 2>&1); reg_rc=$?
+    printf '%s\n' "$reg_out" | sed 's/^/      /'
+    [[ $reg_rc == 77 && $reg_out == *'registration is closed'* ]] || cli_ok=0
   fi
-  ((cli_ok)) && { run_cli device register --name "$cli_device" --class ci || cli_ok=0; }
-  ((cli_ok)) && { run_cli --admin device approve "$cli_device" --class ci --grant gates-cli:write || cli_ok=0; }
+  if ((cli_ok)); then
+    printf '    $ hlm_ops.sh device mint --name %s ... | hlm device login --token-stdin\n' "$cli_device"
+    ops device mint --name "$cli_device" --class ci --grant gates-cli:write --expires 30m 2>/dev/null |
+      hlm device login --name "$cli_device" --token-stdin 2>&1 | sed 's/^/      /'
+    ((PIPESTATUS[0] == 0 && PIPESTATUS[1] == 0)) || cli_ok=0
+  fi
   ((cli_ok)) && { run_cli query 'remote gates context' || cli_ok=0; }
   ((cli_ok)) && { run_cli close --notes "remote gates $stamp against $url" --decision "remote gates $stamp ran" || cli_ok=0; }
   ((cli_ok)) && { run_cli device whoami | grep -q 'gates-cli:write' || cli_ok=0; }
-  cli_detail="init/register/approve/query/close/whoami as $cli_device"
+  ((cli_ok)) && { run_cli device revoke --self || cli_ok=0; }
+  ((cli_ok)) && { ! hlm device whoami >/dev/null 2>&1 || cli_ok=0; }
+  cli_detail="init/register-refused/ops-mint+login/query/close/whoami/revoke --self as $cli_device"
 fi
 if ((cli_ok)); then gate hlm-cli PASS "$cli_detail"; else gate hlm-cli FAIL "${cli_detail:-see log}"; fi
 
@@ -213,7 +268,8 @@ lat=$(env "${tls_env[@]}" INSECURE="$insecure" uv run --quiet --frozen --project
 import json, os, statistics, sys, time, uuid
 import httpx
 url, state, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
-token = json.load(open(state))["device_token"]
+st = json.load(open(state))
+token, project = st["device_token"], st["project"]
 verify = False if (os.environ.get("INSECURE") == "1" and not os.environ.get("SSL_CERT_FILE")) else True
 h = {"Authorization": f"Bearer {token}", "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 with httpx.Client(base_url=url, verify=verify, timeout=30) as c:
@@ -224,7 +280,7 @@ with httpx.Client(base_url=url, verify=verify, timeout=30) as c:
     samples, errors = [], 0
     for i in range(n):
         body = {"jsonrpc": "2.0", "id": i + 1, "method": "tools/call", "params": {"name": "memory.query",
-                "arguments": {"project": "gates", "query": f"latency probe {uuid.uuid4().hex[:6]}", "token_budget": 1024}}}
+                "arguments": {"project": project, "query": f"latency probe {uuid.uuid4().hex[:6]}", "token_budget": 1024}}}
         t = time.perf_counter()
         r = c.post("/mcp", headers=h, json=body)
         samples.append((time.perf_counter() - t) * 1000)
@@ -283,11 +339,13 @@ else
 fi
 
 # ------------------------------------------------------------------ cleanup: revoke gate devices
-if [[ -f $probe_state ]]; then
-  probe_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["device_id"])' "$probe_state" 2>/dev/null || true)
-  [[ -z $probe_id ]] || hlm --admin device revoke "$probe_id" >/dev/null 2>&1 || echo "note: could not revoke probe device $probe_id"
+if ((have_ssh)); then
+  for device in "$probe_device" "$cli_device"; do
+    # Already revoked (cli: --self above) is fine; anything else is reported.
+    ops device list --json 2>/dev/null | python3 -c 'import json,sys; d={x["name"]: x["status"] for x in json.load(sys.stdin)["devices"]}; sys.exit(0 if d.get(sys.argv[1]) == "trusted" else 1)' "$device" &&
+      { ops device revoke "$device" >/dev/null 2>&1 || echo "note: could not revoke $device"; }
+  done
 fi
-[[ -f $cli_dir/hlm.toml ]] && { hlm --admin device revoke "$cli_device" >/dev/null 2>&1 || echo "note: could not revoke $cli_device"; }
 
 # ------------------------------------------------------------------ optional G7: real CLIs
 if ((g7)); then
@@ -309,9 +367,18 @@ if ((g7)); then
   g7_device="g7-$(hostname -s | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-')"
   g7_ok=1
   [[ -f $g7_dir/hlm.toml ]] || g7hlm init --server "$url/mcp" --project gates-g7 --device-name "$g7_device" || g7_ok=0
-  g7hlm --admin project list 2>/dev/null | grep -qw gates-g7 || g7hlm --admin project create gates-g7 --name 'G7 real CLIs' || g7_ok=0
-  if ! g7hlm device whoami >/dev/null 2>&1; then
-    g7hlm device register --name "$g7_device" --class personal && g7hlm --admin device approve "$g7_device" --class personal --grant gates-g7:write || g7_ok=0
+  ops project create gates-g7 --name 'G7 real CLIs' --exists-ok >/dev/null || g7_ok=0
+  # Minted once, then rotated on every run: the new token replaces the stored one and
+  # `hlm mcp add` below re-registers it with each CLI (D-061).
+  if ((g7_ok)); then
+    if ops device rotate "$g7_device" 2>/dev/null | g7hlm device login --name "$g7_device" --token-stdin; then
+      echo "G7 device $g7_device rotated"
+    elif ops device mint --name "$g7_device" --class personal --grant gates-g7:write 2>/dev/null |
+      g7hlm device login --name "$g7_device" --token-stdin; then
+      echo "G7 device $g7_device minted"
+    else
+      g7_ok=0
+    fi
   fi
   for cli in claude codex agy; do
     if ((g7_ok)); then

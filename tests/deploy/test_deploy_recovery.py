@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -67,6 +68,13 @@ elif "config" in args:
         for s in ("api","worker","db","caddy")}}))
 elif "ps" in args:
     if os.environ.get("INITIAL") != "1": print("db-container")
+elif "exec" in args and "hlmemo.ops" in args:
+    # W0a: server-side minting; the token only ever travels on stdout.
+    assert sys.stdin.read() == "", "hlmemo.ops inherited input"
+    print(os.environ.get("ROUTES_TOKEN", "hlm_" + "r" * 43))
+elif "exec" in args and "--routes" in args:
+    assert "def check_routes" in sys.stdin.read(), "route checker not fed on stdin"
+    if fail == "routes-internal": sys.exit(14)
 elif "exec" in args:
     if "pg_dump" in args[-1]:
         assert sys.stdin.read() == "", "pg_dump inherited input"
@@ -129,6 +137,22 @@ backup_env() { [[ ${FAIL:-} != upload ]] || echo S3_BUCKET=simulated-upload; }
 """
 
 
+# W0a: the public route checker runs as `python3 deploy/scripts/check_edge.py --routes` on the
+# host. Intercept only that invocation (it would open real sockets); everything else runs the real
+# interpreter. The shim records argv and whether the token arrived through the environment.
+PYTHON3 = """#!/bin/sh
+case "$1" in
+  */check_edge.py|deploy/scripts/check_edge.py)
+    printf '%s\\n' "$*" >> "$EVENTS.routes-argv"
+    printf '%s\\n' "${HLM_ROUTES_TOKEN:-<none>}" >> "$EVENTS.routes-token"
+    [ "$FAIL" != routes-public ] || exit 1
+    echo 'RESULT routes PASS (harness)'
+    exit 0 ;;
+esac
+exec REAL_PYTHON "$@"
+"""
+
+
 class DeployRecoveryTest(unittest.TestCase):
     def prepare_deploy(self, failure, initial=False):
         temporary = tempfile.TemporaryDirectory()
@@ -158,6 +182,7 @@ class DeployRecoveryTest(unittest.TestCase):
                 "#!/usr/bin/env python3\nimport os,sys\nos.setsid()\nos.execvp(sys.argv[1],sys.argv[1:])\n"
             ),
             "aws": "#!/usr/bin/env bash\necho simulated-upload-failure >&2\nexit 42\n",
+            "python3": PYTHON3.replace("REAL_PYTHON", shutil.which("python3") or sys.executable),
         }
         for name, content in programs.items():
             path = binary / name

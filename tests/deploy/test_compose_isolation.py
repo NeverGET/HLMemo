@@ -52,7 +52,23 @@ class ComposeIsolationTests(unittest.TestCase):
             set(services["db"]["environment"]),
             {"POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_INITDB_ARGS"},
         )
-        self.assertIn("HLM_ADMIN_TOKEN", services["api"]["environment"])
+        # W0a (D-061): the api keeps only its cursor secret; admin token and registration secret are gone.
+        self.assertIn("HLM_CURSOR_SECRET", services["api"]["environment"])
+        self.assertNotIn("HLM_ADMIN_TOKEN", services["api"]["environment"])
+        self.assertNotIn("HLM_REGISTRATION_SECRET", services["api"]["environment"])
+
+    def test_access_settings_ship_with_the_release(self):
+        """W0a (D-061): production access mode is pinned in the tracked Compose model, not env files."""
+        services = self.render()["services"]
+        for name in ("api", "worker", "migrate"):
+            env = services[name]["environment"]
+            self.assertEqual(env["HLM_DEPLOYMENT"], "production", name)
+            self.assertEqual(env["HLM_REGISTRATION_MODE"], "closed", name)
+            self.assertEqual(env["HLM_ADMIN_HTTP"], "disabled", name)
+        self.assertEqual(services["migrate"]["command"], ["alembic", "upgrade", "main@head"])
+        caddy = (ROOT / "deploy/Caddyfile").read_text()
+        self.assertIn("@rest path /health /ready /devices/whoami /devices/revoke\n", caddy)
+        self.assertNotIn("/admin/*", caddy)
 
     def test_proxy_trust_matches_frontend_only_route(self):
         config = self.render()
