@@ -46,7 +46,7 @@ from hlmemo.cli.client_config import (
 from hlmemo.cli.http_client import HlmHttp, HlmHttpError
 from hlmemo.cli.launch import CLIS, build_argv, exec_cli
 from hlmemo.cli.mcp_client import MemoryClient, ToolCallError
-from hlmemo.cli.preflight import UNAVAILABLE_PROMPT, compact, run_preflight
+from hlmemo.cli.preflight import RISK_TIMEOUT_S, UNAVAILABLE_PROMPT, compact, run_preflight
 
 OPS_HINT = (
     "hint: this server does not accept self-registration (D-061). Ask the operator to mint a device:\n"
@@ -899,8 +899,16 @@ def launch(
             )
         else:
             client = MemoryClient(cfg.mcp, token, timeout_s=cfg.timeout_s)
+            # W2d: with --task, memory.risk_check runs in parallel (own, longer timeout; failure = note)
+            risk_client = MemoryClient(cfg.mcp, token, timeout_s=max(cfg.timeout_s, RISK_TIMEOUT_S))
             outcome = run_preflight(
-                client, project=project, device=c.device_name(), budget=cfg.budget, task=task, root=root
+                client,
+                project=project,
+                device=c.device_name(),
+                budget=cfg.budget,
+                task=task,
+                root=root,
+                risk_client=risk_client,
             )
             ok, prompt, outcome_code, outcome_reason = (
                 outcome.ok,
@@ -910,7 +918,8 @@ def launch(
             )
             log_line(
                 f"preflight {outcome.status} cli={cli} project={project} query={outcome.query_text!r} "
-                f"attempts={outcome.attempts} code={outcome_code or '-'}"
+                f"attempts={outcome.attempts} code={outcome_code or '-'} "
+                f"risk={(outcome.risk or {}).get('verdict') or outcome.risk_error or '-'}"
             )
         if not ok:
             if cfg.on_failure == "block":
