@@ -160,13 +160,17 @@ Scripts supply these paths automatically. Missing service files fail closed.
 | PostgreSQL | 2 GiB | 1 |
 | API (local e5-small, including tmpfs) | 2.5 GiB (2560 MiB) | 1 |
 | Worker (local e5-small) | 1.5 GiB | 1 |
+| Librarian (W2a; idle in R1) | 512 MiB | 0.5 |
 | Migration (one-shot) | 768 MiB | 1 |
 | Caddy | 256 MiB | 0.5 |
 
-Steady ceilings total **6.25 GiB** (`2 + 2.5 + 1.5 + 0.25`); adding the one-shot migration's
-0.75 GiB gives a conservative **7 GiB** combined ceiling. An 8 GiB host retains 1.75 GiB
-steady / 1 GiB combined headroom; a decimal 8 GB host retains about **1.20 GiB steady /
-0.45 GiB combined**. Migration completes before API/worker startup. Limits are not reservations;
+Steady ceilings total **6.75 GiB** (`2 + 2.5 + 1.5 + 0.5 + 0.25`); adding the one-shot
+migration's 0.75 GiB gives a conservative **7.5 GiB** combined ceiling. The R1 rehearsal VM
+(nominal 8 GiB) showed only **~7.9 GiB** to the kernel, leaving ~1.15 GiB steady but only
+**~0.4 GiB while the migration runs**; a decimal 8 GB host (7.45 GiB) has ~0.7 GiB steady and
+**no** combined headroom. Headroom during a migration is thin: `deploy.sh` stops
+caddy/api/worker/librarian before `migrate` (only db + migrate run then), so never run the
+migration by hand next to a live stack on such a host. Migration completes before API/worker startup. Limits are not reservations;
 CPU limits share the two physical vCPUs. PostgreSQL uses `shared_buffers=512MB`, `work_mem=4MB`,
 `maintenance_work_mem=128MB`, `max_connections=50`, and 512 MiB shared memory. `work_mem` applies
 per sort/hash operation, not once per connection; avoid increasing concurrency without measuring.
@@ -363,8 +367,13 @@ Install all five completed private env files, with `HLM_BACKUP_DIR=/var/backups/
 ```sh
 scp /secure/path/{prod,app,api,db,backup}.env hlmdeploy@SERVER:/opt/hlmemo/
 ssh hlmdeploy@SERVER 'for file in prod app api db backup; do sudo install -o hlmdeploy -g hlmdeploy -m 0600 "/opt/hlmemo/$file.env" "/etc/hlmemo/$file.env" && rm "/opt/hlmemo/$file.env"; done'
-bash deploy/scripts/deploy.sh hlmdeploy@SERVER RELEASE_REF
+bash deploy/scripts/deploy.sh hlmdeploy@SERVER "$(git rev-parse RELEASE_REF)"   # full SHA
 ```
+
+**Always pass a full 40-character SHA** (`"$(git rev-parse REF)"`): the server fetches the ref by
+name and `git fetch origin <short sha>` cannot resolve an abbreviated SHA (R1 rehearsal).
+`deploy.sh` expands a 7-39 character hex ref to the full SHA from the local checkout before
+sending it (and refuses one it cannot resolve), but the examples here spell the full SHA out.
 
 The deploy user must own the env directory as well as `prod.env`: successful releases replace
 that file atomically. Cloud-init configures this for new hosts. On an existing host created by
@@ -442,6 +451,15 @@ with `printf %q`, `ssh -n`). The token of a minted device travels only on stdout
 `hlm device login --token-stdin`, which checks `/health` reports it `trusted` and stores it in the
 keychain (else a 0600 credentials file). It never appears in argv, shell history or logs.
 
+**Always call `hlm_ops.sh` with `--state deploy/.local/<host>`** (or `HLM_OPS_STATE`): without it
+the wrapper guesses from `deploy/.local/*/deploy.conf` and refuses when rehearsal and production
+state directories coexist; `--state` makes the target host explicit. SSH uses that directory's
+pinned `known_hosts` with `StrictHostKeyChecking=yes`. **A changed SSH host key on production is a
+real alarm, not a nuisance** (R1 rehearsal note): stop; do not delete the `known_hosts` entry or
+re-pin from `ssh-keyscan`. Verify the new fingerprint through the provider console (rebuilt host,
+or someone in the middle) before re-pinning. A legitimately recreated rehearsal VM changes its
+key; production should not.
+
 ```sh
 uv sync --frozen
 export HLM_SERVER_URL=https://memory.example.org/mcp  # replace domain
@@ -474,7 +492,7 @@ See [the exact supported CLI commands](../docs/USAGE.md). `hlm doctor` also chec
 settings and may report those local checks absent on a remote-only workstation; `/ready` is the
 server's authoritative DB/model readiness check. Publicly `/ready` answers only
 `{"status": "ready"|"not_ready"}` (200/503); the per-check diagnostics are served to loopback peers
-only (container healthcheck, `docker exec`) and printed by `hlm_ops.sh status` (D-061, Sol 34 #6).
+only (container healthcheck, `docker exec`) and printed by `hlm_ops.sh --state deploy/.local/<host> status` (D-061, Sol 34 #6).
 
 Local development (`compose.yaml`) keeps the Phase-0 flow (`HLM_REGISTRATION_MODE=open`,
 `HLM_ADMIN_HTTP=enabled`, `HLM_ADMIN_TOKEN` from `.hlm-dev.env`): see docs/USAGE.md.
@@ -487,8 +505,9 @@ Local development (`compose.yaml`) keeps the Phase-0 flow (`HLM_REGISTRATION_MOD
 **before build, backup or writer shutdown**, unless the operator acknowledges that exact model:
 
 ```sh
-git show REF:deploy/compose.prod.yaml | shasum -a 256      # review the diff first
-bash deploy/scripts/deploy.sh --accept-compose-change=<that sha256> hlmdeploy@SERVER REF
+REF=$(git rev-parse <ref>)                                   # full SHA, never a short one
+git show "$REF:deploy/compose.prod.yaml" | shasum -a 256    # review the diff first
+bash deploy/scripts/deploy.sh --accept-compose-change=<that sha256> hlmdeploy@SERVER "$REF"
 ```
 
 A missing or different hash is refused before anything stops. With the acknowledgement the normal
@@ -507,14 +526,17 @@ image ID, and only then starts the previous stack; markers are not touched. Re-r
 command is idempotent. PostgreSQL major-version or volume-layout changes remain separate migrations.
 
 **W0a (D-061)** is such a release: `deploy.sh --accept-compose-change=<sha256 of R's compose.prod.yaml>
-hlmdeploy@SERVER R`, then from the workstation `remote_gates.sh --url https://FQDN --no-drill` and,
+hlmdeploy@SERVER "$(git rev-parse R)"`, then from the workstation `remote_gates.sh --url https://FQDN --no-drill` and,
 from the printed device inventory, rotate the g7 device (`remote_gates.sh ... --g7`, or
-`hlm_ops.sh device rotate g7-<host> | hlm device login --name g7-<host> --token-stdin` followed by
+`hlm_ops.sh --state deploy/.local/<host> device rotate g7-<host> | hlm device login --name g7-<host> --token-stdin` followed by
 `hlm mcp add claude|codex|agy`) and revoke stale pre-W0a devices (`gates-*`, `deploy-*`, `judge-*`)
-with `hlm_ops.sh device revoke <name>`. Pre-W0a tokens have no expiry and keep working until then.
+with `hlm_ops.sh --state deploy/.local/<host> device revoke <name>`. Pre-W0a tokens have no expiry and keep working until then.
 W0a is a one-way door (D-065): no manual rollback to the pre-W0 release; recovery rolls forward.
-The `/etc/hlmemo/*.pre-w0-*` backups (retired secrets) are recorded in `release-state.json` and
-deleted by `deploy.sh --accept-release hlmdeploy@SERVER`; never delete them by hand.
+The `/etc/hlmemo/*.pre-w0-*` backups (retired secrets) are recorded in `release-state.json`
+`retired_backups` the moment they are created (also by a deployment that then fails and is
+auto-recovered; its restore removes the now-redundant copy) and deleted by
+`deploy.sh --accept-release hlmdeploy@SERVER`, which for a W0+ current release also sweeps any
+unrecorded `*.pre-w0-*` next to the env files; never delete them by hand.
 
 **W2a/R1 (librarian service)** changes the model too (new `librarian` service): deploy it with
 `--accept-compose-change=<sha256>` exactly like W0a. The runner stops/starts the librarian with the
@@ -571,7 +593,7 @@ After a successful W0a cutover there is **no downgrade to a pre-W0 release**: th
 target whose tree lacks `alembic/versions/0005_w0_access.py` or `src/hlmemo/ops`, unconditionally.
 (A deployment that fails *before* its cutover completes is still recovered automatically to the
 previous stack with its pre-cutover env, secrets included.) **Disaster recovery from a bad W0+
-release rolls FORWARD:** deploy a good W0+ release (`deploy.sh REF`), then restore the recorded
+release rolls FORWARD:** deploy a good W0+ release (`deploy.sh hlmdeploy@SERVER "$(git rev-parse REF)"`), then restore the recorded
 dump (`release-state.json` `previous_dump`, or any pre-upgrade/daily dump) with
 `bash deploy/backup/restore.sh DUMP --yes`; restore migrates the dump to the W0+ head.
 
@@ -593,7 +615,9 @@ database is restored and the current release restarted (the saved dump is used o
 then ages out with the daily tier). If the runner is killed, the recorded attempt lets the same
 `--rollback` command be re-run to completion. Success consumes the pair in one atomic state write
 plus a `derive` that rewrites or deletes the legacy marker files. `--accept-release` deletes every
-env backup ever recorded (`retired_backups`); keep them until then, never delete them by hand.
+env backup ever recorded (`retired_backups`, including those of failed deployments) and, when the
+current release is W0+ (D-065), any unrecorded `*.pre-w0-*` beside the env files; keep them until
+then, never delete them by hand.
 
 Use a ref supporting the split env layout; for older tooling retain its compatible private config.
 Restore migrates to the selected checkout's head before starting its services with `--no-deps`;

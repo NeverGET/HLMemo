@@ -3,7 +3,8 @@
 # container over SSH. Operator workstation only; there is no admin HTTP route to call instead.
 #
 #   deploy/scripts/hlm_ops.sh [--state DIR] <ops args...>
-#   deploy/scripts/hlm_ops.sh device mint --name my-mac --class personal --grant my-project:write \
+#   deploy/scripts/hlm_ops.sh --state deploy/.local/HOST device mint --name my-mac --class personal \
+#     --grant my-project:write \
 #     | hlm device login --name my-mac --token-stdin --server https://FQDN/mcp
 #
 # The SSH target is `hlm-deploy` from <state>/ssh_config (written by first_deploy.sh). <state> is

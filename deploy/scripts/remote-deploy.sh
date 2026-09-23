@@ -90,7 +90,8 @@ pre_upgrade_dump=
 env_w0_restore=()
 # Remove the retired HLM_ADMIN_TOKEN / HLM_REGISTRATION_SECRET from the host env files (device 1
 # becomes disabled, spec §2 (ii)). Idempotent: an already-migrated file is left untouched and gets
-# no new backup. Each changed file is first copied to <file>.pre-w0-<UTC stamp> (0600). Only key
+# no new backup. Each changed file is first copied to <file>.pre-w0-<UTC stamp> (0600), recorded at
+# once in release-state.json retired_backups (deleted by --accept-release). Only key
 # names are logged, never values. Runs before cutover; a failed deployment restores the backups
 # because the previous release's code would otherwise start with open registration.
 migrate_env_w0() {
@@ -123,6 +124,11 @@ os.replace(tmp, path)
 print(f"migrate_env_w0: {name}: removed {','.join(removed)} (backup {os.path.basename(backup)})")
 sys.exit(10)
 PYENV
+    # Record the backup (it holds the retired secrets) durably BEFORE anything else happens, so
+    # --accept-release deletes it even when this deployment fails and is auto-recovered.
+    if [[ -e $backup ]]; then
+      python3 deploy/scripts/release_state.py add-retired "$parent_dir" "$backup" </dev/null || return 1
+    fi
     case $result in
       0) ;;
       10) env_w0_restore+=("$file|$backup") ;;
@@ -134,7 +140,10 @@ PYENV
 restore_env_w0() {
   local pair
   for pair in "${env_w0_restore[@]}"; do
-    cp -p -- "${pair#*|}" "${pair%%|*}" </dev/null && printf 'migrate_env_w0: restored %s from its backup\n' "$(basename "${pair%%|*}")" >&2
+    # The restored file now holds the same content, so the backup is redundant: remove it
+    # (it stays recorded in release-state.json; accept tolerates an already-missing path).
+    cp -p -- "${pair#*|}" "${pair%%|*}" </dev/null && rm -f -- "${pair#*|}" </dev/null &&
+      printf 'migrate_env_w0: restored %s from its backup\n' "$(basename "${pair%%|*}")" >&2
   done
 }
 rollback() {

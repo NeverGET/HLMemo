@@ -156,7 +156,9 @@ if args[0] == "show":
 changed = os.environ.get("FAIL") == "compose-change" or os.environ.get("COMPOSE_CHANGE") == "1"
 if args[:2] == ["cat-file", "-e"]:
     # PREW0_TARGET=1: the previous release (a*40) predates W0a (no 0005 migration, no ops package).
-    sys.exit(1 if os.environ.get("PREW0_TARGET") == "1" and args[2].startswith("a"*40) else 0)
+    # PREW0_CURRENT=1: the current release (b*40) predates W0a (accept must not sweep).
+    sys.exit(1 if (os.environ.get("PREW0_TARGET") == "1" and args[2].startswith("a"*40))
+             or (os.environ.get("PREW0_CURRENT") == "1" and args[2].startswith("b"*40)) else 0)
 if args[0] == "diff" and changed: sys.exit(1)
 if args[:2] == ["checkout", "--detach"] and args[-1] == "b"*40 and os.environ.get("FAIL") == "legacy":
     from pathlib import Path
