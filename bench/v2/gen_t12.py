@@ -2,7 +2,7 @@
 """Deterministic generator for bench v2 T12 (extract_review): long synthetic code-review documents
 with follow-up rounds (fixes, re-opens, severity changes, won't-fix) and their gold JSON.
 
-    python bench/v2/gen_t12.py            # writes bench/v2/tasks/t12_extract_review.json
+    python bench/v2/gen_t12.py            # writes src/hlmemo/bench/tasks/v2/t12_extract_review.json
 
 Same seed -> byte-identical output. The documents are synthetic (fictional findings in the style of
 HLMemo's review rounds); no sentence is copied from the repo's docs.
@@ -15,7 +15,7 @@ import random
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "tasks" / "t12_extract_review.json"
+OUT = HERE.parent.parent / "src" / "hlmemo" / "bench" / "tasks" / "v2" / "t12_extract_review.json"
 SEED = 20260923
 
 COMPONENTS = ["api", "worker", "librarian", "retrieval", "deploy", "cli", "db", "importer"]

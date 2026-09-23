@@ -36,9 +36,14 @@ def cassette_key(
     schema_version: str,
     messages: list[dict[str, Any]],
     params: dict[str, Any],
+    attempt: int = 1,
 ) -> str:
-    raw = SEP.join((model_id, prompt_version, schema_version, canonical(messages), canonical(params)))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    """``attempt`` is the response attempt of one call (2 = the schema retry). Attempt 1 keeps the
+    original key, so cassettes recorded before retries were keyed still replay unchanged."""
+    parts = [model_id, prompt_version, schema_version, canonical(messages), canonical(params)]
+    if attempt > 1:
+        parts.append(f"attempt={attempt}")
+    return hashlib.sha256(SEP.join(parts).encode("utf-8")).hexdigest()
 
 
 UNSUPPORTED = "⟦CONTENT:unsupported⟧"

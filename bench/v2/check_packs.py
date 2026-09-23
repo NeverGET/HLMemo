@@ -2,7 +2,7 @@
 """Lint the bench v2 task packs, enforce the sealed hold-out exclusion, scan for private data.
 
     python bench/v2/check_packs.py                 # public + private packs, sealed check if the file exists
-    python bench/v2/check_packs.py --pack bench/v2/tasks/t5_supersession.json
+    python bench/v2/check_packs.py --pack src/hlmemo/bench/tasks/v2/t5_supersession.json
 
 Sealed exclusion: loads answer_keys and gold_facts of the sealed corpus-B hold-out and rejects every
 case whose text contains one of them (case-insensitive, also after punctuation/whitespace folding).
@@ -19,7 +19,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-PUBLIC_DIR = HERE / "tasks"
+PUBLIC_DIR = REPO / "src" / "hlmemo" / "bench" / "tasks" / "v2"  # W2f: packs ship in the package
 PRIVATE_DIR = REPO / "docs" / "private" / "bench-v2"
 SEALED = REPO / "docs" / "private" / "realdata-hlmemo" / "corpus-b-sealed.jsonl"
 
