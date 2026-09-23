@@ -50,11 +50,10 @@ async def test_revoke_succeeds_ten_of_ten_under_device_request_flood(db_dsn, mon
             try:
                 await asyncio.wait_for(occupied.wait(), timeout=2)
                 assert client.app.state.pool.get_stats()["requests_waiting"] >= 32
-                # Exercise both spellings, including self-revocation's auth lock upgrade.
+                # Both admin-token spellings retain reserved revocation capacity.
                 path = f"/admin/devices/{device_id}/revoke" if attempt % 2 == 0 else "/devices/revoke"
-                caller = ADMIN_TOKEN if attempt % 2 == 0 else token
                 response = await asyncio.wait_for(
-                    client.post(path, json={"id": device_id}, headers=bearer(caller)), timeout=2
+                    client.post(path, json={"id": device_id}, headers=bearer(ADMIN_TOKEN)), timeout=2
                 )
                 assert response.status_code == 200, (attempt, response.text)
                 assert response.json()["device"]["status"] == "revoked"
@@ -62,6 +61,31 @@ async def test_revoke_succeeds_ten_of_ten_under_device_request_flood(db_dsn, mon
             finally:
                 await asyncio.gather(*tasks)
         assert successes == 10
+
+
+@pytest.mark.parametrize("alias", [False, True], ids=["admin-path", "body-target"])
+async def test_self_revoke_saturated_gate_is_retryable_then_succeeds(db_dsn, monkeypatch, alias):
+    """Self-revoke uses the short normal admission gate, then retries after capacity frees."""
+    monkeypatch.setenv("HLM_POOL_MAX_SIZE", "2")
+    monkeypatch.setenv("HLM_POOL_TIMEOUT_S", "0.05")
+    async with running_app(db_dsn) as client:
+        device_id, token = await trusted_device(client, "saturated-self-revoke")
+        path = "/devices/revoke" if alias else f"/admin/devices/{device_id}/revoke"
+        pool = client.app.state.pool
+        before_reserved = client.app.state.admin_pool.get_stats()["requests_num"]
+        async with pool.connection(), pool.connection():
+            response = await asyncio.wait_for(
+                client.post(path, json={"id": device_id}, headers=bearer(token)), timeout=1
+            )
+            assert response.status_code == 503, response.text
+            assert response.json()["retryable"] is True
+            assert response.json()["code"] == "E_UNAVAILABLE"
+            assert "pre-body authentication" in response.json()["message"]
+        assert client.app.state.admin_pool.get_stats()["requests_num"] == before_reserved
+        response = await client.post(path, json={"id": device_id}, headers=bearer(token))
+        assert response.status_code == 200, response.text
+        assert response.json()["device"]["status"] == "revoked"
+        assert client.app.state.admin_pool.get_stats()["requests_num"] == before_reserved
 
 
 @pytest.mark.parametrize("failure", ["domain", "timeout", "cancel"])
@@ -105,7 +129,9 @@ async def test_rest_failures_rollback_without_discarding_connection(db_dsn, monk
         else:
             await request
             assert messages[0]["status"] == (400 if failure == "domain" else 503)
-        assert returned == [(False, original_pid)]
+        # Admission and authoritative REST transaction each return the same live
+        # pooled connection; neither domain failures nor cancellation discard it.
+        assert returned == [(False, original_pid), (False, original_pid)]
         async with pool.connection() as conn:
             assert conn.info.backend_pid == original_pid
 

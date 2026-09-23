@@ -26,6 +26,7 @@ from psycopg import AsyncConnection
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.auth.cursors import load_cursor_secret, sign_cursor, verify_cursor
 from hlmemo.auth.errors import HlmError
+from hlmemo.config import get_settings
 from hlmemo.core import MODEL_ID, MODEL_REVISION
 from hlmemo.core.budget import BudgetError, Meter, canonical, validate_budget
 from hlmemo.core.clues import Clue, InvalidClue, decode_clue, encode_clue
@@ -67,7 +68,7 @@ class ReadDeps:
     @property
     def embedder(self) -> Embedder:
         if self._embedder is None:
-            self._embedder = Embedder(self.model_dir)
+            self._embedder = Embedder(self.model_dir, threads=get_settings().embed_intra_op_num_threads)
         return self._embedder
 
 
@@ -77,7 +78,7 @@ def _deps_for(model_dir: str) -> ReadDeps:
 
 
 def default_read_deps(model_dir: str | Path | None = None) -> ReadDeps:
-    """Process-wide Meter + lazily created ONNX Embedder + cursor secret."""
+    """Standalone service dependencies; HTTP uses the app lifespan's injected ReadDeps."""
     return _deps_for(str(Path(model_dir) if model_dir else default_model_dir()))
 
 

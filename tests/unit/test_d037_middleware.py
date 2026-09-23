@@ -75,7 +75,7 @@ async def _body_request(settings, chunks, *, path="/ready", headers=()):
 
 
 async def test_slow_body_progress_extends_idle_deadline():
-    settings = get_settings(request_body_timeout_s=0.15, request_body_total_timeout_s=3)
+    settings = get_settings(request_body_timeout_s=0.15)
     chunks = [(0.04, b"x" * 4096, True)] * 9 + [(0.04, b"end", False)]
     messages, routed = await _body_request(settings, chunks)
     assert messages[0]["status"] == 200
@@ -84,7 +84,7 @@ async def test_slow_body_progress_extends_idle_deadline():
 
 @pytest.mark.parametrize("empty_progress", [False, True])
 async def test_stalled_body_is_retryable_without_pool_checkout(empty_progress):
-    settings = get_settings(request_body_timeout_s=0.08, request_body_total_timeout_s=3)
+    settings = get_settings(request_body_timeout_s=0.08)
     chunks = [(0.02, b"", True)] * 20 if empty_progress else [(1, b"x", False)]
     messages, routed = await _body_request(settings, chunks)
     assert messages[0]["status"] == 408

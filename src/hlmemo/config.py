@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     db_dsn: str = "postgresql://hlm:hlm@127.0.0.1:5432/hlm"
     embed_model: str = "intfloat/multilingual-e5-small"
     embed_revision: str = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+    embed_intra_op_num_threads: int = Field(default=2, gt=0)
+    embed_max_batch_tokens: int = Field(default=1024, ge=512)
+    worker_batch_chunks: int = Field(default=32, gt=0)
+    worker_max_jobs_per_batch: int = Field(default=1, gt=0)
+    worker_memory_profile: bool = False
     hosting_target: str = "compose"
 
     # --- librarian LLM: parsed and validated in Phase 0, never called (D-017/D-019) ---
@@ -157,17 +162,21 @@ class Settings(BaseSettings):
     server_url: str = "http://127.0.0.1:8765/mcp"
     api_host: str = "0.0.0.0"
     api_port: int = 8765
+    api_limit_concurrency: int = Field(default=512, gt=0)
+    api_timeout_keep_alive: int = Field(default=5, gt=0)
     # 50 × 64,000 Unicode characters, including JSON surrogate-pair escaping.
     request_max_body_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
     # Inactivity is independent of average throughput, including before the first byte.
     request_body_timeout_s: float = Field(default=30.0, gt=0)
-    # At 8 KiB/s: 38,400,000 bytes take 4687.5 s; the full 64 MiB takes 8192 s.
-    request_body_total_timeout_s: float = Field(default=9000.0, gt=0)
+    # Gate-trusted bodies get base + received/rate seconds; total cap uses declared/max size.
+    # At 8 KiB/s: 38,400,000 bytes get 4717.5 s; the full 64 MiB gets 8222 s.
+    request_body_base_s: float = Field(default=30.0, gt=0)
     request_body_global_budget_bytes: int = Field(default=256 * 1024 * 1024, gt=0)
     request_body_client_budget_bytes: int = Field(default=128 * 1024 * 1024, gt=0)
     request_body_min_rate_bytes_s: int = Field(default=8 * 1024, gt=0)
-    request_body_rate_grace_bytes: int = Field(default=256 * 1024, gt=0)
+    request_body_client_concurrency: int = Field(default=16, gt=0)
     request_body_spool_threshold_bytes: int = Field(default=1024 * 1024, gt=0)
+    request_spool_dir: Path | None = None  # None uses the system temporary directory.
     request_db_timeout_s: float = Field(default=15.0, gt=0)
     readiness_timeout_s: float = Field(default=2.0, gt=0)
     readiness_cache_ttl_s: float = Field(default=1.0, gt=0)

@@ -100,7 +100,8 @@ def test_latency_32_passages(embedder):
 def test_hash_check(model_dir):
     hashes = model_hashes(model_dir)
     assert set(hashes) == set(HASHED_FILES) and all(len(h) == 64 for h in hashes.values())
-    Embedder(model_dir, expected_hashes=hashes)  # matches
+    instance = Embedder(model_dir, expected_hashes=hashes)  # matches
+    instance.close()
     bad = dict(hashes)
     bad["onnx/model.onnx"] = "0" * 64
     with pytest.raises(ModelHashMismatch):

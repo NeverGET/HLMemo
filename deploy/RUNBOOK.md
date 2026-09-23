@@ -121,21 +121,99 @@ Scripts supply these paths automatically. Missing service files fail closed.
 | Service | Memory ceiling | CPU ceiling |
 |---|---:|---:|
 | PostgreSQL | 2 GiB | 1 |
-| API (local e5-small) | 1.5 GiB | 1 |
+| API (local e5-small, including tmpfs) | 2.5 GiB (2560 MiB) | 1 |
 | Worker (local e5-small) | 1.5 GiB | 1 |
 | Migration (one-shot) | 768 MiB | 1 |
 | Caddy | 256 MiB | 0.5 |
 
-Steady ceilings total **5.25 GiB**; including migration, **6 GiB**, leaving about 2 GiB on an
-8 GiB host for Linux, Docker and other host services. Decimal 8 GB hosts have about 1.45 GiB
-headroom at the full combined ceiling. Limits are not reservations; CPU limits share the two
-physical vCPUs. e5-small is roughly 0.5 GB per process (D-042); the API/worker ceilings allow
-runtime/query overhead. PostgreSQL uses `shared_buffers=512MB`, `work_mem=4MB`,
+Steady ceilings total **6.25 GiB** (`2 + 2.5 + 1.5 + 0.25`); adding the one-shot migration's
+0.75 GiB gives a conservative **7 GiB** combined ceiling. An 8 GiB host retains 1.75 GiB
+steady / 1 GiB combined headroom; a decimal 8 GB host retains about **1.20 GiB steady /
+0.45 GiB combined**. Migration completes before API/worker startup. Limits are not reservations;
+CPU limits share the two physical vCPUs. PostgreSQL uses `shared_buffers=512MB`, `work_mem=4MB`,
 `maintenance_work_mem=128MB`, `max_connections=50`, and 512 MiB shared memory. `work_mem` applies
 per sort/hash operation, not once per connection; avoid increasing concurrency without measuring.
 The example API/worker pools each max at 8 connections. Monitor container RSS, OOM events and
 query latency on the actual VPS; these limits are capacity planning, not a production load test.
 Migration is intentionally one-shot, `restart: no`, and must exit zero.
+
+API sizing evidence (2026-09-23, local Docker arm64, one CPU, 1536 MiB cgroup with swap disabled):
+the isolated `oom-check` smoke built this worktree's runtime image, mounted pinned models
+read-only, passed `/ready` and 20 real MCP `memory.query` calls, and finished with
+`OOMKilled=false`, `RestartCount=0`. **Docker stats sampled peak: 956.2 MiB** (5 samples);
+**cgroup `memory.peak`: 1536 MiB**. Docker stats excludes inactive file cache and can miss short
+spikes, so sizing uses the larger cgroup high-water mark, which includes startup/cache pressure
+under the test limit. This is not an unconstrained peak or a maximum-concurrency load test.
+
+The API uses one ONNX session shared by readiness and every query. Missing model files leave
+the API running with `/ready` returning 503 `not_ready` and the missing file list; after the
+files are restored, the next readiness probe initializes the shared session once. Both API and
+worker disable the CPU memory arena and use `HLM_EMBED_INTRA_OP_NUM_THREADS=2` by default.
+`ORT_DISABLE_TELEMETRY=1` (runtime image `ENV`, Compose app environment, embedder module) is set before ONNX Runtime initializes: on macOS its native
+telemetry HTTP callback was observed locking a destroyed mutex during interpreter exit.
+The API owns a single native executor, drains/cancels the readiness task on shutdown,
+joins the executor and releases its session/tokenizer before the event loop closes.
+The worker drains active inference before releasing its native session as well.
+
+Worker limits are configurable: `HLM_WORKER_BATCH_CHUNKS=32` bounds each SQL page;
+`HLM_EMBED_MAX_BATCH_TOKENS=1024` bounds **padded** tokens (`texts × longest text`,
+including prefixes/special tokens), not just the number of texts. It permits two
+full-length 512-token texts per inference. `HLM_WORKER_MAX_JOBS_PER_BATCH=1` avoids
+leasing jobs that wait behind a large job. Pages are inserted into one uncommitted
+transaction per version; the final lease fence commits every page together or rolls
+them all back. Texts and vectors are released before fetching the next page. Writes
+already create one job per version; a 50-item write therefore creates 50 bounded jobs.
+`HLM_WORKER_MEMORY_PROFILE=1` enables RSS/tracemalloc stage logs for diagnosis (off
+by default; profiling adds overhead). Increasing batch limits requires repeating the
+1536 MiB worker test; the earlier API-query smoke does not validate worker sizing.
+In production Compose, set the three batch limits in `prod.env` (Compose
+interpolation); set the optional profiling flag in the worker's app environment.
+
+Run the contract-max worker test separately from tests that reset `hlm_exit`:
+
+```sh
+HLM_TEST_DSN=postgresql://hlm:hlm@127.0.0.1:5432/hlm_exit \
+uv run --frozen python tests/deploy/worker_oom_smoke.py \
+  --image hlmemo:worker-oom --build --worker-log tests/auth-worker-memory.log
+```
+
+The harness creates only Compose project `oom-worker`, binds an ephemeral loopback
+port, writes 50 × 64,000 emoji characters (38.4 MB escaped JSON), checks all returned
+versions' embeddings, reports memory/OOM/restarts, and verifies API SIGTERM exit 0.
+It removes its own containers/network and preserves database rows and the log. The worker runs
+with production defaults; add `--profile` to enable `HLM_WORKER_MEMORY_PROFILE` stage logs.
+
+`HLM_REQUEST_SPOOL_DIR=/var/spool/hlmemo` is backed by a **320 MiB tmpfs** owned by UID/GID 10001;
+`/tmp` retains its separate 64 MiB tmpfs. Both tmpfs allocations count against the API cgroup.
+Required budget: `(1536 + 320) × 1.25 = 2320 MiB`; also reserving all of `/tmp` gives
+`(1536 + 320 + 64) × 1.25 = 2400 MiB`, rounded up to **2560 MiB**. Do not add these tmpfs
+ceilings again to the host table: they are already included in the API limit.
+
+Repeat the isolated memory smoke against an already migrated disposable `hlm_body` database
+(never run concurrently with tests using that DB):
+
+```sh
+HLM_TEST_DSN=postgresql://hlm:hlm@127.0.0.1:5432/hlm_body \
+python3 tests/deploy/oom_smoke.py --image hlmemo:oom-check --build \
+  --models-dir "$HLM_MODELS_DIR"
+```
+
+Set `HLM_MODELS_DIR` to the local directory containing the pinned model first. Omit
+`--models-dir` to bake models instead. The script binds a fresh test admin token, adds a uniquely
+named test project, publishes only an ephemeral loopback port, reports stats and inspect results,
+and removes its `oom-check` API container in `finally`; it does not alter an existing stack.
+
+Protected requests authenticate before body receipt using one unlocked device SELECT with a
+250 ms statement timeout and at most 250 ms normal-pool wait. The connection is returned before
+reading bytes; the authoritative transaction resolves the bearer again after receipt. Unknown
+or revoked tokens return 401, pending devices 403, and pool pressure retryable 503. Only
+gate-verified trusted devices get 64 MiB and rate-based upload time; registration stays at
+16 KiB, and public routes/reserved-admin bypass requests at 64 KiB with a fixed base deadline.
+The 16 per-client slots cover authentication and body receipt. Admin-token requests on reserved
+routes retain separate pool capacity and 16 separate body slots per client, sharing byte budgets;
+normal auth waiters cannot obstruct that path even from the same IP. Caddy upstream transport uses `keepalive 4s`, below the
+API's 5-second idle timeout, to prevent reuse of stale connections for POST requests.
+
 Logs rotate at 5 × 10 MiB per container. Worker health checks observe successful poll-loop log
 heartbeats; missing heartbeats for 180 seconds fail health. Docker does not automatically restart
 an unhealthy but running process: alert on unhealthy state and aging job backlog. Caddy's container
@@ -183,11 +261,11 @@ Create DNS A → output IPv4 and AAAA → output IPv6 after verifying routing, e
 hard-coded. Cloud-init creates `/etc/hlmemo`, `/opt/hlmemo` and `/var/backups/hlmemo`. Docker group
 and passwordless sudo membership make `hlmdeploy` a privileged operator despite being non-root.
 
-### IPv6 client addresses and registration limits
+### IPv6 client addresses and request limits
 
 The shipped Compose bridges are IPv4-only. Docker's default userland proxy can translate incoming
-IPv6 connections to IPv4, making Caddy see the bridge gateway; registration limits then share one
-bucket across IPv6 clients. Publishing `::` alone does not fix this. Before advertising AAAA,
+IPv6 connections to IPv4, making Caddy see the bridge gateway; registration limits and the 16 concurrent auth/body slots then share one
+bucket across IPv6 clients. Slow bodies can therefore deny other IPv6 clients admission. Publishing `::` alone does not fix this. Before advertising AAAA,
 configure native IPv6 on the production Linux host. This procedure requires Docker Engine 27+
 and a maintenance window; it has not been validated against a live VPS. See Docker's
 [port publishing behavior](https://docs.docker.com/engine/network/port-publishing/),
@@ -239,7 +317,7 @@ sudo nsenter -t "$pid" -n tcpdump -n -i any 'ip6 and (tcp dst port 443 or udp ds
 
 The two observed sources must match the clients' distinct public IPv6 addresses. Caddy forwards
 these to the API; do not trust client-supplied forwarding headers as a workaround. Until this is
-verified, withhold AAAA and treat the IPv6 registration limiter as a shared bucket.
+verified, withhold AAAA and treat IPv6 registration and auth/body admission as shared buckets.
 
 ## First deploy and admin bootstrap
 

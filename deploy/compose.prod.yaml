@@ -23,12 +23,14 @@ x-app: &app
     args:
       BAKE_MODELS: "1"
   env_file: *app-env
-  environment:
+  environment: &app-environment
     HLM_PROFILES_DIR: /app/profiles
     HLM_MODELS_DIR: /app/models
     HLM_API_HOST: 0.0.0.0
     HLM_API_PORT: "8765"
     PYTHONUNBUFFERED: "1"
+    # Disable the native telemetry uploader before ONNX Runtime initializes.
+    ORT_DISABLE_TELEMETRY: "1"
   restart: unless-stopped
   logging: *logging
   security_opt: ["no-new-privileges:true"]
@@ -75,13 +77,20 @@ services:
 
   api:
     <<: *app
+    environment:
+      <<: *app-environment
+      HLM_REQUEST_SPOOL_DIR: /var/spool/hlmemo
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/spool/hlmemo:size=320m,uid=10001,gid=10001,mode=0700
     env_file:
       - path: ${HLM_APP_ENV_FILE:-./app.env}
         required: true
       - path: ${HLM_API_ENV_FILE:-./api.env}
         required: true
     command: ["python", "-m", "hlmemo.server.app"]
-    mem_limit: 1536m
+    # Cold cgroup peak 1536 MiB + spool 320 MiB + /tmp 64 MiB, with 25% headroom.
+    mem_limit: 2560m
     cpus: 1.0
     networks:
       backend: {}
@@ -102,6 +111,11 @@ services:
 
   worker:
     <<: *app
+    environment:
+      <<: *app-environment
+      HLM_EMBED_MAX_BATCH_TOKENS: ${HLM_EMBED_MAX_BATCH_TOKENS:-1024}
+      HLM_WORKER_BATCH_CHUNKS: ${HLM_WORKER_BATCH_CHUNKS:-32}
+      HLM_WORKER_MAX_JOBS_PER_BATCH: ${HLM_WORKER_MAX_JOBS_PER_BATCH:-1}
     command: ["python", "/opt/hlmemo/worker_entrypoint.py"]
     volumes:
       - ./scripts/worker_entrypoint.py:/opt/hlmemo/worker_entrypoint.py:ro

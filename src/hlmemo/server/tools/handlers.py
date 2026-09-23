@@ -16,7 +16,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Awaitable, Callable, Mapping
 from types import ModuleType
-from typing import Any
+from typing import Any, Protocol
 
 from psycopg import AsyncConnection
 
@@ -24,8 +24,20 @@ from hlmemo.auth.context import AuthContext
 from hlmemo.core import write_service
 from hlmemo.core.budget import BudgetError, validate_budget
 from hlmemo.core.errors import ToolError
+from hlmemo.core.read_service import ReadDeps
 
 Handler = Callable[[AsyncConnection, AuthContext, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+class ReadHandler(Protocol):
+    async def __call__(
+        self,
+        conn: AsyncConnection,
+        ctx: AuthContext,
+        args: dict[str, Any],
+        *,
+        deps: ReadDeps | None = None,
+    ) -> dict[str, Any]: ...
 
 
 def _load_read_service() -> ModuleType | None:
@@ -64,7 +76,9 @@ async def memory_call_the_day(
 # --------------------------------------------------------------------------- read side
 
 
-async def _read(name: str, conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]) -> dict[str, Any]:
+async def _read(
+    name: str, conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any], deps: ReadDeps | None
+) -> dict[str, Any]:
     if read_service is None:
         try:  # keep the §3 budget errors meaningful even while the service is pending
             validate_budget(args.get("token_budget"))
@@ -72,19 +86,25 @@ async def _read(name: str, conn: AsyncConnection, ctx: AuthContext, args: dict[s
             raise ToolError(exc.code, str(exc), **exc.details) from exc
         raise ToolError("E_UNAVAILABLE", f"memory.{name}: read_service pending", tool=f"memory.{name}")
     fn = getattr(read_service, name)
-    return as_result_dict(await fn(conn, ctx, args))
+    return as_result_dict(await fn(conn, ctx, args, deps=deps))
 
 
-async def memory_query(conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]) -> dict[str, Any]:
-    return await _read("query", conn, ctx, args)
+async def memory_query(
+    conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any], *, deps: ReadDeps | None = None
+) -> dict[str, Any]:
+    return await _read("query", conn, ctx, args, deps)
 
 
-async def memory_drilldown(conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]) -> dict[str, Any]:
-    return await _read("drilldown", conn, ctx, args)
+async def memory_drilldown(
+    conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any], *, deps: ReadDeps | None = None
+) -> dict[str, Any]:
+    return await _read("drilldown", conn, ctx, args, deps)
 
 
-async def memory_raw(conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]) -> dict[str, Any]:
-    return await _read("raw", conn, ctx, args)
+async def memory_raw(
+    conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any], *, deps: ReadDeps | None = None
+) -> dict[str, Any]:
+    return await _read("raw", conn, ctx, args, deps)
 
 
 __all__ = [

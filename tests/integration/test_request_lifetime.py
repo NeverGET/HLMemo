@@ -98,19 +98,27 @@ async def test_actual_body_byte_limit_precedes_pool_checkout(db_dsn, monkeypatch
 
 
 @pytest.mark.parametrize("authenticated", [False, True])
-async def test_total_body_deadline_never_checks_out_connection(db_dsn, monkeypatch, authenticated):
-    """Even ongoing progress cannot extend the separate generous overall body cap."""
+async def test_body_rate_deadline_holds_no_connection_during_body(db_dsn, monkeypatch, authenticated):
+    """Sparse ongoing progress cannot buy time past the base + received/rate floor."""
     monkeypatch.setenv("HLM_REQUEST_BODY_TIMEOUT_S", "0.1")
-    monkeypatch.setenv("HLM_REQUEST_BODY_TOTAL_TIMEOUT_S", "0.06")
+    monkeypatch.setenv("HLM_REQUEST_BODY_BASE_S", "0.06")
     async with running_app(db_dsn) as client:
         messages = []
         reads = 0
 
+        checkouts = 0
+        original_getconn = client.app.state.pool.getconn
+
         async def getconn(*args, **kwargs):
-            pytest.fail("a trickling request acquired a DB connection")
+            nonlocal checkouts
+            checkouts += 1
+            assert authenticated and reads == 0 and checkouts == 1, "only the admission lease precedes body"
+            return await original_getconn(*args, **kwargs)
 
         async def receive():
             nonlocal reads
+            if authenticated:
+                assert client.app.state.pool.get_stats()["pool_available"] >= 1
             await asyncio.sleep(0.02)
             reads += 1
             return {"type": "http.request", "body": b"x", "more_body": reads < 20}
@@ -129,6 +137,7 @@ async def test_total_body_deadline_never_checks_out_connection(db_dsn, monkeypat
         )
         assert messages[0]["status"] == 408
         assert reads < 20
+        assert checkouts == int(authenticated)
 
 
 async def test_idle_sse_releases_single_pool_slot_and_revocation_is_effective(db_dsn, monkeypatch):
@@ -222,7 +231,8 @@ async def test_stalled_finite_response_releases_connection_before_first_send(db_
             await _finish(request)
 
 
-async def test_cancellation_during_pool_return_preserves_connection(db_dsn, monkeypatch):
+@pytest.mark.parametrize("cancel_return", ["gate", "request"])
+async def test_cancellation_during_pool_return_preserves_connection(db_dsn, monkeypatch, cancel_return):
     monkeypatch.setenv("HLM_POOL_MAX_SIZE", "1")
     async with running_app(db_dsn) as client:
         returning = asyncio.Event()
@@ -233,6 +243,10 @@ async def test_cancellation_during_pool_return_preserves_connection(db_dsn, monk
         original_putconn = pool.putconn
 
         async def putconn(conn):
+            if cancel_return == "request" and not returned:
+                await original_putconn(conn)
+                returned.append(conn)
+                return
             returning.set()
             await release_return.wait()
             assert conn.info.transaction_status == TransactionStatus.IDLE
@@ -261,7 +275,7 @@ async def test_cancellation_during_pool_return_preserves_connection(db_dsn, monk
             release_return.set()
             with pytest.raises(asyncio.CancelledError, match="client disconnected"):
                 await asyncio.wait_for(request, timeout=2)
-            assert len(returned) == 1, "the same connection must be returned exactly once"
+            assert len(returned) == (1 if cancel_return == "gate" else 2), "each lease must return once"
             assert not messages, "cancelled response was flushed to the disconnected client"
             assert pool.get_stats()["pool_available"] == 1
             async with pool.connection() as conn:

@@ -38,7 +38,7 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
+from typing import Any, cast
 
 from mcp import types
 from mcp.server.context import ServerRequestContext
@@ -58,6 +58,7 @@ from hlmemo.core.budget import BudgetError, canonical
 from hlmemo.core.clues import InvalidClue
 from hlmemo.core.errors import ToolError
 from hlmemo.server.tools import TOOL_BY_NAME, TOOLS
+from hlmemo.server.tools.handlers import ReadHandler
 
 log = logging.getLogger("hlmemo.server.mcp")
 
@@ -194,7 +195,14 @@ async def on_call_tool(
             # Savepoint inside the request transaction: a failing tool leaves the connection
             # usable and the middleware still commits the (read-only) outer transaction.
             async with conn.transaction():
-                result = await spec.handler(conn, auth, dict(arguments))
+                if params.name in {"memory.query", "memory.drilldown", "memory.raw"}:
+                    # Never enter the standalone service's lazy model path from HTTP.
+                    deps = ctx.request.app.state.read_deps
+                    if deps is None:
+                        raise RuntimeError("read dependencies are not initialized")
+                    result = await cast(ReadHandler, spec.handler)(conn, auth, dict(arguments), deps=deps)
+                else:
+                    result = await spec.handler(conn, auth, dict(arguments))
     except (ToolError, HlmError, BudgetError, InvalidClue) as err:
         outcome = getattr(err, "code", type(err).__name__)
         return error_result(err)

@@ -11,16 +11,23 @@ import hashlib
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from tokenizers import Tokenizer
 
 from hlmemo.core import EMBEDDING_DIMS, MODEL_ID, MODEL_REVISION
+from hlmemo.core.memory_profile import memory_sample
+
+# Set this before ONNX Runtime initializes: API suppression alone leaves its initial
+# telemetry upload running. The native 1DS uploader can outlive its mutex at exit.
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 
 QUERY_PREFIX = "query: "
 PASSAGE_PREFIX = "passage: "
 MAX_TOKENS = 512
 DEFAULT_BATCH = 32
+DEFAULT_BATCH_TOKENS = 1024
 MODEL_FILES = ("onnx/model.onnx", "onnx/tokenizer.json", "tokenizer_config.json", "config.json")
 HASHED_FILES = ("onnx/model.onnx", "onnx/tokenizer.json")
 
@@ -157,11 +164,13 @@ class Embedder:
         *,
         max_tokens: int = MAX_TOKENS,
         batch_size: int = DEFAULT_BATCH,
-        threads: int | None = None,
+        max_batch_tokens: int = DEFAULT_BATCH_TOKENS,
+        threads: int = 2,
         expected_hashes: dict[str, str] | None = None,
     ) -> None:
         import onnxruntime as ort
 
+        ort.disable_telemetry_events()
         self.model_dir = Path(model_dir)
         model_path = self.model_dir / "onnx" / "model.onnx"
         tok_path = self.model_dir / "onnx" / "tokenizer.json"
@@ -174,6 +183,9 @@ class Embedder:
             if bad:
                 raise ModelHashMismatch(f"model files differ from models.lock: {bad}")
 
+        if batch_size < 1 or max_batch_tokens < max_tokens:
+            raise ValueError("batch_size must be positive and max_batch_tokens must cover max_tokens")
+        self.max_batch_tokens = max_batch_tokens
         self.max_tokens = max_tokens
         self.batch_size = batch_size
         self._tok = Tokenizer.from_file(str(tok_path))
@@ -183,17 +195,25 @@ class Embedder:
         self._pad_id = pad if pad is not None else 1
 
         opts = ort.SessionOptions()
-        if threads:
-            opts.intra_op_num_threads = threads
+        # Do not retain the largest inference allocation in a growing CPU arena.
+        opts.enable_cpu_mem_arena = False
+        opts.intra_op_num_threads = threads
         self._sess = ort.InferenceSession(
             str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
         )
         self._input_names = {i.name for i in self._sess.get_inputs()}
         self._output_name = self._sess.get_outputs()[0].name
 
+    def close(self) -> None:
+        """Release native resources after the owner has drained all inference work."""
+        self._sess = None
+        self._tok = None
+
     # -- internals ----------------------------------------------------------
     def _encode_batch(self, texts: list[str]) -> dict[str, np.ndarray]:
-        encs = self._tok.encode_batch(texts, add_special_tokens=True)
+        return self._feeds(self._tok.encode_batch(texts, add_special_tokens=True))
+
+    def _feeds(self, encs: Sequence[Any]) -> dict[str, np.ndarray]:
         width = max(len(e.ids) for e in encs)
         n = len(encs)
         ids = np.full((n, width), self._pad_id, dtype=np.int64)
@@ -208,10 +228,17 @@ class Embedder:
         return feeds
 
     def _run(self, texts: list[str]) -> np.ndarray:
-        feeds = self._encode_batch(texts)
+        return self._infer(self._encode_batch(texts))
+
+    def _infer(self, feeds: dict[str, np.ndarray]) -> np.ndarray:
+        n, width = feeds["input_ids"].shape
+        memory_sample("tokenization", texts=n, padded_tokens=n * width)
         (hidden,) = self._sess.run([self._output_name], feeds)  # (n, L, 384) float32
+        memory_sample("inference", texts=n, padded_tokens=n * width)
         mask = feeds["attention_mask"][..., None].astype(np.float32)
-        summed = (hidden * mask).sum(axis=1)
+        hidden *= mask
+        summed = hidden.sum(axis=1)
+        del hidden, feeds
         counts = np.clip(mask.sum(axis=1), 1e-9, None)
         pooled = summed / counts
         norms = np.linalg.norm(pooled, axis=1, keepdims=True)
@@ -221,8 +248,27 @@ class Embedder:
         """Embed already-prefixed texts. Returns float32 ``(n, 384)``, rows L2-normalised."""
         if len(texts) == 0:
             return np.zeros((0, self.dims), dtype=np.float32)
-        out = [self._run(list(texts[i : i + self.batch_size])) for i in range(0, len(texts), self.batch_size)]
-        return np.concatenate(out, axis=0)
+        # Padded tokens, not their sum: one long text widens every row in its batch.
+        # Tokenize one text at a time (each is truncated to max_tokens) and reuse that
+        # encoding for inference, so tokenizer intermediates are bounded by one batch too.
+        out = np.empty((len(texts), self.dims), dtype=np.float32)
+        batch: list[Any] = []
+        width = start = 0
+        for text in texts:
+            enc = self._tok.encode(text, add_special_tokens=True)
+            length = len(enc.ids)
+            if batch and (
+                len(batch) >= self.batch_size or max(width, length) * (len(batch) + 1) > self.max_batch_tokens
+            ):
+                out[start : start + len(batch)] = self._infer(self._feeds(batch))
+                start += len(batch)
+                batch.clear()
+                width = 0
+            batch.append(enc)
+            width = max(width, length)
+        if batch:
+            out[start:] = self._infer(self._feeds(batch))
+        return out
 
     # -- public -------------------------------------------------------------
     def embed_passages(self, passages: Sequence[str]) -> np.ndarray:

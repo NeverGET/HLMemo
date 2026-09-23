@@ -9,7 +9,8 @@ Pure ASGI middleware that runs BEFORE routing and before any MCP session manager
   * Every other path (including `/mcp` and unknown routes) requires a `trusted` device:
     unknown / revoked token -> 401 `E_AUTH`; pending -> 403 `E_DEVICE_PENDING`.
 
-The middleware bounds and buffers the body before acquiring a connection. It then owns a
+Before buffering a protected body, a short, unlocked bearer lookup admits only trusted
+devices. That connection is released before receiving any bytes. The middleware then owns a
 time-bounded request transaction: it takes a pooled connection, resolves the device
 under `FOR SHARE`, exposes `request.state.conn` / `request.state.auth` / `request.state.device`
 to the route, commits when the route finished (or rolls back on an `HlmError`, which it maps to
@@ -138,6 +139,23 @@ def trusted_client_ip(scope: Scope, trusted_proxy_ips: str) -> str:
         return host
 
 
+def _body_client_key(scope: Scope, trusted_proxy_ips: str) -> str:
+    client = trusted_client_ip(scope, trusted_proxy_ips)
+    try:
+        address = ip_address(client)
+    except ValueError:
+        return client
+    if address.version == 6:
+        return str(ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
+class _BodyReadError(Exception):
+    def __init__(self, status: int, message: str) -> None:
+        self.status = status
+        super().__init__(message)
+
+
 class BodyBudget:
     """Event-loop-local accounting; no await separates admission from reservation."""
 
@@ -189,6 +207,8 @@ class AuthMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
         self.body_budget: BodyBudget | None = None
+        self.body_readers: dict[str, int] = {}
+        self.admin_body_readers: dict[str, int] = {}
 
     async def commit_request(self, conn: Any) -> None:
         """The outer ``COMMIT`` of the request transaction (seam for the G6 commit-failure test)."""
@@ -204,11 +224,13 @@ class AuthMiddleware:
             self.body_budget = BodyBudget(
                 settings.request_body_global_budget_bytes, settings.request_body_client_budget_bytes
             )
-        reservation = BodyReservation(self.body_budget, trusted_client_ip(scope, settings.trusted_proxy_ips))
+        reservation = BodyReservation(self.body_budget, _body_client_key(scope, settings.trusted_proxy_ips))
         try:
             # No allocation is based on untrusted Content-Length. Large uploads roll
             # to disk; the byte budget also bounds disk use until the request ends.
-            with SpooledTemporaryFile(max_size=settings.request_body_spool_threshold_bytes) as body:
+            with SpooledTemporaryFile(
+                max_size=settings.request_body_spool_threshold_bytes, dir=settings.request_spool_dir
+            ) as body:
                 await self._request(scope, receive, send, reservation, body)
         finally:
             # Keep accounting through authentication, route execution and slow responses.
@@ -238,88 +260,72 @@ class AuthMiddleware:
             return
 
         settings = getattr(scope["app"].state, "settings", None) or get_settings()
-        body_cap = (
-            min(settings.request_max_body_bytes, 16 * 1024)
-            if is_register
-            else settings.request_max_body_bytes
-        )
         admin_token = settings.admin_token
         is_admin_token = (
             bearer is not None
             and admin_token is not None
             and constant_time_equal(bearer, admin_token.get_secret_value())
         )
-        # Untrusted network input must never own a database connection or device lock.
+        use_admin_pool = is_admin_token and (is_revoke or route == READY or route[1].startswith("/admin/"))
+        # Slots cover both the short auth lease and body read; byte reservations
+        # also cover downstream handling. Unknown bearers never reach reserved capacity.
+        # Reserved admin admission is independently bounded: a normal-pool gate
+        # flood from the same proxy/client must not obstruct the reserved DB path.
+        body_readers = self.admin_body_readers if use_admin_pool else self.body_readers
+        key = reservation.client
+        readers = body_readers.get(key, 0)
+        if readers >= settings.request_body_client_concurrency:
+            await self._body_error(scope, receive, send, 429, "too many concurrent request body reads")
+            return
+        body_readers[key] = readers + 1
+        failure = None
+        gate_error = None
         try:
-            loop = asyncio.get_running_loop()
-            started = loop.time()
-            total_deadline = started + settings.request_body_total_timeout_s
-            async with asyncio.timeout_at(
-                min(total_deadline, loop.time() + settings.request_body_timeout_s)
-            ) as body_deadline:
-                size = 0
-                on_disk = False
-                length = headers.get("content-length")
-                if length is not None:
-                    try:
-                        declared = int(length)
-                    except ValueError:
-                        declared = -1
-                    if declared < 0:
-                        await error_response(HlmError("E_INVALID_ARG", "invalid content-length"))(
-                            scope, receive, send
-                        )
-                        return
-                    if declared > body_cap:
-                        await self._body_error(scope, receive, send, 413, "request body too large")
-                        return
-                while True:
-                    message = await receive()
-                    if message["type"] == "http.disconnect":
-                        del message
-                        return
-                    chunk = message.get("body", b"")
-                    if size + len(chunk) > body_cap:
-                        del message, chunk
-                        await self._body_error(scope, receive, send, 413, "request body too large")
-                        return
-                    if not reservation.grow(len(chunk)):
-                        del message, chunk
-                        await self._body_error(scope, receive, send, 503, "request body budget exhausted")
-                        return
-                    # Roll BEFORE the write to avoid copying an arbitrarily large
-                    # ASGI chunk into BytesIO on its way to disk.
-                    if not on_disk and size + len(chunk) > settings.request_body_spool_threshold_bytes:
-                        await _body_io(body.rollover)
-                        on_disk = True
-                    if on_disk:
-                        await _body_io(body.write, chunk)
-                    else:
-                        body.write(chunk)
-                    size += len(chunk)
-                    if chunk:
-                        next_deadline = min(total_deadline, loop.time() + settings.request_body_timeout_s)
-                        if size >= settings.request_body_rate_grace_bytes:
-                            rate_deadline = started + size / settings.request_body_min_rate_bytes_s
-                            if loop.time() > rate_deadline:
-                                del message, chunk
-                                await self._body_error(
-                                    scope, receive, send, 408, "request body transfer rate too low"
-                                )
-                                return
-                        body_deadline.reschedule(next_deadline)
-                    more_body = message.get("more_body", False)
-                    # The ASGI message owns its chunk: do not pin a second copy
-                    # throughout authentication, route handling or the next receive.
-                    del message, chunk
-                    if not more_body:
-                        break
-        except TimeoutError:
-            await self._body_error(scope, receive, send, 408, "request body read timed out")
+            try:
+                trusted = False
+                if not is_register and route not in NO_BEARER_OK and not use_admin_pool:
+                    await self._pre_body_gate(scope["app"].state.pool, bearer, settings)
+                    trusted = True
+                body_cap = min(
+                    settings.request_max_body_bytes,
+                    16 * 1024 if is_register else (settings.request_max_body_bytes if trusted else 64 * 1024),
+                )
+                result = await self._read_body(
+                    receive, headers, settings, body_cap, reservation, body, trusted=trusted
+                )
+            finally:
+                remaining_readers = body_readers[key] - 1
+                if remaining_readers:
+                    body_readers[key] = remaining_readers
+                else:
+                    del body_readers[key]
+        except HlmError as exc:
+            gate_error = exc
+        except (PoolTimeout, DatabaseError) as exc:
+            log.debug("pre-body authentication unavailable: %s", type(exc).__name__)
+            gate_error = HlmError("E_UNAVAILABLE", "pre-body authentication temporarily unavailable")
+        except (_BodyReadError, TimeoutError, OSError) as exc:
+            # A slow error consumer must not retain either storage or admission capacity.
+            body.close()
+            reservation.release(reservation.size)
+            if isinstance(exc, _BodyReadError):
+                status, message = exc.status, str(exc)
+            elif isinstance(exc, TimeoutError):
+                status, message = 408, "request body read timed out"
+            else:
+                status, message = 503, "request body storage unavailable"
+            failure = (status, message)
+        # Leave the exception scope before sending: its traceback owns the last chunk.
+        if gate_error is not None:
+            body.close()
+            await error_response(gate_error)(scope, receive, send)
             return
-        except OSError:
-            await self._body_error(scope, receive, send, 503, "request body storage unavailable")
+        if failure is not None:
+            await self._body_error(scope, receive, send, *failure)
             return
+        if result is None:
+            return
+        size, on_disk = result
 
         body.seek(0)
         original_receive = receive
@@ -339,7 +345,6 @@ class AuthMiddleware:
         if bearer is None and route in NO_BEARER_OK:
             await self.app(scope, receive, send)
             return
-        use_admin_pool = is_admin_token and (is_revoke or route == READY or route[1].startswith("/admin/"))
         pool = scope["app"].state.admin_pool if use_admin_pool else scope["app"].state.pool
         buffered: list[Message] = []
         sent_any = False
@@ -527,10 +532,108 @@ class AuthMiddleware:
             await send(message)
 
     @staticmethod
+    async def _pre_body_gate(pool: Any, bearer: str, settings: Any) -> None:
+        """Admission hint only: no locks/grants/context; authoritative resolve stays in-tx.
+
+        SET LOCAL is reverted when this short lease commits/rolls back. Exactly one
+        SELECT reads the bearer state, with no connection held over client I/O.
+        """
+
+        async def lookup():
+            async with pool.connection(timeout=min(settings.pool_timeout_s, 0.25)) as conn:
+                await conn.execute("SET LOCAL statement_timeout = '250ms'")
+                cur = await conn.execute(
+                    "SELECT device_id, status, token_generation FROM devices WHERE token_sha256 = %s",
+                    (hash_token(bearer),),
+                )
+                return await cur.fetchone()
+
+        # A disconnect must not interrupt pool return and leak its admission slot.
+        task = asyncio.create_task(lookup())
+        row = await _finish_shielded(task)
+        if row is None or row[1] == "revoked":
+            raise HlmError("E_AUTH", "unknown or revoked token")
+        if row[1] == "pending":
+            raise HlmError("E_DEVICE_PENDING", "device awaiting approval", {"device_id": int(row[0])})
+        if row[1] != "trusted":
+            raise HlmError("E_AUTH", "device is not trusted")
+
+    @staticmethod
+    async def _read_body(
+        receive: Receive,
+        headers: Headers,
+        settings: Any,
+        body_cap: int,
+        reservation: BodyReservation,
+        body: Any,
+        *,
+        trusted: bool = False,
+    ) -> tuple[int, bool] | None:
+        # No untrusted network input owns a database connection or device lock.
+        length = headers.get("content-length")
+        max_body_bytes = body_cap
+        if length is not None:
+            try:
+                max_body_bytes = int(length)
+            except ValueError:
+                raise _BodyReadError(400, "invalid content-length") from None
+            if max_body_bytes < 0:
+                raise _BodyReadError(400, "invalid content-length")
+            if max_body_bytes > body_cap:
+                raise _BodyReadError(413, "request body too large")
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        base_deadline = started + settings.request_body_base_s
+        rate = settings.request_body_min_rate_bytes_s
+        total_deadline = base_deadline + (max_body_bytes / rate if trusted else 0)
+        idle_deadline = started + settings.request_body_timeout_s
+        next_deadline = min(total_deadline, base_deadline, idle_deadline)
+        size = 0
+        on_disk = False
+        async with asyncio.timeout_at(next_deadline) as body_deadline:
+            while True:
+                message = await receive()
+                # A receive callable may complete without yielding; do not let a
+                # late chunk buy more time before the timeout callback can run.
+                if loop.time() > next_deadline:
+                    raise _BodyReadError(408, "request body read timed out")
+                if message["type"] == "http.disconnect":
+                    return None
+                chunk = message.get("body", b"")
+                if size + len(chunk) > body_cap:
+                    raise _BodyReadError(413, "request body too large")
+                if not reservation.grow(len(chunk)):
+                    raise _BodyReadError(503, "request body budget exhausted")
+                if chunk:
+                    idle_deadline = loop.time() + settings.request_body_timeout_s
+                size += len(chunk)
+                next_deadline = min(
+                    total_deadline, base_deadline + (size / rate if trusted else 0), idle_deadline
+                )
+                body_deadline.reschedule(next_deadline)
+                # Roll before writing, avoiding a large intermediate BytesIO copy.
+                if not on_disk and size > settings.request_body_spool_threshold_bytes:
+                    await _body_io(body.rollover)
+                    on_disk = True
+                if on_disk:
+                    await _body_io(body.write, chunk)
+                else:
+                    body.write(chunk)
+                if loop.time() > next_deadline:
+                    raise _BodyReadError(408, "request body read timed out")
+                more_body = message.get("more_body", False)
+                del message, chunk
+                if not more_body:
+                    return size, on_disk
+
+    @staticmethod
     async def _body_error(scope: Scope, receive: Receive, send: Send, status: int, message: str) -> None:
-        response = error_response(
-            HlmError("E_UNAVAILABLE" if status in (408, 503) else "E_INVALID_ARG", message)
+        code = (
+            "E_RATE_LIMITED"
+            if status == 429
+            else ("E_UNAVAILABLE" if status in (408, 503) else "E_INVALID_ARG")
         )
+        response = error_response(HlmError(code, message))
         response.status_code = status
         await response(scope, receive, send)
 
@@ -538,6 +641,11 @@ class AuthMiddleware:
 async def _body_io(operation: Any, *args: Any) -> Any:
     """Keep disk I/O off the event loop; finish it before cancellation closes the spool."""
     task = asyncio.create_task(asyncio.to_thread(operation, *args))
+    return await _finish_shielded(task)
+
+
+async def _finish_shielded(task: asyncio.Task) -> Any:
+    """Finish owned work/cleanup under repeated cancellation, then propagate cancellation."""
     cancelled = None
     while not task.done():
         try:
