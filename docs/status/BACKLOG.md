@@ -32,6 +32,7 @@ Updated 2026-09-23. Source of each item in parentheses.
 - Contract-max write embeds in ~38 min on 1 CPU (2 × 512-token texts per inference) → faster batching / int8 model.
 
 - Worker cgroup memory.peak reaches its 1536 MiB limit through file cache after reboot (anon ~830 MiB, no OOM kill) — watch on the VPS; consider 1792m or dropping page cache pressure (D-045).
+- first_deploy.sh `--host-fingerprint` pins only the ED25519 host key; an ECDSA/RSA fingerprint from a provider console is rejected as a mismatch. Accept any key type or name the expected type in the error (hit on the real deploy 2026-09-23).
 
 ## Process
 - Test suite wall time regressed to ~52 min in the auth-gate round (under investigation in the closing verification).
