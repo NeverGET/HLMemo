@@ -1,7 +1,7 @@
-# HLMemo — Phase 2–4 Roadmap (planning spec, D-051)
+# HLMemo — Phase 2–5 Roadmap (planning spec, D-051, D-058)
 
-Status: REVISION 2, 2026-09-23. Rev 1 was reviewed by gpt-6-sol (`docs/consults/32-sol-review-roadmap.md`, verdict "No", 10 defects) and by the orchestrator (`docs/consults/31-opus-position-roadmap.md`, 5 points). Every point is resolved here; the index is §8. Next steps: owner answers the §7 questions, then each workstream gets its own frozen contract section before coding starts (D-025 pattern).
-Binding inputs: `docs/research/00-deep-research-report.md` (the report), D-001..D-053, `PHASE0-SPEC.md` (the spec).
+Status: REVISION 3, 2026-09-23. Rev 3 applies the owner's answers (D-058) and the real-data results D-054..D-057: the 14-day shadow mode is replaced by the Phase 5 controlled migration and the librarian role ladder (§4b); no spend cap during development; an optimize-to-best loop after the first quality bar; §7 answered questions moved to §8. Rev 1 was reviewed by gpt-6-sol (`docs/consults/32-sol-review-roadmap.md`, verdict "No", 10 defects) and by the orchestrator (`docs/consults/31-opus-position-roadmap.md`, 5 points). Every point is resolved here; the index is §8. Next step: each workstream gets its own frozen contract section before coding starts (D-025 pattern).
+Binding inputs: `docs/research/00-deep-research-report.md` (the report), D-001..D-058, `PHASE0-SPEC.md` (the spec).
 Conventions: an ideal-day (id) is one focused implementer-day including tests. It excludes review rounds, which add about 30–50% (D-036 neutral verifier + adversarial review). File anchors refer to `main` at 49fe389.
 
 ---
@@ -14,9 +14,10 @@ Conventions: an ideal-day (id) is one focused implementer-day including tests. I
 | Faz 1: Graphiti L1 bi-temporal, RAPTOR L2, clue ids + drilldown | "Phase 1" (never named in the spec) | L1 bi-temporal and clues/drilldown moved into Phase 0 on our own schema, not Graphiti (D-006/D-007). **RAPTOR L2 is not built.** It needs an LLM, so it moves to **Phase 3 (W3a)**, next to consolidation, which regenerates summaries (report D.5). The real-data regression the spec owes (§9.10) becomes **W-E**. |
 | — | Phase 1.5: importers (D-020) | **W1.5** (import + export). Runs right after W0 because dogfooding needs it (Opus 3). |
 | Faz 2: librarian, placement, contradiction, cross-project, risk_check | Phase 2 (D-016/17/19) | **Phase 2 (W2a–W2f)**. The librarian runs on OpenRouter `deepseek/deepseek-v4.1-flash` (D-019), not the report's self-hosted model. |
-| — | Phase 2.5: reconstruction (D-022) | Only the **HLMemo self-project** is in D-051 scope (§6). The legacy campaign stays out of scope (Q5). |
+| — | Phase 2.5: reconstruction (D-022) | Becomes the per-project protocol of **Phase 5** (§4b, D-058). The final acceptance (§6) runs it on HLMemo first, then on the private corpus-A project. |
 | Faz 3: consolidation (score, silent drop, experience promotion), PDF/DOCX ingestion | Phase 3 (D-012) | **Phase 3 (W3a–W3d)**. The report's silent DROP becomes a reversible ARCHIVE (D-012). |
 | Faz 4: L4 experience, event-log multi-computer sync, packed share | Phase 4 | **Phase 4 (W4a–W4c)**, reduced to a minimal, demonstrated scope (§4). Deferred items and reasons are in §4. |
+| — | Phase 5 (D-058, new) | **Controlled legacy-memory migration** (§4b): every owner project, one at a time, under an audited protocol. It replaces the shadow mode and is where the librarian earns its roles. |
 
 ---
 
@@ -27,7 +28,10 @@ Conventions: an ideal-day (id) is one focused implementer-day including tests. I
 | 1 | Server-side device minting; public registration off, fail-closed | D-052 | W0a | `server/devices.py:91-105` (secret header + 5/min limiter); `db/auth_queries.py:74,131,249` reusable |
 | 2 | Pasted-token login in `hlm` | D-052 | W0a | `cli/credentials.py:133 store_token`; `hlm --token` is only a per-call override (`cli/hlm.py:101`) |
 | 3 | Extra VPS security layer | D-053 | W0b | ufw + fail2ban only (`deploy/bootstrap.sh`) |
-| 4 | Real-data evaluation (spec §9.10 owes one) + agent-level A/B | spec §9.10, report Değerlendirme Planı, Opus 1/2 | **W-E** | `eval/realdata/import_corpus.py` (mechanical corpus importer, in progress) |
+| 4 | Real-data evaluation (spec §9.10 owes one) + agent-level A/B | spec §9.10, report Değerlendirme Planı, Opus 1/2 | **W-E** | corpus-A harness exists: `eval/realdata/import_corpus.py` + `eval/realdata/run_eval.py`; baseline D-054, re-measured D-057 (reference) |
+| 4a | Retrieval fixes from the real-data baseline: DF query-term filter, query-centred previews, title/path as a 4th RRF list, drill-top-5 guidance | D-054 | **DONE (D-055, re-measured D-057)** | migrations `0003_title_lexical`, `0004_title_norm_fold`; thresholds frozen 0.20/100/2/20/216; confirmation on sealed corpus B still owed (Sol 33 #5) → W-E |
+| 4b | Test-DB guard (pytest can never truncate the dev DB `hlm`) | D-056 | **DONE** | `tests/conftest.py`, `tests/unit/test_conftest_guard.py` |
+| 4c | Temporal supersession on real data (stale-first 8/15 on corpus A) + a real no-evidence signal + TR↔EN query rewriting | D-054, D-057 | W2b (gate G-E-TEMP), W2e | none |
 | 5 | L2 topic summaries (RAPTOR-style) with clue ids | report D.1 L2, B; Faz 1 | W3a | none; `kind` CHECK `alembic/versions/0001_phase0.py:133-134` |
 | 6 | Skeleton project card at project creation | D-015 (dropped, F10 note in D-033) | W2a | `server/admin.py:22` creates project + events, no card |
 | 7 | Librarian provider: OpenAI-compatible, schema-validated, retry once, 429/5xx backoff, model+prompt version per job | D-017, D-019 | W2a | parsed but unused: `config.py:150-156`; `profiles/*.toml` (5) |
@@ -42,11 +46,11 @@ Conventions: an ideal-day (id) is one focused implementer-day including tests. I
 | 16 | Low-confidence slow-path synthesis | report D.4(c) | **W2e (in scope)** | none |
 | 17 | Librarian working memory, compaction, fresh-wake | report D.4 | W2a/W2c | none |
 | 18 | `hlm bench` user tool | D-017, spec §5 | W2f | `bench/run.py`, `bench/tasks/t1..t4` |
-| 19 | Hard cost caps, latency/privacy controls | report risk "maliyet kaçağı" | W2a | none |
+| 19 | Cost-reservation guard (no budget cap during development, D-058), latency/privacy controls | report risk "maliyet kaçağı", D-058 | W2a | none |
 | 20 | Importers + provenance + idempotent re-import + dry-run diff + `describes` | D-020, D-022 (1.5 part) | W1.5 | `eval/realdata/import_corpus.py` (eval-only mapping, see W1.5) |
 | 21 | `hlm export` (cold-start fallback) | D-021 bootstrap rule | **W1.5** | none |
-| 22 | NotebookLM + codex SQLite importers | D-020 | deferred (Q5) | none |
-| 23 | Reconstruction campaign | D-022 | §6 (HLMemo only) | none |
+| 22 | NotebookLM + codex SQLite importers | D-020, D-058 | Phase 5 (built when the first project that needs them comes up in the migration order) | none |
+| 23 | Reconstruction campaign / legacy migration | D-022, D-058 | Phase 5 (§4b); §6 = first two projects | none |
 | 24 | Consolidation "sleep" | report D.5 | W3b | none |
 | 25 | Score formula in ranking | report D.5, D-024(10), spec §9.12 | W3b | signals only: `last_access_at` `0001_phase0.py:149`, `db/read_queries.py:580-597` |
 | 26 | Decay + reversible archive, shadow first, restore | D-012 | W3c | status `0001_phase0.py:135`, events :107-108, job kind :252, `core/read_service.py:110` |
@@ -65,11 +69,11 @@ Conventions: an ideal-day (id) is one focused implementer-day including tests. I
 
 ## Cross-cutting contracts (frozen in W-C before fan-out)
 
-**CC-1 Migration chain.** Existing: `0001_phase0` (label `phase0`) and `0002_hnsw` (label `hnsw`, D-026). New revisions extend phase0 linearly: `0003_w0_access` → `0004_librarian` → `0005_import` → `0006_consolidation` → `0007_ingest` → `0008_experience_share`. `0003` adds `branch_labels=("main",)`. Migrate commands (`compose.yaml:56`, `deploy/compose.prod.yaml:70`) move to `alembic upgrade main@head`. Agents never pick `down_revision`; the orchestrator links revisions at merge. Each agent tests on its own DB `hlm_test_<ws>`. Migrations only add tables/columns, extend CHECK lists, and insert reserved rows. **No migration rewrites existing event rows.** Any future change to event rows (e.g. a hash chain, §4) needs its own contract and decision.
+**CC-1 Migration chain.** Existing: `0001_phase0` (label `phase0`), `0002_hnsw` (label `hnsw`, D-026), and on the phase0 chain `0003_title_lexical` → `0004_title_norm_fold` (D-055). New revisions continue after `0004_title_norm_fold`: `0005_w0_access` → `0006_librarian` → `0007_import` → `0008_consolidation` → `0009_ingest` → `0010_experience_share`. `0005` adds `branch_labels=("main",)`. Migrate commands (`compose.yaml:56`, `deploy/compose.prod.yaml:70`) move to `alembic upgrade main@head`. Agents never pick `down_revision`; the orchestrator links revisions at merge. Each agent tests on its own DB `hlm_test_<ws>`. Migrations only add tables/columns, extend CHECK lists, and insert reserved rows. **No migration rewrites existing event rows.** Any future change to event rows (e.g. a hash chain, §4) needs its own contract and decision.
 
-**CC-2 Event kinds (0004+).** `events.kind` CHECK gains: `librarian`, `question`, `answer`, `import`, `ingest`, `consolidation`, `pack_import`, `device_minted`. Replay handlers ship in the same PR. G6 `test_rebuild_projections_from_events_identical` covers every new kind.
+**CC-2 Event kinds (0006+).** `events.kind` CHECK gains: `librarian`, `question`, `answer`, `import`, `ingest`, `consolidation`, `pack_import`, `device_minted`. Replay handlers ship in the same PR. G6 `test_rebuild_projections_from_events_identical` covers every new kind.
 
-**CC-3 System actor and internal capabilities (Sol #3).** `0004` adds `devices.is_system boolean DEFAULT false` and inserts device `librarian` (class `server`, `trusted`, `token_sha256='reserved:librarian'`: no usable bearer; `is_admin` false). The librarian never acts with "all grants". Each job carries a **capability set**, computed at enqueue and **rechecked at apply** inside the apply transaction. The recheck re-resolves the triggering device with `FOR SHARE` (same ordering rule as spec §2), reloads its current grants, and checks every project a mutation touches:
+**CC-3 System actor and internal capabilities (Sol #3).** `0006` adds `devices.is_system boolean DEFAULT false` and inserts device `librarian` (class `server`, `trusted`, `token_sha256='reserved:librarian'`: no usable bearer; `is_admin` false). The librarian never acts with "all grants". Each job carries a **capability set**, computed at enqueue and **rechecked at apply** inside the apply transaction. The recheck re-resolves the triggering device with `FOR SHARE` (same ordering rule as spec §2), reloads its current grants, and checks every project a mutation touches:
 
 | Capability | Allows | Scope rule |
 |---|---|---|
@@ -77,7 +81,7 @@ Conventions: an ideal-day (id) is one focused implementer-day including tests. I
 | `correct(P)` | bi-temporal correction (valid_to close) of an item | item home ∈ P and all of the item's `project_ids ⊆ P`; triggering device holds write on each; only under the W2b auto-resolve rule |
 | `question(P)` | open a `librarian_questions` row | all subject clues readable by the triggering device |
 | `librarian_memory` | write `kind=fact, tag librarian-rule` into reserved project `hlm-librarian` only | content limited to rule text + clue references; never copies item bodies |
-| `global_experience` | write `kind=experience` into reserved project `hlm-global` only | only via an **accepted `promote` answer** (never autonomous, Q2); answering device must hold `write` on `hlm-global` and `read` on every source lesson's projects |
+| `global_experience` | write `kind=experience` into reserved project `hlm-global` only | only via an **accepted `promote` answer** (never autonomous, D-058); answering device must hold `write` on `hlm-global` and `read` on every source lesson's projects |
 
 If the recheck fails (device revoked or downgraded, a grant removed), the job applies nothing. It records a `librarian` event with `resolved.outcome="authority_lost"` so replay stays identical. **Answers** (`memory.answer`) are authorized against the **answering** device. It must hold `write` on every project in the union of the question's subject `project_ids` and the proposed action's targets, else `E_FORBIDDEN_PROJECT`. A question whose subjects the device cannot fully read is `E_NOT_FOUND`. Accepting a question never grants authority over another project.
 
@@ -86,7 +90,7 @@ If the recheck fails (device revoked or downgraded, a grant removed), the job ap
 **CC-5 LLM audit payload, determinism, live gates (Sol #8).**
 - *Audit payload.* Phase 0 defines `payload.request` as the client's verbatim arguments. For **system-actor events** (`librarian`, `consolidation`, `question`), `payload.request` is defined as the actor's arguments: the versioned audit record `{"audit":"llm/1","task","job_id","capabilities","profile","model_id","prompt_version","schema_version","redaction_version","input_digest":sha256(redacted prompt),"output":<schema-validated JSON AFTER redaction>}`. Free-text fields (`reason`, `summary`, `why`) pass through the same redactor as the prompt. The raw provider response is **never** stored. `payload.resolved` holds only the applied mutations. Replay reads `resolved` only and never calls an LLM. `events.schema_version = 2` marks these rows. PHASE0-SPEC §1.1 gets an addendum (a contract change, logged as a decision).
 - *Cassettes (CI).* Provider mode `HLM_LLM_MODE ∈ {live, record, replay, off}`. Key = `sha256(model_id ‖ prompt_version ‖ schema_version ‖ canonical(redacted messages) ‖ canonical(params))`. Files: `tests/cassettes/<ws>/*.jsonl`. `replay` is strict (a miss fails; no network). Cassettes prove parsing, application, idempotency and replay. **They do not prove model quality.**
-- *Live gate (release-blocking).* `make gate-live PROFILE=… REPS=3 MAX_USD=2` runs every LLM task fixture against the real provider, and runs **again for the fallback profile**. It is required before R2, R3, R4 and after any change of model, profile or prompt version. Fixture files are pinned by sha256 and the rubric lives in `eval/live/RUBRIC.md`. Scored outputs, error counts, cost and latency are kept in `eval/live/<date>-<profile>/` (redacted, committed). Pass rule: the minimum across 3 reps ≥ threshold, and the mean is reported. A cap breach aborts the run as a FAIL, never a skip.
+- *Live gate (release-blocking).* `make gate-live PROFILE=… REPS=3 MAX_USD=5` (a runaway guard, not a budget: D-058) runs every LLM task fixture against the real provider, and runs **again for the fallback profile**. It is required before R2, R3, R4 and after any change of model, profile or prompt version. Fixture files are pinned by sha256 and the rubric lives in `eval/live/RUBRIC.md`. Scored outputs, error counts, cost and latency are kept in `eval/live/<date>-<profile>/` (redacted, committed). Pass rule: the minimum across 3 reps ≥ threshold, and the mean is reported. A cap breach aborts the run as a FAIL, never a skip.
 
 ---
 
@@ -96,8 +100,10 @@ Purpose: every quality gate so far (G3) is tuned on our synthetic fixture. W-E m
 - **Corpus A (a private owner project).** Imported by `eval/realdata/import_corpus.py` (mechanical, no LLM). The 100-question private set lives in `docs/private/realdata-yt/`. **Hold-out rule:** no implementer agent reads the questions. Only the grader script and the orchestrator's eval runner open them. Public artifacts get only scores and the set's sha256.
 - **Corpus B (HLMemo held-out).** Built by a separate agent **before** dogfood import (D1). It is frozen at a pinned commit and stored in `docs/private/realdata-hlmemo/` (sha256 published). Rows: `{question, category, gold_facts:[atomic statements], evidence_spans:[path:Lstart-Lend@commit], temporal_status:current|superseded(valid dates), negative:bool}`. Categories: architecture, decision rationale, gotcha/lesson, temporal ("what did X use before Y"), identifier/config, negative (no answer exists). There are ≥ 80 questions, of which ≥ 15 temporal and ≥ 10 negative. The final D-051 acceptance uses a **disjoint** 50-question subset kept sealed until §6.
 - **Metrics.** Per category: evidence Recall@5 (a returned chunk overlaps a gold span by ≥ 50% of the span's characters), drilldown-to-fact (the gold fact is reachable within one drilldown from the top-5 clues), stale-claim error (a superseded value returned as current), negative false-answer rate, tokens/query (≤ 7k, report metric). Answer-level accuracy uses an LLM judge with a fixed rubric (3 reps, live, cost-capped). Deterministic identifier matching is used where possible.
-- **Baseline.** Phase 0 fast path (no librarian) on both corpora, recorded with commit, fixture hashes and model/embedder ids in `eval/baselines/phase0.json`.
-- **Feature gate (applies to W2b, W2e, W3a, W3b, W3c).** A feature is enabled by default only if on corpus A ∪ B: overall primary metric (evidence Recall@5 for retrieval-shaping features; answer accuracy for W2e) improves by **≥ X = +3 points** (W3c: non-inferior, ≥ −1 point), and **no category regresses by more than Y = 3 points**, and the stale-claim error does not rise. McNemar p is reported (not a gate at this n). A feature that misses X still ships, but disabled by config, with a logged decision (Opus 4: each phase must justify itself on the evaluation). X and Y are Q6.
+- **Baseline.** Phase 0 fast path + D-055 (no librarian) on both corpora, recorded with commit, fixture hashes and model/embedder ids in `eval/baselines/phase0.json`.
+- **Feature gate (applies to W2b, W2e, W3a, W3b, W3c).** A feature is enabled by default only if on corpus A ∪ B: overall primary metric (evidence Recall@5 for retrieval-shaping features; answer accuracy for W2e) improves by **≥ X = +3 points** (W3c: non-inferior, ≥ −1 point), and **no category regresses by more than Y = 3 points**, and the stale-claim error does not rise. McNemar p is reported (not a gate at this n). A feature that misses X still ships, but disabled by config, with a logged decision (Opus 4: each phase must justify itself on the evaluation). X and Y are the **first bar** only (D-058).
+- **Optimize-to-best loop (D-058: "the better we optimize, the better").** Once a feature clears the first bar, it keeps iterating (prompt versions, λ, thresholds, candidate counts, clustering parameters) while the per-corpus score rises. `eval/results/leaderboard.json` keeps, per corpus (A, B, and each Phase 5 project set), the **best score so far** with the commit, config hash, prompt versions, model id and cost/query. `eval/results/LEADERBOARD.md` is rendered from it. Rules: (1) a change that sets a new best on one corpus must not lose more than 1 point on any other corpus's best; (2) a merge that drops any corpus below its best by more than 1 point needs a logged decision; (3) each iteration records $/query next to its score, because the budget is set after development on price/performance (D-058); (4) tuning uses corpus A and the Phase 5 project sets, and corpus B's sealed subset is only for confirmation, never for tuning.
+- **Corpus-A reference numbers** (D-057, budget 3000): hit@5 .793, MRR .662, L1 .533, L2 .750/.772, temporal L2 .400, **stale-first 8/15 (L2)**, negatives 8/8 `evidence:matched` (AUC .792). These are the baseline for every corpus-A gate below.
 - **Agent-level A/B.** 10 fixed HLMemo tasks under `eval/ab/tasks/`, each with a deterministic check: a test passes, a specific file/line changes, or a command output matches. Examples: "add a config key following the conventions", "which gate proves revocation ordering", "prepare the deploy command for a new release" (must avoid `bash -s` piping). Each task runs headless (`hlm claude --headless`) **with memory** and **without memory** (`--no-preflight` and the MCP server removed from the child config), 3 reps each, and records success, turns and tokens. Gate at R2 and at the final acceptance: with-memory success ≥ without-memory success + 2 tasks (of 10), and median tokens no more than 20% higher.
 - Size: **4 id** (harness integration, corpus-B builder, grader, A/B runner).
 
@@ -126,13 +132,13 @@ Purpose: every quality gate so far (G3) is tuned on our synthetic fixture. W-E m
 
 **Operator path: ops only (Sol #2).** There is no private HTTP listener, so no tunnel has to reach one. All admin actions go through `python -m hlmemo.ops` inside the api container, reached over SSH:
 - `src/hlmemo/ops/__main__.py` uses the app DSN and the query layer (`auth_queries.py`) in one transaction. Events carry `device_id=1`, `client='hlm-ops/<ver>'`, and the command does not depend on the admin token being bound. Commands: `device mint --name N --class C [--grant slug:role …] [--expires 2h] [--notes …]` prints **only the token on stdout** (metadata on stderr; events `device_minted` + `grant_added`). The others: `device list|revoke|rotate|grant|ungrant`, `project create|list`, `status [--json]` (jobs, heartbeats, librarian ledger), plus later W2/W3 subcommands.
-- `0003_w0_access` adds `devices.expires_at timestamptz NULL`. Expired is treated exactly like revoked, both in the pre-body gate (`middleware.py:252-291`) and in the in-transaction resolve.
+- `0005_w0_access` adds `devices.expires_at timestamptz NULL`. Expired is treated exactly like revoked, both in the pre-body gate (`middleware.py:252-291`) and in the in-transaction resolve.
 - The local wrapper `deploy/scripts/hlm_ops.sh <args…>` runs `ssh -F deploy/.local/<host>/ssh_config hlm-deploy "cd /srv/hlmemo && docker compose … exec -T api python -m hlmemo.ops <printf %q args>" </dev/null` (the D-035 stdin lesson).
 - Token delivery: `hlm_ops.sh device mint … | hlm device login --name N --token-stdin --server https://mcp.hlmemo.com`. `hlm device login` reads stdin (or `getpass` for a pasted token), requires `/health` to report `trusted`, then calls `credentials.store_token` (keychain, else a 0600 file). The token never appears in argv, history or logs. `hlm device register` handles a 404 with a hint to ask the operator. `hlm device revoke --self` uses the public self-revoke route.
 
 **Script changes.** `deploy/scripts/probe.py:117-155` (smoke/remote gates) gets its probe device from `hlm_ops.sh device mint --class ci --grant gates-probe:write --expires 30m` and cleans up with `hlm_ops.sh device revoke`. `remote_gates.sh:200-203,288-290,312-314` replaces register/approve/admin-revoke with ops mint/login/revoke and adds **RG-routes** (the table above, with anonymous, trusted, and junk bearers). G7 mints `g7-<host>` once (`--class personal --grant gates-g7:write`) and rotates via `hlm_ops.sh device rotate` + `hlm device login` + `hlm mcp add …`. `first_deploy.sh:134-163` stops generating the registration secret and the admin token. RUNBOOK and USAGE get "Adding a device (operator + owner over SSH)".
 
-**Files.** `src/hlmemo/ops/**`, `server/middleware.py`, `server/devices.py`, `server/app.py` (unsafe-config check), `config.py`, `cli/hlm.py` (`device login`, `revoke --self`), `alembic/versions/0003_w0_access.py`, `deploy/{compose.prod.yaml,Caddyfile,app.env.example,api.env.example,RUNBOOK.md}`, `deploy/scripts/{hlm_ops.sh,remote-deploy.sh,check_edge.py,probe.py,remote_gates.sh,first_deploy.sh}`, `tests/gates/test_g5_isolation.py` (route table).
+**Files.** `src/hlmemo/ops/**`, `server/middleware.py`, `server/devices.py`, `server/app.py` (unsafe-config check), `config.py`, `cli/hlm.py` (`device login`, `revoke --self`), `alembic/versions/0005_w0_access.py`, `deploy/{compose.prod.yaml,Caddyfile,app.env.example,api.env.example,RUNBOOK.md}`, `deploy/scripts/{hlm_ops.sh,remote-deploy.sh,check_edge.py,probe.py,remote_gates.sh,first_deploy.sh}`, `tests/gates/test_g5_isolation.py` (route table).
 
 **Gates.**
 - G-W0-1 `test_closed_routes_never_read_body`: each closed route is called through an ASGI harness whose `receive()` **raises if awaited**. Expect 404, no exception, no `devices` row, no event.
@@ -164,7 +170,7 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 - **Temporal rule (Sol #6).** `recorded_at` stays server time (spec §1.1 invariant). `mtime` and git commit date are **provenance only** (`source.mtime`, `source.commit_date`). `valid_from` is taken only from **explicit evidence**: a frontmatter `valid_from`/`date`, a dated decision-log row (e.g. `D-047 | 2026-09-23`), or a dated heading. Otherwise it is the server's import time (the write's `occurred_at` default). Evidence dates in the future beyond the 5-minute tolerance are rejected per item, with the reason in the dry-run report. The rule is logged as a decision:
   > **D-0xx (proposed)** | ACCEPTED | D-020 deviation: imported memories keep server-assigned `recorded_at` (system time, spec §1.1). The original file mtime and commit date are stored only as provenance in `source`; they do not establish when a fact became true. `valid_from` comes from explicit evidence in the content (frontmatter date, dated decision row, dated heading), else import time. | Filesystem mtime reflects copies and edits, not factual validity, and using it as `recorded_at` breaks the monotone system-time invariant. Reviewed in consults/32. | Temporal queries on imported history are exact only where the source dates its facts; `source.mtime` stays queryable via `memory.raw`.
 - `eval/realdata/import_corpus.py` currently sets `valid_from` from the git author date or mtime. That is acceptable **for eval corpora only**. Production imports use `hlm import`, and the eval harness adopts the same rule before its output is reused as production memory.
-- **Contract (Item).** New optional fields: `source:{system, path ≤ 512, sha256, mtime?, commit?, commit_date?}` and `describes:[path ≤ 256](≤ 16)`. `0005_import` adds `memory_versions.source jsonb NULL`, a generated `source_key` column + index, and a projection table `code_refs(version_id, path, commit NULL)`.
+- **Contract (Item).** New optional fields: `source:{system, path ≤ 512, sha256, mtime?, commit?, commit_date?}` and `describes:[path ≤ 256](≤ 16)`. `0007_import` adds `memory_versions.source jsonb NULL`, a generated `source_key` column + index, and a projection table `code_refs(version_id, path, commit NULL)`.
 - **Idempotency.** `request_id = uuid5(NS_IMPORT, project ‖ source_key ‖ sha256)`. An unchanged file is a replay. A changed file with a known `source_key` becomes a revision (`expected_version_id` = head). The `--dry-run` report lists new/changed/unchanged/skipped, duplicate groups, rejected evidence dates, and a token estimate.
 - **`hlm export` (Sol #9, D-021).** `hlm export --project P --out DIR [--kinds …] [--as-of T]` writes Markdown with frontmatter (`clue`, `logical_id`, `version_id`, `kind`, `valid_from/to`, `source`, `tags`, `links`) to one file per current item, plus `CARD.md` and `INDEX.md`. The export can be re-imported (`hlm import markdown` recognizes its own frontmatter and maps it back by `logical_id`).
 - **Gates.**
@@ -186,21 +192,22 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 ### W2a Librarian foundation (6 id)
 - **Provider** `librarian/provider.py`: OpenAI-compatible client built from `config.py:150-156` profiles plus the fallback profile. `response_format=json_object`, or `json_schema` if the profile declares support. Schema validation, retry once on a schema failure, backoff 1/2/4/8 s ×5 on 429/5xx/timeouts (D-019), fallback profile once, circuit breaker (5 failures → open for 60 s, doubling up to 15 min). **Every request sets `max_tokens`** from the task's bound (placement 200, contradiction 600, summary 700, risk 500, synthesis 700).
 - **Redaction** `librarian/redact.py`: the gitleaks rule set from `.githooks/pre-commit` plus `hlm_` tokens, private keys, JWTs, DSNs with passwords, IBAN, and optionally email/phone. Replacement format `⟦REDACTED:<type>:<sha8>⟧`. The mapping stays in memory only. It is applied to prompts **and** to audit-payload free text (CC-5).
-- **Atomic hard caps (Sol #7).** Table `llm_budget(period_kind ∈ {day, month}, period_start date, cap_usd, reserved_usd, spent_usd, PRIMARY KEY(period_kind, period_start))` plus `llm_reservations(call_id PK, day_start, month_start, worst_usd, expires_at)`. Before each call: `worst = ceil(input_tokens × 1.10) × price_in + max_tokens × price_out`. Prices come from the profile (`price_in_per_m`, `price_out_per_m`). A profile without prices refuses live calls unless `HLM_LLM_BUDGET_DISABLED=true`. One short transaction locks the day row then the month row (fixed order) and does `UPDATE … SET reserved_usd = reserved_usd + :worst WHERE spent_usd + reserved_usd + :worst <= cap_usd` on both. If either affects 0 rows → no call, outcome `budget_deferred`. After the call, settle: `reserved -= worst, spent += actual` (actual comes from `usage`; if absent, charge worst). A sweeper settles reservations older than `expires_at` (10 min) **as worst-case spent** (conservative). Caps: `HLM_LLM_BUDGET_DAY_USD`, `HLM_LLM_BUDGET_MONTH_USD` (Q4).
+- **Atomic cost reservation (Sol #7; D-058: a runaway guard, not a budget, during development).** Table `llm_budget(period_kind ∈ {day, month}, period_start date, cap_usd, reserved_usd, spent_usd, PRIMARY KEY(period_kind, period_start))` plus `llm_reservations(call_id PK, day_start, month_start, worst_usd, expires_at)`. Before each call: `worst = ceil(input_tokens × 1.10) × price_in + max_tokens × price_out`. Prices come from the profile (`price_in_per_m`, `price_out_per_m`). A profile without prices refuses live calls unless `HLM_LLM_BUDGET_DISABLED=true`. One short transaction locks the day row then the month row (fixed order) and does `UPDATE … SET reserved_usd = reserved_usd + :worst WHERE spent_usd + reserved_usd + :worst <= cap_usd` on both. If either affects 0 rows → no call, outcome `budget_deferred`. After the call, settle: `reserved -= worst, spent += actual` (actual comes from `usage`; if absent, charge worst). A sweeper settles reservations older than `expires_at` (10 min) **as worst-case spent** (conservative). Limits: `HLM_LLM_BUDGET_DAY_USD`, `HLM_LLM_BUDGET_MONTH_USD`. **Development defaults are generous** (day $10, month $60; the OpenRouter wallet, about $23 per D-058, is the practical stop). A third, short window catches loops: `HLM_LLM_BUDGET_HOUR_USD` = $3, plus a per-job ceiling of 20 calls. The same reservation code handles it: an `hour` row joins `llm_budget`. A trip pauses the librarian and alerts via the heartbeat (`breaker_state=budget`); it does not silently defer for a day. **The production budget is set after development** by a decision based on the W-E leaderboard's price/performance (score per $), not on minimum cost.
 - **Ledger** `llm_calls` (no content): `call_id, job_id, task, profile, model_id, prompt_version, schema_version, request_sha256, response_sha256, input_tokens, cached_input_tokens, output_tokens, reserved_usd, cost_usd, latency_ms, outcome ∈ {ok, schema_retry_ok, schema_fail, http_error, timeout, budget_deferred, breaker_open}, created_at`.
 - **Cassette + live-gate runner** (CC-5): `librarian/cassette.py`, `eval/live/run.py`, `eval/live/RUBRIC.md`.
 - **Privacy controls.** `HLM_LIBRARIAN_ENABLED` (default false until R2). Per-project `projects.policy.librarian ∈ {on, off}` (column `0001_phase0.py:79`, unused so far). This is a small deviation from D-016 and gets logged. `device:*`-scoped items are never sent to an LLM (`HLM_LIBRARIAN_SEND_DEVICE_SCOPED=false`).
-- **Worker + actor.** `librarian/worker.py` implements CC-3 capabilities with apply-time recheck, plus the CC-2 kinds. Heartbeat fields: `ready`, `in_flight`, `oldest_ready_age_s`, `failed_24h`, `spend_today_usd`, `reserved_usd`, `breaker_state`.
-- **Working memory** `librarian/memory.py`: reserved project `hlm-librarian` (created by `0004`). Each job loads the top-8 `librarian-rule` facts (≤ 1,500 tokens): fresh-wake. Compaction happens in W3b once the project exceeds 200 items or 40k tokens.
+- **Worker + actor.** `librarian/worker.py` implements CC-3 capabilities with apply-time recheck, plus the CC-2 kinds. Heartbeat fields: `ready`, `in_flight`, `oldest_ready_age_s`, `failed_24h`, `spend_today_usd`, `spend_hour_usd`, `reserved_usd`, `breaker_state`, `role`.
+- **Working memory** `librarian/memory.py`: reserved project `hlm-librarian` (created by `0006`). Each job loads the top-8 `librarian-rule` facts (≤ 1,500 tokens): fresh-wake. Compaction happens in W3b once the project exceeds 200 items or 40k tokens.
 - **D-015 skeleton card restored.** `POST /admin/projects` and `hlm.ops project create` write a deterministic skeleton card in the same transaction. A migration step backfills a card as a write event for each existing project without one.
 - **`memory.raw` payload paging** (D-026).
-- **Migrations `0004_librarian`.** `jobs.kind` += `librarian_write, topic_summary, consolidate, ingest_extract, import_postprocess, pack_review, experience_review`. Also: `jobs.priority smallint DEFAULT 5`, `devices.is_system`, the librarian device row, `llm_calls`, `llm_budget`, `llm_reservations`, the CC-2 event kinds, and the reserved projects `hlm-librarian` and `hlm-global`. Both reserved projects get **no default grants**: `hlm-global` grants are issued explicitly by ops (Q3).
+- **Migrations `0006_librarian`.** `jobs.kind` += `librarian_write, topic_summary, consolidate, ingest_extract, import_postprocess, pack_review, experience_review`. Also: `jobs.priority smallint DEFAULT 5`, `devices.is_system`, the librarian device row, `llm_calls`, `llm_budget`, `llm_reservations`, the CC-2 event kinds, and the reserved projects `hlm-librarian` and `hlm-global`. Both reserved projects get **no default grants**: `hlm-global` grants are issued explicitly by ops (D-058).
 - **Files.** `src/hlmemo/librarian/**`, `src/hlmemo/worker/lease.py`, `worker/main.py`, `server/admin.py`, `ops/`, `core/read_service.py`, `deploy/compose.prod.yaml` + `compose.yaml` (librarian service), `deploy/llm.env.example`, `eval/live/**`.
 - **Gates.**
   - G-L1 provider contract against a scripted stub (invalid JSON, 429×3, 5xx×6 → fallback, schema-invalid×2 → `schema_fail`); fake clock asserts the backoff; ledger rows exact.
   - G-L2 redaction corpus: 60 seeded secrets (TR/DE/EN contexts) appear in 0 outgoing requests and 0 audit payloads. False-positive rate ≤ 1% on 200 clean identifier-rich chunks.
   - G-L3 LLM down: the stub returns 503 or stalls 30 s. G4 with the librarian enabled keeps p95 ≤ 500 ms; 100 writes acked. After recovery all jobs complete, with 0 lost and 0 duplicate `librarian` events.
-  - G-L4 **concurrent cap**: 50 concurrent calls with the cap set to 3 × worst → exactly 3 HTTP calls reach the stub; ledger spend ≤ cap; a crash between reserve and settle is swept as worst-case.
+  - G-L4 **concurrent guard** (test caps, not the dev defaults): 50 concurrent calls with the limit set to 3 × worst → exactly 3 HTTP calls reach the stub; ledger spend ≤ limit; a crash between reserve and settle is swept as worst-case. A synthetic loop (a job that re-enqueues itself) trips the hour window or the per-job ceiling within 1 minute.
+  - G-L8 **role enforcement** (§4b ladder): in `observer` a job produces only proposals (questions + audit rows): 0 mutations of user items or links across 500 fixture jobs. In `assistant`, mutations apply only for batches with a recorded owner approval event. `autonomous` refuses to start without a matching `librarian_role` decision event.
   - G-L5 replay never calls an LLM (`HLM_LLM_MODE=off`, network denied) → projections identical.
   - G-L6 lease renewal (a 300 s job is not re-leased) + SIGKILL → re-lease, exactly one applied event.
   - G-L7 `authority_lost`: revoke the triggering device between enqueue and apply → nothing applied, event recorded, replay identical.
@@ -215,16 +222,18 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
   4. **Resolution.**
      - `duplicate` gets `relates_to{dup:true}` (the merge is deferred to W3b).
      - `refines` gets `relates_to`.
-     - **Auto-invalidate** only when: `contradicts ∧ supersedes ∧ high`, same home project, identical `device_scope`, C not pinned, C.kind ≠ experience, `V.valid_from ≥ C.valid_from`, the `correct(P)` capability passes the recheck, **and** `librarian.auto_resolve=true`. It is a bi-temporal correction of C (`valid_to = V.valid_from`) plus `supersedes` and `contradicts` links; nothing is deleted.
-     - Everything else, including every case while in **shadow** mode (the default), becomes a `question` with `proposed_action` plus a `contradicts` link.
-     - A cross-project duplicate or refinement produces a `widen_scope` question only (Q3).
+     - **Auto-invalidate** only when: `contradicts ∧ supersedes ∧ high`, same home project, identical `device_scope`, C not pinned, C.kind ≠ experience, `V.valid_from ≥ C.valid_from`, the `correct(P)` capability passes the recheck, **and** the librarian role permits it (§4b: `assistant` with an approved batch, or `autonomous` within its limits). It is a bi-temporal correction of C (`valid_to = V.valid_from`) plus `supersedes` and `contradicts` links; nothing is deleted.
+     - Everything else, and **every** case while the role is `observer` (the default, D-058), becomes a **proposal**: a `question` with `proposed_action`, grouped into an approval batch (`librarian_batches`, §4b). In `observer` even the `relates_to`/`contradicts` links are proposals only; only `version_signals` placement for client-unset fields and the proposal rows are written.
+     - A cross-project duplicate or refinement produces a `widen_scope` question only, in every role (D-058: propose-only).
   5. One `librarian` event per job, with `request_id = uuid5(NS, "librarian_write:<event_id>")`.
 - **Contract.** `memory.query` gains an optional `librarian:{pending_questions, notices[≤3]}`, budgeted and packed after hits (`query/2`).
-- **Shadow audit (Sol Gates).** During dogfooding (D1 onward) and R2, every proposed invalidation and merge is logged via `hlm.ops librarian audit --since … --json`. The owner or orchestrator labels ≥ 100 real proposals (correct/incorrect/near-miss). Auto-resolve may be enabled (Q2) only when the labeled false-invalidation rate is ≤ 0.02 with ≥ 100 labeled proposals, and a 95% upper bound ≤ 0.05 is reported.
+- **Proposal audit (replaces the 14-day shadow, D-058).** Every proposal is listed by `hlm.ops librarian audit --project P --batch B --json` and labeled (correct / incorrect / near-miss) during the Phase 5 migration of each project (§4b). Labeled precision and the false-invalidation rate feed the role ladder's promotion criteria. Nothing here depends on elapsed days.
+- **Temporal supersession on the read side (D-057).** Stale-first has two parts. Write side: the librarian proposes `supersedes` links and bi-temporal corrections. Read side, in `memory.query`: when two hits are joined by a live `supersedes` link (applied, not proposed), the superseded one is removed from hits (it stays reachable via drilldown/raw and `valid_at`). When they are only near-duplicates with different `valid_from` and no link, the newer is ranked first on an exact RRF tie. The read-side rule is deterministic and G3-gated.
 - **Files.** `librarian/tasks/{placement,contradiction}.py`, prompts, `db/librarian_queries.py`, shared hunks for `write_service.py` (enqueue), `retrieval.py` (scope-parameterized candidates), `replay.py`, `read_service.py` (notices).
 - **Gates.**
-  - G-P1 CI replay: golden `payload.resolved` over ≥ 60 placement and ≥ 150 contradiction pairs (the 80 in rev 1 were too few). Includes 40 adversarial near-misses and 20 cross-project cases, TR/DE/EN. Client importance is never overwritten; shadow mode → 0 invalidations.
+  - G-P1 CI replay: golden `payload.resolved` over ≥ 60 placement and ≥ 150 contradiction pairs (the 80 in rev 1 were too few). Includes 40 adversarial near-misses and 20 cross-project cases, TR/DE/EN. Client importance is never overwritten; `observer` role → 0 invalidations and 0 links.
   - **G-LIVE-B** (release-blocking): placement ≥ 0.90; contradiction exact ≥ 0.90; false-supersede ≤ 0.02 on the minimum across 3 reps.
+  - **G-E-TEMP (D-057 gate)**: on corpus A, temporal stale-first (superseded text ranked above the current answer, L2 top-3) **≤ 4/15**, down from 8/15. Measured on a disposable eval copy where the librarian runs at `assistant` and the eval harness approves **every** batch (approve-all), so the gate measures the librarian's unfiltered effect and the hold-out labels never steer approval. Proposal precision on a separately labeled 50-proposal sample is reported next to it. Temporal L2 must also not fall below .400.
   - G-P3 capability isolation: 1,000 randomized probes → 0 candidates from ungranted projects; `device:*` items in 0 requests.
   - **G-E-W2b**: the W-E feature gate (≥ +X, no category worse than −Y, stale-claim error not higher) with notices and links enabled.
 
@@ -267,7 +276,7 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 ## §3 Phase 3: Consolidation, decay/archive, ingestion
 
 ### W3a L2 topic summaries, bounded RAPTOR-lite (4.5 id)
-- New kind `topic` and rel `member_of` (`0006`). The topic body is an LLM summary ≤ 300 tokens (T3: summary + ≥ 3 cited clues) with `derived_from` links pinned to member versions, reusing the D-015 staleness machinery.
+- New kind `topic` and rel `member_of` (`0008`). The topic body is an LLM summary ≤ 300 tokens (T3: summary + ≥ 3 cited clues) with `derived_from` links pinned to member versions, reusing the D-015 staleness machinery.
 - **Bounded clustering (Sol #4).** Average linkage over 20k items needs about 1.6 GiB for distances alone, so it is replaced by:
   1. **Stage 1: mini-batch k-means** (numpy, `k = ceil(n/25)`, seed = `project_id`, batch 1,024, 30 iterations). Vectors are streamed from the DB in pages of 2,048 (keyset). Memory is O(n·d + k·d): 20k × 384 × 4 B ≈ 30 MiB + centroids.
   2. **Stage 2: exact average linkage inside each stage-1 cluster**, only when its size ≤ 400 (distance matrix ≤ 400² × 4 B = 0.6 MiB). Larger clusters are split by recursive 2-means until they fit.
@@ -288,7 +297,7 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
   2. **Re-summarize** stale topics. Card refreshes are offered as a `card_refresh` question (the card stays client-authored, D-015, unless `policy.card_author="librarian"`).
   3. **Score**: `w_r·r + w_i·importance/10 + w_u·u`, with `r = 2^(-idle_days/14)` (the D-012 function), `u = min(1, log2(1+usage)/5)`, weights 1/3 each. Experience and stable items use `r = 1`.
   4. **Ranking**: `S'' = S'·(1 + λ(score − 0.5))`, λ ∈ [0, 0.5] tuned on G3 plus `g3c_temporal` plus **W-E corpora (tuned on corpus A, confirmed on corpus B)**. λ = 0 if no value passes every gate, and that outcome is logged.
-  5. **Promotion candidates**: ≥ 3 independent confirmations, ≥ 14 days old, no open contradiction → a `promote` question (never autonomous; see Q2).
+  5. **Promotion candidates**: ≥ 3 independent confirmations, ≥ 14 days old, no open contradiction → a `promote` question (never autonomous, in any role; D-058).
   6. **Bury**: that is W3c.
 - **Gates.**
   - G-C1: golden replay of a 60-day synthetic history.
@@ -300,7 +309,7 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 ### W3c Decay + reversible archive (D-012) (3 id; LLM-free)
 - Daily `archive_cycle` job on the **embed worker**, per project. Candidate iff all hold: `r < 0.1` (about 47 idle days), `volatile`, not pinned, `kind ∉ {lesson, experience, project_card, topic, document}`, no live incoming `derived_from/depends_on/member_of` link, not cited by an open question.
 - Counter table `retention_state(logical_id PK, below_count, last_cycle_date)` (rebuildable from events). Archive happens at `below_count = 3`.
-- **Shadow** by default: archive events carry `resolved.shadow=true` and change nothing. `hlm.ops archive report`. **Live** mode writes a new version with status `archived`.
+- **Shadow** by default (this is D-012's own archive shadow, separate from the retired librarian shadow): archive events carry `resolved.shadow=true` and change nothing. `hlm.ops archive report`. **Live** mode writes a new version with status `archived`.
 - **Restore**: automatic on drilldown/raw of an archived clue, or via `hlm.ops restore`.
 - **Gates.**
   - G-A1: simulated 120 days → golden archived set. Property test over 1,000 seeded histories: exempt items are never archived.
@@ -310,7 +319,7 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
   - **G-E-W3c**: non-inferiority (≥ −1 point overall, no category worse than −Y) on the W-E corpora after 120 simulated days.
 
 ### W3d PDF/DOCX ingestion (4 id)
-- **Versioned document item (Sol #5).** New kind `document` (`0007`). One logical item per document, title = filename. Its body is a deterministic metadata card: filename, mime, pages, extraction status, outline headings. It is not the full text. A re-upload of the same `(project, filename)` with a new sha256 becomes a **revision**.
+- **Versioned document item (Sol #5).** New kind `document` (`0009`). One logical item per document, title = filename. Its body is a deterministic metadata card: filename, mime, pages, extraction status, outline headings. It is not the full text. A re-upload of the same `(project, filename)` with a new sha256 becomes a **revision**.
   - Table `documents(version_id PK REFERENCES memory_versions, sha256, mime, size, bytes bytea, extract_status ∈ {pending, extracted, failed}, extract_report jsonb)` keyed by the document's **version**.
   - `doc_chunk` items link `derived_from` **pinned to the document version**, so the D-015 staleness machinery works when a document is revised.
   - Per-project quota `HLM_DOC_QUOTA_MB` (default 1024).
@@ -335,7 +344,7 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 
 ### W4a L4 experience maturation (4 id)
 - Promotion happens only through an accepted `promote` question (capability `global_experience`, CC-3). The librarian drafts the experience (`## When/## Do/## Avoid/## Evidence`, ≤ 300 tokens, `stable`) with `derived_from` links pinned to the confirming lessons. `project_ids = [hlm-global] ∪ source projects` (the answering device must hold write on all of them).
-- Retrieval: query and risk_check merge up to 3 `hlm-global` hits for devices with read on `hlm-global` (Q3 default: personal devices only, via explicit ops grants).
+- Retrieval: query and risk_check merge up to 3 `hlm-global` hits for devices with read on `hlm-global` (D-058: personal devices via explicit ops grants; work devices only when granted).
 - Maturation: only new evidence raises confidence. A contradicting lesson produces a question, never an auto-invalidation. Decay-exempt.
 - **Gates.**
   - G-X1: golden promotions from a 90-day history; 0 promotions from fewer than 3 confirmations or from docs.
@@ -367,13 +376,62 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 
 ---
 
+## §4b Phase 5: Controlled legacy-memory migration (D-058)
+
+**Goal.** All of the owner's existing projects (about a year of memory; some with a memory system, some with a primitive one, some with none) move into HLMemo **one project at a time** under an audited protocol. This migration replaces the retired 14-day shadow mode. It is also where the librarian earns its roles, on real data. **Depends on** W1.5 (importers + export), W2a/W2b (librarian + proposals), W-E (real-data scoring + leaderboard). Phase 3/4 features take part once they are deployed. Per-project reconstruction follows D-022's 8 steps.
+
+**Librarian role ladder** (setting `librarian.role`, per deployment, with an optional per-project override that can only be *lower*):
+
+| Role | What it may do | How it is entered |
+|---|---|---|
+| `observer` (default) | Writes proposals only (questions in approval batches + audit rows) and client-unset placement signals. It changes no user item, link or status. | default |
+| `assistant` | Applies proposals **only per batch after an owner approval event** (`hlm.ops librarian approve-batch <B> [--except q1,q7]` records an `answer` event per question, signed by the ops actor with the owner's device name in `client`). Rejections are stored as `librarian-rule` facts. | an explicit owner decision after the promotion criteria below are met (logged as a D-entry + a `librarian_role` event) |
+| `autonomous` (within limits) | Applies proposals in the W2b auto-rule class (high confidence, same project, same device scope, not pinned, not experience; merges within one device class) without per-batch approval. Everything else still goes to batches. Never: cross-project widening, experience promotion, card rewrites, document approval. | **only** a separate explicit owner decision, after the assistant-stage criteria are met. It can be revoked at any time (`hlm.ops librarian role observer`) |
+
+**Promotion criteria** (measured on migration data, per the audited projects):
+
+| Step | Criteria (all required) |
+|---|---|
+| observer → assistant | (1) ≥ 2 projects fully audited in observer mode, with ≥ 150 labeled proposals in total; (2) proposal precision ≥ 0.90 overall and ≥ 0.80 in every proposal kind with ≥ 20 samples; (3) false-invalidation rate ≤ 0.02 (95% upper bound reported, ≤ 0.05); (4) W-E non-regression: applying all correct-labeled proposals on an eval copy does not drop any corpus below its leaderboard best by more than 1 point; (5) zero capability or authorization violations (G-L7/G-L8 counters in production) |
+| assistant → autonomous | (1) ≥ 3 more projects in assistant mode with ≥ 300 approved or rejected proposals; (2) owner rejection rate ≤ 5% in the auto-rule class; (3) false-invalidation rate ≤ 0.01 in that class; (4) W-E non-regression as above after each project; (5) no rollback of an applied batch needed in the last 2 projects |
+
+**Per-project protocol** (the same for every project; checklist file `docs/migration/<slug>/AUDIT.md`, public template in `docs/migration/TEMPLATE.md`, private details stay in `docs/private/migration/`):
+1. **Inventory** (D-022 step 1): sources (serena / auto-memory / context files / NotebookLM / codex / none), bytes, file count, date span, live-code location. The inventory decides which importer is needed. A missing importer (NotebookLM, codex SQLite) is built when its first project comes up.
+2. **Truth set**: before import, a separate agent writes 20–40 held-out questions for the project from the live code + docs (the W-E corpus-B format: gold facts, evidence spans, temporal status, negatives). It is sealed and hashed. Projects without any memory still get a code-derived set.
+3. **Mechanical import** (`hlm import … --dry-run`, then the real run) → W-E baseline for the project (fast path, no librarian).
+4. **Reconstruction session(s)** (D-022 steps 2–7) via `hlm claude|codex` on the machine holding the repo: diff memory claims against the code, fill gaps, drop irrelevant detail, extract lessons, attach evidence (`describes`, `code_refs`). The librarian runs in its current role and proposes throughout.
+5. **Audit** (checklist items, each pass/fail with evidence):
+   - (a) proposal labels for every batch (correct / incorrect / near-miss);
+   - (b) W-E project score vs its baseline and vs the leaderboard (overall + per category);
+   - (c) stale-claim sample: 10 facts re-checked against the code;
+   - (d) scope check: 0 items from the project visible to devices without a grant (G5-style probe on this project);
+   - (e) the secret scan on imported content;
+   - (f) cost and latency per item;
+   - (g) the list of protocol or tooling friction points.
+6. **Fix-before-degrade loop.** Any audit fail, or any W-E category that drops more than 3 points from the project's baseline, or a stale-claim error > 0.05, **stops the migration of the next project**. The finding becomes a BACKLOG item with a regression test (fixture from the failing case), is fixed, and steps 3–5 are **re-run on the same project** until it passes. The previous projects are re-scored after the fix, and none may drop below its recorded best by more than 1 point.
+7. **Close**: the project's `AUDIT.md` is signed off (owner + orchestrator), a D-entry records its scores, and the leaderboard is updated.
+
+**Stop conditions (whole campaign pauses)**:
+- any authorization/scope leak;
+- data loss or failed replay (G6) on production;
+- the false-invalidation rate > 0.05 in any audited batch → role demoted to `observer` automatically;
+- spend guard trips twice in one project;
+- two consecutive projects fail their audit after 2 fix iterations each (a protocol redesign is needed);
+- the owner says stop.
+
+**Standardization (W5c)**: after the librarian is stable (assistant criteria met and ≥ 4 projects closed), the checklist becomes a runner, `hlm migrate <project> --plan|--run|--audit`. It automates steps 1, 3, 5(b–f) and batch preparation, and it still stops at the truth-set sealing, the owner batch approvals and the sign-off. It runs **sequentially**, one project at a time, in an order the owner sets (default: active projects first, then by size ascending). A roadmap for the remaining projects is written once the librarian is optimized (D-058).
+
+**Gates.** G-M1: the runner's dry-run on a fixture project reproduces the manual protocol's artifacts (inventory, batches, audit report) byte-for-byte modulo timestamps. G-M2: a stop-condition drill: a seeded false invalidation in a batch → automatic demotion to observer, and the next project refuses to start. G-M3: re-scoring after a fix shows no earlier project below its best by more than 1 point.
+
+---
+
 ## Workstream summary
 
 | WS | Phase | id | Depends on | Parallel? |
 |---|---|---|---|---|
-| W-C contract freeze (CC-1..5, 0003/0004 skeletons, schemas, config) | prep | 2 | — | no (orchestrator) |
+| W-C contract freeze (CC-1..5, 0005/0006 skeletons, schemas, config) | prep | 2 | — | no (orchestrator) |
 | W0a minting, fail-closed routes, env migration | W0 | 3.5 | W-C | yes |
-| W0b Hostinger outer firewall | W0 | 1.5 | Q1 | yes (ops) |
+| W0b Hostinger outer firewall | W0 | 1.5 | D-058 (approved) | yes (ops) |
 | D1 dogfood import of HLMemo into production | 1.5 | 1 | R1, W1.5 (markdown/automemory) | no |
 | W1.5 import + export | 1.5 | 5 | W-C (Item.source) | yes |
 | W-E real-data eval + A/B + baselines | eval | 4 | W1.5 (corpus B import) | yes |
@@ -390,8 +448,12 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 | W4a experience | 4 | 4 | W3b | yes |
 | W4b offline write outbox | 4 | 2.5 | W0a | yes |
 | W4c minimal packs | 4 | 3 | W2b, W3d quarantine | yes |
+| W5a Phase 5 protocol + audit tooling + role ladder + batches | 5 | 4 | W1.5, W2a, W2b, W-E | no |
+| W5b per-project migration run (each; HLMemo and corpus-A project counted in W-D) | 5 | ≈1.5 per project | W5a | no (sequential by design) |
+| W5c protocol standardization + semi-automated sequential runner | 5 | 3 | W5a + ≥ 2 audited projects | no |
+| W-O optimize-to-best iterations (leaderboard loop) | all | open-ended, time-boxed per release | W-E | yes |
 | W-D deploys, mem gate, final acceptance | all | 5 | all | no |
-| **Total** | | **≈ 70.5 id** (+30–50% review) | | |
+| **Total** | | **≈ 77.5 id** (+30–50% review) + ≈1.5 id per further migrated project + optimize iterations | | |
 
 ---
 
@@ -400,11 +462,12 @@ Client-side, because the files live on the owner's machines (D-022). It is neede
 1. **W0 closure + reachable operator path.** W-C → W0a (+ W0b step A) → **R1 deploy** → RG-routes verified on production.
 2. **Import plumbing; freeze real-data truth and baselines.** W1.5 (import + export). A separate agent seals the W-E corpus-B questions **before** D1. Then **D1 dogfood**: `hlm import` of HLMemo's docs, auto-memory and CLAUDE.md into production project `hlmemo`, and every HLMemo dev session uses `hlm claude|codex` from here on (D-021; docs stay the cold-start fallback). The librarian can reprocess this history later (`hlm.ops librarian backfill --project hlmemo`), since events are authoritative. W-E baselines are recorded on corpus A + B.
 3. **W2a + W2f**; live provider gate G-LIVE-A for default + fallback.
-4. **W2b/W2c/W2d/W2e in shadow.** Proposed mutations are audited on the dogfood project (≥ 100 labeled). W-E gates (G-E-W2b, G-LIVE-B/C/D), A/B gate → **R2 deploy** (librarian on, shadow, caps).
+4. **W2b/W2c/W2d/W2e with the librarian as `observer`.** W-E gates (G-E-W2b, **G-E-TEMP**, G-LIVE-B/C/D), A/B gate → **R2 deploy** (librarian on, role `observer`, dev spend guard). W5a lands in parallel.
+4b. **Phase 5 starts: project 1 = HLMemo** (§4b protocol on top of the D1 dogfood import). The librarian observes and proposes; audit findings are fixed before the next batch (fix-before-degrade). Promotion to `assistant` needs the §4b criteria plus an owner approval. Phase 3/4 development continues in parallel; migration audits feed it.
 5. **Bounded W3a, then W3d.** G-T4 capacity on the lima VM, then production.
-6. **W3b consolidation + W3c archive shadow.** Real-data regression (G-E-W3a/b/c) → **R3 deploy**.
+6. **W3b consolidation + W3c archive shadow.** Real-data regression (G-E-W3a/b/c) → **R3 deploy**. Phase 5 project 2 (the private corpus-A project) begins once R3 is live.
 7. **Minimal Phase 4** (W4a, W4b narrowed, W4c minimal) → **R4 deploy**.
-8. **Final acceptance** (§6): reconstruct HLMemo on production, then the fresh-chat test and the A/B.
+8. **Final acceptance** (§6): HLMemo graded first, then the private corpus-A project, then further owner projects if the librarian has not been exercised enough. Then W5c standardizes the protocol and the remaining projects migrate semi-automatically, still one at a time.
 
 **Parallel waves.** Disjoint owned paths; one DB `hlm_test_<ws>` and one compose project per agent; no agent commits; the orchestrator re-runs gates and commits.
 
@@ -443,17 +506,19 @@ Hot shared files (`config.py`, `server/tools/{__init__,schemas}.py`, `core/write
 Pass: 0 OOMKilled, RestartCount 0, every service's anon peak ≤ 90% of its limit (`memory.peak` and `memory.stat anon` recorded), host `MemAvailable` ≥ 512 MiB throughout, query p95 ≤ 500 ms. Evidence goes to `docs/bakeoff/mem-gate/`. This gate runs before R2 and before R3.
 
 **Release train.** Each release goes through: local gates G1–G8 plus the new workstream gates, the release-blocking live gates (CC-5), a Sol review, the neutral verifier, `deploy.sh`, `remote_gates.sh` + RG-routes, and new remote gates. The backup timer stays uninstalled (D-051). Each deploy's pre-upgrade dump is the rollback point.
-- **R1 (W0)**: `0003`, env migration, RG-routes. Then W0b option A.
+- **R1 (W0)**: `0005`, env migration, RG-routes. Then W0b option A.
 - **D1** (dogfood import, §5 step 2).
-- **R2 (Phase 2 + W1.5)**: `0004`, `0005`. Librarian enabled, shadow on, caps set (Q4). `llm.env` is mounted into api + librarian only. Remote checks: provider egress blocked (temporary ufw OUTPUT rule) → `/ready` 200, writes and queries OK, jobs back off, then drain; G-MEM.
-- **R3 (Phase 3)**: `0006`, `0007`, archive shadow. Live archive only after 7 shadow days, a reviewed `hlm.ops archive report`, G-E-W3c, and a decision.
-- **R4 (Phase 4)**: `0008`.
+- **R2 (Phase 2 + W1.5)**: `0006`, `0007`. Librarian enabled as `observer`, dev spend guard (D-058). `llm.env` is mounted into api + librarian only. Remote checks: provider egress blocked (temporary ufw OUTPUT rule) → `/ready` 200, writes and queries OK, jobs back off, then drain; G-MEM.
+- **R3 (Phase 3)**: `0008`, `0009`, archive shadow. Live archive only after 7 shadow days, a reviewed `hlm.ops archive report`, G-E-W3c, and a decision.
+- **R4 (Phase 4)**: `0010`.
 
-### Final acceptance: "HLMemo migrates itself" (D-021 + D-022 + D-051, Sol #9)
-The script `deploy/scripts/self_migrate_acceptance.sh --url https://mcp.hlmemo.com` runs from the owner's Mac. Each step is machine-checked; the first failure exits non-zero. Truth is **frozen**: `docs/private/realdata-hlmemo/final/` (the sealed 50-question subset of W-E corpus B, pinned to commit `<C>`, sha256 published) plus `claims.jsonl` (≥ 30 current facts with evidence spans at `<C>`, ≥ 10 of them superseded facts with their current value).
+### Final acceptance: HLMemo first, then the private corpus-A project (D-021 + D-022 + D-051 + D-058, Sol #9)
+The final acceptance is the start of Phase 5 (§4b), graded on production in the order D-058 sets: **Part A HLMemo → Part B the private corpus-A project → Part C further owner projects if the librarian is not yet sufficiently exercised.** Each part follows the §4b per-project protocol (truth set sealed before import, audit, fix-before-degrade).
+
+**Part A: HLMemo.** The script `deploy/scripts/self_migrate_acceptance.sh --url https://mcp.hlmemo.com` runs from the owner's Mac. Each step is machine-checked; the first failure exits non-zero. Truth is **frozen**: `docs/private/realdata-hlmemo/final/` (the sealed 50-question subset of W-E corpus B, pinned to commit `<C>`, sha256 published) plus `claims.jsonl` (≥ 30 current facts with evidence spans at `<C>`, ≥ 10 of them superseded facts with their current value).
 1. **Device**: `hlm_ops.sh device mint --name <host>-final --class personal --grant hlmemo:write --grant hlm-global:read | hlm device login --token-stdin`; `whoami` = trusted.
 2. **Idempotent re-import** of the D1 sources at `<C>`: `hlm import … --dry-run --json` then the real run. A second pass makes 0 writes.
-3. **Drain**: `hlm_ops.sh status --json` reaches `ready=0`, `failed_24h=0` (timeout 30 min). Run spend ≤ $1.00 (from the ledger).
+3. **Drain**: `hlm_ops.sh status --json` reaches `ready=0`, `failed_24h=0` (timeout 30 min). Run spend is recorded from the ledger (no cap during development, D-058; the runaway guard must not trip).
 4. **Reconstruction session (D-022 steps 1–7)**: `hlm claude --headless --task "$(cat deploy/acceptance/reconstruct-hlmemo.md)"`. It diffs claims against the repo, fills gaps from code, registers lessons, and answers open questions. Checks: a session `call_the_day` exists, and the card is non-skeleton and ≤ 512 tokens. Counts are reported, **not graded**.
 5. **Evidence retrieval**: for every sealed question, top-5 evidence overlaps a gold span by ≥ 50% of its characters. **Recall@5 ≥ 0.90**, tokens/query ≤ 7k.
 6. **Factual answers**: a fresh headless agent answers each sealed question using only HLMemo (the wrapper preflight plus MCP tools; repo access removed by running from an empty temp dir). Grading uses deterministic identifier/number matching where the gold fact has one, and otherwise the fixed-rubric LLM judge (3 reps, live, capped). **Accuracy ≥ 0.85** (minimum over reps). Negative questions: false-answer rate ≤ 0.10.
@@ -463,19 +528,26 @@ The script `deploy/scripts/self_migrate_acceptance.sh --url https://mcp.hlmemo.c
 10. **Agent-level A/B** (W-E): with-memory success ≥ without-memory success + 2 of 10 tasks.
 11. **Regression**: `remote_gates.sh --g7` and RG-routes pass; G-MEM passes.
 12. **Bootstrap rule (D-021)**: `hlm export --project hlmemo --out docs/status/hlmemo-export/` succeeds, and re-importing the export into a scratch project re-passes step 5 at ≥ 0.85. `deploy.sh --check` works with HLMemo stopped.
-13. On PASS: log a decision "self-hosting live" and switch CLAUDE.md's Project Memory section to HLMemo-first. Then, **after owner confirmation**, delete the local `hlmemo` compose project and the lima VMs (D-051).
+13. On PASS: log a decision "self-hosting live" and switch CLAUDE.md's Project Memory section to HLMemo-first. Close Part A's `AUDIT.md`.
+
+**Part B: the private corpus-A project**, migrated into a **new production project** (not the eval copy) with `self_migrate_acceptance.sh --project <corpus-A slug> --repo <path on the machine holding it>`, following §4b steps 1–7:
+- Corpus A's 100-question set has been used for tuning (optimize-to-best loop), so it is **not** a hold-out here. It is graded as non-regression: the production project must score within 1 point of corpus A's leaderboard best on L2 and hit@5, with stale-first ≤ 4/15 (G-E-TEMP).
+- The hold-out for Part B is a **fresh 30-question truth set**, written from the live code + docs and sealed before the production import (§4b step 2). Thresholds are the same as Part A steps 5–7: evidence Recall@5 ≥ 0.90, answer accuracy ≥ 0.85, stale-claim error ≤ 0.05, negative false-answer ≤ 0.10.
+- Part A steps 8–10 are repeated with project-specific risk tasks (≥ 5) and 3 fresh-chat questions.
+
+**Part C: further owner projects, only if needed.** "Sufficiently exercised" means that after Parts A+B the librarian has produced ≥ 150 labeled proposals, with ≥ 20 in every proposal kind (contradiction, merge, placement, widen_scope, promote, card_refresh), i.e. the observer → assistant evidence floor of §4b. If not, the owner names more projects. They migrate sequentially under §4b, each with its own sealed truth set, until the floor is met.
+
+**Close-out.** Once A (+B, +C) pass, and **after owner confirmation**, delete the local `hlmemo` compose project and the lima VMs (D-051). A roadmap for the remaining projects follows once the librarian is optimized (D-058); W5c then runs them semi-automatically, one at a time.
 
 ---
 
 ## §7 Owner questions and research items
 
-**Owner questions (defaults in italics)**
-1. **Q1 VPS outer layer**: may I enable the Hostinger VPS firewall via API (80/443 tcp, 443/udp and 22 open; everything else closed), and leave Tailscale-only SSH until after the final acceptance? — *Default: yes to the firewall now; Tailscale re-evaluated later.*
-2. **Q2 Librarian autonomy**: after the shadow audit shows a false-invalidation rate ≤ 0.02 on ≥ 100 labeled real proposals, may the librarian invalidate contradicted facts on its own (same project, same device scope, not pinned)? Experience promotion always asks. — *Default: yes, under exactly that evidence rule.*
-3. **Q3 Global experience visibility**: should experiences live in `hlm-global`, readable by **personal** devices via explicit grants, with **work** devices excluded unless granted, and cross-project widening only proposed, never applied? — *Default: yes / yes / propose-only.*
-4. **Q4 LLM spend caps** (hard, reserved atomically): — *Default: $1/day, $10/month, $2 per live-gate run. When exceeded, jobs wait until the next day and risk_check/synthesis fall back to deterministic mode.*
-5. **Q5 Import scope for D-051**: HLMemo only, with the NotebookLM/codex-SQLite importers and the other projects handled as a separate later goal? — *Default: HLMemo only.*
-6. **Q6 Real-data gate thresholds**: a librarian or Phase-3 feature is on by default only if it improves the real-data score by ≥ X and no category regresses by more than Y; otherwise it ships disabled. — *Default: X = +3 points, Y = 3 points (W3c: non-inferior, ≥ −1).*
+**Owner questions (defaults in italics).** The rev-2 questions Q1–Q6 are answered by D-058 and recorded in §8. New open points:
+1. **N1 Promotion thresholds**: are the §4b criteria acceptable? observer → assistant: ≥ 2 audited projects, ≥ 150 labeled proposals, precision ≥ 0.90, false-invalidation ≤ 0.02. assistant → autonomous: ≥ 3 more projects, ≥ 300 decisions, owner rejection ≤ 5%, false-invalidation ≤ 0.01. — *Default: yes, as written.*
+2. **N2 Batch approval ergonomics**: how large should a batch be, and how should you review it? — *Default: ≤ 25 proposals per batch; the orchestrator presents a summary table from `hlm.ops librarian audit` in chat; you answer "approve all", "approve except …" or "reject"; the ops command records it.*
+3. **N3 Projects after corpus A** (Part C and the Phase 5 order), including whether the work-computer estate joins the same server (D-022). — *Default: you name projects only if Part C triggers; active projects first; the work computer later, after a KVKK re-check (D-049).*
+4. **N4 Development spend guard**: is it acceptable? Limits: $10/day, $60/month, $3/hour, 20 calls per job, $5 per live-gate run; the ≈ $23 OpenRouter wallet is the practical stop. — *Default: yes; you top up the wallet when the ledger shows it is needed.*
 
 **Research needed**
 - R1 (W0b): the Hostinger firewall API: default policy, IPv6, statefulness, interplay with Docker, and browser-console/recovery availability for VPS 2002259. Try it on a firewall bound to no VM first.
@@ -503,8 +575,16 @@ The script `deploy/scripts/self_migrate_acceptance.sh --url https://mcp.hlmemo.c
 | Sol #10 W2e optional; W4b over-scoped | W2e in scope (3 id, W-E gated default); W4b narrowed to an offline write outbox; hash chain, standby export and offline read cache deferred with reasons | W2e, W4b |
 | Sol Gates (tests) | ASGI never-read receive; nmap treated as a smoke check; drilldown-to-fact instead of "member or topic"; no pre-accessed gold in archive tests; correct supersession allowed with historical access; labeled document facts + live adversarial docs; ≥ 150 contradiction pairs + ≥ 100 labeled shadow proposals | G-W0-1, G-W0b, G-T2, G-A2, G-C2, G-D1, G-LIVE-G, W2b |
 | Sol Order | Adopted as §5 steps 1–8, merged with W-E and D1 | §5 |
-| Opus 1 real-data eval first-class | W-E workstream: corpus A (private YT set, hold-out) + corpus B (sealed HLMemo set); Phase 0 baselines; feature gate ≥ +X, no category worse than −Y for W2b/W2e/W3a/W3b/W3c | W-E, gates G-E-* |
+| Opus 1 real-data eval first-class | W-E workstream: corpus A (the private corpus-A project's hold-out set) + corpus B (sealed HLMemo set); Phase 0 baselines; feature gate ≥ +X, no category worse than −Y for W2b/W2e/W3a/W3b/W3c | W-E, gates G-E-* |
 | Opus 2 agent-level A/B | 10 fixed tasks with/without memory, 3 reps, deterministic checks; gate at R2 and final | W-E, §6 step 10 |
 | Opus 3 dogfooding early | D1 right after R1 + W1.5; history reprocessed later by the librarian backfill; final D-051 test still last | §5 step 2 |
 | Opus 4 scope risk | Each feature must pass the W-E gate or ship disabled; Phase 4 reduced to its minimal demonstrated scope; W2e/W4c are the first cut candidates if W-E shows no gain | W-E, §4 |
 | Opus 5 RAM budget | Per-service hard limits (sum 6.5 GiB) + G-MEM 30-minute concurrent load-proof gate before R2/R3 | §6 |
+| D-058 Q1 VPS outer layer | Hostinger VPS firewall now (22/80/443 tcp, 443/udp inbound); Tailscale later | W0b, §6 R1 |
+| D-058 Q2 librarian autonomy | Replaced: the 14-day shadow mode is removed. Phase 5 controlled migration with the role ladder observer → assistant (per-batch owner approval) → autonomous (separate owner decision), promotion measured on migration data | §4b, W2b, G-L8, §5 |
+| D-058 Q3 global visibility | `hlm-global` for personal devices via explicit grants; work devices only when granted; cross-project widening propose-only in every role | CC-3, W2b, W4a |
+| D-058 Q4 spend | No cap during development; the atomic reservation stays as a runaway guard with generous defaults (+ hour window, per-job ceiling); budget set after development on price/performance | W2a, CC-5, G-L4 |
+| D-058 Q5 final test order | HLMemo → private corpus-A project → more owner projects if the librarian is not sufficiently exercised; remaining projects via W5c afterwards | §6 Parts A–C, §4b |
+| D-058 Q6 quality | +3 / −3 / W3c ≥ −1 are the first bar; then the optimize-to-best loop with a per-corpus leaderboard | W-E |
+| D-057 temporal regression | Gate G-E-TEMP in W2b: corpus-A stale-first ≤ 4/15 (from 8/15), plus a deterministic read-side supersession rule | W2b |
+| D-055/D-056 done | Title index, query-centred previews, DF filter and the test-DB guard marked DONE in the ledger; migrations renumbered after `0004_title_norm_fold` | §0, CC-1 |
