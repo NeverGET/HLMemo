@@ -1,205 +1,328 @@
-"""G-L3 — the LLM is down; the core does not notice (PHASE2-4-ROADMAP W2a).
+"""G-L3 — the LLM is down; the core does not notice (PHASE2-4-ROADMAP W2a; Sol 35 #3).
 
-Runs on the loaded G3 retrieval world (a CLONE of ``hlm_retr``: this test writes into it) with the
-librarian worker running in the same event loop against a stub provider:
+Production-shaped: the REAL ASGI app runs as its own uvicorn process (``python -m
+hlmemo.server.app``) and the librarian as its own worker process (``python -m
+hlmemo.librarian.worker``) against a stub OpenAI-compatible server, all on a CLONE of the loaded
+G3 retrieval world (``hlm_retr``; this test writes into it).
 
-1. the stub STALLS 30 s per request: 100 writes are acked (each enqueues a librarian job in its
-   own transaction), then the G4 query load (3 callers, fixture queries) runs while it stalls;
-2. the stub returns 503: the breaker opens, jobs are handed back without consuming attempts,
-   and the same query load runs again;
-3. recovery: the stub answers; every job completes — 0 lost (none failed, none left queued) and
-   0 duplicate ``librarian`` events (one per job).
+While 100 ``memory.write`` calls (≈6 kB bodies each, a librarian job enqueued after every ack) are
+being acknowledged, three query callers issue ``memory.query`` over HTTP continuously and every
+query is timed. The stub STALLS 30 s per request for the first 50 writes, then returns 503 (the
+breaker opens, jobs are handed back without consuming attempts). Afterwards the stub recovers and
+every job must complete — 0 lost, 0 duplicate ``librarian`` events.
 
-Gate: query p95 ≤ 500 ms across both loaded phases (the same bound as G4), 100/100 writes acked.
+Gate: query p95 ≤ 500 ms over the queries timed DURING the writes; 100/100 writes acked.
+
+Status 2026-09-23 (M3 Pro, dev db): FAILS — p95 ≈ 6.7 s before and after moving write-path
+chunking/tokenization off the event loop (the loop was not the bottleneck: the same slowdown
+appears when the writes come from a separate process). Measured causes are in the core read path:
+the trigram candidate query scans the GIN pending list of the burst (6.5 s statements; with
+``fastupdate=off`` on the chunk GIN indexes p95 falls to 589 ms) and every write invalidates the
+D-055 DF vocabulary, so the next query pays a ~210 ms ts_stat refresh (with both changes, as an
+uncommitted experiment, p95 = 470 ms → PASS). Both need a core decision (Sol 33 #1 requires the
+next query to see a write's DF).
+Opt-in (like O2): ``HLM_GL3=1 HLM_TEST_DSN=<clone of hlm_retr> pytest …test_gl3_llm_down.py``.
 """
 
 # ruff: noqa: F811 - pytest fixtures are imported into the module and requested by parameter name
 from __future__ import annotations
 
 import asyncio
+import json
 import os
-import random
+import signal
+import socket
 import statistics
+import subprocess
+import sys
+import threading
 import time
-from decimal import Decimal
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
+import httpx
+import psycopg
 import pytest
 
-from hlmemo.core.read_service import query
-from hlmemo.core.write_service import default_deps, write
-from hlmemo.librarian.budget import Caps
-from hlmemo.librarian.provider import Clock
-from tests.integration._librarian_fixtures import (
-    CONTRADICTS_B,
-    ScriptedLLM,
-    enqueue_pair,
-    lib_settings,
-    make_provider,
-    make_worker,
-    stub_chain,
-)
+from hlmemo.auth.tokens import hash_token
+from tests.integration._librarian_fixtures import CONTRADICTS_B, enqueue_pair, seed_reserved
 from tests.integration._read_fixtures import (  # noqa: F401 - fixtures by import
     MAIN,
     RetrWorld,
     _clean_tables,
     embedder,
     load_queries,
-    read_deps,
     retr_world,
 )
 
 pytestmark = [
     pytest.mark.integration,
-    # Opt-in like O2: it needs the loaded G3 world (10-15 min to build) on a disposable clone.
-    # HLM_GL3=1 HLM_TEST_DSN=<clone of hlm_retr> pytest tests/integration/test_g3_recall.py
-    #   tests/integration/test_g4_latency.py tests/integration/test_gl3_llm_down.py
     pytest.mark.skipif(os.environ.get("HLM_GL3") != "1", reason="G-L3 runs on a hlm_retr clone (HLM_GL3=1)"),
 ]
 
+ROOT = Path(__file__).resolve().parents[2]
 CALLERS = 3
-QUERIES_PER_PHASE = 150
 N_WRITES = 100
 P95_LIMIT_MS = 500.0
 STALL_S = 30.0
+LOADER_TOKEN = "hlm_" + "L" * 43
+READER_TOKEN = "hlm_" + "R" * 43
+MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
 
-class FastBackoff(Clock):
-    """Real monotonic time (the breaker window is real), backoff sleeps compressed 100×."""
+# --------------------------------------------------------------------------- stub provider
+class _Stub:
+    mode = "stall"
+    requests = 0
 
-    async def sleep(self, seconds: float) -> None:
-        await asyncio.sleep(seconds / 100)
+
+class _StubHandler(BaseHTTPRequestHandler):
+    def do_POST(self) -> None:  # noqa: N802
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        _Stub.requests += 1
+        mode = _Stub.mode
+        if mode == "stall":
+            time.sleep(STALL_S)
+            mode = "ok"
+        if mode == "503":
+            body, status = b'{"error":{"code":503,"message":"stub down"}}', 503
+        else:
+            body = json.dumps(
+                {
+                    "choices": [{"message": {"content": json.dumps(CONTRADICTS_B)}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 200, "completion_tokens": 20},
+                }
+            ).encode()
+            status = 200
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args: object) -> None:
+        pass
 
 
-async def _query_load(connect, world: RetrWorld, deps, n: int) -> list[float]:  # noqa: ANN001
-    qs = [q["query"] for q in load_queries()]
-    rng = random.Random(n)
-    picks = [rng.choice(qs) for _ in range(n)]
-    lat: list[float] = []
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
-    async def caller(i: int) -> None:
-        async with await connect() as conn:
-            for text in picks[i::CALLERS]:
-                t0 = time.perf_counter()
-                await query(
-                    conn, world.ctx_reader, {"project": MAIN, "query": text, "token_budget": 2000}, deps=deps
-                )
-                await conn.commit()
-                lat.append((time.perf_counter() - t0) * 1000)
 
-    await asyncio.gather(*(caller(i) for i in range(CALLERS)))
-    return lat
+_WORDS = (
+    "deploy review migration cache latency budget session card lesson retry queue worker index backup "
+    "restore token grant project device policy archive summary decision note sprint release config "
+    "Karte Dienst Speicher Abfrage Sitzung Entscheidung proje karar oturum kayıt yedek sürüm ayar"
+).split()
+
+
+def _body(i: int) -> str:
+    """≈ 6 kB of mixed-language prose with unique note ids. It deliberately avoids the G3 fixture's
+    query identifiers (svc-*, APP_*, E4xxx): repeating those 6,000 times would make every new
+    chunk a trigram candidate of every identifier query (a data artefact, measured: 6.5 s scans)."""
+    import random
+
+    rng = random.Random(i)
+    lines = [f"note-{i}-{k}: " + " ".join(rng.choice(_WORDS) for _ in range(12)) + "." for k in range(60)]
+    return "\n".join(lines)
+
+
+async def _rpc(client: httpx.AsyncClient, token: str, name: str, args: dict) -> dict:
+    msg = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}}
+    r = await client.post("/mcp", json=msg, headers={**MCP_HEADERS, "Authorization": f"Bearer {token}"})
+    r.raise_for_status()
+    text = r.text
+    if text.startswith("event:") or "data:" in text[:20]:
+        text = next(line[5:].strip() for line in text.splitlines() if line.startswith("data:"))
+    result = json.loads(text)["result"]
+    assert not result.get("isError"), result
+    return json.loads(result["content"][0]["text"])
+
+
+def _spawn(module: str, env: dict[str, str], cwd: Path, log_name: str) -> subprocess.Popen:
+    with open(cwd / log_name, "w") as log:  # the child keeps its own descriptor
+        return subprocess.Popen(
+            [sys.executable, "-m", module], cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT
+        )
 
 
 def _p95(values: list[float]) -> float:
     return statistics.quantiles(values, n=100)[94]
 
 
-async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWorld, read_deps) -> None:  # noqa: ANN001
-    world = retr_world
-    from tests.integration._librarian_fixtures import seed_reserved
+async def _wait_ready(base: str, proc: subprocess.Popen, limit_s: float = 180.0) -> None:
+    deadline = time.monotonic() + limit_s
+    async with httpx.AsyncClient(base_url=base, timeout=5) as c:
+        while time.monotonic() < deadline:
+            assert proc.poll() is None, "api process exited"
+            try:
+                if (await c.get("/ready")).status_code == 200:
+                    return
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(0.5)
+    raise AssertionError("api never became ready")
 
+
+async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWorld, tmp_path) -> None:  # noqa: ANN001
+    world = retr_world
     async with await connect() as conn:
         await seed_reserved(conn)
-    await _query_load(connect, world, read_deps, 20)  # warm-up (not measured)
+        for did, tok in ((world.loader_id, LOADER_TOKEN), (world.reader_id, READER_TOKEN)):
+            await conn.execute(
+                "UPDATE devices SET token_sha256 = %s WHERE device_id = %s", (hash_token(tok), did)
+            )
+        await conn.commit()
 
-    llm = ScriptedLLM(default=("stall", STALL_S, CONTRADICTS_B))
-    provider = make_provider(
-        db_dsn,
-        llm,
-        chain=stub_chain(fallback=False),
-        clock=FastBackoff(),
-        caps=Caps(Decimal(100), Decimal(100), Decimal(100)),
-        timeout_s=60.0,
-        breaker_open_s=1.0,
-        breaker_max_open_s=2.0,
+    stub_port, api_port = _free_port(), _free_port()
+    stub = ThreadingHTTPServer(("127.0.0.1", stub_port), _StubHandler)
+    threading.Thread(target=stub.serve_forever, daemon=True).start()
+    base_env = {k: v for k, v in os.environ.items() if not k.startswith("HLM_")}
+    base_env.update(
+        HLM_DB_DSN=db_dsn,
+        HLM_MODELS_DIR=os.environ.get("HLM_MODELS_DIR", str(ROOT / "models")),
+        PYTHONUNBUFFERED="1",
+        ORT_DISABLE_TELEMETRY="1",
     )
-    worker = make_worker(
-        lib_settings(db_dsn, librarian_poll_s=0.05, librarian_lease_s=120), provider, connect
-    )
-    stop = asyncio.Event()
-    runner = asyncio.create_task(worker.run_forever(stop))
+    api_env = {
+        **base_env,
+        "HLM_API_HOST": "127.0.0.1",
+        "HLM_API_PORT": str(api_port),
+        "HLM_CURSOR_SECRET": "gl3",
+    }
+    lib_env = {
+        **base_env,
+        "HLM_LIBRARIAN_ENABLED": "true",
+        "HLM_LLM_MODE": "live",
+        "HLM_LLM_BASE_URL": f"http://127.0.0.1:{stub_port}/v1",
+        "HLM_LLM_MODEL": "stub/model",
+        "HLM_LLM_API_KEY": "stub",
+        "HLM_PRICE_IN_PER_M": "1",
+        "HLM_PRICE_OUT_PER_M": "1",
+        "HLM_LLM_BREAKER_OPEN_S": "1",
+        "HLM_LLM_BREAKER_MAX_OPEN_S": "2",
+        "HLM_LIBRARIAN_POLL_S": "0.2",
+        "HLM_LIBRARIAN_HEARTBEAT_FILE": str(tmp_path / "hb.json"),
+    }
+    api = _spawn("hlmemo.server.app", api_env, tmp_path, "api.log")
+    lib = _spawn("hlmemo.librarian.worker", lib_env, tmp_path, "librarian.log")
+    base = f"http://127.0.0.1:{api_port}"
     candidates = sorted(world.version_to_logical)[:50]
+    lat: list[float] = []
+    write_ms: list[float] = []
+    quiet: list[float] = []
     try:
-        # phase 1: stalled provider; 100 writes, then the timed query load
-        deps = default_deps()
-        write_ms: list[float] = []
+        await _wait_ready(base, api)
+        queries = [q["query"] for q in load_queries()]
+        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+            for text in queries[:20]:  # warm-up, not timed
+                await _rpc(
+                    client,
+                    READER_TOKEN,
+                    "memory.query",
+                    {"project": MAIN, "query": text, "token_budget": 2000},
+                )
 
-        async def writes() -> int:
-            acked = 0
-            async with await connect() as conn:
-                for i in range(N_WRITES):
+            async def quiet_caller(i: int) -> None:  # reference: the same load with no writes
+                for k in range(i, 60, CALLERS):
                     t0 = time.perf_counter()
-                    res = await write(
-                        conn,
-                        world.ctx_loader,
-                        {
-                            "project": MAIN,
-                            "request_id": f"00000000-0000-4000-8000-{i:012d}",
-                            "client": "pytest/gl3",
-                            "items": [
-                                {
-                                    "kind": "fact",
-                                    "title": f"G-L3 note {i}",
-                                    "body": f"Load note {i}: svc-qx7 ok.",
-                                }
-                            ],
-                        },
-                        deps=deps,
+                    await _rpc(
+                        client,
+                        READER_TOKEN,
+                        "memory.query",
+                        {"project": MAIN, "query": queries[k % len(queries)], "token_budget": 2000},
                     )
-                    await enqueue_pair(
-                        conn,
-                        project_id=world.main_id,
-                        trigger_device_id=world.loader_id,
-                        subject_vid=res.versions[0].version_id,
-                        candidate_vids=[candidates[i % len(candidates)]],
-                        key=f"gl3:{i}",
-                    )
-                    await conn.commit()
-                    write_ms.append((time.perf_counter() - t0) * 1000)
-                    acked += 1
-            return acked
+                    quiet.append((time.perf_counter() - t0) * 1000)
 
-        # The writes run first: their chunking is CPU work in THIS event loop, which would otherwise
-        # be charged to the timed queries (in production writes run in the api process). The
-        # stalled librarian keeps running (lease renewal, heartbeat) while the queries are timed.
-        acked = await writes()
-        lat1 = await _query_load(connect, world, read_deps, QUERIES_PER_PHASE)
+            await asyncio.gather(*(quiet_caller(i) for i in range(CALLERS)))
+            done = asyncio.Event()
+
+            async def caller(i: int) -> None:
+                k = i
+                while not done.is_set():
+                    t0 = time.perf_counter()
+                    await _rpc(
+                        client,
+                        READER_TOKEN,
+                        "memory.query",
+                        {"project": MAIN, "query": queries[k % len(queries)], "token_budget": 2000},
+                    )
+                    lat.append((time.perf_counter() - t0) * 1000)
+                    k += CALLERS
+
+            async def writer() -> int:
+                acked = 0
+                async with await psycopg.AsyncConnection.connect(db_dsn) as conn:
+                    for i in range(N_WRITES):
+                        if i == N_WRITES // 2:
+                            _Stub.mode = "503"
+                        t0 = time.perf_counter()
+                        ack = await _rpc(
+                            client,
+                            LOADER_TOKEN,
+                            "memory.write",
+                            {
+                                "project": MAIN,
+                                "request_id": str(uuid.uuid4()),
+                                "client": "pytest/gl3",
+                                "items": [{"kind": "fact", "title": f"G-L3 note {i}", "body": _body(i)}],
+                            },
+                        )
+                        write_ms.append((time.perf_counter() - t0) * 1000)
+                        acked += 1
+                        await enqueue_pair(
+                            conn,
+                            project_id=world.main_id,
+                            trigger_device_id=world.loader_id,
+                            subject_vid=ack["versions"][0]["version_id"],
+                            candidate_vids=[candidates[i % len(candidates)]],
+                            key=f"gl3:{i}",
+                        )
+                        await conn.commit()
+                done.set()
+                return acked
+
+            results = await asyncio.gather(writer(), *(caller(i) for i in range(CALLERS)))
+            acked = results[0]
         assert acked == N_WRITES
-        assert llm.calls >= 1 and worker.stats.jobs_done == 0  # the librarian is stuck in the stall
 
-        # phase 2: hard outage (503) once the stalled call returns; the breaker opens
-        llm.default = 503
-        lat2 = await _query_load(connect, world, read_deps, QUERIES_PER_PHASE)
-        deadline = time.monotonic() + STALL_S + 30
-        while provider.breaker_state() != "open" and time.monotonic() < deadline:  # noqa: ASYNC110
-            await asyncio.sleep(0.2)
-        assert provider.breaker_state() == "open"
-
-        # phase 3: recovery
-        llm.default = CONTRADICTS_B
-        deadline = time.monotonic() + 300
+        # the provider is still down: wait for the breaker to have opened, then recover
+        deadline = time.monotonic() + STALL_S + 60
+        while _Stub.requests < 3 and time.monotonic() < deadline:  # noqa: ASYNC110
+            await asyncio.sleep(0.5)
+        _Stub.mode = "ok"
+        deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
             async with await connect() as conn:
                 cur = await conn.execute(
                     "SELECT count(*) FILTER (WHERE status = 'done'), count(*) FROM jobs"
-                    " WHERE kind = 'librarian_write' AND dedupe_key LIKE 'librarian_write:gl3:%'"
+                    " WHERE dedupe_key LIKE 'librarian_write:gl3:%'"
                 )
-                done, total = await cur.fetchone()
+                n_done, total = await cur.fetchone()
                 await conn.commit()
-            if done == total == N_WRITES:
+            if n_done == total == N_WRITES:
                 break
-            await asyncio.sleep(0.5)
+            assert lib.poll() is None, "librarian process exited"
+            await asyncio.sleep(1)
     finally:
-        stop.set()
-        await runner
-        await provider.aclose()
+        for proc in (lib, api):
+            if proc.poll() is None:
+                proc.send_signal(signal.SIGTERM)
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+        stub.shutdown()
 
-    lat = lat1 + lat2
     p95 = _p95(lat)
     print(
-        f"\nG-L3: {len(lat)} queries p50 {statistics.median(lat):.1f} ms p95 {p95:.1f} ms;"
-        f" writes {N_WRITES} acked, write p95 {_p95(write_ms):.1f} ms; provider requests {llm.calls};"
-        f" jobs released {worker.stats.jobs_released}"
+        f"\nG-L3 (real api + librarian processes): {len(lat)} queries during {N_WRITES} writes:"
+        f" p50 {statistics.median(lat):.1f} ms p95 {p95:.1f} ms max {max(lat):.1f} ms;"
+        f" write p50 {statistics.median(write_ms):.1f} ms p95 {_p95(write_ms):.1f} ms;"
+        f" stub requests {_Stub.requests}; reference without writes: {len(quiet)} queries"
+        f" p50 {statistics.median(quiet):.1f} ms p95 {_p95(quiet):.1f} ms"
     )
     assert p95 <= P95_LIMIT_MS
     async with await connect() as conn:
@@ -208,7 +331,8 @@ async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWor
         )
         assert dict(await cur.fetchall()) == {"done": N_WRITES}  # 0 lost
         cur = await conn.execute(
-            "SELECT count(*), count(DISTINCT payload->'resolved'->>'done_job') FROM events"
-            " WHERE kind = 'librarian' AND payload->'resolved'->>'done_job' LIKE 'librarian_write:gl3:%'"
+            "SELECT count(*), count(DISTINCT payload->'resolved'->'done'->>'dedupe_key') FROM events"
+            " WHERE kind = 'librarian'"
+            " AND payload->'resolved'->'done'->>'dedupe_key' LIKE 'librarian_write:gl3:%'"
         )
         assert await cur.fetchone() == (N_WRITES, N_WRITES)  # 0 duplicate librarian events
