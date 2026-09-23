@@ -367,6 +367,15 @@ class LibrarianWorker:
                 continue
             if not actor.readable(ctx, caps, prop.project_ids):
                 raise AuthorityLost("E_QUESTION_CAPABILITY")
+            if plan.op == "write_review" and await actor.pending_question_exists(
+                conn, prop.kind, sorted(set(prop.assessed.values()))
+            ):
+                # the same pair was already proposed (e.g. reviewed from its other side by an
+                # earlier job): one question per pending proposal, never a duplicate for the owner
+                plan.request_extra["duplicate_proposals"] = (
+                    plan.request_extra.get("duplicate_proposals", 0) + 1
+                )
+                continue
             questions.append(
                 {
                     "question_id": str(uuid.uuid5(NS_LIBRARIAN, f"{job.dedupe_key}#{i}")),
