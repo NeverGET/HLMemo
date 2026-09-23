@@ -1,0 +1,2 @@
+- [Testing feedback](feedback_testing.md) — integration tests must hit a real database, never mocks
+- [Project state](project_state.md) — the fixture project is in its migration phase

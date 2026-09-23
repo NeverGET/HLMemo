@@ -45,6 +45,7 @@ class VersionRow:
     source_event_id: int
     supersedes_version_id: int | None = None
     last_access_at: datetime | None = None
+    source: dict[str, Any] | None = None  # W1.5 provenance (0007); source_key is derived in SQL
 
 
 @dataclass(slots=True)
@@ -181,7 +182,7 @@ async def session_closed(conn: AsyncConnection, project_id: int, session_id: str
 _VERSION_COLS = """
     version_id, logical_id, project_id, project_ids, device_scope, kind, status, title, body, tags,
     pinned, stability, importance, token_count, valid_from, nullif(valid_to, 'infinity'), recorded_at,
-    source_event_id, supersedes_version_id, last_access_at
+    source_event_id, supersedes_version_id, last_access_at, source
 """
 
 
@@ -337,16 +338,25 @@ async def insert_event(
     )
 
 
+def source_key_sql(col: str) -> str:
+    """The ONE spelling of ``source_key`` from a ``source`` jsonb expression (W1.5). Migration 0007
+    enforces the same expression with CHECK ``mv_source_key_derived`` (a unit test pins both), so
+    every insert derives the key in SQL from the row's own ``source``, never in Python."""
+    return f"CASE WHEN {col} IS NULL THEN NULL ELSE ({col} ->> 'system') || ':' || ({col} ->> 'path') END"
+
+
 async def insert_version(conn: AsyncConnection, v: VersionRow) -> None:
+    src = Jsonb(v.source) if v.source is not None else None
     await conn.execute(
-        """
+        f"""
         INSERT INTO memory_versions
             (version_id, logical_id, project_id, project_ids, device_scope, kind, status, title, body,
              tags, pinned, stability, importance, token_count, valid_from, valid_to, recorded_at,
-             source_event_id, supersedes_version_id, last_access_at)
+             source_event_id, supersedes_version_id, last_access_at, source, source_key)
         OVERRIDING SYSTEM VALUE
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                COALESCE(%s, 'infinity'::timestamptz), %s, %s, %s, %s)
+                COALESCE(%s, 'infinity'::timestamptz), %s, %s, %s, %s, %s::jsonb,
+                {source_key_sql("%s::jsonb")})
         """,
         (
             v.version_id,
@@ -369,6 +379,10 @@ async def insert_version(conn: AsyncConnection, v: VersionRow) -> None:
             v.source_event_id,
             v.supersedes_version_id,
             v.last_access_at,
+            src,
+            src,  # source_key_sql references the parameter three times
+            src,
+            src,
         ),
     )
 

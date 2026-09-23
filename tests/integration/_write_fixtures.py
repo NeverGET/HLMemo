@@ -124,4 +124,6 @@ async def dump_projections(conn: psycopg.AsyncConnection) -> dict[str, list[str]
         " FROM jobs ORDER BY dedupe_key"
     )
     out["jobs"] = [r[0] for r in await cur.fetchall()]
+    cur = await conn.execute("SELECT t::text FROM code_refs t ORDER BY version_id, path")  # W1.5
+    out["code_refs"] = [r[0] for r in await cur.fetchall()]
     return out

@@ -669,7 +669,7 @@ async def test_admin_bypasses_grants_not_device_scope(db_dsn, connect) -> None:
             )
         cur = await conn.execute(
             "SELECT device_scope FROM memory_versions WHERE %s = ANY(project_ids) AND device_scope = ANY(%s)"
-            " ORDER BY device_scope",
+            " AND kind <> 'project_card' ORDER BY device_scope",  # D-015: the skeleton card is 'all' too
             (pid, list(ctx.scope_values())),
         )
         visible = [r[0] for r in await cur.fetchall()]

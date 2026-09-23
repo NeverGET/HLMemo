@@ -1,0 +1,57 @@
+{
+ "closed": [],
+ "counts": {
+  "changed": 0,
+  "closed": 0,
+  "missing": 0,
+  "new": 3,
+  "rejected": 0,
+  "skipped": 0,
+  "unchanged": 0
+ },
+ "dry_run": true,
+ "duplicate_groups": [],
+ "items": [
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:MEMORY.md",
+   "kind": "fact",
+   "sha256": "23abc4c32c09e77a4ac9fc60cd73ed2684101f023cbd9e8af596438630dd47b8",
+   "title": "MEMORY · MEMORY.md",
+   "tokens": 40,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:feedback_testing.md",
+   "kind": "lesson",
+   "sha256": "ede844112ab8bf1426e5eea09074f3b31ef2ace46c17f3459cd690c821651461",
+   "title": "Testing feedback · feedback_testing.md",
+   "tokens": 49,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "frontmatter:date",
+   "key": "automemory:project_state.md",
+   "kind": "fact",
+   "sha256": "a72c1123a3c3fd5d5f61073b47e8b3555081c8e595702ce9b2b4dc0ed9db0507",
+   "title": "Project state · project_state.md",
+   "tokens": 55,
+   "valid_from": "2026-04-02T00:00:00Z"
+  }
+ ],
+ "missing": [],
+ "project": "fx",
+ "rejected": [],
+ "remapped": [],
+ "skipped": [],
+ "source": "automemory",
+ "token_estimate": {
+  "items": 3,
+  "tokenizer": "o200k_base",
+  "tokens": 144
+ }
+}

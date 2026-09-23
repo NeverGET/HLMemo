@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import secrets
 import subprocess
 import sys
@@ -360,7 +361,12 @@ async def test_ops_mint_roundtrip(db_dsn, connect) -> None:
     minted = next(r[3] for r in rows if r[0] == "device_minted")
     assert minted["resolved"]["device_id"] == device_id and minted["resolved"]["via"] == "mint"
     assert token not in json.dumps([r[3] for r in rows]), "a token must never enter an event"
-    assert await scalar(connect, "SELECT count(*) FROM events WHERE kind = 'write'") == 1
+    # one client write + the D-015 skeleton card of each of the two ops-created projects
+    assert await scalar(connect, "SELECT count(*) FROM events WHERE kind = 'write'") == 3
+    assert (
+        await scalar(connect, "SELECT count(*) FROM events WHERE kind = 'write' AND client LIKE 'hlm-ops/%%'")
+        == 2
+    )
     async with await connect() as conn:
         before = await dump_projections(conn)
         await rebuild_projections(conn)
@@ -372,6 +378,8 @@ async def test_ops_cli_prints_only_the_token(db_dsn, connect) -> None:
     """`python -m hlmemo.ops device mint` stdout is exactly the token; metadata goes to stderr."""
     # HLM_API_PORT=9: `status` reads /ready on the loopback listener; never probe the dev stack here.
     env = {"PATH": "/usr/bin:/bin", "HLM_DB_DSN": db_dsn, "HLM_API_PORT": "9"}
+    # project create writes the D-015 skeleton card: the tokenizer/meter assets (the image sets these)
+    env.update({k: os.environ[k] for k in ("HLM_MODELS_DIR", "TIKTOKEN_CACHE_DIR") if k in os.environ})
     run = lambda *a: subprocess.run(  # noqa: E731
         [sys.executable, "-m", "hlmemo.ops", *a], env=env, capture_output=True, text=True, timeout=60
     )
@@ -406,7 +414,7 @@ async def test_ops_cli_prints_only_the_token(db_dsn, connect) -> None:
     assert run("device", "mint", "--name", "w0-cli-dev", "--class", "ci").returncode == 2  # name taken
     assert run("device", "revoke", "w0-cli-dev").returncode == 0
     status = json.loads(run("status", "--json").stdout)
-    assert status["devices"] == {"revoked": 1} and status["migration"] == ["0006_librarian"]
+    assert status["devices"] == {"revoked": 1} and status["migration"] == ["0007_import"]
     assert status["ready"]["status"] == "unreachable"  # no API on the loopback port in this test
 
 
@@ -625,7 +633,7 @@ async def test_check_edge_routes_against_a_real_listener(db_dsn, connect) -> Non
     # Sol 34 #6: the public route saw status only; operators get the details via hlmemo.ops.
     assert status.returncode == 0, status.stderr
     ready = json.loads(status.stdout)["ready"]
-    assert ready["status"] == "ready" and ready["checks"]["migration"]["expected"] == "0006_librarian"
+    assert ready["status"] == "ready" and ready["checks"]["migration"]["expected"] == "0007_import"
     assert "RESULT routes PASS" in proc.stdout
     assert "hlm_" not in proc.stdout + proc.stderr, "a token was printed"
     # The checker's device revoked itself through the public self-revoke route.
@@ -654,7 +662,12 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
         return subprocess.run(
             [sys.executable, "-m", "alembic", *args],
             cwd=ROOT,
-            env={"PATH": "/usr/bin:/bin", "HLM_DB_DSN": dsn},
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HLM_DB_DSN": dsn,
+                # 0007 backfill: tokenizer + tiktoken cache (only for non-reserved projects)
+                **{k: os.environ[k] for k in ("HLM_MODELS_DIR", "TIKTOKEN_CACHE_DIR") if k in os.environ},
+            },
             capture_output=True,
             text=True,
             timeout=180,
@@ -672,7 +685,7 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
         assert version() == [(start,)]
         up = alembic("upgrade", "main@head")
         assert up.returncode == 0, up.stderr
-        assert version() == [("0006_librarian",)]
+        assert version() == [("0007_import",)]
         with psycopg.connect(dsn) as conn:
             assert conn.execute(
                 "SELECT 1 FROM information_schema.columns"
@@ -681,7 +694,7 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
     down = alembic("downgrade", "0004_title_norm_fold")
     assert down.returncode == 0, down.stderr
     assert alembic("upgrade", "phase0@head").returncode == 0  # the old label resolves the same head
-    assert version() == [("0006_librarian",)]
+    assert version() == [("0007_import",)]
     # device_minted events are authoritative: the downgrade refuses instead of rewriting them.
     with psycopg.connect(dsn) as conn:
         conn.execute(

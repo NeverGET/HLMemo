@@ -1,0 +1,62 @@
+{
+ "closed": [],
+ "counts": {
+  "changed": 0,
+  "closed": 0,
+  "missing": 0,
+  "new": 3,
+  "rejected": 0,
+  "skipped": 1,
+  "unchanged": 0
+ },
+ "dry_run": true,
+ "duplicate_groups": [],
+ "items": [
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "context:.mcp.json",
+   "kind": "fact",
+   "sha256": "58d8c3023c625de2f5f50dcb7daf59f718bf03f6d8b5cfe77de1c22fe1fe8097",
+   "title": "MCP server configuration · .mcp.json",
+   "tokens": 46,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "context:AGENTS.md",
+   "kind": "fact",
+   "sha256": "0c05c009b7195841ea380b75f612639d62989baaa1287b5c64d308ceace77db7",
+   "title": "Agents · AGENTS.md",
+   "tokens": 23,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "context:CLAUDE.md",
+   "kind": "fact",
+   "sha256": "5b2b7ab49d457632b036e75c3c85a1a933eac6cddf45c39bbb970eef4efacb01",
+   "title": "Fixture project — agent instructions · CLAUDE.md",
+   "tokens": 28,
+   "valid_from": null
+  }
+ ],
+ "missing": [],
+ "project": "fx",
+ "rejected": [],
+ "remapped": [],
+ "skipped": [
+  {
+   "path": "sub/CLAUDE.md",
+   "reason": "stub-of:../AGENTS.md"
+  }
+ ],
+ "source": "context",
+ "token_estimate": {
+  "items": 3,
+  "tokenizer": "o200k_base",
+  "tokens": 97
+ }
+}

@@ -1,0 +1,156 @@
+{
+ "closed": [],
+ "counts": {
+  "changed": 0,
+  "closed": 0,
+  "missing": 0,
+  "new": 9,
+  "rejected": 1,
+  "skipped": 3,
+  "unchanged": 0
+ },
+ "dry_run": true,
+ "duplicate_groups": [
+  {
+   "kept": "docs/notes/plain.md",
+   "paths": [
+    "docs/notes/plain.md",
+    "docs/notes/archive/plain.md"
+   ],
+   "reason": "same_content"
+  },
+  {
+   "key": "plain",
+   "paths": [
+    "docs/notes/plain.md",
+    "docs/other/plain.md"
+   ],
+   "reason": "same_name"
+  }
+ ],
+ "items": [
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "markdown:docs/decisions/DECISIONS.md",
+   "kind": "fact",
+   "sha256": "3023535d44d3d89b159c2d08f33b3364344676967c268ad543637d38ec2ad28c",
+   "title": "Fixture — Decision Log (append-only) · docs/decisions/DECISIONS.md",
+   "tokens": 26,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "decision-row",
+   "key": "markdown:docs/decisions/DECISIONS.md#D-001",
+   "kind": "fact",
+   "sha256": "3b164c0584e9c7ae21194427cf39b2325ab094399d6b0ff4c90f7f4f92466932",
+   "title": "D-001 · ACCEPTED: The fixture service stores sessions in Postgres, not Redis. · docs/decisions/DECISIONS.md",
+   "tokens": 44,
+   "valid_from": "2026-01-05T00:00:00Z"
+  },
+  {
+   "action": "new",
+   "evidence": "decision-row",
+   "key": "markdown:docs/decisions/DECISIONS.md#D-002",
+   "kind": "fact",
+   "sha256": "18c5f65e1b1b2d5ae396fe47d06fd1b067f9e07824a2908ffbc867fbeeb07479",
+   "title": "D-002 · ACCEPTED: Retries back off exponentially up to 30 seconds (supersedes the fixed 5-second retry). · docs/decisions/DECISIONS.md",
+   "tokens": 53,
+   "valid_from": "2026-02-11T00:00:00Z"
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "markdown:docs/notes/changelog.md",
+   "kind": "doc_chunk",
+   "sha256": "7f797e8e5e41a88ea75180c004707a7f7f2404abbd0bfb5bdc75c585e57e5e98",
+   "title": "Fixture changelog · docs/notes/changelog.md",
+   "tokens": 20,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "dated-heading",
+   "key": "markdown:docs/notes/changelog.md#2026-01-10-queue-introduced",
+   "kind": "episode",
+   "sha256": "24463afe359b5e84a1ee148729c745b54c39865e49992c31390c3b6e8044aff1",
+   "title": "2026-01-10 — Queue introduced · docs/notes/changelog.md",
+   "tokens": 28,
+   "valid_from": "2026-01-10T00:00:00Z"
+  },
+  {
+   "action": "new",
+   "evidence": "dated-heading",
+   "key": "markdown:docs/notes/changelog.md#2026-02-01-lease-renewal",
+   "kind": "episode",
+   "sha256": "ac260b9539eae92debef3300d2f385b3d823182c0cdb389664c62c026ade4795",
+   "title": "2026-02-01 — Lease renewal · docs/notes/changelog.md",
+   "tokens": 32,
+   "valid_from": "2026-02-01T00:00:00Z"
+  },
+  {
+   "action": "new",
+   "describes": [
+    "src/app/main.py"
+   ],
+   "evidence": "frontmatter:date",
+   "key": "markdown:docs/notes/frontmatter-date.md",
+   "kind": "doc_chunk",
+   "sha256": "a892c3e4f860e6ff9faccab3a7525a0f21360b8fcaf25ac8db50e7536e493bd8",
+   "title": "Startup order · docs/notes/frontmatter-date.md",
+   "tokens": 50,
+   "valid_from": "2026-03-05T00:00:00Z"
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "markdown:docs/notes/plain.md",
+   "kind": "doc_chunk",
+   "sha256": "e4289cb3c7b50eb323143cb5b28a1123c0f3243a3165cce5fd9b8a078d02910d",
+   "title": "Plain note · docs/notes/plain.md",
+   "tokens": 21,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "markdown:docs/other/plain.md",
+   "kind": "doc_chunk",
+   "sha256": "f100ededf41db97d2738ba3c67ab75fd327571f31e30166392f67109318001cc",
+   "title": "Another plain note · docs/other/plain.md",
+   "tokens": 22,
+   "valid_from": null
+  }
+ ],
+ "missing": [],
+ "project": "fx",
+ "rejected": [
+  {
+   "date": "2099-01-01T00:00:00Z",
+   "key": "markdown:docs/decisions/DECISIONS.md#D-003",
+   "reason": "future_evidence_date"
+  }
+ ],
+ "remapped": [],
+ "skipped": [
+  {
+   "path": "docs/notes/archive/plain.md",
+   "reason": "duplicate-of:docs/notes/plain.md"
+  },
+  {
+   "path": "docs/notes/empty.md",
+   "reason": "empty"
+  },
+  {
+   "path": "docs/notes/stub.md",
+   "reason": "stub-of:plain.md"
+  }
+ ],
+ "source": "markdown",
+ "token_estimate": {
+  "items": 9,
+  "tokenizer": "o200k_base",
+  "tokens": 296
+ }
+}

@@ -8,6 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from hlmemo.auth.errors import HlmError
+from hlmemo.core.skeleton_card import write_skeleton_card
 from hlmemo.db import auth_queries as q
 from hlmemo.server.common import SLUG_RE, auth_of, conn_of, parse_body, project_view
 from hlmemo.server.errors import from_db_error
@@ -54,6 +55,15 @@ async def projects_create(request: Request) -> JSONResponse:
         client=ctx.client,
         request={"device": ctx.device_id, "project": body.slug, "role": "admin"},
         resolved={"device_id": ctx.device_id, "project_id": pid, "via": "project_create"},
+    )
+    # D-015: the deterministic skeleton card, in the same request transaction
+    await write_skeleton_card(
+        conn,
+        slug=body.slug,
+        name=body.name,
+        card_logical_id=int(row["card_logical_id"]),
+        client=ctx.client,
+        ctx=ctx,
     )
     return JSONResponse({"project": project_view(row)}, status_code=201)
 

@@ -7,7 +7,9 @@ Shape validation (types, ranges, enums) lives here and surfaces as ``E_INVALID_A
 
 from __future__ import annotations
 
+import re
 import uuid
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -58,6 +60,55 @@ class LinkSpec(_Strict):
         return v
 
 
+SOURCE_SYSTEM_RE = r"^[a-z][a-z0-9_-]{0,31}$"
+SOURCE_PATH_MAX = 512  # W1.5 contract: source.path <= 512
+DESCRIBES_MAX = 16  # W1.5 contract: describes <= 16 paths
+DESCRIBES_PATH_MAX = 256  # each describes path <= 256
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _ts_or_none(v: str | None, field: str) -> str | None:
+    if v is None:
+        return v
+    try:
+        datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be an ISO-8601 timestamp") from exc
+    return v
+
+
+class SourceSpec(_Strict):
+    """W1.5 provenance of an imported item (PHASE2-4-ROADMAP W1.5 *Contract (Item)*).
+
+    ``mtime`` and ``commit_date`` are provenance only: they never set ``valid_from`` or
+    ``recorded_at`` (D-020 deviation, Sol #6). ``source_key = system || ':' || path`` is derived
+    by the database (migration 0007) and at most one current logical item per project owns it."""
+
+    system: str = Field(pattern=SOURCE_SYSTEM_RE)
+    path: str = Field(min_length=1, max_length=SOURCE_PATH_MAX)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    mtime: str | None = None
+    commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{7,64}$")
+    commit_date: str | None = None
+
+    @field_validator("path")
+    @classmethod
+    def _path_text(cls, v: str) -> str:
+        if _CONTROL.search(v):
+            raise ValueError("source.path must not contain control characters")
+        return v
+
+    @field_validator("mtime")
+    @classmethod
+    def _mtime(cls, v: str | None) -> str | None:
+        return _ts_or_none(v, "source.mtime")
+
+    @field_validator("commit_date")
+    @classmethod
+    def _commit_date(cls, v: str | None) -> str | None:
+        return _ts_or_none(v, "source.commit_date")
+
+
 class Item(_Strict):
     kind: Kind
     logical_id: int | None = Field(default=None, ge=1)
@@ -73,13 +124,40 @@ class Item(_Strict):
     valid_from: str | None = None
     valid_to: str | None = None
     links: list[LinkSpec] = Field(default_factory=list, max_length=ITEM_LINKS_MAX)
+    # W1.5 (optional; absent → the item is byte-identical to a Phase-0 item in resolved.write)
+    source: SourceSpec | None = None
+    describes: list[str] | None = Field(default=None, max_length=DESCRIBES_MAX)
+    # W1.5 `close`: the fact stopped being true at valid_to (default: occurred_at, i.e. server now).
+    # A correction of [valid_from, valid_to) whose superseded segments keep NO part after valid_to
+    # (invalidate, never delete). Revisions only; None (not False) when unset so resolved.write of
+    # ordinary items is unchanged.
+    close: bool | None = None
 
     _device_scope = field_validator("device_scope")(canonical_device_scope)
+
+    @field_validator("describes")
+    @classmethod
+    def _describes(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        for p in v:
+            if not 1 <= len(p) <= DESCRIBES_PATH_MAX:
+                raise ValueError(f"describes paths must be 1..{DESCRIBES_PATH_MAX} characters")
+            if _CONTROL.search(p):
+                raise ValueError("describes paths must not contain control characters")
+        if len(set(v)) != len(v):
+            raise ValueError("describes must not contain duplicates")
+        return v
 
     @model_validator(mode="after")
     def _shared_card(self) -> Item:
         if self.kind == "project_card" and self.device_scope != "all":
             raise ValueError('project_card device_scope must be "all"')
+        if self.close:
+            if self.kind == "project_card":
+                raise ValueError("a project card cannot be closed")
+            if self.logical_id is None or self.valid_from is None:
+                raise ValueError("close needs logical_id, expected_version_id and valid_from")
         return self
 
     @field_validator("project_ids", mode="before")
@@ -259,6 +337,7 @@ __all__ = [
     "LessonSpec",
     "LinkSpec",
     "Rel",
+    "SourceSpec",
     "VersionAck",
     "WriteRequest",
     "WriteResult",
