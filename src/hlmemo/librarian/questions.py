@@ -178,8 +178,9 @@ async def answer(
 
         now = await q.clock_now(conn)
         answerable = status in ANSWERABLE or (status == "approved" and kind == "widen_scope")
-        if not answerable or (expires_at is not None and expires_at <= now and status == "open"):
-            shown = "expired" if status == "open" else status
+        expired = expires_at is not None and expires_at <= now
+        if not answerable or expired:  # past 30 days nothing is applied, approved or not (Sol 41 #2)
+            shown = "expired" if answerable and expired else status
             raise ToolError("E_VERSION_CONFLICT", f"the question is {shown}", status=shown)
 
         redactor = Redactor()
@@ -200,9 +201,18 @@ async def answer(
             if await actor.is_stale(conn, {"assessed": assessed}):
                 new_status = "superseded"
             else:
-                records, recorded = await actor.materialize(
-                    conn, None, None, [a for a in actions if a.get("op") != "widen_scope"]
-                )
+                from hlmemo.librarian.errors import AuthorityLost
+                from hlmemo.librarian.trigger import capabilities_from_ctx
+
+                caps = capabilities_from_ctx(ctx, sorted(union))  # the ANSWERING device (CC-3)
+                try:
+                    records, recorded = await actor.materialize(
+                        conn, ctx, caps, [a for a in actions if a.get("op") != "widen_scope"]
+                    )
+                except AuthorityLost as exc:
+                    raise ToolError(
+                        "E_FORBIDDEN_PROJECT", "the answering device may not apply this action"
+                    ) from exc
                 for a in actions:
                     if a.get("op") == "widen_scope":
                         vid, ev = await _widen(conn, ctx, a, request.request_id)
@@ -217,7 +227,7 @@ async def answer(
                 ]
                 jobs = actor.close_embed_jobs(records)
         elif request.decision == "custom":
-            jobs = await _replan_job(conn, ctx, pid, qid, [int(v) for v in subject_vids])
+            jobs = await _replan_job(conn, ctx, pid, qid, [int(v) for v in subject_vids], note)
         rule_vid = await _rule(
             conn, kind, proposal, request.decision, note, list(clues), qid, request.request_id
         )
@@ -326,10 +336,16 @@ async def _slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[int, str
 
 
 async def _replan_job(
-    conn: AsyncConnection, ctx: AuthContext, project_id: int, question_id: str, subject_vids: list[int]
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    project_id: int,
+    question_id: str,
+    subject_vids: list[int],
+    note: str | None,
 ) -> list[dict[str, Any]]:
     """``custom``: re-plan = a ``write_review`` of the subjects that are still current, under the
-    ANSWERING device's capabilities; the answer rule is in working memory for that job."""
+    ANSWERING device's capabilities; the owner's (redacted) note travels in this job's payload
+    only and is shown to the model as a rule of this one job."""
     from hlmemo.librarian.tasks.write_review import MAX_VERSIONS, OP
     from hlmemo.librarian.trigger import capabilities_from_ctx, librarian_on
 
@@ -360,6 +376,7 @@ async def _replan_job(
                 "project_id": project_id,
                 "capabilities": capabilities_from_ctx(ctx, [project_id]),
                 "lineage": str(uuid.uuid5(NS_LIBRARIAN, "lineage:" + key)),
+                **({"owner_note": note[:500]} if note else {}),
             },
         )
     ]
@@ -384,28 +401,25 @@ async def _rule(
     question_id: str,
     request_id: str,
 ) -> int | None:
-    """Every answer becomes a ``librarian-rule`` fact; a note that reproduces item text (the D-062
-    overlap guard) is left out of the rule rather than failing the answer."""
+    """Every answer becomes a ``librarian-rule`` fact built ONLY from the structured decision (the
+    deterministic ``rule_text``: decision, kind, relation, clue refs). The free-text note never
+    enters working memory, which every job of every project loads (Sol 41 #1); it stays in the
+    question's ``answer`` and reaches only this project's re-plan job."""
     from hlmemo.librarian.memory import MAX_RULE_CHARS, write_rule
 
-    base = rule_text(kind, proposal, decision, clues)
-    texts = [f"{base} Note: {note}"[:MAX_RULE_CHARS]] if note else []
-    texts.append(base[:MAX_RULE_CHARS])
     projects = [int(p) for a in proposal_actions(proposal) for p in a.get("project_ids") or []]
-    for i, text in enumerate(texts):
-        try:
-            async with conn.transaction():
-                return await write_rule(
-                    conn,
-                    title=f"Answer: {kind} {question_id[:8]}",
-                    text=text,
-                    clue_refs=[c for c in clues if c.startswith("v")],
-                    dedupe=f"answer:{question_id}:{request_id}:{i}",
-                    source_project_ids=projects,
-                )
-        except ToolError:
-            continue
-    return None
+    try:
+        async with conn.transaction():
+            return await write_rule(
+                conn,
+                title=f"Answer: {kind} {question_id[:8]}",
+                text=rule_text(kind, proposal, decision, clues)[:MAX_RULE_CHARS],
+                clue_refs=[c for c in clues if c.startswith("v")],
+                dedupe=f"answer:{question_id}:{request_id}",
+                source_project_ids=projects,
+            )
+    except ToolError:
+        return None
 
 
 # --------------------------------------------------------------------------- expiry (30 days)

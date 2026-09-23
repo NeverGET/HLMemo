@@ -72,6 +72,14 @@ FIXTURES: dict[str, tuple[str, str]] = {
     ),
 }
 THRESHOLDS = {"placement": 0.90, "contradiction_exact": 0.90, "false_supersede_max": 0.02}
+#: Sol 41: the overall exact rate is dominated by `none` pairs, so the positive classes, the
+#: supersession direction and false cross-project raises carry their own worst-over-reps bars.
+CLASS_THRESHOLDS = {
+    "positive_recall": 0.85,  # gold relation != none decided exactly (relation + direction)
+    "positive_precision": 0.90,  # raised decisions that match gold exactly
+    "direction": 0.90,  # gold supersessions decided with the right direction
+    "false_cross_raise_max": 0.02,  # cross-project gold-none pairs raised (widen/question)
+}
 MAX_JSON_FAIL_RATE = 0.02
 PLACE_BATCH = 4
 
@@ -125,9 +133,15 @@ def placement_rows(fx: dict[str, Any]) -> list[tuple[Row, dict[str, Any]]]:
 
 
 # --------------------------------------------------------------------------- one rep
-async def _call(provider: Provider, task: str, payload: dict[str, Any], rec: dict[str, Any]) -> Any:
+async def _call(
+    provider: Provider,
+    task: str,
+    payload: dict[str, Any],
+    rec: dict[str, Any],
+    chain: list[Any] | None = None,
+) -> Any:
     try:
-        res = await provider.complete(load_task(task), user_message(task, payload))
+        res = await provider.complete(load_task(task), user_message(task, payload), chain=chain)
     except BudgetDeferred as exc:
         raise GateAbort(f"MAX_USD runaway guard tripped: {exc}") from exc
     except SchemaFail:
@@ -142,7 +156,12 @@ async def _call(provider: Provider, task: str, payload: dict[str, Any], rec: dic
     return res
 
 
-async def run_rep(provider: Provider, rel_fx: dict[str, Any], place_fx: dict[str, Any]) -> dict[str, Any]:
+async def run_rep(
+    provider: Provider,
+    rel_fx: dict[str, Any],
+    place_fx: dict[str, Any],
+    verifier_chain: list[Any] | None = None,
+) -> dict[str, Any]:
     redactor = provider.redactor
     rec: dict[str, Any] = {"calls": 0, "json_fail": 0, "infra_error": 0, "latency_ms": []}
     # placement
@@ -188,8 +207,8 @@ async def run_rep(provider: Provider, rel_fx: dict[str, Any], place_fx: dict[str
             if kind is not None:
                 todo.append((e, j, kind))
         if todo:
-            items = verify_payload([(s, e["row"]) for e, _, _ in todo])
-            vres = await _call(provider, "relate_verify", {"pairs": items}, rec)
+            items = verify_payload([(s, e["row"], e["cross"]) for e, _, _ in todo])
+            vres = await _call(provider, "relate_verify", {"pairs": items}, rec, verifier_chain)
             answers = (
                 {} if vres is None else guards.check_verifications(vres.output, [it["id"] for it in items])
             )
@@ -241,7 +260,17 @@ def rep_metrics(rep: dict[str, Any]) -> dict[str, Any]:
             ok = rel == p["gold"][0]
             calib.setdefault(f"{rel}/{conf}", []).append(int(ok))
     confusion = Counter(f"{p['gold'][0]}->{p['final'][0]}" for p in pairs)
+    pos = [p for p in pairs if p["gold"][0] != "none"]
+    raised = [p for p in pairs if p["final"][0] != "none"]
+    sup = [p for p in pairs if p["gold"][1] != "none"]
+    cross_none = [p for p in pairs if p["cross"] and p["gold"][0] == "none"]
     return {
+        "positive_recall": round(sum(p["exact"] for p in pos) / max(1, len(pos)), 4),
+        "positive_precision": round(sum(p["exact"] for p in raised) / max(1, len(raised)), 4),
+        "direction": round(sum(p["final"][1] == p["gold"][1] for p in sup) / max(1, len(sup)), 4),
+        "false_cross_raise": round(
+            sum(p["final"][0] != "none" for p in cross_none) / max(1, len(cross_none)), 4
+        ),
         "placement": round(sum(p["ok"] for p in place) / len(place), 4),
         "contradiction_exact": round(sum(p["exact"] for p in pairs) / len(pairs), 4),
         "false_supersede": round(fs / max(1, len(no_sup)), 4),
@@ -260,12 +289,23 @@ def rep_metrics(rep: dict[str, Any]) -> dict[str, Any]:
 
 
 async def run_profile(
-    profile_name: str, *, reps: int, budget: MemoryBudget, mode: str, cassettes: CassetteStore | None
+    profile_name: str,
+    *,
+    reps: int,
+    budget: MemoryBudget,
+    mode: str,
+    cassettes: CassetteStore | None,
+    verifier_name: str | None = None,
 ) -> dict[str, Any]:
+    """One profile alone (``verifier_name`` None: the verifier is the same profile), or the
+    PRODUCTION chain: primary + fallback ``verifier_name``, the verifier call on the other profile
+    first (``HLM_LIBRARIAN_VERIFIER=cross``)."""
     profile = named_profile(profile_name)
+    chain = [profile] + ([named_profile(verifier_name)] if verifier_name else [])
+    verifier_chain = [chain[1], chain[0]] if verifier_name else None
     ledger = MemoryLedger()
     provider = Provider(
-        [profile],
+        chain,
         mode=mode,
         budget=budget,
         ledger=ledger,
@@ -277,10 +317,13 @@ async def run_profile(
     reps_out = []
     try:
         for rep in range(reps):
-            out = await run_rep(provider, rel_fx, place_fx)
+            out = await run_rep(provider, rel_fx, place_fx, verifier_chain)
             m = rep_metrics(out)
             print(
-                f"  [{profile_name}] rep{rep}: placement {m['placement']:.3f}"
+                f"  [{profile_name}{'+' + verifier_name if verifier_name else ''}] rep{rep}:"
+                f" placement {m['placement']:.3f} positive_recall {m['positive_recall']:.3f}"
+                f" positive_precision {m['positive_precision']:.3f} direction {m['direction']:.3f}"
+                f" false_cross_raise {m['false_cross_raise']:.3f}"
                 f" contradiction_exact {m['contradiction_exact']:.3f}"
                 f" false_supersede {m['false_supersede']:.3f}"
                 f" calls {out['calls']} json_fail {out['json_fail']} infra {out['infra_error']}",
@@ -289,7 +332,9 @@ async def run_profile(
             reps_out.append({"metrics": m, **out})
     finally:
         await provider.aclose()
-    return summarize(profile, reps_out, ledger)
+    summary = summarize(profile, reps_out, ledger)
+    summary["verifier"] = verifier_name or profile_name
+    return summary
 
 
 def summarize(profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger) -> dict[str, Any]:
@@ -299,7 +344,14 @@ def summarize(profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger) ->
         "contradiction_exact": min(m["contradiction_exact"] for m in ms),
         "false_supersede": max(m["false_supersede"] for m in ms),
     }
+    for key in ("positive_recall", "positive_precision", "direction"):
+        mins[key] = min(m[key] for m in ms)
+    mins["false_cross_raise"] = max(m["false_cross_raise"] for m in ms)
     means = {
+        "positive_recall": round(statistics.fmean(m["positive_recall"] for m in ms), 4),
+        "positive_precision": round(statistics.fmean(m["positive_precision"] for m in ms), 4),
+        "direction": round(statistics.fmean(m["direction"] for m in ms), 4),
+        "false_cross_raise": round(statistics.fmean(m["false_cross_raise"] for m in ms), 4),
         "placement": round(statistics.fmean(m["placement"] for m in ms), 4),
         "contradiction_exact": round(statistics.fmean(m["contradiction_exact"] for m in ms), 4),
         "false_supersede": round(statistics.fmean(m["false_supersede"] for m in ms), 4),
@@ -311,6 +363,10 @@ def summarize(profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger) ->
         mins["placement"] >= THRESHOLDS["placement"]
         and mins["contradiction_exact"] >= THRESHOLDS["contradiction_exact"]
         and mins["false_supersede"] <= THRESHOLDS["false_supersede_max"]
+        and mins["positive_recall"] >= CLASS_THRESHOLDS["positive_recall"]
+        and mins["positive_precision"] >= CLASS_THRESHOLDS["positive_precision"]
+        and mins["direction"] >= CLASS_THRESHOLDS["direction"]
+        and mins["false_cross_raise"] <= CLASS_THRESHOLDS["false_cross_raise_max"]
         and rate <= MAX_JSON_FAIL_RATE
         and sum(r["infra_error"] for r in reps) == 0
     )
@@ -322,7 +378,7 @@ def summarize(profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger) ->
         "reps": len(reps),
         "worst": mins,
         "mean": means,
-        "thresholds": THRESHOLDS,
+        "thresholds": {**THRESHOLDS, **CLASS_THRESHOLDS},
         "calls": calls,
         "json_fail": json_fail,
         "json_fail_rate": round(rate, 4),
@@ -339,7 +395,7 @@ def render(s: dict[str, Any], stamp: str) -> str:
     verdict = "PASS" if s["pass"] else "FAIL"
     w, m, t = s["worst"], s["mean"], s["thresholds"]
     lines = [
-        f"# G-LIVE-B {stamp} — profile `{s['profile']}` (`{s['model_id']}`)",
+        f"# G-LIVE-B {stamp} — profile `{s['profile']}` (`{s['model_id']}`), verifier `{s['verifier']}`",
         "",
         f"Verdict: **{verdict}** · reps {s['reps']} · calls {s['calls']} · JSON-fail {s['json_fail']}"
         f" ({s['json_fail_rate']:.1%}) · infra errors {s['infra_error']}"
@@ -352,6 +408,13 @@ def render(s: dict[str, Any], stamp: str) -> str:
         f" | ≥ {t['contradiction_exact']:.2f} |",
         f"| false supersede | {w['false_supersede']:.3f} | {m['false_supersede']:.3f}"
         f" | ≤ {t['false_supersede_max']:.2f} |",
+        f"| positive recall | {w['positive_recall']:.3f} | {m['positive_recall']:.3f}"
+        f" | ≥ {t['positive_recall']:.2f} |",
+        f"| positive precision | {w['positive_precision']:.3f} | {m['positive_precision']:.3f}"
+        f" | ≥ {t['positive_precision']:.2f} |",
+        f"| supersession direction | {w['direction']:.3f} | {m['direction']:.3f} | ≥ {t['direction']:.2f} |",
+        f"| false cross-project raise | {w['false_cross_raise']:.3f} | {m['false_cross_raise']:.3f}"
+        f" | ≤ {t['false_cross_raise_max']:.2f} |",
         "",
         "Per class (rep 0): "
         + ", ".join(
@@ -379,7 +442,10 @@ def load_env_file(path: Path) -> None:
 async def amain(args: argparse.Namespace) -> int:
     if args.env_file:
         load_env_file(Path(args.env_file))
-    profiles = [p for p in (args.profile, args.fallback) if p]
+    runs: list[tuple[str, str | None]] = [(p, None) for p in (args.profile, args.fallback) if p]
+    if args.chain:  # the production chain: primary + the fallback as the cross verifier
+        primary, _, verifier = args.chain.partition("+")
+        runs = [(primary, verifier)] if args.chain_only else [*runs, (primary, verifier)]
     cassettes = (
         CassetteStore(Path(args.cassette_dir), record_name=args.record_name) if args.mode != "live" else None
     )
@@ -387,11 +453,16 @@ async def amain(args: argparse.Namespace) -> int:
     stamp = dt.date.today().isoformat()
     verdict = 0
     summaries = []
-    for name in profiles:
-        print(f"== profile {name}", flush=True)
+    for name, verifier in runs:
+        print(f"== profile {name}" + (f" (verifier {verifier})" if verifier else ""), flush=True)
         try:
             summary = await run_profile(
-                name, reps=args.reps, budget=budget, mode=args.mode, cassettes=cassettes
+                name,
+                reps=args.reps,
+                budget=budget,
+                mode=args.mode,
+                cassettes=cassettes,
+                verifier_name=verifier,
             )
         except GateAbort as exc:
             print(f"FAIL (aborted): {exc}", flush=True)
@@ -401,7 +472,9 @@ async def amain(args: argparse.Namespace) -> int:
         if not summary["pass"]:
             verdict = 1
         if args.out:
-            outdir = Path(args.out) / f"{stamp}-w2b-{name}"
+            outdir = Path(args.out) / (
+                f"{stamp}-w2b-chain-{name}+{verifier}" if verifier else f"{stamp}-w2b-{name}"
+            )
             outdir.mkdir(parents=True, exist_ok=True)
             (outdir / "results.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1) + "\n")
             (outdir / "SUMMARY.md").write_text(render(summary, stamp))
@@ -413,6 +486,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--profile", default="openrouter-gpt6-luna")
     ap.add_argument("--fallback", default="openrouter", help="run the gate again on this profile ('' = skip)")
+    ap.add_argument("--chain", default="", help="also run the production chain PRIMARY+VERIFIER (e.g. a+b)")
+    ap.add_argument("--chain-only", action="store_true", help="run only the --chain configuration")
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--max-usd", type=float, default=4.0)
     ap.add_argument("--mode", choices=["live", "record", "replay"], default="live")

@@ -23,7 +23,8 @@ Even the ceiling model is wrong a few percent of the time, so no model output is
    a different framing, by default the OTHER profile of the chain) must agree before the
    proposal is even raised; ``verifier_agrees`` is the agreement rule. Disagreement downgrades
    (a verified conflict without an agreed direction stays a plain contradiction question) or
-   drops the proposal (``verifier_rejected``). Both calls are in the audit record.
+   drops the proposal (``verifier_rejected``); no usable answer drops it (``verifier_no_answer``).
+   The verifier sees each side's project (same/other) to judge the scope. Both calls are audited.
 7. **First-class abstention** — ``none`` is the prompts' default; a missing, uncited or
    low-confidence link-type answer is an abstention, and abstentions are counted and scored.
 """
@@ -177,8 +178,10 @@ def check_relations(
                 j.supersedes = "none"
                 counts["supersedes_without_contradiction"] += 1
                 j.flags.append("supersedes_without_contradiction")
+            # the replacing item must be the later one; on a tie only the NEW item may replace
+            # (an existing item never hides the item just written, Sol 41 #5)
             if (j.supersedes == "new" and p.new_valid < p.old_valid) or (
-                j.supersedes == "old" and p.old_valid < p.new_valid
+                j.supersedes == "old" and p.old_valid <= p.new_valid
             ):
                 j.supersedes = "none"
                 counts["supersedes_against_time"] += 1
@@ -225,17 +228,18 @@ def verifier_agrees(kind: str, v: dict[str, Any], *, new_is_b: bool, direction: 
 
 def apply_verification(j: Judgement, kind: str, v: dict[str, Any] | None, *, new_is_b: bool) -> None:
     """Downgrade ``j`` in place per the verifier (``v`` None = the verifier gave no answer)."""
-    if v is None:  # no usable second opinion: never an action, never a supersession
+    if v is None:  # no usable second opinion: the high-impact judgement is not raised (Sol 41 #6)
         j.verification = {"kind": kind, "agreed": False, "answer": None}
-        agreed, conflict = False, kind == "supersede"
-    else:
-        agreed = verifier_agrees(kind, v, new_is_b=new_is_b, direction=j.supersedes)
-        conflict = bool(v.get("same_subject")) and bool(v.get("conflict"))
-        j.verification = {
-            "kind": kind,
-            "agreed": agreed,
-            "answer": {k: v.get(k) for k in ("same_subject", "conflict", "current")},
-        }
+        j.flags.append("verifier_no_answer")
+        j.relation, j.supersedes, j.tier = "none", "none", "abstain"
+        return
+    agreed = verifier_agrees(kind, v, new_is_b=new_is_b, direction=j.supersedes)
+    conflict = bool(v.get("same_subject")) and bool(v.get("conflict"))
+    j.verification = {
+        "kind": kind,
+        "agreed": agreed,
+        "answer": {k: v.get(k) for k in ("same_subject", "conflict", "current")},
+    }
     if agreed:
         return
     if kind == "supersede" and conflict:

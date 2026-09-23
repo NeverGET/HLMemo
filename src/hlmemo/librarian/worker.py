@@ -61,7 +61,7 @@ from hlmemo.librarian.jobs import LIBRARIAN_JOB_KINDS, assign_job_ids, insert_re
 from hlmemo.librarian.provider import Provider, lineage_scope
 from hlmemo.librarian.redact import REDACTION_VERSION
 from hlmemo.librarian.reserved import reserved_ids
-from hlmemo.librarian.roles import check_role_at_start, effective_role
+from hlmemo.librarian.roles import check_role_at_start, effective_role, lock_role_order
 from hlmemo.librarian.tasks import Handler, Plan
 from hlmemo.librarian.tasks.apply_batch import ApplyBatch, proposal_actions
 from hlmemo.librarian.tasks.pair_check import PairCheck
@@ -422,6 +422,7 @@ class LibrarianWorker:
         changes: list[dict[str, Any]] = []
         superseded = 0
         recorded: list[datetime] = []
+        planned: dict[str, set[Any]] = {"links": set(), "closed": set()}
         for qid, proposal in plan.approved:
             actions = proposal_actions(proposal)
             if proposal.get("kind") == "widen_scope" or any(a.get("op") == "widen_scope" for a in actions):
@@ -429,7 +430,10 @@ class LibrarianWorker:
             assessed: dict[str, int] = {}
             for a in actions:
                 assessed.update(a.get("assessed") or {})
-            if await actor.is_stale(conn, {"assessed": assessed}):
+            # stale, or a subject an earlier question of this batch already closed: superseded
+            if {int(k) for k in assessed} & planned["closed"] or await actor.is_stale(
+                conn, {"assessed": assessed}
+            ):
                 changes.append({"question_id": qid, "status": "superseded"})
                 superseded += 1
                 continue
@@ -437,7 +441,9 @@ class LibrarianWorker:
             try:
                 async with conn.transaction():  # savepoint: one question's failure applies nothing of it
                     ctx = await actor.recheck(conn, caps, CLIENT)
-                    recs, rec_at = await actor.materialize(conn, ctx, caps, actions)
+                    trial = {k: set(v) for k, v in planned.items()}
+                    recs, rec_at = await actor.materialize(conn, ctx, caps, actions, trial)
+                planned = trial
             except AuthorityLost:
                 changes.append({"question_id": qid, "status": "authority_lost"})
                 continue
@@ -450,6 +456,7 @@ class LibrarianWorker:
         caps = plan.capabilities
         project_id = job.payload.get("project_id")
         async with conn.transaction():
+            await lock_role_order(conn, exclusive=False)  # a demotion cannot interleave (Sol 41 #4)
             T = await q.clock_now(conn)
             role = await effective_role(conn, self.settings.librarian_role, project_id)
             ids = await reserved_ids(conn)
@@ -464,7 +471,11 @@ class LibrarianWorker:
             detail: str | None = None
             if plan.op == "apply_batch" and outcome == "approved":
                 if role == "observer":
+                    # nothing applies; the approvals are handed back (questions open again, the
+                    # batch ready) so they can be decided again once the role allows it (Sol 41 #7)
                     outcome = "role_denied"
+                    status_changes = [{"question_id": qid, "status": "open"} for qid, _ in plan.approved]
+                    batch_changes = [{"batch_id": job.payload["batch_id"], "status": "ready"}]
                 else:
                     applied, status_changes, superseded, recorded = await self._apply_approved(conn, plan)
                     outcome = "applied" if applied else "superseded" if superseded else "no_change"

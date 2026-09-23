@@ -158,10 +158,10 @@ async def test_gq1_accept_applies_and_replays(db_dsn, connect, world: World, emb
         )
         (rule,) = await cur.fetchone()
         assert rule.startswith("Owner accepted a contradiction proposal (contradicts, supersedes new)")
-        assert (
-            "Note: Yes, we moved in September." in rule
-            and f"Refs: v{new.version_id}, v{old.version_id}" in rule
-        )
+        assert f"Refs: v{new.version_id}, v{old.version_id}" in rule
+        assert "September" not in rule  # a free-text note never enters working memory (Sol 41 #1)
+        cur = await conn.execute("SELECT answer->>'note' FROM librarian_questions")
+        assert await cur.fetchone() == ("Yes, we moved in September.",)
         res = await query(
             conn,
             world.ctx_a,
@@ -207,7 +207,10 @@ async def test_gq1_reject_and_custom_replan(db_dsn, connect, world: World, embed
     await make_worker(lib_settings(db_dsn), provider, connect).drain()
     await provider.aclose()
     replan = [r for r in llm.requests if "Both hosts exist." in r["messages"][1]["content"]]
-    assert replan, "the answer rule is in the re-plan's working memory"
+    assert replan, "the owner's note reaches the re-plan job of this project"
+    assert all(
+        "Owner note for this re-check: Both hosts exist." in r["messages"][1]["content"] for r in replan
+    )
     await embed(connect, embedder)
     await _replay_identical(connect)
 
@@ -348,5 +351,135 @@ async def test_gq3_stale_subject_is_superseded_without_mutation(
         assert await count(conn, "memory_versions", user_rows, (world.main_id, world.other_id)) == before
         cur = await conn.execute("SELECT status FROM librarian_questions")
         assert await cur.fetchall() == [("superseded",)]
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+# --------------------------------------------------------------------------- Sol 41 regressions
+async def test_sol41_expired_questions_cannot_be_approved(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    from hlmemo.librarian.roles import record_batch_decision
+
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "UPDATE librarian_questions SET expires_at = now() - interval '1 second'"
+            " WHERE question_id = %s RETURNING batch_id::text",
+            (qid,),
+        )
+        (batch,) = await cur.fetchone()
+        await conn.commit()
+        with pytest.raises(ToolError) as ei:  # the only open question is past its 30 days
+            await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.rollback()
+        assert ei.value.code == "E_NOT_FOUND"
+
+
+async def test_sol41_approved_widen_expires_too(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    from hlmemo.librarian.roles import record_batch_decision
+
+    lesson_o = ("Heredoc over ssh", "Never pipe a heredoc into ssh with bash -s: stdin is swallowed.")
+    lesson_m = ("ssh stdin heredoc", "bash -s over ssh with a heredoc swallows stdin; do not do it.")
+    await write_items(connect, world.ctx_a, OTHER, [{**item(*lesson_o, valid_from=D_OLD), "kind": "lesson"}])
+    await write_items(connect, world.ctx_a, MAIN, [{**item(*lesson_m), "kind": "lesson"}])
+    await embed(connect, embedder)
+    llm = ScriptedLLM(default=Oracle(relations={(lesson_m[0], lesson_o[0]): ("duplicate", "none", "high")}))
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT question_id::text, batch_id::text FROM librarian_questions")
+        ((qid, batch),) = await cur.fetchall()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.execute(
+            "UPDATE librarian_questions SET expires_at = now() - interval '1 second' WHERE question_id = %s",
+            (qid,),
+        )
+        await conn.commit()
+    err = await _err(connect, world.ctx_a, _args(qid, "accept"))
+    assert err.code == "E_VERSION_CONFLICT" and err.details["status"] == "expired"
+
+
+async def test_sol41_conflicting_batch_questions(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """Two approved proposals both close the same item: the first applies, the second is
+    superseded, the job completes (it used to fail at apply and roll the whole batch back)."""
+    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+
+    s2 = ("Deploy host moved again", "Production later moved to a second Hostinger VPS in Vilnius.")
+    (old,) = await write_items(connect, world.ctx_a, MAIN, [item(*OLD, valid_from=D_OLD)])
+    await write_items(
+        connect,
+        world.ctx_a,
+        MAIN,
+        [item(*NEW, valid_from=D_NEW), item(*s2, valid_from=datetime(2026, 7, 1, tzinfo=UTC).isoformat())],
+    )
+    await embed(connect, embedder)
+    rel = {**CONTRA, (s2[0], OLD[0]): ("contradicts", "new", "high")}
+    llm = ScriptedLLM(default=Oracle(relations=rel))
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT DISTINCT batch_id::text FROM librarian_questions WHERE status = 'open'"
+        )
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await conn.commit()
+    await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status, count(*) FROM librarian_questions GROUP BY 1 ORDER BY 1")
+        assert await cur.fetchall() == [("applied", 1), ("superseded", 1)]
+        cur = await conn.execute(
+            "SELECT count(*) FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'"
+            " AND valid_to <> 'infinity'",
+            (old.logical_id,),
+        )
+        assert await cur.fetchone() == (1,)  # closed exactly once
+        assert await count(conn, "jobs", "kind = 'librarian_write' AND status <> 'done'") == 0
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_sol41_role_decision_waits_for_an_apply_in_flight(connect, world: World) -> None:  # noqa: ANN001
+    """An apply holds the role-order lock SHARED; a demotion needs it EXCLUSIVE and waits."""
+    import psycopg
+
+    from hlmemo.librarian.roles import lock_role_order, record_role_decision
+
+    async with await connect() as apply_conn:
+        await lock_role_order(apply_conn, exclusive=False)  # a worker apply in flight
+        async with await connect() as conn:
+            await conn.execute("SET lock_timeout = '300ms'")
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                await record_role_decision(
+                    conn, role="observer", decided_by=world.ctx_admin, decision="D-stop"
+                )
+            await conn.rollback()
+        await apply_conn.rollback()
+    async with await connect() as conn:  # once the apply committed, the demotion goes through
+        await record_role_decision(conn, role="observer", decided_by=world.ctx_admin, decision="D-stop")
+        await conn.commit()
+
+
+async def test_sol41_observer_hands_approvals_back(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    from hlmemo.librarian.roles import record_batch_decision
+
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.commit()
+    llm = ScriptedLLM(default=Oracle())
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()  # observer: role_denied
+    await provider.aclose()
+    async with await connect() as conn:
+        assert await count(conn, "links") == 0
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("open",)]  # can be decided again after a promotion
+        cur = await conn.execute("SELECT status FROM librarian_batches")
+        assert await cur.fetchall() == [("ready",)]
     await embed(connect, embedder)
     await _replay_identical(connect)

@@ -56,7 +56,7 @@ from hlmemo.librarian.questions import pending_block
 
 PREPROC_VERSION = 1
 QUERY_CONTRACT = "query/2"  # W2b: optional `librarian` block + D-057 supersession (CC-4)
-LIBRARIAN_SHARE = 0.10  # the `librarian` block may take at most this share of token_budget
+LIBRARIAN_SHARE = 0.10  # the `librarian` block may take at most this share of token_budget (after hits)
 MIN_HIT_TOKENS = 40  # lower bound of a rendered hit; bounds how many rows are fetched for packing
 CURSOR_TOKENS = 70  # additive estimate for a signed ``next_cursor`` (exact measure decides)
 RAW_BODY_SEGMENT = 512  # characters per ``payload_body`` unit when raw pages the verbatim body (D-026)
@@ -259,17 +259,33 @@ async def query(
         "indexing_pending": pending,
         "contract_version": QUERY_CONTRACT,
     }
-    if librarian is not None:  # query/2: budgeted to LIBRARIAN_SHARE of the budget, packed first
-        while librarian["notices"] and deps.meter.count(librarian) > budget * LIBRARIAN_SHARE:
-            librarian["notices"].pop()
-        if deps.meter.count(librarian) <= budget * LIBRARIAN_SHARE:
-            envelope["librarian"] = librarian
     try:
-        return pack_query(
+        packed = pack_query(
             deps.meter, envelope, budget, card, head, total=len(ordered), terms=terms.preview_terms
         )
     except BudgetError as exc:
         raise ToolError(exc.code, str(exc), **exc.details) from exc
+    if librarian is not None:
+        _add_librarian_block(deps.meter, packed, librarian, budget)
+    return packed
+
+
+def _add_librarian_block(meter: Meter, envelope: dict[str, Any], block: dict[str, Any], budget: int) -> None:
+    """query/2: the optional ``librarian`` block is packed AFTER the hits (roadmap W2b; Sol 41):
+    into what the hits left, at most ``LIBRARIAN_SHARE`` of the budget, dropping notices from the
+    end, then the whole block; ``budget.used`` stays the exact measure."""
+    notices = list(block["notices"])
+    while True:
+        candidate = {**block, "notices": notices}
+        if meter.count(candidate) <= budget * LIBRARIAN_SHARE:
+            envelope["librarian"] = candidate
+            if meter.settle(envelope, budget) <= budget:
+                return
+            del envelope["librarian"]
+        if not notices:
+            meter.settle(envelope, budget)
+            return
+        notices = notices[:-1]
 
 
 # --------------------------------------------------------------------------- memory.drilldown

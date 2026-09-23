@@ -49,6 +49,14 @@ def test_quote_evidence_caps_below_action() -> None:
     assert not g.quote_in("60", "The TTL is 60 s.")  # one word is not evidence
 
 
+def test_on_equal_time_only_the_new_item_may_replace() -> None:
+    tie = g.PairText("v2", "The TTL is 300 s.", "The TTL is 60 s.", T1, T1)
+    (j,), counts = g.check_relations({"results": [_res(supersedes="old", new_quote="TTL is 300 s")]}, [tie])
+    assert counts["supersedes_against_time"] == 1 and j.supersedes == "none"
+    (j,), _ = g.check_relations({"results": [_res(new_quote="TTL is 300 s")]}, [tie])
+    assert j.supersedes == "new"
+
+
 def test_supersession_must_follow_time_and_needs_a_contradiction() -> None:
     (j,), counts = g.check_relations({"results": [_res(supersedes="old")]}, [_pair()])
     assert counts["supersedes_against_time"] == 1 and j.supersedes == "none" and j.relation == "contradicts"
@@ -94,8 +102,8 @@ def test_verification_downgrades_or_drops() -> None:
     )
     assert not j.raised and "verifier_rejected" in j.flags
     (j,), _ = g.check_relations({"results": [_res()]}, [_pair()])
-    g.apply_verification(j, "supersede", None, new_is_b=True)  # no second opinion: never an action
-    assert j.supersedes == "none" and j.tier == "question"
+    g.apply_verification(j, "supersede", None, new_is_b=True)  # no second opinion: not raised
+    assert not j.raised and "verifier_no_answer" in j.flags
     (j,), _ = g.check_relations({"results": [_res(relation="duplicate", supersedes="none")]}, [_pair()])
     assert g.high_impact(j, cross_project=True) == "widen" and g.high_impact(j, cross_project=False) is None
     g.apply_verification(j, "widen", None, new_is_b=True)

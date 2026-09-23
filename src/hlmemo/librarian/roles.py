@@ -35,6 +35,14 @@ def lower(a: str, b: str | None) -> str:
     return a if _RANK[a] <= _RANK[b] else b
 
 
+async def lock_role_order(conn: AsyncConnection, *, exclusive: bool) -> None:
+    """Serialize role decisions with librarian applies (Sol 41 #4): every apply holds the SHARED
+    lock while it reads the role and commits; a role decision takes it EXCLUSIVE. A demotion that
+    commits first is seen by the next apply; an apply in flight commits before the demotion."""
+    fn = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+    await conn.execute(f"SELECT {fn}(4, 0)")
+
+
 async def latest_role_decision(conn: AsyncConnection, project_id: int | None = None) -> str | None:
     scope = "project_id IS NULL" if project_id is None else "project_id = %s"
     cur = await conn.execute(
@@ -64,6 +72,7 @@ async def record_role_decision(
         raise ToolError("E_FORBIDDEN", "the deployment role is set by the operator (admin device) only")
     if project_id is not None and not decided_by.has(project_id, Role.ADMIN):
         raise ToolError("E_FORBIDDEN_PROJECT", "project role override needs admin on the project")
+    await lock_role_order(conn, exclusive=True)
     at = await q.clock_now(conn)
     event_id = await insert_system_event(
         conn,
@@ -109,11 +118,13 @@ async def effective_role(conn: AsyncConnection, configured: str, project_id: int
 async def batch_questions(
     conn: AsyncConnection, batch_id: str, status: str | None = None
 ) -> list[dict[str, Any]]:
-    """The question rows of ``batch_id`` (optionally only one status), locked for update."""
+    """The question rows of ``batch_id`` (optionally only one status), locked for update. An open
+    question past its ``expires_at`` is never returned as open: it cannot be approved (Sol 41 #2)."""
     cur = await conn.execute(
         """
         SELECT question_id::text, project_id, project_ids, status, proposal FROM librarian_questions
          WHERE batch_id = %s AND (%s::text IS NULL OR status = %s)
+           AND NOT (status = 'open' AND expires_at IS NOT NULL AND expires_at <= clock_timestamp())
          ORDER BY question_id FOR UPDATE
         """,
         (batch_id, status, status),

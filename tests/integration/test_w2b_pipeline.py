@@ -426,3 +426,33 @@ async def test_request_ids_are_deterministic(db_dsn, connect, world: World, embe
 
         for rid, key in await cur.fetchall():
             assert rid == uuid.uuid5(NS_LIBRARIAN, f"job:{key}")
+
+
+async def test_sol41_rules_with_unreadable_refs_are_not_loaded(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """A librarian-rule referencing a MAIN clue never reaches a job of a device without MAIN."""
+    from hlmemo.librarian.memory import write_rule
+
+    (m,) = await write_items(connect, world.ctx_a, MAIN, [item("Main secret title", "main body")])
+    async with await connect() as conn:
+        await write_rule(
+            conn,
+            title="r",
+            text="Owner rejected a link proposal (duplicate) for vX.",
+            clue_refs=[f"v{m.version_id}"],
+            dedupe="t1",
+        )
+        await write_rule(
+            conn, title="r2", text="Prefer none for unrelated deploy notes.", clue_refs=[], dedupe="t2"
+        )
+        await conn.commit()
+    await write_items(connect, world.ctx_b, OTHER, [item("Other note", "other body")])
+    await embed(connect, embedder)
+    llm = await _drain(db_dsn, connect, Oracle())
+    for req in llm.requests:
+        task, _inp = parse_input(req)
+        content = req["messages"][1]["content"]
+        if '"Other note"' in content and task == "place":
+            assert f"v{m.version_id}" not in content.split("RULES", 1)[-1]
+            assert "Prefer none for unrelated deploy notes." in content
