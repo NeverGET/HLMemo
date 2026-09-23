@@ -3,7 +3,7 @@ Updated: 2026-09-23 — PRODUCTION LIVE at https://mcp.hlmemo.com; e2e COMPLETE 
 
 ## Where we are
 - Phase 0 (LLM-free core + deploy tooling) is DONE (D-041..D-044). Production deploy DONE (D-047): Hostinger KVM 2, Vilnius, Ubuntu 26.04, release 912f2d3, Let's Encrypt TLS; all 8 remote gates PASS; G7 claude + codex + agy all PASS against the remote URL (D-048).
-- Model strategy (D-036/D-043): gpt-6-astra (codex) = implementer; quota restored 2026-09-23 by the owner (D-048); every change gets a neutral verifier + a separate adversarial review.
+- Model strategy (D-050, supersedes D-036/D-043/D-048): Claude (Opus 5.5) subagents implement; codex gpt-6-sol is co-architect + adversarial reviewer; every change gets a neutral verifier + a separate adversarial review.
 - Embeddings (D-042): local e5-small for launch; gemini-embedding-2 is a Phase-1 opt-in profile.
 - Non-blocking issues: docs/status/BACKLOG.md.
 
