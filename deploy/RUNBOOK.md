@@ -511,9 +511,9 @@ from the printed device inventory, rotate the g7 device (`remote_gates.sh ... --
 `hlm_ops.sh device rotate g7-<host> | hlm device login --name g7-<host> --token-stdin` followed by
 `hlm mcp add claude|codex|agy`) and revoke stale pre-W0a devices (`gates-*`, `deploy-*`, `judge-*`)
 with `hlm_ops.sh device revoke <name>`. Pre-W0a tokens have no expiry and keep working until then.
-The `/etc/hlmemo/*.pre-w0-*` backups (retired secrets) are what a rollback to the pre-W0 release
-restores: keep them until `deploy.sh --accept-release hlmdeploy@SERVER` deletes them (after which
-that rollback is refused). Never delete them by hand.
+W0a is a one-way door (D-065): no manual rollback to the pre-W0 release; recovery rolls forward.
+The `/etc/hlmemo/*.pre-w0-*` backups (retired secrets) are recorded in `release-state.json` and
+deleted by `deploy.sh --accept-release hlmdeploy@SERVER`; never delete them by hand.
 
 ### Application releases
 
@@ -535,25 +535,36 @@ Daily backup rotation does not touch pre-upgrade snapshots. Before manual prunin
 recorded rollback dump is among those kept. Keep old images and refs too. Do not change major PostgreSQL versions by simply
 changing the image; plan a dump/restore or pg_upgrade.
 
-### Rollback of a successful release (`deploy.sh --rollback`)
+### W0a is a one-way door (D-065)
+
+After a successful W0a cutover there is **no downgrade to a pre-W0 release**: that code ignores
+`HLM_REGISTRATION_MODE` and would reopen public registration. `deploy.sh --rollback` refuses any
+target whose tree lacks `alembic/versions/0005_w0_access.py` or `src/hlmemo/ops`, unconditionally.
+(A deployment that fails *before* its cutover completes is still recovered automatically to the
+previous stack with its pre-cutover env, secrets included.) **Disaster recovery from a bad W0+
+release rolls FORWARD:** deploy a good W0+ release (`deploy.sh REF`), then restore the recorded
+dump (`release-state.json` `previous_dump`, or any pre-upgrade/daily dump) with
+`bash deploy/backup/restore.sh DUMP --yes`; restore migrates the dump to the W0+ head.
+
+### Rollback between W0+ releases (`deploy.sh --rollback`)
 
 ```sh
 bash deploy/scripts/deploy.sh --rollback hlmdeploy@SERVER        # detached, same log/status/lock
-bash deploy/scripts/deploy.sh --accept-release hlmdeploy@SERVER  # later: keep this release for good
+bash deploy/scripts/deploy.sh --accept-release hlmdeploy@SERVER  # deletes the retired-secret backups
 ```
 
-`--rollback` runs the **current** release's `deploy/scripts/rollback.sh` and reads only
-`release-state.json`. Before stopping anything it validates the whole tuple: the previous commit,
-its quiesced dump, its image resolving to the recorded image ID, every recorded env backup, and the
-rendered previous Compose model (with the backups in place of the live env files) pinned to that
-image ID. It **refuses** a pre-W0 previous release (its model does not pin
-`HLM_REGISTRATION_MODE: closed`) when no env backups are recorded (accepted or deleted) or when the
-restored env gives its API no non-empty `HLM_REGISTRATION_SECRET`: that old code would open public
-registration. Then it stops writers, saves the current database (`backup.sh`), restores the env
-backups, checks out the previous commit, publishes its image in `prod.env`, restores the dump,
-starts the previous stack from the verified model and checks readiness. The consumed pair is
-removed from the state (a second `--rollback` is refused). `--accept-release` deletes the recorded
-env backups and marks the release accepted.
+Both first verify that the **running** api's image revision label equals `release-state.json`
+`current_ref`; on a mismatch they refuse (finish or re-run the interrupted deployment first).
+`--rollback` copies its helpers from the current release's git objects into a private temp dir,
+validates the previous commit (W0+), its quiesced dump and its image (by recorded ID) and renders
+the previous Compose model pinned to that ID, all before stopping anything. It then records the
+attempt in the state, stops writers, saves the current database (`backup.sh`), checks out the
+previous commit, publishes its image, restores its dump and starts it. If a step fails, the saved
+database is restored and the current release restarted (the saved dump is used only for that; it
+then ages out with the daily tier). If the runner is killed, the recorded attempt lets the same
+`--rollback` command be re-run to completion. Success consumes the pair in one atomic state write
+plus a `derive` that rewrites or deletes the legacy marker files. `--accept-release` deletes every
+env backup ever recorded (`retired_backups`); keep them until then, never delete them by hand.
 
 Use a ref supporting the split env layout; for older tooling retain its compatible private config.
 Restore migrates to the selected checkout's head before starting its services with `--no-deps`;
