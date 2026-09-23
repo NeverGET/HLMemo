@@ -4,9 +4,13 @@ and check that each question's evidence span is in the top-5 of ``memory.query``
 
 The questions (``questions.jsonl``) were written by the W1.5 implementer from the pinned files
 themselves, one per sampled file (they are NOT the corpus-B hold-out set, which stays sealed).
-Metric (W-E): a question is a hit when one of the first five hits' chunks overlaps the gold span
-(``lines`` of ``file``) by >= 50 % of the span's characters. The item-level rate (the right file
-section among the top-5 items) is reported next to it. Gate: >= 0.90.
+Metric (W-E): a question is a hit when one of the first five hits' chunks overlaps a gold span
+(``lines`` of ``file``, or a verified same-fact span elsewhere in the tree, ``alt``) by >= 50 % of
+the span's characters. Also reported: ``drill`` (one drilldown of a top-5 clue, chunk +-1, reaches
+the span) and ``item`` (the right file section is among the top-5 items). Gate: >= 0.90 (strict).
+History (results/): first run 0.559 with one item per file; heading sections (``--section-chars``,
+default 8000) + the adjudicated ``alt`` spans (8, added for misses whose fact another file states
+too) + one corrected question (q07 said "first" verdict; that is round 4) → 0.794 / drill 0.853.
 
     HLM_MODELS_DIR=... uv run python eval/import_recall/run_gi4.py --dsn postgresql://.../hlm_test_a
 
