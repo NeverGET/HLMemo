@@ -20,6 +20,7 @@ from typing import Any
 
 from hlmemo.importers import exportfmt
 from hlmemo.importers.common import (
+    SECTION_CHARS,
     GitInfo,
     ImportRecord,
     ParseResult,
@@ -36,8 +37,8 @@ from hlmemo.importers.common import (
     iso_mtime,
     parse_frontmatter,
     read_text,
+    section_split,
     sha256_text,
-    size_split,
     stub_targets,
 )
 
@@ -91,6 +92,7 @@ def build(
     scopes: list[str] | None = None,
     empty_sources: list[str] | None = None,
     tz: tzinfo | None = None,
+    section_chars: int = SECTION_CHARS,
 ) -> ParseResult:
     now = now or datetime.now(UTC)
     res = ParseResult(scopes=sorted(scopes or []))
@@ -167,8 +169,15 @@ def build(
             sections = dated or [Section(None, text)]
         kind_default = kind_fn(rel, meta, text)
         tags = _tags(system, rel, meta)
-        for sec in [p for s in sections for p in size_split(s)]:
+        doc_title = derive_title(meta, text, rel).rsplit(" · ", 1)[0]
+        used: set[str] = set()
+        for sec in [p for s in sections for p in section_split(s, section_chars, doc_title)]:
             path = rel if sec.anchor is None else f"{rel}#{sec.anchor}"
+            n, base_path = 1, path
+            while path in used:  # a sub-section slug equal to a dated-entry anchor: keep keys unique
+                n += 1
+                path = f"{base_path}-{n}"
+            used.add(path)
             date, evidence = (sec.date, sec.evidence) if sec.date else (file_date, file_evidence)
             rec = ImportRecord(
                 system=system,

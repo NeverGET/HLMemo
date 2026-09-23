@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from hlmemo.importers.build import Candidate, build
-from hlmemo.importers.common import GitInfo, ParseResult, git_toplevel, walk_files
+from hlmemo.importers.common import SECTION_CHARS, GitInfo, ParseResult, git_toplevel, walk_files
 
 SYSTEM = "serena"
 
@@ -42,6 +42,7 @@ def parse(
     now: datetime | None = None,
     system: str = SYSTEM,
     tz: tzinfo | None = None,
+    section_chars: int = SECTION_CHARS,
 ) -> ParseResult:
     mdir = memories_dir(directory)
     project_root = mdir.parent.parent if mdir.parent.name == ".serena" else None
@@ -57,6 +58,7 @@ def parse(
         scopes=[""],
         empty_sources=[] if files else [mdir.name],
         tz=tz,
+        section_chars=section_chars,
     )
 
 

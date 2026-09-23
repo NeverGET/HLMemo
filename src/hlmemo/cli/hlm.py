@@ -883,6 +883,9 @@ def import_cmd(
     base: Annotated[Path | None, typer.Option("--base", help="key paths relative to this dir")] = None,
     repo: Annotated[Path | None, typer.Option("--repo", help="repository for `describes` paths")] = None,
     tz: Annotated[str | None, typer.Option("--tz", help="zone of date-only evidence (default local)")] = None,
+    section_chars: Annotated[
+        int, typer.Option("--section-chars", help="split longer files into heading sections")
+    ] = 8000,
 ) -> None:
     """Import legacy memories with provenance (idempotent: unchanged content makes 0 writes)."""
     from hlmemo.importers.cli import SOURCES, human_summary, run_import_command
@@ -903,6 +906,7 @@ def import_cmd(
             memory=None if offline else c.memory(),
             progress=not json_out,
             tz=tz,
+            section_chars=section_chars,
         )
     except ValueError as exc:
         raise CliError(str(exc), EX_USAGE) from None

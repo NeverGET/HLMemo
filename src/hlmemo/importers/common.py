@@ -418,22 +418,64 @@ def dated_sections(text: str, tz: tzinfo | None = None) -> tuple[list[Section] |
     return out, None
 
 
-def size_split(sec: Section) -> list[Section]:
-    """Sections above the item limit → heading-split parts; part 0 keeps the section's anchor."""
-    parts = split_text(sec.body)
+#: Items longer than this are split into their heading sections (``hlm import --section-chars``).
+#: Retrieval returns one chunk per item (deduped by logical item), so a 50k-character spec as ONE
+#: item can surface only one of its ~40 chunks; section items compete on their own and carry
+#: their heading in the indexed title (G-I4 finding on HLMemo's docs).
+SECTION_CHARS = 8000
+
+
+def _heading_parts(text: str, limit: int, min_level: int) -> list[tuple[str | None, str]]:
+    """``[(heading or None, text)]``: cut at every heading of the shallowest level (≥ min_level)
+    that has one after the start — NO packing, so each cut is a stable heading anchor; parts still
+    over ``limit`` recurse one level deeper; headingless text falls back to paragraph packing."""
+    if len(text) <= limit:
+        return [(None, text)]
+    hs = headings(text)
+    for lvl in range(min_level, 7):
+        cuts = [(off, t) for off, level, t in hs if level <= lvl and off > 0]
+        if not cuts:
+            continue
+        bounds = [0, *(off for off, _t in cuts), len(text)]
+        out: list[tuple[str | None, str]] = []
+        for i, (a, b) in enumerate(zip(bounds, bounds[1:], strict=False)):
+            title = None if i == 0 else cuts[i - 1][1]
+            seg = text[a:b]
+            if len(seg) > limit:
+                sub = _heading_parts(seg, limit, lvl + 1)
+                out.append((title, sub[0][1]))
+                out.extend(sub[1:])
+            else:
+                out.append((title, seg))
+        return out
+    return [(None if n == 0 else f"part {n + 1}", p) for n, p in enumerate(split_text(text, limit, 7))]
+
+
+def section_split(sec: Section, limit: int = SECTION_CHARS, doc_title: str | None = None) -> list[Section]:
+    """A section longer than ``limit`` → one section per heading (part 0 keeps the section's own
+    anchor, so a file that grows past the limit keeps its main item). Anchors are heading slugs
+    (``#3-tool-contracts``), unique per file; titles become ``<doc title> › <heading>``."""
+    limit = max(1000, min(limit, ITEM_BODY_MAX))
+    parts = _heading_parts(sec.body, limit, 1)
     if len(parts) == 1:
         return [sec]
     out: list[Section] = []
     seen: dict[str, int] = {}
-    for n, part in enumerate(parts):
+    for n, (heading, body) in enumerate(parts):
         if n == 0:
-            anchor = sec.anchor
+            anchor, lead = sec.anchor, sec.lead
         else:
-            first = next((t for _o, _l, t in headings(part)), None)
-            base = slug(first) if first else f"part-{n + 1}"
+            base = slug(heading) if heading else f"part-{n + 1}"
             anchor = _unique(f"{sec.anchor}~{base}" if sec.anchor else base, seen)
-        out.append(Section(anchor, part, lead=sec.lead, date=sec.date, evidence=sec.evidence, kind=sec.kind))
+            parent = sec.lead or doc_title
+            lead = f"{parent} › {heading}" if parent and heading and heading != parent else heading
+        out.append(Section(anchor, body, lead=lead, date=sec.date, evidence=sec.evidence, kind=sec.kind))
     return out
+
+
+def size_split(sec: Section) -> list[Section]:
+    """Only the hard item limit (64,000 characters)."""
+    return section_split(sec, ITEM_BODY_MAX)
 
 
 # --------------------------------------------------------------------------- describes
