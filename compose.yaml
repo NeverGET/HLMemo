@@ -103,6 +103,36 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  # Librarian (W2a): same image, no ONNX model. Disabled unless HLM_LIBRARIAN_ENABLED=true; the
+  # provider key comes from the optional, gitignored `.hlm-llm.env` (see deploy/llm.env.example).
+  librarian:
+    build: *build
+    image: hlmemo:dev
+    environment:
+      <<: *app-env
+      HLM_LIBRARIAN_ENABLED: "${HLM_LIBRARIAN_ENABLED:-false}"
+      HLM_LIBRARIAN_HEARTBEAT_FILE: /tmp/hlm-librarian-heartbeat.json
+    env_file:
+      - path: .hlm-dev.env
+        required: false
+      - path: .hlm-llm.env
+        required: false
+    command: ["python", "-m", "hlmemo.librarian.worker"]
+    mem_limit: 512m
+    cpus: 0.5
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "hlmemo.librarian.health", "120"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
   test:
     profiles: ["test"]
     build:

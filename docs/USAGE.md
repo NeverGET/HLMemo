@@ -155,8 +155,8 @@ Global flags: `--server URL`, `--project SLUG`, `--device NAME`, `--token TOKEN`
 
 ### Profiles
 
-`[hlm].profile` selects a librarian LLM profile (D-017; parsed and validated in Phase 0, no LLM call is
-made). Shipped: `profiles/openrouter.toml`, `openai.toml`, `local-vllm.toml`, `mistral-eu.toml`,
+`[hlm].profile` selects a librarian LLM profile (D-017; always parsed and validated; only the librarian
+service calls it, and only with `HLM_LIBRARIAN_ENABLED=true`, which is off in production release R1). Shipped: `profiles/openrouter.toml`, `openai.toml`, `local-vllm.toml`, `mistral-eu.toml`,
 `alibaba-eu.toml`. An inline `[profiles.<name>]` table in `hlm.toml` overrides the file key by key;
 `HLM_PROFILE=<name>` overrides the selection. Keys: `HLM_LLM_BASE_URL`, `HLM_LLM_MODEL`,
 `HLM_LLM_API_KEY = "env:..."`, `HLM_LLM_REASONING` (JSON string), `extra` (request extras).

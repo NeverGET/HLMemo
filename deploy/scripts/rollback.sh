@@ -104,16 +104,32 @@ path, image_id = sys.argv[1], sys.argv[2]
 with open(path) as stream:
     config = json.load(stream)
 for name, service in config["services"].items():
-    if name in ("api", "worker", "migrate"):
+    if name in ("api", "worker", "librarian", "migrate"):
         service["image"] = image_id
         service.pop("build", None)
 with open(path, "w") as stream:
     json.dump(config, stream)
 PYMODEL
 rb() { docker compose -p "$COMPOSE_PROJECT" -f "$model" "$@"; }
+# W2a: the librarian exists only in W2a+ models. Services each model runs, and a model-independent
+# stop/remove of librarian containers (by Compose label) for a target model that lacks the service.
+previous_services=(db api worker caddy)
+if python3 -c 'import json,sys; sys.exit(0 if "librarian" in json.load(open(sys.argv[1]))["services"] else 1)' "$model"; then
+  previous_services=(db api worker librarian caddy)
+fi
+current_services() {
+  if dc config --services | grep -qx librarian; then echo db api worker librarian caddy; else echo db api worker caddy; fi
+}
+stop_librarian() { # stop_librarian [rm]
+  local ids
+  mapfile -t ids < <(docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" --filter label=com.docker.compose.service=librarian)
+  ((${#ids[@]})) || return 0
+  docker stop "${ids[@]}" >&2
+  [[ ${1:-} != rm ]] || docker rm -f "${ids[@]}" >&2
+}
 current_image=${image%:*}:$current
 export HLM_IMAGE=$image HLM_IMAGE_REVISION=$previous
-rendered=$(rb config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; print(s["api"]["image"] if s["api"]["image"] == s["worker"]["image"] else "MISMATCH")')
+rendered=$(rb config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; i={s[n]["image"] for n in ("api","worker","librarian") if n in s}; print(s["api"]["image"] if len(i) == 1 else "MISMATCH")')
 [[ $rendered == "$image_id" ]] || refuse "rendered rollback model runs $rendered, expected $image_id"
 printf 'Rollback validated: %s -> %s (image %s = %s, dump %s)\n' "$current" "$previous" "$image" "$image_id" "$dump"
 
@@ -127,6 +143,7 @@ recover_current() {
   set +e
   echo "Rollback step failed; restoring the current release $current." >&2
   rb stop caddy api worker >&2
+  stop_librarian >&2
   git checkout --detach "$current" >&2
   for mounted in deploy/Caddyfile deploy/scripts/worker_entrypoint.py deploy/scripts/worker_health.py; do
     [[ ! -e $mounted ]] || chmod go+r "$mounted"
@@ -143,7 +160,8 @@ recover_current() {
       pg_restore --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --no-owner --no-acl --exit-on-error --single-transaction
     ' < "$safety" >&2 || ok=0
   fi
-  if ((ok)) && dc up -d --no-deps --wait --wait-timeout 300 db api worker caddy >&2; then
+  read -ra up_services <<< "$(current_services)"
+  if ((ok)) && dc up -d --no-deps --wait --wait-timeout 300 "${up_services[@]}" >&2; then
     python3 "$helpers/release_state.py" end-rollback "$parent_dir" >&2
     echo "Current release $current restored${safety:+ (database from $safety)}; rollback aborted." >&2
   else
@@ -153,6 +171,8 @@ recover_current() {
 }
 trap recover_current ERR
 dc stop caddy api worker
+# The librarian is a writer too; removed outright when the previous model does not define it.
+if [[ " ${previous_services[*]} " == *" librarian "* ]]; then stop_librarian; else stop_librarian rm; fi
 # The current database, saved before it is replaced: used by recover_current on a failed step.
 safety=$(bash deploy/backup/backup.sh)
 printf 'Saved the current database before replacing it: %s\n' "$safety"
@@ -169,7 +189,7 @@ rb exec -T db sh -eu -c '
   createdb --username="$POSTGRES_USER" --owner="$POSTGRES_USER" --template=template0 -- "$POSTGRES_DB"
   pg_restore --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --no-owner --no-acl --exit-on-error --single-transaction
 ' < "$dump"
-rb up -d --no-deps --wait --wait-timeout 300 db api worker caddy
+rb up -d --no-deps --wait --wait-timeout 300 "${previous_services[@]}"
 rb exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()"
 trap - ERR
 # One atomic step: consume the pair, clear the attempt, derive (and prune) the legacy markers.

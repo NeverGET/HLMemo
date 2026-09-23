@@ -38,7 +38,7 @@ temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
 dc config --format json | python3 "$SCRIPT_DIR/probe.py" write --state "$temporary/state.json"
 dump=$("$DEPLOY_DIR/backup/backup.sh")
-dc stop caddy api worker
+dc stop caddy api worker librarian
 dc exec -T db sh -eu -c '
     case "$POSTGRES_DB" in postgres|template0|template1|"") exit 64;; esac
     dropdb --username="$POSTGRES_USER" --force -- "$POSTGRES_DB"

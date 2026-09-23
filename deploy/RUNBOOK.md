@@ -94,6 +94,7 @@ Keep these private files together with mode 0600; each has exactly one example i
 | `api.env` | `api.env.example` | API only: cursor secret, trusted proxy CIDR (no admin token, D-061) |
 | `db.env` | `db.env.example` | DB only: PostgreSQL variables |
 | `backup.env` | `backup.env.example` | Host backup/upload only: S3 credentials and retention |
+| `llm.env` (optional) | `llm.env.example` | Librarian only: provider key, profile, spend guard (W2a). **Absent in R1** |
 
 Replace the `CHANGE_ME_*` values (database password, cursor secret) with independent
 `openssl rand -hex 32` outputs; use the **same database password** in `db.env` and `app.env`'s DSN.
@@ -105,7 +106,7 @@ of every service file. Env files use Compose dotenv syntax, never shell `source`
 Docker administrators can inspect container environments; Docker membership is privileged.
 `HLM_ENV_FILE` selects `prod.env`; scripts resolve the other four files alongside it. Explicit
 `HLM_APP_ENV_FILE`, `HLM_API_ENV_FILE`, `HLM_DB_ENV_FILE`, `HLM_BACKUP_ENV_FILE` overrides select
-other absolute paths. All five files must exist, even when S3 upload is disabled; `backup.env`
+other absolute paths (`HLM_LLM_ENV_FILE` for the optional `llm.env`). All five files must exist, even when S3 upload is disabled; `backup.env`
 may be empty or contain only comments. The backup directory defaults to `/var/backups/hlmemo`.
 An explicit directory inside the repository (including a symlink resolving there) is rejected.
 
@@ -494,7 +495,7 @@ A missing or different hash is refused before anything stops. With the acknowled
 detached runner does, in order: validate the full new and previous refs and the previous image
 (before any stop); render the **previous** release's own Compose model with the current env files
 as the rollback model; take a live pre-upgrade dump (proves backups work); `migrate_env_w0`; stop
-caddy/api/worker; take the final **quiesced** dump (no write can commit after it; it replaces the
+caddy/api/worker/librarian; take the final **quiesced** dump (no write can commit after it; it replaces the
 live one and is the rollback dump); build; `alembic upgrade main@head`; `up --wait`; internal
 readiness, Caddy loopback and the W0a route table; publish the image; publish the rollback tuple
 atomically in `/opt/hlmemo/release-state.json` (previous ref, quiesced dump, image + ID, this
@@ -514,6 +515,34 @@ with `hlm_ops.sh device revoke <name>`. Pre-W0a tokens have no expiry and keep w
 W0a is a one-way door (D-065): no manual rollback to the pre-W0 release; recovery rolls forward.
 The `/etc/hlmemo/*.pre-w0-*` backups (retired secrets) are recorded in `release-state.json` and
 deleted by `deploy.sh --accept-release hlmdeploy@SERVER`; never delete them by hand.
+
+**W2a/R1 (librarian service)** changes the model too (new `librarian` service): deploy it with
+`--accept-compose-change=<sha256>` exactly like W0a. The runner stops/starts the librarian with the
+other writers, checks its heartbeat (`python -m hlmemo.librarian.health`) after `up --wait`, and on
+recovery to a model without it removes the new librarian container. See "Librarian (W2a)" below.
+
+### Librarian (W2a): off in R1, enabled at R2
+
+The `librarian` service runs the release image (`python -m hlmemo.librarian.worker`, 512 MiB, 0.5
+CPU, no port). In **R1 it is disabled**: `compose.prod.yaml` pins `HLM_LIBRARIAN_ENABLED: "false"`
+in the service environment, which wins over any env file. Disabled, it only writes a heartbeat
+every 10 s (healthcheck: heartbeat younger than 120 s); it leases no job, loads no provider and
+needs **no** `llm.env` and no OpenRouter key. Check it with `stack.sh ps librarian` and
+`stack.sh logs librarian` (expect `HLM_LIBRARIAN_ENABLED is false; idling`).
+
+Enabling it (R2, a separate reviewed release):
+
+1. On the server create `/etc/hlmemo/llm.env` (0600, deploy user) from `deploy/llm.env.example`:
+   set `OPENROUTER_API_KEY` (the only secret; mounted into the librarian container only), keep
+   `HLM_LIBRARIAN_ROLE=observer` and the spend-guard caps (`HLM_LLM_BUDGET_*_USD`,
+   `HLM_LLM_JOB_CALL_CAP`). Scripts find it next to `prod.env`; `HLM_LLM_ENV_FILE` overrides.
+2. Ship the R2 release that removes the `HLM_LIBRARIAN_ENABLED: "false"` pin (and sets
+   `HLM_LIBRARIAN_ENABLED=true` in `llm.env`), and deploy it with `--accept-compose-change`.
+3. `make gate-release` (G3, G4, G-L3) and `make gate-live` (G-LIVE-A) are release-blocking for R2.
+   A role above `observer` additionally needs an owner decision event (D-062).
+
+To switch it off again without a release: set `HLM_LLM_MODE=off` in `llm.env` and
+`stack.sh up -d --no-deps librarian` (it idles), or `stack.sh stop librarian`.
 
 ### Application releases
 

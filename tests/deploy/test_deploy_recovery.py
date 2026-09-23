@@ -659,6 +659,24 @@ class DeployRecoveryTest(unittest.TestCase):
                 self.assertEqual("c" * 40, (root / "previous-ref").read_text().strip())
                 self.assertEqual("older-marker.dump", (root / "previous-dump").read_text().strip())
 
+    def test_librarian_joins_writer_lifecycle_and_is_removed_on_recovery_to_older_model(self):
+        """W2a: the librarian stops/starts with the writers and its heartbeat is checked; a recovery
+        to a previous model without the service (the harness renders api/worker/db/caddy only)
+        removes the new librarian container and never asks the rollback model to start it."""
+        _, result, rows = self.run_deploy("")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(
+            any(row[-4:] == ["caddy", "api", "worker", "librarian"] and "stop" in row for row in rows)
+        )
+        self.assertTrue(any("up" in row and "--wait" in row and "librarian" in row for row in rows))
+        self.assertTrue(any("exec" in row and "hlmemo.librarian.health" in row for row in rows))
+        _, result, rows = self.run_deploy("migration")
+        self.assertIn("Previous stack restored", result.stderr)
+        self.assertTrue(any("rm" in row and row[-1] == "librarian" for row in rows))
+        restarts = [row for row in rows if "up" in row and ".rollback-compose." in " ".join(row)]
+        self.assertTrue(restarts)
+        self.assertFalse(any("librarian" in row for row in restarts))
+
     def test_sigterm_after_stop_recovers_previous_stack(self):
         root, result, rows = self.run_deploy("term")
         self.assertEqual(143, result.returncode, result.stderr)
