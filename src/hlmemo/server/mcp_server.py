@@ -66,7 +66,8 @@ SERVER_NAME = "hlmemo"
 INSTRUCTIONS = (
     "HLMemo: bi-temporal long-term memory. Call memory.query before acting, memory.drilldown to "
     "expand clues, memory.raw for provenance, memory.write to remember, memory.call_the_day to "
-    "close a session. Every result is one JSON text block with a `budget` block; errors are "
+    "close a session, memory.risk_check before a risky step, memory.register_lesson after a "
+    "mistake. Every result is one JSON text block with a `budget` block; errors are "
     "`{code,message,retryable,details}` with isError=true."
 )
 

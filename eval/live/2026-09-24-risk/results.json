@@ -1,0 +1,266 @@
+{
+ "fixture": "tests/fixtures/risk",
+ "max_usd": "2.5",
+ "profiles": {
+  "openrouter": {
+   "calls": 230,
+   "catch_mean": 1.0,
+   "catch_min": 1.0,
+   "cost_usd": "0.0219228163",
+   "false_warn_max": 0.25,
+   "false_warn_mean": 0.24166666666666667,
+   "latency_ms_p50": 858.0,
+   "latency_ms_p95": 2011.2,
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "outcomes": {
+    "ok": 229,
+    "timeout": 1
+   },
+   "pass": false,
+   "reps": [
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.25,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.25,
+     "false_warns": [
+      "N01",
+      "N04",
+      "N05",
+      "N09",
+      "N10",
+      "N12",
+      "N13",
+      "N14",
+      "N19",
+      "N20"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.25,
+      "n_neg": 40,
+      "n_pos": 37
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 77,
+      "timeout": 3
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.25,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    },
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.25,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.225,
+     "false_warns": [
+      "N01",
+      "N04",
+      "N05",
+      "N09",
+      "N10",
+      "N12",
+      "N13",
+      "N14",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.225,
+      "n_neg": 40,
+      "n_pos": 38
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 1,
+     "statuses": {
+      "ok": 78,
+      "timeout": 2
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.2,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    },
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.3,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.25,
+     "false_warns": [
+      "N01",
+      "N04",
+      "N05",
+      "N09",
+      "N10",
+      "N12",
+      "N13",
+      "N14",
+      "N15",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.23684210526315788,
+      "n_neg": 38,
+      "n_pos": 36
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 2,
+     "statuses": {
+      "ok": 74,
+      "timeout": 6
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.2,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  },
+  "openrouter-gpt6-luna": {
+   "calls": 237,
+   "catch_mean": 1.0,
+   "catch_min": 1.0,
+   "cost_usd": "0.01088818",
+   "false_warn_max": 0.05,
+   "false_warn_mean": 0.03333333333333333,
+   "latency_ms_p50": 1460.0,
+   "latency_ms_p95": 3070.2,
+   "model_id": "openai/gpt-6-luna",
+   "outcomes": {
+    "ok": 237
+   },
+   "pass": true,
+   "reps": [
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.025,
+     "false_warns": [
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.025,
+      "n_neg": 40,
+      "n_pos": 37
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 77,
+      "timeout": 3
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    },
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.025,
+     "false_warns": [
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.025,
+      "n_neg": 40,
+      "n_pos": 40
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 1,
+     "statuses": {
+      "ok": 80
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    },
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.1,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.05,
+     "false_warns": [
+      "N05",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 40,
+      "n_pos": 40
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 2,
+     "statuses": {
+      "ok": 80
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  }
+ },
+ "reps": 3,
+ "spent_usd": "0.03281100"
+}
