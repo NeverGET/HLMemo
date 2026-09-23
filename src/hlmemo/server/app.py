@@ -31,6 +31,7 @@ from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 
@@ -279,12 +280,26 @@ async def _check_readiness(
     return all(c.get("ok") for c in checks.values()), checks
 
 
+def _loopback_peer(request: Request) -> bool:
+    """The API's own loopback listener (compose healthcheck, `docker exec`, hlmemo.ops status)."""
+    client = request.scope.get("client")
+    try:
+        return bool(client) and ip_address(client[0]).is_loopback
+    except ValueError:
+        return False
+
+
 async def ready(request: Request) -> JSONResponse:
-    """Readiness: 200 `{"status":"ready"}` only when writes and queries can succeed; 503 otherwise."""
+    """Readiness: 200 `{"status":"ready"}` only when writes and queries can succeed; 503 otherwise.
+
+    Sol 34 #6 (D-061): the per-check diagnostics (migration ids, model paths, DB errors, access
+    config) are returned only to a loopback peer. Every other caller, including Caddy, gets the
+    status alone; operators read details via `python -m hlmemo.ops status` over SSH."""
     ok, checks = await readiness(request.app)
-    return JSONResponse(
-        {"status": "ready" if ok else "not_ready", "checks": checks}, status_code=200 if ok else 503
-    )
+    body: dict[str, Any] = {"status": "ready" if ok else "not_ready"}
+    if _loopback_peer(request):
+        body["checks"] = checks
+    return JSONResponse(body, status_code=200 if ok else 503)
 
 
 def build_routes(mcp: McpEndpoint | None = None) -> list[Route]:

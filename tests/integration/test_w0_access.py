@@ -273,7 +273,12 @@ async def test_production_refuses_unsafe_config(db_dsn, unsafe: dict[str, str]) 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         r = await client.get("/ready")
     assert r.status_code == 503
-    assert r.json()["checks"]["access_config"]["error"] == "unsafe config"
+    assert r.json()["checks"]["access_config"]["error"] == "unsafe config"  # loopback peer: details
+    # Sol 34 #6: any non-loopback peer (Caddy, the internet) gets the status only.
+    public = httpx.ASGITransport(app=app, client=("203.0.113.5", 40000))
+    async with httpx.AsyncClient(transport=public, base_url="http://test") as client:
+        r = await client.get("/ready")
+    assert r.status_code == 503 and r.json() == {"status": "not_ready"}
     # The safe production config starts and reports the access check as ok.
     safe = create_app(get_settings(db_dsn=db_dsn, deployment="production", **PROD), register_rate_limit=None)
     async with safe.router.lifespan_context(safe):
@@ -281,6 +286,10 @@ async def test_production_refuses_unsafe_config(db_dsn, unsafe: dict[str, str]) 
             transport=httpx.ASGITransport(app=safe), base_url="http://test"
         ) as client:
             assert (await client.get("/ready")).json()["checks"]["access_config"] == {"ok": True}
+        proxied = httpx.ASGITransport(app=safe, client=("172.30.39.2", 40000))  # Caddy's subnet
+        async with httpx.AsyncClient(transport=proxied, base_url="http://test") as client:
+            r = await client.get("/ready")
+            assert set(r.json()) == {"status"} and r.json()["status"] in ("ready", "not_ready")
 
 
 def test_production_env_refusal_via_process(db_dsn) -> None:
@@ -361,7 +370,8 @@ async def test_ops_mint_roundtrip(db_dsn, connect) -> None:
 
 async def test_ops_cli_prints_only_the_token(db_dsn, connect) -> None:
     """`python -m hlmemo.ops device mint` stdout is exactly the token; metadata goes to stderr."""
-    env = {"PATH": "/usr/bin:/bin", "HLM_DB_DSN": db_dsn}
+    # HLM_API_PORT=9: `status` reads /ready on the loopback listener; never probe the dev stack here.
+    env = {"PATH": "/usr/bin:/bin", "HLM_DB_DSN": db_dsn, "HLM_API_PORT": "9"}
     run = lambda *a: subprocess.run(  # noqa: E731
         [sys.executable, "-m", "hlmemo.ops", *a], env=env, capture_output=True, text=True, timeout=60
     )
@@ -397,14 +407,17 @@ async def test_ops_cli_prints_only_the_token(db_dsn, connect) -> None:
     assert run("device", "revoke", "w0-cli-dev").returncode == 0
     status = json.loads(run("status", "--json").stdout)
     assert status["devices"] == {"revoked": 1} and status["migration"] == ["0005_w0_access"]
+    assert status["ready"]["status"] == "unreachable"  # no API on the loopback port in this test
 
 
 # --------------------------------------------------------------------------- G-W0-5
 
 
 async def test_expired_device_rejected(db_dsn, connect) -> None:
-    """G-W0-5: expired == revoked at the pre-body gate and in-transaction; a cursor issued before
-    expiry fails after it with E_INVALID_CURSOR."""
+    """G-W0-5 (as aligned by D-061 / Sol 34 #5): expired == revoked at the pre-body gate and
+    in-transaction. Authentication precedes cursor verification, so a cursor presented with the
+    expired bearer fails with E_AUTH (401) and is never examined. Renewal is an operator rotation
+    (token_generation + 1), after which the pre-expiry cursor fails with E_INVALID_CURSOR."""
     await op(connect, ops.project_create, "w0-exp", "Expiry")
     device_id, token = await mint(connect, "w0-expiring", "w0-exp:write", expires="1h")
     async with running_app(db_dsn) as client:
@@ -418,6 +431,8 @@ async def test_expired_device_rejected(db_dsn, connect) -> None:
         )
         secret = client.app.state.cursor_secret  # type: ignore[attr-defined]
         cursor = sign_cursor(secret, ctx, {"h": "x", "i": 0})
+        written = await call_tool(client, token, "memory.write", write_args("w0-exp", "w0 expiry item"))
+        version_id = written["versions"][0]["version_id"]
         async with await connect() as conn:
             await conn.execute(
                 "UPDATE devices SET expires_at = now() - interval '1 second' WHERE device_id = %s",
@@ -432,6 +447,23 @@ async def test_expired_device_rejected(db_dsn, connect) -> None:
         ):
             r = await client.request(method, path, json=body, headers={**MCP_HEADERS, **bearer(token)})
             assert r.status_code == 401 and r.json()["code"] == "E_AUTH", (path, r.text)
+        # A cursor presented with the expired bearer: auth fails first -> E_AUTH, never the cursor.
+        raw_call = {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "memory.raw",
+                "arguments": {
+                    "project": "w0-exp",
+                    "version_id": version_id,
+                    "cursor": cursor,
+                    "token_budget": 2000,
+                },
+            },
+        }
+        r = await client.post("/mcp", json=raw_call, headers={**MCP_HEADERS, **bearer(token)})
+        assert r.status_code == 401 and r.json()["code"] == "E_AUTH"
         health = (await client.get("/health", headers=bearer(token))).json()["device"]
         assert health["status"] == "revoked"
         # ... and in-transaction (the authoritative resolve under FOR SHARE).
@@ -460,6 +492,9 @@ async def test_expired_device_rejected(db_dsn, connect) -> None:
         with pytest.raises(HlmError) as ei:
             verify_cursor(secret, cursor, new_ctx)
         assert ei.value.code == "E_INVALID_CURSOR"
+        # ... and end to end: the renewed bearer passes auth, the old cursor is refused.
+        refused = await call_tool(client, renewed.token, "memory.raw", raw_call["params"]["arguments"])
+        assert refused["code"] == "E_INVALID_CURSOR", refused
     # A rotate of an expired device without a new expiry is refused (it would stay expired).
     async with await connect() as conn:
         await conn.execute(
@@ -561,13 +596,21 @@ def _live_route_check(db_dsn: str) -> subprocess.CompletedProcess[str]:
             time.sleep(0.5)
         script = str(ROOT / "deploy/scripts/check_edge.py")
         base = f"http://127.0.0.1:{port}"
-        return subprocess.run(
+        routes = subprocess.run(
             [sys.executable, script, "--routes", "--base", base, "--mint-ops"],
             env=env,
             capture_output=True,
             text=True,
             timeout=120,
         )
+        status = subprocess.run(
+            [sys.executable, "-m", "hlmemo.ops", "status", "--json"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return routes, status
     finally:
         server.terminate()
         server.wait(timeout=30)
@@ -577,8 +620,12 @@ async def test_check_edge_routes_against_a_real_listener(db_dsn, connect) -> Non
     """deploy/scripts/check_edge.py --routes (RG-routes) passes against uvicorn in production mode."""
     import asyncio
 
-    proc = await asyncio.to_thread(_live_route_check, db_dsn)
+    proc, status = await asyncio.to_thread(_live_route_check, db_dsn)
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    # Sol 34 #6: the public route saw status only; operators get the details via hlmemo.ops.
+    assert status.returncode == 0, status.stderr
+    ready = json.loads(status.stdout)["ready"]
+    assert ready["status"] == "ready" and ready["checks"]["migration"]["expected"] == "0005_w0_access"
     assert "RESULT routes PASS" in proc.stdout
     assert "hlm_" not in proc.stdout + proc.stderr, "a token was printed"
     # The checker's device revoked itself through the public self-revoke route.

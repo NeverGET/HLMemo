@@ -171,6 +171,9 @@ async def _dispatch(conn: AsyncConnection, args: argparse.Namespace, settings: A
             _print(st)
         else:
             w = st["worker"]
+            rd = st["ready"]
+            failing = sorted(k for k, v in (rd.get("checks") or {}).items() if not v.get("ok"))
+            sys.stdout.write(f"ready       {rd.get('status')} failing={','.join(failing) or '-'}\n")
             sys.stdout.write(f"migration   {','.join(st['migration'])}\n")
             sys.stdout.write(f"devices     {st['devices']}\n")
             sys.stdout.write(

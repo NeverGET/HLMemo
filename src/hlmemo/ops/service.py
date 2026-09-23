@@ -9,6 +9,7 @@ written to an event, a log line or the database.
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from dataclasses import dataclass
@@ -373,6 +374,26 @@ async def list_projects(conn: AsyncConnection) -> list[dict[str, Any]]:
     return [_project_public(r) for r in rows]
 
 
+def _loopback_readiness() -> dict[str, Any]:
+    """The API's detailed /ready, read on its loopback listener (only loopback peers get checks)."""
+    import urllib.error
+    import urllib.request
+
+    from hlmemo.config import get_settings
+
+    url = f"http://127.0.0.1:{get_settings().api_port}/ready"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read())
+        except ValueError:
+            return {"status": "not_ready", "error": f"HTTP {exc.code}"}
+    except (OSError, ValueError) as exc:
+        return {"status": "unreachable", "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
 async def status(conn: AsyncConnection) -> dict[str, Any]:
     """Jobs ledger, worker progress (last committed job), devices by status, migration."""
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -400,6 +421,7 @@ async def status(conn: AsyncConnection) -> dict[str, Any]:
         migration = [r["version_num"] for r in await cur.fetchall()]
     admin = await q.admin_state(conn)
     return {
+        "ready": _loopback_readiness(),
         "jobs": jobs,
         "worker": {
             "ready_jobs": int(ledger.get("ready") or 0),
