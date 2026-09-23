@@ -23,5 +23,13 @@ Updated 2026-09-23. Source of each item in parentheses.
 - Embedder provider interface + async query embedding; gemini-embedding-2 / pplx-embed-v1-4b as opt-in profiles after RRF re-tuning and latency measured from the VPS.
 - int8-quantized e5 ONNX to cut RAM/CPU.
 - memory.raw paging instead of E_BUDGET_TOO_SMALL for oversized payload_item (D-026).
+## Worker (consults/30)
+- No lease renewal: >1 worker replica or a job >120 s → takeover ping-pong (compose runs one worker; jobs ≤ ~45 s today).
+- Heartbeat written only between jobs → a job >180 s marks the worker unhealthy.
+- FIFO queue: small writes wait behind a contract-max write (~37 min) for their vectors (still found via lexical/trigram) → fair ordering.
+- OOM/segfault-killed job is re-leased forever (attempts grow, _mark_failed only on Python exceptions) → cap attempts.
+- API stop grace 10 s < body timeouts → SIGKILL (exit 137) during an in-flight 64 MiB upload (nothing committed).
+- Contract-max write embeds in ~38 min on 1 CPU (2 × 512-token texts per inference) → faster batching / int8 model.
+
 ## Process
 - Test suite wall time regressed to ~52 min in the auth-gate round (under investigation in the closing verification).
