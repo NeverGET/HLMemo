@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from hlmemo.importers.build import Candidate, build
-from hlmemo.importers.common import JUNK_DIRS, GitInfo, ParseResult, git_toplevel
+from hlmemo.importers.common import JUNK_DIRS, SECTION_CHARS, GitInfo, ParseResult, git_toplevel
 from hlmemo.importers.markdown import resolve_base
 
 SYSTEM = "context"
@@ -43,6 +43,7 @@ def parse(
     now: datetime | None = None,
     system: str = SYSTEM,
     tz: tzinfo | None = None,
+    section_chars: int = SECTION_CHARS,
 ) -> ParseResult:
     base_dir = resolve_base(paths, base)
     candidates: list[Candidate] = []
@@ -75,6 +76,7 @@ def parse(
         scopes=scopes,
         empty_sources=empty,
         tz=tz,
+        section_chars=section_chars,
     )
 
 

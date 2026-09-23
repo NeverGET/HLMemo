@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from hlmemo.importers.build import Candidate, build
-from hlmemo.importers.common import GitInfo, ParseResult, git_toplevel, walk_files
+from hlmemo.importers.common import SECTION_CHARS, GitInfo, ParseResult, git_toplevel, walk_files
 
 SYSTEM = "markdown"
 SUFFIXES = (".md", ".markdown")
@@ -62,6 +62,7 @@ def parse(
     use_git: bool = True,
     system: str = SYSTEM,
     tz: tzinfo | None = None,
+    section_chars: int = SECTION_CHARS,
 ) -> ParseResult:
     base_dir = resolve_base(paths, base)
     candidates: list[Candidate] = []
@@ -87,6 +88,7 @@ def parse(
         scopes=scopes,
         empty_sources=empty,
         tz=tz,
+        section_chars=section_chars,
     )
 
 

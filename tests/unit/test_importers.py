@@ -122,6 +122,22 @@ def test_size_split_keeps_the_main_anchor() -> None:
     assert len({p.anchor for p in parts}) == len(parts)
 
 
+def test_long_files_become_heading_sections_with_stable_anchors() -> None:
+    """G-I4 finding: a 50k spec as one item surfaces one chunk; sections compete on their own."""
+    body = "\n\n".join(f"## Part {i}\n\n" + ("alpha beta " * 300) for i in range(6))
+    text = "# Big spec\n\nIntro line.\n\n" + body + "\n"
+    parts = common.section_split(Section(None, text), 5000, doc_title="Big spec")
+    assert parts[0].anchor is None and parts[0].body.startswith("# Big spec")
+    assert [p.anchor for p in parts[1:]] == [f"part-{i}" for i in range(6)]
+    assert parts[1].lead == "Big spec › Part 0" and "".join(p.body for p in parts) == text
+    # an edit inside one section changes only that section (anchors do not shift)
+    edited = text.replace("## Part 3\n\n", "## Part 3\n\nNEW LINE\n\n")
+    again = common.section_split(Section(None, edited), 5000, doc_title="Big spec")
+    assert [p.anchor for p in again] == [p.anchor for p in parts]
+    assert [a.body == b.body for a, b in zip(parts, again, strict=True)].count(False) == 1
+    assert common.section_split(Section(None, "# small\n"), 5000) == [Section(None, "# small\n")]
+
+
 def test_secret_files_never_enter_a_payload(tmp_path: Path) -> None:
     f = tmp_path / "notes.md"
     f.write_text("# Keys\n\naws " + "AKIA" + "ABCDEFGHIJKLMNOP" + " leaked\n")

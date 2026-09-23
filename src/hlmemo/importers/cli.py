@@ -9,7 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from hlmemo.importers import automemory, context, markdown, serena
-from hlmemo.importers.common import ParseResult
+from hlmemo.importers.common import SECTION_CHARS, ParseResult
 from hlmemo.importers.plan import classify, report
 from hlmemo.importers.runner import Call, fetch_items, run_export, run_import
 
@@ -37,6 +37,7 @@ def parse_source(
     repo: Path | None = None,
     now: datetime | None = None,
     tz: tzinfo | None = None,
+    section_chars: int = SECTION_CHARS,
 ) -> ParseResult:
     if source not in SOURCES:
         raise ValueError(f"source must be one of {SOURCES}")
@@ -46,14 +47,14 @@ def parse_source(
     if missing:
         raise ValueError(f"path(s) not found: {', '.join(missing)}")
     if source == "markdown":
-        return markdown.parse(paths, base=base, repo=repo, now=now, tz=tz)
+        return markdown.parse(paths, base=base, repo=repo, now=now, tz=tz, section_chars=section_chars)
     if source == "context":
-        return context.parse(paths, base=base, repo=repo, now=now, tz=tz)
+        return context.parse(paths, base=base, repo=repo, now=now, tz=tz, section_chars=section_chars)
     if len(paths) != 1:
         raise ValueError(f"`hlm import {source}` takes exactly one directory")
     if source == "automemory":
-        return automemory.parse(paths[0], repo=repo, now=now, tz=tz)
-    return serena.parse(paths[0], repo=repo, now=now, tz=tz)
+        return automemory.parse(paths[0], repo=repo, now=now, tz=tz, section_chars=section_chars)
+    return serena.parse(paths[0], repo=repo, now=now, tz=tz, section_chars=section_chars)
 
 
 async def import_async(
@@ -122,8 +123,17 @@ def run_import_command(
     memory: Any,
     progress: bool,
     tz: str | None = None,
+    section_chars: int = SECTION_CHARS,
 ) -> dict[str, Any]:
-    parsed = parse_source(source, paths, base=base, repo=repo, now=datetime.now(UTC), tz=resolve_tz(tz))
+    parsed = parse_source(
+        source,
+        paths,
+        base=base,
+        repo=repo,
+        now=datetime.now(UTC),
+        tz=resolve_tz(tz),
+        section_chars=section_chars,
+    )
 
     async def go() -> dict[str, Any]:
         if offline:

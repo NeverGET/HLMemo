@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from hlmemo.importers.build import Candidate, build
-from hlmemo.importers.common import ParseResult, walk_files
+from hlmemo.importers.common import SECTION_CHARS, ParseResult, walk_files
 
 SYSTEM = "automemory"
 
@@ -33,6 +33,7 @@ def parse(
     now: datetime | None = None,
     system: str = SYSTEM,
     tz: tzinfo | None = None,
+    section_chars: int = SECTION_CHARS,
 ) -> ParseResult:
     d = directory.resolve()
     files = walk_files(d, (".md",), recursive=False) if d.is_dir() else []
@@ -46,6 +47,7 @@ def parse(
         scopes=[""],
         empty_sources=[] if files else [d.name],
         tz=tz,
+        section_chars=section_chars,
     )
 
 
