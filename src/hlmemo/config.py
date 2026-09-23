@@ -173,6 +173,12 @@ class Settings(BaseSettings):
     librarian_heartbeat_file: Path | None = Path("/tmp/hlm-librarian-heartbeat.json")
     librarian_memory_rules: int = Field(default=8, gt=0)
     librarian_memory_tokens: int = Field(default=1500, gt=0)
+    # W2b: a write_review job waits (handed back, no attempt consumed) up to this long for the
+    # subject's embeddings before it runs with the lexical list only.
+    librarian_embed_wait_s: float = Field(default=300.0, ge=0)
+    # W2b (D-067): who gives the second opinion on high-impact proposals: "cross" = the other
+    # profile of the chain (primary <-> fallback), "self" = the answering profile again.
+    librarian_verifier: str = Field(default="cross", pattern="^(cross|self)$")
     llm_mode: str = Field(default="live", pattern="^(live|record|replay|off)$")
     llm_cassette_dir: Path | None = None
     llm_timeout_s: float = Field(default=60.0, gt=0)

@@ -20,7 +20,7 @@ from hlmemo.auth.context import AuthContext, Role
 from hlmemo.core.errors import ToolError
 from hlmemo.core.temporal import fmt_ts
 from hlmemo.db import write_queries as q
-from hlmemo.librarian.actor import set_question_status
+from hlmemo.librarian.actor import apply_batch_changes, set_question_status
 from hlmemo.librarian.errors import RoleNotAuthorized
 from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event
 from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
@@ -175,6 +175,10 @@ async def record_batch_decision(
                 )
             ]
         await assign_job_ids(conn, jobs)
+        last = i == len(rows) - 1
+        batches = (
+            [{"batch_id": batch_id, "status": "decided", "decided_by": approver.device_id}] if last else []
+        )
         change = {"question_id": r["question_id"], "status": status, "decided_by": approver.device_id}
         event_id = await insert_system_event(
             conn,
@@ -189,12 +193,18 @@ async def record_batch_decision(
                 "question_id": r["question_id"],
                 "decision": status,
             },
-            resolved={"recorded_at": fmt_ts(at), "question_status": [change], "jobs": jobs},
+            resolved={
+                "recorded_at": fmt_ts(at),
+                "question_status": [change],
+                "jobs": jobs,
+                "batches": batches,
+            },
             at=at,
         )
         if event_id is None:
             continue
         await set_question_status(conn, [change], at)
+        await apply_batch_changes(conn, batches, event_id, at)
         if jobs:
             await insert_recorded_jobs(conn, jobs, event_id, at)
     return {

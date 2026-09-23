@@ -27,6 +27,10 @@ MAX_TOKENS: dict[str, int] = {
     "summary": 700,
     "risk": 500,
     "synthesis": 700,
+    # W2b (batched): ≤ 8 items / ≤ 8 pairs per call, reasoning tokens included by the providers
+    "place": 700,
+    "relate": 1400,
+    "relate_verify": 700,
 }
 
 _VERSION = re.compile(r"^v(\d+)\.md$")

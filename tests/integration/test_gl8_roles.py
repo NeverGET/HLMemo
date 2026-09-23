@@ -145,7 +145,7 @@ async def test_gl8_assistant_applies_only_approved_batches(db_dsn, connect, worl
         await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
     worker, provider, batch_id, proposals = await _proposals_job(db_dsn, connect, world, deps, "assistant")
-    assert len(proposals) == 2 and {p["mutation"]["rel"] for p in proposals} == {"contradicts", "supersedes"}
+    assert len(proposals) == 2 and {p["actions"][0]["rel"] for p in proposals} == {"contradicts", "supersedes"}
     async with await connect() as conn:
         assert await count(conn, "links") == 0  # assistant: nothing before an approval
         assert await worker.drain() == 0  # no apply job exists without an approval event
@@ -153,7 +153,7 @@ async def test_gl8_assistant_applies_only_approved_batches(db_dsn, connect, worl
             await record_batch_decision(conn, batch_id=batch_id, approver=world.ctx_b, decision="accept")
         await conn.rollback()
         assert ei.value.code == "E_FORBIDDEN_PROJECT"
-        rejected = next(p["question_id"] for p in proposals if p["mutation"]["rel"] == "supersedes")
+        rejected = next(p["question_id"] for p in proposals if p["actions"][0]["rel"] == "supersedes")
         summary = await record_batch_decision(
             conn, batch_id=batch_id, approver=world.ctx_a, decision="accept", except_ids=[rejected]
         )
@@ -166,7 +166,7 @@ async def test_gl8_assistant_applies_only_approved_batches(db_dsn, connect, worl
         assert await cur.fetchall() == [("contradicts", "librarian")]
         assert (await outcomes(conn))[-1] == "applied"
         cur = await conn.execute("SELECT status, decided_by FROM librarian_questions ORDER BY status")
-        assert await cur.fetchall() == [("approved", world.dev_a), ("rejected", world.dev_a)]
+        assert await cur.fetchall() == [("applied", world.dev_a), ("rejected", world.dev_a)]
     await provider.aclose()
 
 
