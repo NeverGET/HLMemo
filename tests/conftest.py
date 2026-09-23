@@ -2,7 +2,9 @@
 
 Database selection:
   1. `HLM_TEST_DSN` set  -> use it as-is (CI / `compose --profile test`).
-  2. else                -> `docker compose up -d --wait db` and use the host-mapped port.
+  2. else                -> `docker compose up -d --wait db` and use a dedicated `hlm_test`
+                            database on it (created if missing), never the dev database `hlm`.
+Tests truncate every table, so a DSN naming a protected database (the dev stack's `hlm`) is refused.
 In both cases `alembic upgrade phase0@head` is applied once per session (idempotent).
 Between tests every table is truncated except `devices` row 1 (reserved admin, §2).
 """
@@ -27,7 +29,9 @@ os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_DB_USER = "hlm"
 COMPOSE_DB_PASSWORD = "hlm"
-COMPOSE_DB_NAME = "hlm"
+COMPOSE_DB_NAME = "hlm_test"
+# Databases the suite must never truncate (the dev stack's live data). D-056.
+PROTECTED_DB_NAMES = frozenset({"hlm"})
 
 ConnectFactory = Callable[[], Awaitable[psycopg.AsyncConnection]]
 
@@ -53,8 +57,24 @@ def _compose_db_dsn() -> tuple[str, bool]:
     port_line = _compose("port", "db", "5432").stdout.strip()  # e.g. 0.0.0.0:5432
     host, _, port = port_line.rpartition(":")
     host = "127.0.0.1" if host in ("0.0.0.0", "", "[::]") else host
+    admin = f"postgresql://{COMPOSE_DB_USER}:{COMPOSE_DB_PASSWORD}@{host}:{port}/postgres"
+    _wait_for_postgres(admin)
+    with psycopg.connect(admin, autocommit=True) as conn:
+        exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (COMPOSE_DB_NAME,)).fetchone()
+        if exists is None:
+            conn.execute(f'CREATE DATABASE "{COMPOSE_DB_NAME}"')
     dsn = f"postgresql://{COMPOSE_DB_USER}:{COMPOSE_DB_PASSWORD}@{host}:{port}/{COMPOSE_DB_NAME}"
     return dsn, not already
+
+
+def _refuse_protected(dsn: str) -> None:
+    """Refuse a DSN whose database is protected: the autouse fixture truncates every table."""
+    name = psycopg.conninfo.conninfo_to_dict(dsn).get("dbname")
+    if name in PROTECTED_DB_NAMES:
+        raise pytest.UsageError(
+            f"refusing to run tests against protected database {name!r}: the suite truncates every "
+            "table. Point HLM_TEST_DSN at a dedicated database (e.g. hlm_verify)."
+        )
 
 
 def _wait_for_postgres(dsn: str, timeout: float = 60.0) -> None:
@@ -92,6 +112,7 @@ def db_dsn() -> str:
     started_by_us = False
     if not dsn:
         dsn, started_by_us = _compose_db_dsn()
+    _refuse_protected(dsn)
     _wait_for_postgres(dsn)
     _migrate(dsn)
     yield dsn
