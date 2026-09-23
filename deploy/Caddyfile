@@ -36,7 +36,9 @@
 			}
 		}
 	}
-	@rest path /health /ready /devices/* /admin/*
+	# W0a (D-061): only the public routes; the API's route filter also answers 404 for the
+	# closed ones (register, approve, grant, list, every /admin route) before reading any body.
+	@rest path /health /ready /devices/whoami /devices/revoke
 	handle @rest {
 		request_body {
 			max_size 64KiB

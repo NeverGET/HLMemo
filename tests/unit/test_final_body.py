@@ -47,7 +47,7 @@ class _Pool:
         return self
 
     async def fetchone(self):
-        return 2, "trusted", 1
+        return 2, "trusted", 1, False  # device_id, status, token_generation, expired (W0a)
 
     async def commit(self):
         pass

@@ -193,15 +193,23 @@ class FirstDeployTests(unittest.TestCase):
         secrets = state / "secrets"
         self.assertEqual(state.stat().st_mode & 0o777, 0o700)
         self.assertEqual(secrets.stat().st_mode & 0o777, 0o700)
-        for path in [*secrets.iterdir(), state / "admin.token", state / "registration.secret"]:
+        for path in secrets.iterdir():
             self.assertEqual(path.stat().st_mode & 0o777, 0o600, path)
+        # W0a (D-061): no admin token and no registration secret are generated any more.
+        self.assertFalse((state / "admin.token").exists())
+        self.assertFalse((state / "registration.secret").exists())
         prod = (secrets / "prod.env").read_text().splitlines()
         self.assertIn("HLM_DOMAIN=mcp.example.com", prod)
         self.assertIn("HLM_TLS_MODE=acme", prod)
         self.assertFalse([line for line in prod if line.startswith("HLM_ACME_EMAIL")])
         for name in ("db.env", "app.env", "api.env"):
             self.assertNotIn("CHANGE_ME", (secrets / name).read_text())
-        token = (state / "admin.token").read_text().strip()
+        api = (secrets / "api.env").read_text()
+        self.assertNotRegex(api, r"(?m)^HLM_ADMIN_TOKEN=")
+        self.assertNotRegex(api, r"(?m)^HLM_REGISTRATION_SECRET=")
+        token = next(line for line in api.splitlines() if line.startswith("HLM_CURSOR_SECRET=")).split(
+            "=", 1
+        )[1]
         self.assertRegex(token, r"^[0-9a-f]{64}$")
         self.assertNotIn(token, result.stdout + result.stderr)
         # Idempotent: a second run reuses the same secrets.
@@ -216,7 +224,44 @@ class FirstDeployTests(unittest.TestCase):
         )
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertIn("reusing existing secrets", again.stdout)
-        self.assertEqual((state / "admin.token").read_text().strip(), token)
+        self.assertIn(f"HLM_CURSOR_SECRET={token}", (secrets / "api.env").read_text())
+
+    def test_pre_w0_local_secrets_are_scrubbed_not_deleted(self):
+        """A pre-W0a secret set loses its retired keys; the old token files are kept aside."""
+        state = self.state / "203.0.113.10"
+        secrets = state / "secrets"
+        secrets.mkdir(parents=True)
+        admin, registration = "a" * 64, "b" * 64
+        (secrets / "db.env").write_text("POSTGRES_PASSWORD=" + "c" * 64 + "\n")
+        (secrets / "app.env").write_text("HLM_DB_DSN=postgresql://hlm:x@db:5432/hlm\n")
+        (secrets / "api.env").write_text(
+            f"HLM_ADMIN_TOKEN={admin}\nHLM_REGISTRATION_SECRET={registration}\nHLM_CURSOR_SECRET="
+            + "d" * 64
+            + "\n"
+        )
+        (state / "admin.token").write_text(admin + "\n")
+        (state / "registration.secret").write_text(registration + "\n")
+        args = (
+            "--host",
+            "203.0.113.10",
+            "--domain",
+            "mcp.example.com",
+            "--repo",
+            "https://github.com/NeverGET/HLMemo.git",
+            "--secrets-only",
+        )
+        for _ in range(2):  # idempotent
+            result = self.run_first_deploy(*args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            api = (secrets / "api.env").read_text()
+            self.assertNotRegex(api, r"(?m)^HLM_ADMIN_TOKEN=")
+            self.assertNotRegex(api, r"(?m)^HLM_REGISTRATION_SECRET=")
+            self.assertIn("HLM_CURSOR_SECRET=" + "d" * 64, api)
+            self.assertNotIn(admin, result.stdout + result.stderr)
+            self.assertNotIn(registration, result.stdout + result.stderr)
+        self.assertFalse((state / "admin.token").exists())
+        self.assertEqual((state / "admin.token.retired-w0").read_text().strip(), admin)
+        self.assertEqual((state / "registration.secret.retired-w0").read_text().strip(), registration)
 
     def test_caddyfile_has_no_email_directive(self):
         # An empty `email` global option is a Caddyfile parse error; ACME works without one.

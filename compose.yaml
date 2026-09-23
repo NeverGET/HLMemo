@@ -8,6 +8,10 @@ x-app-env: &app-env
   HLM_PROFILES_DIR: /app/profiles
   HLM_MODELS_DIR: /app/models
   PYTHONUNBUFFERED: "1"
+  # W0a (D-061): both default to closed/disabled; local dev opts in to the Phase-0 contract
+  # (self-registration + admin HTTP routes). Production pins closed/disabled in compose.prod.yaml.
+  HLM_REGISTRATION_MODE: open
+  HLM_ADMIN_HTTP: enabled
 
 # Local dev secrets (HLM_ADMIN_TOKEN, ...). Gitignored; optional so `docker compose config` works without it.
 x-env-file: &env-file
@@ -51,9 +55,9 @@ services:
     build: *build
     image: hlmemo:dev
     environment: *app-env
-    # `phase0@head` (not bare `head`): the deferred `hnsw` branch is a second head by design
+    # `main@head` (not bare `head`): the deferred `hnsw` branch is a second head by design
     # (alembic/versions/0002_hnsw.py) and must never be applied automatically.
-    command: ["alembic", "upgrade", "phase0@head"]
+    command: ["alembic", "upgrade", "main@head"]
     depends_on:
       db:
         condition: service_healthy
@@ -73,7 +77,7 @@ services:
       migrate:
         condition: service_completed_successfully
     # Readiness, not liveness: /ready is 200 only when the DB is reachable, the migration is at
-    # phase0@head and the model files hash to models.lock (server/app.py). /health stays liveness.
+    # main@head and the model files hash to models.lock (server/app.py). /health stays liveness.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).status == 200 else 1)"]
       interval: 5s

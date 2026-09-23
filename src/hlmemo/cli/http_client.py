@@ -142,6 +142,10 @@ class HlmHttp:
     def revoke(self, device_id: int) -> dict[str, Any]:
         return self.request("POST", f"/admin/devices/{device_id}/revoke", {})
 
+    def self_revoke(self, device_id: int) -> dict[str, Any]:
+        """Public self-only revoke (D-061): the bearer's own id; any other id answers 404."""
+        return self.request("POST", "/devices/revoke", {"id": device_id})
+
     def grant(self, device_id: int, project: str, role: str) -> dict[str, Any]:
         return self.request("POST", f"/admin/projects/{project}/grants", {"device": device_id, "role": role})
 

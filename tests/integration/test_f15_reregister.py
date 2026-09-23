@@ -22,6 +22,9 @@ from hlmemo.cli.http_client import HlmHttp
 from hlmemo.server import devices
 from tests.integration.test_g5_auth import ADMIN_TOKEN, approve, bearer, register, running_app
 
+# W0a (D-061): the fixtures opt in to self-registration + admin HTTP (tests/conftest.py).
+W0_DEV_MODES = ("HLM_REGISTRATION_MODE", "HLM_ADMIN_HTTP")
+
 pytestmark = pytest.mark.integration
 
 
@@ -70,7 +73,7 @@ async def test_cli_default_name_and_fingerprint_reregister_after_revoke(
 ) -> None:
     # Keep the real hostname and machine fingerprint; isolate only configuration and storage.
     for key in list(os.environ):
-        if key.startswith("HLM_") and key not in {"HLM_TEST_DSN", "HLM_MODELS_DIR"}:
+        if key.startswith("HLM_") and key not in {"HLM_TEST_DSN", "HLM_MODELS_DIR", *W0_DEV_MODES}:
             monkeypatch.delenv(key)
     monkeypatch.setenv("HLM_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("HLM_ADMIN_TOKEN", ADMIN_TOKEN)

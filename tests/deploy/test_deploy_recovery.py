@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -55,18 +56,52 @@ if "run" in args and "migrate" in args:
         labels_path.write_text(json.dumps(labels))
 if "up" in args and "api" in args:
     Path(os.environ["EVENTS"]+".running-image").write_text(images.get(selected, selected))
+    # The api container's org.opencontainers.image.revision label (rollback.sh checks it).
+    tag = selected.rsplit(":", 1)[-1]
+    revision = tag if len(tag) == 40 else labels.get(selected, "")
+    Path(os.environ["EVENTS"]+".running-revision").write_text(revision)
 if "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
     captured=json.loads(Path(args[args.index("-f")+1]).read_text())
     assert captured["services"]["api"]["environment"]["TOKEN"] == "literal$$VAR"
 if args[0] == "ps":
     if fail != "missing-baseline": print("old-container")
+elif args[0] == "inspect" and "image.revision" in " ".join(args):
+    marker = Path(os.environ["EVENTS"]+".running-revision")
+    print(marker.read_text() if marker.exists() else "a"*40)
 elif args[0] == "inspect": print("sha256:old-image")
+elif ("exec" in args and "dropdb" in args[-1] and fail == "rollback-kill"
+      and ".rollback-compose." in " ".join(args)
+      and not Path(os.environ["EVENTS"]+".killed").exists()):
+    Path(os.environ["EVENTS"]+".killed").touch()
+    os.kill(os.getppid(), signal.SIGKILL)  # an uncatchable interruption mid-rollback
+elif "config" in args and "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
+    print(Path(args[args.index("-f")+1]).read_text())  # the captured rollback model, as rendered
 elif "config" in args:
-    print(json.dumps({"name":"bake-astra", "services":{
+    rendered = {"name":"bake-astra", "services":{
         s:{"image":"mutable:prod", "environment":{"TOKEN":"literal$$VAR"}}
-        for s in ("api","worker","db","caddy")}}))
+        for s in ("api","worker","db","caddy")}}
+    if "-f" in args and ".compose-previous." in args[args.index("-f")+1]:
+        Path(os.environ["EVENTS"]+".previous-model").write_text(Path(args[args.index("-f")+1]).read_text())
+        # Like Compose: the api service's env_file (HLM_API_ENV_FILE) lands in its environment.
+        api_env = Path(os.environ.get("HLM_API_ENV_FILE") or "/nonexistent")
+        if api_env.is_file():
+            for line in api_env.read_text().splitlines():
+                key, sep, value = line.removeprefix("export ").partition("=")
+                if sep and not key.startswith("#"):
+                    rendered["services"]["api"]["environment"][key.strip()] = value
+    print(json.dumps(rendered))
 elif "ps" in args:
     if os.environ.get("INITIAL") != "1": print("db-container")
+elif "exec" in args and "hlmemo.ops" in args:
+    # W0a: server-side minting; the token only ever travels on stdout.
+    assert sys.stdin.read() == "", "hlmemo.ops inherited input"
+    if "mint" in args:
+        print(os.environ.get("ROUTES_TOKEN", "hlm_" + "r" * 43))
+    elif "list" in args:
+        print("   2  g7-mac   personal trusted  expires=- grants=gates-g7:write")
+elif "exec" in args and "--routes" in args:
+    assert "def check_routes" in sys.stdin.read(), "route checker not fed on stdin"
+    if fail == "routes-internal": sys.exit(14)
 elif "exec" in args:
     if "pg_dump" in args[-1]:
         assert sys.stdin.read() == "", "pg_dump inherited input"
@@ -98,6 +133,8 @@ elif "run" in args:
     if fail == "migration": sys.exit(9)
 elif "up" in args and "api" in args and fail == "health" and ".rollback-compose." not in " ".join(args):
     sys.exit(10)
+elif "up" in args and "api" in args and fail == "rollback-up" and ".rollback-compose." in " ".join(args):
+    sys.exit(10)
 """
 
 GIT = r"""#!/usr/bin/env python3
@@ -105,9 +142,22 @@ import json, os, sys
 args=sys.argv[1:]
 with open(os.environ["EVENTS"], "a") as f: f.write(json.dumps(["git", *args])+"\n")
 if args[0] == "show":
-    print((__import__("pathlib").Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
+    from pathlib import Path
+    if args[-1].endswith(":deploy/compose.prod.yaml"):
+        name = "compose.previous.yaml" if args[-1].startswith("a"*40) else "compose.prod.yaml"
+        path = Path(os.environ["HLM_REMOTE_DIR"])/"deploy"/name
+        if not path.exists(): path = Path(os.environ["HLM_REMOTE_DIR"])/"deploy/compose.prod.yaml"
+        sys.stdout.write(path.read_text())
+    elif ":deploy/scripts/" in args[-1] and not args[-1].endswith("remote-deploy.sh"):
+        sys.stdout.write((Path(os.environ["HLM_REMOTE_DIR"])/args[-1].split(":", 1)[1]).read_text())
+    else:
+        print((Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
     sys.exit()
-if args[0] == "diff" and os.environ.get("FAIL") == "compose-change": sys.exit(1)
+changed = os.environ.get("FAIL") == "compose-change" or os.environ.get("COMPOSE_CHANGE") == "1"
+if args[:2] == ["cat-file", "-e"]:
+    # PREW0_TARGET=1: the previous release (a*40) predates W0a (no 0005 migration, no ops package).
+    sys.exit(1 if os.environ.get("PREW0_TARGET") == "1" and args[2].startswith("a"*40) else 0)
+if args[0] == "diff" and changed: sys.exit(1)
 if args[:2] == ["checkout", "--detach"] and args[-1] == "b"*40 and os.environ.get("FAIL") == "legacy":
     from pathlib import Path
     import shutil
@@ -126,6 +176,22 @@ dc() { docker compose -p "$COMPOSE_PROJECT" -f "$DEPLOY_DIR/compose.prod.yaml" "
 env_value() { if [[ $1 == HLM_DOMAIN ]]; then echo localhost; fi; }
 backup_value() { echo ""; }
 backup_env() { [[ ${FAIL:-} != upload ]] || echo S3_BUCKET=simulated-upload; }
+"""
+
+
+# W0a: the public route checker runs as `python3 deploy/scripts/check_edge.py --routes` on the
+# host. Intercept only that invocation (it would open real sockets); everything else runs the real
+# interpreter. The shim records argv and whether the token arrived through the environment.
+PYTHON3 = """#!/bin/sh
+case "$1" in
+  */check_edge.py|deploy/scripts/check_edge.py)
+    printf '%s\\n' "$*" >> "$EVENTS.routes-argv"
+    printf '%s\\n' "${HLM_ROUTES_TOKEN:-<none>}" >> "$EVENTS.routes-token"
+    [ "$FAIL" != routes-public ] || exit 1
+    echo 'RESULT routes PASS (harness)'
+    exit 0 ;;
+esac
+exec REAL_PYTHON "$@"
 """
 
 
@@ -158,6 +224,7 @@ class DeployRecoveryTest(unittest.TestCase):
                 "#!/usr/bin/env python3\nimport os,sys\nos.setsid()\nos.execvp(sys.argv[1],sys.argv[1:])\n"
             ),
             "aws": "#!/usr/bin/env bash\necho simulated-upload-failure >&2\nexit 42\n",
+            "python3": PYTHON3.replace("REAL_PYTHON", shutil.which("python3") or sys.executable),
         }
         for name, content in programs.items():
             path = binary / name

@@ -16,7 +16,7 @@ Conventions: valid time = `valid_from/valid_to`; system time = **one** pair `rec
 
 ## 1. DDL
 
-Alembic revisions: `alembic/versions/0001_phase0.py` (everything below, applied by the `migrate` service) and `alembic/versions/0002_hnsw.py` (prepared, **not** in `head` chain; applied manually at >200k rows). The Alembic script executes the SQL verbatim via `op.execute`. **(D-055)** `alembic/versions/0003_title_lexical.py` follows `0001_phase0` on the `phase0` branch (applied by `alembic upgrade phase0@head`): the IMMUTABLE SQL function `hlm_title_norm(text)` (NFKC, `lower()` under the builtin `pg_c_utf8` collation — locale/libc/ICU-independent — ß→ss, final ς→σ, ı→i, NFD, combining marks dropped, and the separators `/ . _ - # § : \` turned into spaces; the query side applies the same function to the raw query tokens, so both sides fold identically by construction) and the expression index `CREATE INDEX CONCURRENTLY mv_title_tsv ON memory_versions USING gin (to_tsvector('simple'::regconfig, hlm_title_norm(title)))`. No column, no table rewrite (online-safe); `0004_title_norm_fold.py` brings databases that ran the first cut of 0003 to this function definition and rebuilds the index with `REINDEX INDEX CONCURRENTLY`; an INVALID leftover of an interrupted build is removed with `DROP INDEX CONCURRENTLY` outside a transaction before the rebuild; downgrade drops the index concurrently and the function.
+Alembic revisions: `alembic/versions/0001_phase0.py` (everything below, applied by the `migrate` service) and `alembic/versions/0002_hnsw.py` (prepared, **not** in `head` chain; applied manually at >200k rows). The Alembic script executes the SQL verbatim via `op.execute`. **(D-055)** `alembic/versions/0003_title_lexical.py` follows `0001_phase0` on the `phase0` branch (applied by `alembic upgrade phase0@head`): the IMMUTABLE SQL function `hlm_title_norm(text)` (NFKC, `lower()` under the builtin `pg_c_utf8` collation — locale/libc/ICU-independent — ß→ss, final ς→σ, ı→i, NFD, combining marks dropped, and the separators `/ . _ - # § : \` turned into spaces; the query side applies the same function to the raw query tokens, so both sides fold identically by construction) and the expression index `CREATE INDEX CONCURRENTLY mv_title_tsv ON memory_versions USING gin (to_tsvector('simple'::regconfig, hlm_title_norm(title)))`. No column, no table rewrite (online-safe); `0004_title_norm_fold.py` brings databases that ran the first cut of 0003 to this function definition and rebuilds the index with `REINDEX INDEX CONCURRENTLY`; an INVALID leftover of an interrupted build is removed with `DROP INDEX CONCURRENTLY` outside a transaction before the rebuild; downgrade drops the index concurrently and the function. **(D-061)** `alembic/versions/0005_w0_access.py` follows `0004_title_norm_fold` and carries the branch label `main` (CC-1): it adds `devices.expires_at timestamptz NULL` and the event kind `device_minted`. Every migrate invocation (both compose files, the test fixtures, readiness's expected head) runs `alembic upgrade main@head`, which upgrades a database at `0001` or `0004` alike; `phase0@head` resolves to the same head. The downgrade refuses while `device_minted` events exist (events are authoritative, D-010).
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -48,6 +48,7 @@ CREATE TABLE devices (
   approved_by_device_id bigint REFERENCES devices,
   revoked_at            timestamptz,
   last_seen_at          timestamptz,
+  -- (D-061, migration 0005) expires_at timestamptz NULL: past expiry == revoked (§2)
   UNIQUE (user_id, name),
   UNIQUE (token_sha256),
   UNIQUE (fingerprint),
@@ -103,7 +104,7 @@ CREATE TABLE events (
   kind           text NOT NULL CHECK (kind IN (
                    'write','call_the_day','access','archive','restore','project_created',
                    'device_registered','device_approved','device_revoked',
-                   'grant_added','grant_revoked')),
+                   'grant_added','grant_revoked')),  -- (D-061, 0005) + 'device_minted'
   schema_version smallint NOT NULL DEFAULT 1,
   projection_version smallint NOT NULL DEFAULT 1, -- chunker/normalizer/meter contract that derived the projections (§1.1)
   payload        jsonb NOT NULL,                -- {"request":<verbatim args>,"resolved":<server-resolved defaults+ids>} (§1.1)
@@ -324,7 +325,7 @@ Integrity rules enforced in the write service (not expressible as FKs): every el
 
 **Admin device (device 1).** Migration `0001` reserves `device_id = 1` (`name admin`, class `server`, `is_admin`, status `trusted`, placeholder hash) atomically before any registration is possible (§1 bootstrap insert; `CHECK (NOT is_admin OR device_id = 1)`). **Start-up binding (exact, runs before the listener opens, in one transaction, on every start):** (i) `HLM_ADMIN_TOKEN` set → `UPDATE devices SET token_sha256 = sha256(token), token_generation = token_generation + 1, last_seen_at = NULL WHERE device_id = 1` — the generation is bumped on **every** start, so admin cursors/sessions never survive a restart, whether or not the token changed; (ii) `HLM_ADMIN_TOKEN` unset or empty → `UPDATE devices SET token_sha256 = 'reserved:admin', token_generation = token_generation + 1 WHERE device_id = 1` and log `WARNING admin device disabled: HLM_ADMIN_TOKEN not set` — a hash bound by an earlier start is **never** left active; the placeholder can match no bearer, so device 1 is unusable until a start with the env var. In both cases the API starts normally. `hlm doctor` reports the admin state. A plaintext token is never read from the database or written to logs; database identity lookup uses its hash. Reserved-pool admission additionally constant-time compares the bearer with the configured `HLM_ADMIN_TOKEN`, then still resolves the device and current status transactionally. G5 `test_device1_restart_without_env_disables_admin` (start with token → admin call succeeds → restart without env → same bearer 401 `E_AUTH`, previously issued admin cursor `E_INVALID_CURSOR`, generation +1 → restart with token → succeeds again, generation +1). `is_admin` bypasses `device_project_grants` **only**; it does **not** bypass `device_scope`: device 1 sees rows scoped `all`, `class:server` or `device:1`, nothing else. Device 1 never goes through ordinary device workflows: `/devices/register` cannot create it, `approve`/`revoke`/`grants` with `id = 1` → `E_FORBIDDEN`, `hlm device list` shows it as `admin (reserved)` and never prints or stores its token; rotation = change the env var and restart. Admin actions are ordinary device actions with `events.device_id = 1`.
 
-**Status gate.** `pending` and `revoked` devices may call only `GET /health`. `/health` with a bearer echoes `{"status":"ok","device":{"id","name","status","class"}}` so a pending device can poll for approval without another endpoint. The gate is an HTTP middleware that runs **before** routing and before the MCP session manager: every `/admin/*`, `/devices/*` route and every JSON-RPC method on `/mcp` — `initialize`, `tools/list`, `tools/call`, `ping`, everything — from a pending device → HTTP 403 `{"code":"E_DEVICE_PENDING"}`; from a revoked/unknown token → HTTP 401 `{"code":"E_AUTH"}`. G5 `test_pending_device_all_http_routes_rejected` is parametrised over the full route table of `server/app.py` and `test_pending_device_mcp_initialize_list_call_rejected` covers the three MCP methods (§7). HTTP status mapping for non-tool routes: `E_AUTH` 401, `E_DEVICE_PENDING`/`E_FORBIDDEN`/`E_FORBIDDEN_PROJECT` 403, `E_NOT_FOUND` 404, `E_INVALID_ARG` 400, `E_REQUEST_ID_CONFLICT`/`E_VERSION_CONFLICT` 409, `E_UNAVAILABLE` 503.
+**Status gate.** `pending` and `revoked` devices may call only `GET /health`. **(D-061)** A device whose `expires_at` has passed is treated exactly like a `revoked` one, both by the pre-body gate (401 `E_AUTH` before any body byte) and by the in-transaction resolve (`E_AUTH`); `/health` echoes it as `revoked` with `expired: true`. Authentication precedes cursor verification, so a cursor presented with the expired bearer fails with 401 `E_AUTH` and is never examined (expiry itself does not change `token_generation`). Renewal is an operator rotation (new token, `token_generation + 1`), after which a cursor issued before expiry fails with `E_INVALID_CURSOR` (Sol 34 #5). `/health` with a bearer echoes `{"status":"ok","device":{"id","name","status","class"}}` so a pending device can poll for approval without another endpoint. The gate is an HTTP middleware that runs **before** routing and before the MCP session manager: every `/admin/*`, `/devices/*` route and every JSON-RPC method on `/mcp` — `initialize`, `tools/list`, `tools/call`, `ping`, everything — from a pending device → HTTP 403 `{"code":"E_DEVICE_PENDING"}`; from a revoked/unknown token → HTTP 401 `{"code":"E_AUTH"}`. G5 `test_pending_device_all_http_routes_rejected` is parametrised over the full route table of `server/app.py` and `test_pending_device_mcp_initialize_list_call_rejected` covers the three MCP methods (§7). HTTP status mapping for non-tool routes: `E_AUTH` 401, `E_DEVICE_PENDING`/`E_FORBIDDEN`/`E_FORBIDDEN_PROJECT` 403, `E_NOT_FOUND` 404, `E_INVALID_ARG` 400, `E_REQUEST_ID_CONFLICT`/`E_VERSION_CONFLICT` 409, `E_UNAVAILABLE` 503.
 
 **Authorization matrix.** For each tool call: `project` slug → `project_id` (unknown slug → `E_FORBIDDEN_PROJECT`, no enumeration); then `device_project_grants` with `revoked_at IS NULL` must contain the pair, or the device is `is_admin`. Role check: `read` → query/drilldown/raw; `write` → + write/call_the_day; `admin` → + grant/revoke other devices on that project. A write whose item lists several `project_ids` requires `write` on **every** listed project; a revision additionally requires `write` on the item's immutable home project and on every project of the *existing* version (old ∪ new, §3). `last_seen_at` is refreshed at most once per 60 s per device.
 
@@ -337,6 +338,37 @@ Integrity rules enforced in the write service (not expressible as FKs): every el
 4. Grants: `POST/DELETE /admin/projects/{slug}/grants {device, role}` require `admin` role on that project or `is_admin`; `device = 1` → `E_FORBIDDEN`. `POST /admin/projects {slug,name}` requires `is_admin` and grants the creator `admin` on the new project.
 
 **Dual-axis scope on data.** Every version/link carries `project_ids[]` (home first) and `device_scope ∈ {all, class:<c>, device:<id>}`. Retrieval for a device `d` of class `c` in project `p` sees a row iff `p = ANY(project_ids)` **and** `device_scope ∈ {'all','class:'||c,'device:'||d}`. Writes may target another device's scope (e.g. from the personal machine: "on the work machine never push to X"). The server derives `d`/`c` from the token, never from the payload. G5 covers both axes (§7).
+
+**Access modes and the operator path (D-061, W0a; supersedes the production parts of steps 1-4).**
+Two fail-closed settings: `registration_mode ∈ {open, secret, closed}` (default `closed`) and
+`admin_http ∈ {enabled, disabled}` (default `disabled`); only local `compose.yaml` and the test
+fixtures set `open` + `enabled`, where every rule above applies unchanged. `deploy/compose.prod.yaml`
+pins `HLM_DEPLOYMENT=production`, `closed` and `disabled` in its tracked `environment:`; with
+`production`, the API refuses to start (lifespan error; `/ready` 503 `"unsafe config"`) unless
+registration is `closed` and admin HTTP `disabled`. `GET /ready` returns only `{"status":"ready"|"not_ready"}` (200/503) to every non-loopback peer; the per-check diagnostics (migration, models, DB errors, access config) go only to loopback peers (container healthcheck, `docker exec`) and to `python -m hlmemo.ops status` (Sol 34 #6).
+- *Closed routes.* A middleware route filter runs before the body budget, the bearer check, any
+  database access or a single `receive()`: `POST /devices/register` (when `closed`) and every admin
+  route — `/admin/*`, `/devices/approve`, `/devices/grant` (POST/DELETE), `/devices/list` — (when
+  admin HTTP is `disabled`) answer 404 `E_NOT_FOUND` for every caller, anonymous or trusted, with no
+  device row and no event. Paths are normalised (repeated/trailing slashes) before the check.
+  `secret` mode requires `X-HLM-Registration-Secret` and refuses registration if none is configured.
+- *Self-only revoke.* `POST /devices/revoke` stays public but, with admin HTTP `disabled`, a device
+  may revoke only itself (`id = caller`, step 3 effects unchanged); any other id — existing, device 1
+  or unknown — answers the same 404 `E_NOT_FOUND`. Revoking another device is an operator action.
+- *Device 1 disabled in production.* With admin HTTP `disabled`, start-up binding always takes branch
+  (ii): the placeholder hash is bound (generation + 1) even when `HLM_ADMIN_TOKEN` is set (a warning is
+  logged) and the reserved admin pool is never used. The deploy step `migrate_env_w0` removes
+  `HLM_ADMIN_TOKEN` and `HLM_REGISTRATION_SECRET` from the host env files.
+- *Operator path.* `python -m hlmemo.ops` inside the api container (over SSH via
+  `deploy/scripts/hlm_ops.sh`) is the only admin path: `device mint|list|revoke|rotate|grant|ungrant`,
+  `project create|list`, `status`. It uses the app DSN and `db/auth_queries.py` in one transaction per
+  command; its events carry `device_id = 1` and `client = hlm-ops/<version>`. `device mint` creates a
+  `trusted` device (optional `expires_at`, grants) and prints only the token on stdout (event
+  `device_minted` + one `grant_added` per grant); `device rotate` binds a new token (generation + 1,
+  event `device_minted` with `resolved.via = "rotate"`); `device revoke` takes the exclusive advisory
+  lock before the row lock, like step 3, so the ordering rule above holds. Tokens reach clients only
+  through `hlm device login --token-stdin` (or a hidden prompt), which stores them after `/health`
+  reports the device `trusted`.
 
 **Headless/CI.** A CI runner registers as class `ci` and receives grants for one project — a "project-scoped token" is simply a device token with a one-project grant list.
 

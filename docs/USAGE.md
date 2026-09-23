@@ -7,7 +7,7 @@ always sees the project memory before acting.
 
 ```
 hlm init | doctor
-hlm device register|approve|revoke|grant|ungrant|list|whoami
+hlm device register|login|approve|revoke|grant|ungrant|list|whoami
 hlm project create|list
 hlm mcp add claude|codex|agy
 hlm query "<q>" [--budget N]
@@ -50,6 +50,30 @@ uv run hlm doctor
 
 `--admin` uses `HLM_ADMIN_TOKEN` from your shell as the bearer (device 1). A trusted device that holds
 the `admin` role on a project can also approve/grant for that project without `--admin`.
+
+## Adding a device (operator + owner over SSH)
+
+A production server (D-052, D-061) has **no public registration and no admin HTTP routes**:
+`hlm device register`, `approve`, `grant`, `list` and every `--admin` command get 404 there (the
+register command prints the procedure below as a hint). The operator mints the device on the server
+over SSH and the token is piped straight into `hlm device login`; it never appears in argv, shell
+history or logs, and `login` stores it only after `/health` reports the device `trusted`.
+
+```sh
+OPS="bash deploy/scripts/hlm_ops.sh --state deploy/.local/SERVER_IP"   # SSH config from first_deploy.sh
+$OPS project create my-project --name 'My project' --exists-ok
+uv run hlm init --server https://FQDN/mcp --project my-project --device-name my-mac
+$OPS device mint --name my-mac --class personal --grant my-project:write [--expires 7d] \
+  | uv run hlm device login --name my-mac --token-stdin
+uv run hlm device whoami && uv run hlm mcp add claude
+```
+
+Without a pipe, `hlm device login --name my-mac` asks for the token with a hidden prompt. Operator
+commands (all `python -m hlmemo.ops` in the api container): `device mint|list|revoke|rotate|grant|ungrant`,
+`project create|list`, `status [--json]`. Rotation: `$OPS device rotate my-mac | uv run hlm device
+login --name my-mac --token-stdin`, then `hlm mcp add ...` again. A device can revoke itself with
+`hlm device revoke --self`; revoking another device is `$OPS device revoke <name|id>`. Expired
+devices (`--expires`) are rejected like revoked ones; renew with `$OPS device rotate --expires`.
 
 ## What `hlm claude|codex|agy` does
 
@@ -149,9 +173,10 @@ Credential Locker). When no backend is usable it falls back to `~/.config/hlm/cr
 "mbp-personal@http://127.0.0.1:8765" = "hlm_..."
 ```
 
-Rotation = revoke + register again; `hlm mcp add` re-registers with the new token (agy entry is replaced
-in place). Device 1 (`admin (reserved)`) never has a stored token; it is `HLM_ADMIN_TOKEN` on the server
-and `--admin` on the client.
+Rotation (local dev) = revoke + register again; in production `hlm_ops.sh device rotate` piped into
+`hlm device login`. `hlm mcp add` re-registers with the new token (agy entry is replaced in place).
+Device 1 (`admin (reserved)`) never has a stored token; in local dev it is `HLM_ADMIN_TOKEN` on the
+server and `--admin` on the client; in production it is disabled (D-061).
 
 ## Commands
 
@@ -160,8 +185,10 @@ and `--admin` on the client.
 | `hlm init [--server URL] [--project SLUG] [--device-name N] [--user] [--force] [--instructions]` | writes `./hlm.toml` (or `~/.config/hlm/hlm.toml` with `--user`); `--instructions` appends an idempotent HLMemo section to `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` |
 | `hlm doctor [--models]` | server `/health`, device status, admin binding (probes `/health` with `HLM_ADMIN_TOKEN` when set), DB (`HLM_DB_DSN`), model hashes vs `models.lock` (`--models`), CLI versions vs `tests/smoke/VERSIONS`; exit 69 if the server is unreachable |
 | `hlm device register [--name N] [--class C] [--wait] [--registration-secret S]` | `POST /devices/register`; stores the token; `--wait` polls `/health` until `trusted` |
-| `hlm device approve <name\|id> --class C [--notes ..] [--grant slug:role ...]` | trusted device / `--admin` |
-| `hlm device revoke <name\|id>` · `grant <name\|id> <slug> <role>` · `ungrant <name\|id> <slug>` | roles: `read`, `write`, `admin` |
+| `hlm device login [--name N] [--token-stdin]` | stores an operator-minted token after `/health` reports it `trusted`; stdin or hidden prompt, never argv (D-061) |
+| `hlm device approve <name\|id> --class C [--notes ..] [--grant slug:role ...]` | trusted device / `--admin` (dev only; 404 in production) |
+| `hlm device revoke --self` | public self-revoke of this device; deletes the stored token |
+| `hlm device revoke <name\|id>` · `grant <name\|id> <slug> <role>` · `ungrant <name\|id> <slug>` | roles: `read`, `write`, `admin` (dev only; production: `hlm_ops.sh`) |
 | `hlm device list` · `whoami` | `--json` for machine output |
 | `hlm project create <slug> [--name N]` · `list` | `create` needs device 1 (`--admin`) |
 | `hlm query "<q>" [--budget N] [--kind K ...] [--valid-at TS] [--known-at TS] [--include-archived]` | prints the compact, sorted JSON of `memory.query` |
