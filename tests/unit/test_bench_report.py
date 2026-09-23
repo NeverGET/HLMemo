@@ -109,17 +109,20 @@ def test_overlay_is_public_safe_and_versioned() -> None:
             assert op["op"] in allowed
             for v in op.get("variants", []):  # only short generic English words, never private text
                 assert re.fullmatch(r"[a-z ]{3,12}", v), v
-    assert re.fullmatch(r"adj-1\+[0-9a-f]{8}", v2.overlay_version())
+    assert re.fullmatch(r"adj-2\+[0-9a-f]{8}", v2.overlay_version())
 
 
 def test_adjusted_gold_rescoring_of_public_misses(adjusted) -> None:  # noqa: ANN001
+    """adj-2 (Sol 40, strict): T9-01, T9-03, T9-15, T9-25 and T10-07 are model errors; only the
+    T7 keys and the T12 file-list reading were too narrow."""
     rows = {(r["case_id"], r["model"]): r for r in json.loads(FIXTURE.read_text(encoding="utf-8"))["rows"]}
     sol = "openai/gpt-6-sol"
     want = {
-        "T9-01": 1.0,
-        "T9-03": 1.0,
+        "T9-01": 0.65,
+        "T9-03": 0.65,
         "T9-15": 0.65,
         "T9-25": 0.0,
+        "T10-07": 0.0,
         "T7-16": 1.0,
         "T7-18": 1.0,
         "T12-10": 0.8,
@@ -129,7 +132,16 @@ def test_adjusted_gold_rescoring_of_public_misses(adjusted) -> None:  # noqa: AN
         fam = r["family"]
         case, pack = adjusted[(fam, cid)]
         assert v2.score(fam, r["parsed"], case, pack, raw=v2.raw_of(r["parsed"]))[0] == expected, cid
-    assert ("T10", "T10-07") not in adjusted  # ambiguous -> dropped
+    ov = {c["case"]: c for c in v2.load_overlay()["cases"]}
+    assert {k for k, c in ov.items() if c["verdict"] == "gold_correct"} == {
+        "T9-01",
+        "T9-03",
+        "T9-15",
+        "T9-25",
+        "T10-07",
+        "T12-10",
+    }
+    assert not any(c.get("action") == "drop" for c in ov.values())
 
 
 def test_t12_family_rule_accepts_both_file_readings(adjusted) -> None:  # noqa: ANN001
@@ -147,16 +159,120 @@ def test_raw_gold_is_untouched() -> None:
     assert "retries" not in raw["T7-16"]["gold"]["key_terms"][0]
 
 
-def test_leaderboard_render_is_stable(tmp_path: Path) -> None:
-    doc = leaderboard.load(tmp_path / "missing.json")
-    rows = [_row("T5", "c1", 1.0), _row("T9", "c2", 0.65)]
-    s = report.summarize(rows, suite="v2")
-    e = leaderboard.librarian_entry(
-        s, {"model_id": "m", "reps": 1}, gold="raw", run="r", source="f", commit="abc"
+# --------------------------------------------------------------------------- leaderboard (Sol 40)
+BASE = json.loads((ROOT / "eval" / "baselines" / "phase0.json").read_text(encoding="utf-8"))
+
+
+def _cand(a: float, b: float | None, **kw) -> dict:  # noqa: ANN003
+    scores = {"corpus_a": a} if b is None else {"corpus_a": a, "corpus_b_dev": b}
+    return {
+        "label": "iter",
+        "commit": "abc1234",
+        "config": {"lambda": 0.1},
+        "usd_per_query": 0.0,
+        "fixtures_sha256": {c: BASE["fixtures"][k] for c, k in _FIX.items() if c in scores},
+        "scores": scores,
+        **kw,
+    }
+
+
+_FIX = {"corpus_a": "corpus_a_questions_sha256", "corpus_b_dev": "corpus_b_dev_sha256"}
+
+
+@pytest.fixture
+def seeded() -> dict:
+    doc = leaderboard.load(Path("/nonexistent/leaderboard.json"))
+    leaderboard.seed_baseline(doc, BASE)
+    return doc
+
+
+def test_seed_baseline_never_rewrites_history(seeded: dict) -> None:
+    before = json.dumps(seeded, sort_keys=True)
+    with pytest.raises(leaderboard.LeaderboardError, match="append-only"):
+        leaderboard.seed_baseline(seeded, BASE)
+    assert json.dumps(seeded, sort_keys=True) == before
+    assert leaderboard.best_of(seeded["retrieval"]["corpus_a"])["score"] == 0.793
+
+
+def test_rule1_new_best_may_not_drop_another_corpus(seeded: dict) -> None:
+    before = json.dumps(seeded, sort_keys=True)
+    with pytest.raises(leaderboard.LeaderboardError, match="rule 1"):  # +2 on A, -2 on B
+        leaderboard.add_retrieval_candidate(seeded, _cand(0.813, 0.431))
+    with pytest.raises(leaderboard.LeaderboardError, match="rule 1: new best .* no score reported"):
+        leaderboard.add_retrieval_candidate(seeded, _cand(0.813, None))
+    assert json.dumps(seeded, sort_keys=True) == before  # a refusal writes nothing
+    moved = leaderboard.add_retrieval_candidate(seeded, _cand(0.813, 0.431), decision="D-070")
+    a = seeded["retrieval"]["corpus_a"]
+    assert moved == ["corpus_a"] and leaderboard.best_of(a)["score"] == 0.813
+    assert a["history"][-1]["decision"] == "D-070" and a["history"][-1]["rule_exceptions"]
+    assert len(a["history"]) == 2 and a["history"][0]["score"] == 0.793  # history kept
+    assert a["history"][-1]["config_hash"] and a["history"][-1]["commit"] == "abc1234"
+
+
+def test_rule1_within_one_point_and_rule2_on_merge(seeded: dict) -> None:
+    assert leaderboard.add_retrieval_candidate(seeded, _cand(0.80, 0.445)) == ["corpus_a"]  # -0.6 pt ok
+    with pytest.raises(leaderboard.LeaderboardError, match="rule 2"):  # merging a -2 pt config
+        leaderboard.add_retrieval_candidate(seeded, _cand(0.78, 0.445), merge=True)
+    assert leaderboard.add_retrieval_candidate(seeded, _cand(0.78, 0.445)) == []  # a plain iteration
+
+
+def test_data_errors_are_never_overridable(seeded: dict) -> None:
+    bad_fixture = _cand(0.9, 0.5)
+    bad_fixture["fixtures_sha256"]["corpus_a"] = "0" * 64
+    for cand, msg in (
+        (bad_fixture, "fixture sha256"),
+        ({**_cand(0.9, 0.5), "usd_per_query": None}, "rule 3"),
+        (_cand(0.9, 0.5, scores={"corpus_b_sealed": 0.5}), "unknown corpus|fixture|rule 4"),
+    ):
+        with pytest.raises(leaderboard.LeaderboardError, match=msg):
+            leaderboard.add_retrieval_candidate(seeded, cand, decision="D-070")
+    sealed = _cand(0.5, None)
+    sealed["scores"] = {"corpus_b_sealed": 0.5}
+    sealed["fixtures_sha256"] = {"corpus_b_sealed": BASE["fixtures"]["corpus_b_sealed_sha256"]}
+    with pytest.raises(leaderboard.LeaderboardError, match="rule 4"):
+        leaderboard.add_retrieval_candidate(seeded, sealed)
+    leaderboard.add_retrieval_candidate(seeded, sealed, confirmation=True)
+    with pytest.raises(leaderboard.LeaderboardError, match="D-xxx"):
+        leaderboard.add_retrieval_candidate(seeded, _cand(0.9, 0.5), decision="later")
+
+
+def _entry(score_rows: list[dict], meta: dict, packs: dict, incomplete: list[str], run: str = "r") -> dict:
+    return leaderboard.librarian_entry(
+        report.summarize(score_rows, suite="v2"),
+        {"model_id": "m", "reps": 1, "config_hash": "cfg", **meta},
+        gold="raw",
+        run=run,
+        source="f.json",
+        commit="abc",
+        packs=packs,
+        incomplete=incomplete,
     )
-    leaderboard.add_librarian(doc, "bench_v2", e)
-    leaderboard.add_librarian(doc, "bench_v2", e)  # upsert, not duplicate
-    assert len(doc["librarian"]["bench_v2"]["entries"]) == 1
+
+
+def test_incomplete_runs_are_recorded_but_never_ranked() -> None:
+    doc = leaderboard.load(Path("/nonexistent/leaderboard.json"))
+    packs = [("T5", {"cases": [{"id": "c1"}, {"id": "c2"}]})]
+    full = [_row("T5", "c1", 1.0), _row("T5", "c2", 0.5)]
+    part = [_row("T5", "c1", 1.0)]
+    assert leaderboard.coverage(full, packs, 1, {}) == []
+    assert leaderboard.coverage(part, packs, 1, {}) == ["1 of 2 case x rep results missing"]
+    assert "interrupted" in leaderboard.coverage(full, packs, 1, {"aborted": True})[0]
+    ref = {"t5.json": "a" * 64}
+    good = _entry(full, {}, ref, [], run="complete")
+    partial = _entry(part + [_row("T5", "c2", 1.0)], {}, ref, ["interrupted"], run="partial")
+    other_packs = _entry(full, {}, {"t5.json": "b" * 64}, [], run="other")
+    for e in (good, partial, other_packs):
+        leaderboard.add_librarian(doc, "bench_v2", e)
+    b = doc["librarian"]["bench_v2"]
+    assert b["best"]["raw"]["run"] == "complete"
+    assert {e["run"]: e["complete"] for e in b["entries"]} == {
+        "complete": True,
+        "partial": False,
+        "other": False,
+    }
+    assert "pack set differs" in b["entries"][-1]["incomplete"][-1]
     md = leaderboard.render_md(doc)
-    assert md == leaderboard.render_md(json.loads(json.dumps(doc)))
-    assert "err T9" in md and "$/correct" in md
+    assert "Not ranked (incomplete)" in md and md == leaderboard.render_md(json.loads(json.dumps(doc)))
+    assert not leaderboard.add_librarian(doc, "bench_v2", good)  # identical: idempotent
+    with pytest.raises(leaderboard.LeaderboardError, match="append-only"):
+        leaderboard.add_librarian(doc, "bench_v2", {**good, "score": 0.1})

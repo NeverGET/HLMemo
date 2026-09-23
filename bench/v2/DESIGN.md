@@ -128,7 +128,7 @@ score ≥ 0.8).
 
 ```
 bench/v2/DESIGN.md                      this file
-bench/v2/ADJUDICATION.md                gold adjudication record (adj-1)
+bench/v2/ADJUDICATION.md                gold adjudication record (adj-2)
 src/hlmemo/bench/v2.py                  system prompt, message builders, validators, scorers for T5-T12
 src/hlmemo/bench/adjudication_v2.json   gold overlay (hlm bench --gold adjusted, the default)
 src/hlmemo/bench/tasks/v2/*.json        public pack (moved from bench/v2/tasks/ in W2f)

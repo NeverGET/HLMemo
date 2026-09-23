@@ -1,7 +1,8 @@
 """``hlm bench``: benchmark a librarian model on the production path (W2f, D-017).
 
     hlm bench --suite v2 --profile openrouter-gpt6-luna --runs 1 --max-usd 0.5 --env-file .env
-    hlm bench --suite v2 --model openai/gpt-6-luna --price-in 0.2 --price-out 0.75 --pack docs/private/bench-v2
+    hlm bench --suite v2 --model openai/gpt-6-luna --price-in 0.2 --price-out 0.75 \
+        --pack docs/private/bench-v2
     hlm bench --suite v1 --profile openrouter --mode replay --cassette-dir tests/cassettes/w2a
     hlm bench --compare bench/results/A.json bench/results/B.json#openai/gpt-6-luna
     hlm bench rescore bench/results/20260923-194459-v2.json --gold adjusted --pack docs/private/bench-v2
@@ -87,8 +88,15 @@ def bench(
     record_name: Annotated[str, typer.Option(help="Cassette file name when recording.")] = "bench",
     concurrency: Annotated[int, typer.Option(min=1, help="Calls in flight.")] = 4,
     calls_per_day: Annotated[int, typer.Option(min=1, help="$/month projection basis.")] = 60,
+    budget: Annotated[
+        str,
+        typer.Option(
+            help="db (default): reserve every attempt against the SHARED Postgres llm_budget, like the"
+            " librarian; local: an in-process --max-usd cap that is NOT shared across runs."
+        ),
+    ] = "db",
     budget_dsn: Annotated[
-        str | None, typer.Option(help="Also reserve against this Postgres llm_budget (hour/day/month).")
+        str | None, typer.Option(help="--budget db: the database (default HLM_DB_DSN / hlm.toml).")
     ] = None,
     env_file: Annotated[str | None, typer.Option(help="Load KEY=VALUE secrets without echoing.")] = None,
     out: Annotated[str | None, typer.Option(help="Result directory ('' = do not write).")] = None,
@@ -124,6 +132,7 @@ def bench(
         record_name=record_name,
         concurrency=concurrency,
         calls_per_day=calls_per_day,
+        budget=budget,
         budget_dsn=budget_dsn,
     )
     out_dir = _default_out() if out is None else (Path(out) if out.strip() else None)
@@ -192,75 +201,175 @@ def rescore(
     as_json: Annotated[bool, typer.Option("--json", help="Print the summary JSON.")] = False,
 ) -> None:
     """Re-score a saved v2 result offline (no LLM) under raw or adjusted gold."""
-    from hlmemo.bench import report, v2
+    from hlmemo.bench import leaderboard, report, v2
 
     rows, meta = report.load_rows(result)
     packs = v2.load_packs(v2.default_packs() + v2.expand_pack_paths(pack or []), gold=gold)
     rescored, skipped = report.rescore_rows(rows, packs)
+    if skipped["missing_case"]:
+        typer.echo(
+            f"hlm bench rescore: {skipped['missing_case']} rows reference cases outside the loaded packs"
+            " (pass the private pack with --pack); refusing to report a silently partial score",
+            err=True,
+        )
+        raise typer.Exit(1)
     summary = report.summarize(rescored, suite="v2")
+    incomplete = leaderboard.coverage(rescored, packs, meta.get("reps") or 1, meta)
     meta = {**meta, "gold": gold if gold == "raw" else v2.overlay_version(), "mode": "rescore"}
     if as_json:
-        typer.echo(json.dumps({"meta": meta, "skipped": skipped, "summary": summary}, indent=1))
+        typer.echo(json.dumps({"meta": meta, "incomplete": incomplete, "summary": summary}, indent=1))
     else:
-        typer.echo(report.render_md(summary, meta))
-        typer.echo(f"skipped rows (case not in the loaded packs): {skipped['missing_case']}", err=True)
+        typer.echo(report.render_md(summary, meta), nl=False)
+        if incomplete:
+            typer.echo("INCOMPLETE: " + "; ".join(incomplete))
 
 
-@bench_app.command("leaderboard")
-def leaderboard_cmd(
-    path: Annotated[Path, typer.Option(help="leaderboard.json")] = Path("eval/results/leaderboard.json"),
-    add: Annotated[
-        list[str] | None,
-        typer.Option(help="Add a result (hlm bench path.json, or bench/run.py path.json#model); repeatable."),
-    ] = None,
-    gold: Annotated[
-        str, typer.Option(help="v2 entries: raw | adjusted | both (re-scored offline).")
-    ] = "both",
-    pack: Annotated[list[str] | None, typer.Option(help="Extra v2 pack file/dir (the private pack).")] = None,
-    run: Annotated[str | None, typer.Option(help="Run label (default: the result file's stem).")] = None,
-    commit: Annotated[str | None, typer.Option(help="Commit of the code that produced the run.")] = None,
-    board: Annotated[str | None, typer.Option(help="Librarian board (default bench_<suite>).")] = None,
-    baseline: Annotated[
-        Path | None, typer.Option(help="(Re)seed the retrieval boards from a W-E baseline JSON.")
-    ] = None,
-) -> None:
-    """Add results / seed baselines, then re-render LEADERBOARD.md next to leaderboard.json."""
-    from hlmemo.bench import leaderboard, report, v2
+leaderboard_app = typer.Typer(
+    help="The W-E leaderboard (eval/results/): append-only history, rules enforced.",
+    invoke_without_command=True,
+    no_args_is_help=False,
+    rich_markup_mode=None,
+)
+bench_app.add_typer(leaderboard_app, name="leaderboard")
+LB_PATH = Path("eval/results/leaderboard.json")
 
-    doc = leaderboard.load(path)
-    if baseline is not None:
-        doc["retrieval"] = leaderboard.retrieval_from_baseline(
-            json.loads(baseline.read_text(encoding="utf-8"))
-        )
-    for spec in add or []:
-        rows, meta = report.load_rows(spec)
-        suite = meta.get("suite", "v2")
-        label = run or Path(spec.partition("#")[0]).stem
-        golds = ["raw", "adjusted"] if gold == "both" else [gold]
-        for g in golds if suite == "v2" else ["v1"]:
-            if suite == "v2":
-                packs = v2.load_packs(v2.default_packs() + v2.expand_pack_paths(pack or []), gold=g)
-                scored, skipped = report.rescore_rows(rows, packs)
-                if g == "raw" and skipped["missing_case"]:
-                    raise typer.BadParameter(
-                        f"{spec}: {skipped['missing_case']} rows without a case (pass --pack)"
-                    )
-            else:
-                scored = rows
-            summary = report.summarize(scored, suite=suite)
-            entry = leaderboard.librarian_entry(
-                summary,
-                meta,
-                gold="raw" if g == "raw" else (v2.overlay_version() if g == "adjusted" else g),
-                run=label,
-                source=Path(spec.partition("#")[0]).name,
-                commit=commit or meta.get("commit"),
-            )
-            leaderboard.add_librarian(doc, board or f"bench_{suite}", entry)
+
+def _lb_write(path: Path, doc: dict) -> None:
+    from hlmemo.bench import leaderboard
+
     leaderboard.save(path, doc)
     md = path.with_name("LEADERBOARD.md")
     md.write_text(leaderboard.render_md(doc), encoding="utf-8")
     typer.echo(f"rendered {md}", err=True)
+
+
+@leaderboard_app.callback()
+def leaderboard_render(
+    ctx: typer.Context,
+    path: Annotated[Path, typer.Option(help="leaderboard.json")] = LB_PATH,
+) -> None:
+    """Re-render LEADERBOARD.md from leaderboard.json (no subcommand)."""
+    ctx.obj = path
+    if ctx.invoked_subcommand is None:
+        from hlmemo.bench import leaderboard
+
+        _lb_write(path, leaderboard.load(path))
+
+
+@leaderboard_app.command("seed-baseline")
+def seed_baseline(
+    ctx: typer.Context,
+    baseline: Annotated[Path, typer.Argument(help="W-E baseline JSON (eval/baselines/phase0.json).")],
+) -> None:
+    """Create the retrieval boards from a baseline. Refused if any board exists (history is never
+    rewritten; later iterations go through add-candidate)."""
+    from hlmemo.bench import leaderboard
+
+    path: Path = ctx.obj
+    doc = leaderboard.load(path)
+    try:
+        boards = leaderboard.seed_baseline(doc, json.loads(baseline.read_text(encoding="utf-8")))
+    except leaderboard.LeaderboardError as exc:
+        typer.echo(f"refused: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"seeded {boards}", err=True)
+    _lb_write(path, doc)
+
+
+def _librarian_candidate(
+    doc: dict, spec: str, gold: str, pack: list[str], run: str | None, commit: str | None, board: str | None
+) -> list[str]:
+    from hlmemo.bench import leaderboard, report, v1, v2
+
+    rows, meta = report.load_rows(spec)
+    suite = meta.get("suite", "v2")
+    label = run or Path(spec.partition("#")[0]).stem
+    notes = []
+    golds = (["raw", "adjusted"] if gold == "both" else [gold]) if suite == "v2" else ["v1"]
+    for g in golds:
+        if suite == "v2":
+            paths = v2.default_packs() + v2.expand_pack_paths(pack)
+            packs = v2.load_packs(paths, gold=g)
+            scored, skipped = report.rescore_rows(rows, packs)
+            if skipped["missing_case"]:
+                raise leaderboard.LeaderboardError(
+                    [
+                        f"{spec}: {skipped['missing_case']} rows reference cases outside the loaded packs"
+                        " (pass the private pack with --pack)"
+                    ]
+                )
+            hashes = leaderboard.pack_hashes(paths)
+            gold_label = "raw" if g == "raw" else v2.overlay_version()
+        else:
+            packs = [(t, v1.load_fixture(t)) for t in v1.TASKS]
+            scored = rows
+            hashes = {v1.FIXTURE_FILES[t]: v1.fixture_sha256(t) for t in v1.TASKS}
+            gold_label = "v1"
+        incomplete = leaderboard.coverage(scored, packs, meta.get("reps") or 1, meta)
+        ran = meta.get("pack_sha256")  # recorded at run time by hlm bench (absent in legacy files)
+        if ran is not None and ran != hashes:
+            incomplete.append("run-time pack hashes differ from the packs scored here")
+        entry = leaderboard.librarian_entry(
+            report.summarize(scored, suite=suite),
+            meta,
+            gold=gold_label,
+            run=label,
+            source=Path(spec.partition("#")[0]).name,
+            commit=commit or meta.get("commit"),
+            packs=hashes,
+            incomplete=incomplete,
+        )
+        added = leaderboard.add_librarian(doc, board or f"bench_{suite}", entry)
+        state = "ranked" if entry["complete"] else "NOT ranked: " + "; ".join(incomplete)
+        notes.append(f"{label} gold {gold_label}: {'added' if added else 'unchanged'} ({state})")
+    return notes
+
+
+@leaderboard_app.command("add-candidate")
+def add_candidate(
+    ctx: typer.Context,
+    result: Annotated[
+        list[str] | None,
+        typer.Option(help="Librarian: an hlm bench result (path.json) or bench/run.py path.json#model."),
+    ] = None,
+    retrieval: Annotated[
+        Path | None, typer.Option(help="Retrieval: a candidate JSON (see hlmemo.bench.leaderboard).")
+    ] = None,
+    decision: Annotated[
+        str | None, typer.Option(help="D-xxx that logs an exception to rule 1/2 (required to override).")
+    ] = None,
+    merge: Annotated[
+        bool, typer.Option("--merge", help="Retrieval: this config is being merged (rule 2).")
+    ] = False,
+    confirmation: Annotated[
+        bool, typer.Option("--confirmation", help="Retrieval: record a sealed-corpus confirmation (rule 4).")
+    ] = False,
+    gold: Annotated[str, typer.Option(help="Librarian v2: raw | adjusted | both.")] = "both",
+    pack: Annotated[list[str] | None, typer.Option(help="Extra v2 pack file/dir (the private pack).")] = None,
+    run: Annotated[str | None, typer.Option(help="Run label (default: the result file's stem).")] = None,
+    commit: Annotated[str | None, typer.Option(help="Commit of the code that produced the run.")] = None,
+    board: Annotated[str | None, typer.Option(help="Librarian board (default bench_<suite>).")] = None,
+) -> None:
+    """Append one iteration (retrieval) or run (librarian). Refused, with nothing written, when the
+    W-E rules or the history rules do not hold."""
+    from hlmemo.bench import leaderboard
+
+    path: Path = ctx.obj
+    doc = leaderboard.load(path)
+    try:
+        if retrieval is not None:
+            cand = json.loads(retrieval.read_text(encoding="utf-8"))
+            moved = leaderboard.add_retrieval_candidate(
+                doc, cand, decision=decision, merge=merge, confirmation=confirmation, source=retrieval.name
+            )
+            typer.echo(f"appended {cand.get('label')!r}; new best on {moved or 'no corpus'}", err=True)
+        for spec in result or []:
+            for note in _librarian_candidate(doc, spec, gold, list(pack or []), run, commit, board):
+                typer.echo(note, err=True)
+    except leaderboard.LeaderboardError as exc:
+        typer.echo("refused (nothing written):\n  - " + "\n  - ".join(exc.problems), err=True)
+        raise typer.Exit(1) from None
+    _lb_write(path, doc)
 
 
 def main() -> None:  # python -m hlmemo.bench.cli
