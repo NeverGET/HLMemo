@@ -68,8 +68,10 @@ log = logging.getLogger("hlmemo.server")
 
 ADMIN_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_TOKEN not set"
 ADMIN_HTTP_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_HTTP=disabled ignores HLM_ADMIN_TOKEN (D-061)"
-MIGRATION_BRANCH = "main"  # CC-1 / D-061: label on 0005_w0_access; head 0006_librarian (D-062)
-MIGRATION_HEAD_FALLBACK = "0006_librarian"  # used only when alembic/ is not on disk (never in the image)
+MIGRATION_BRANCH = "main"  # CC-1 / D-061: label on 0005_w0_access; head 0008_librarian_tasks (D-069)
+MIGRATION_HEAD_FALLBACK = (
+    "0008_librarian_tasks"  # used only when alembic/ is not on disk (never in the image)
+)
 MODELS_LOCK = "models.lock"
 
 

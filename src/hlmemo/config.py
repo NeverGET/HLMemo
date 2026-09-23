@@ -176,6 +176,8 @@ class Settings(BaseSettings):
     # W2b: a write_review job waits (handed back, no attempt consumed) up to this long for the
     # subject's embeddings before it runs with the lexical list only.
     librarian_embed_wait_s: float = Field(default=300.0, ge=0)
+    # W2b: a relation review job starts this long after its write (the embed worker runs first).
+    librarian_review_delay_s: float = Field(default=3.0, ge=0)
     # W2b (D-067): who gives the second opinion on high-impact proposals: "cross" = the other
     # profile of the chain (primary <-> fallback), "self" = the answering profile again.
     librarian_verifier: str = Field(default="cross", pattern="^(cross|self)$")
