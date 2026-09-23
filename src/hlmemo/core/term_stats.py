@@ -20,8 +20,10 @@ Stale-while-revalidate (D-063): once a project has a DF, no query ever blocks on
 invalidation (a newer corpus revision, or the TTL) returns the cached DF and starts ONE background
 refresh for that project (single flight, on its own connection, still capped by
 ``REFRESH_TIMEOUT_MS``); a refresh that fails or times out leaves the old DF in place and may be
-retried after ``STALE_RETRY_S``. Staleness is bounded by ``MAX_STALENESS_S`` (5 s): a query at least
-that long after a write (or after the refresh finished) sees the new DF. Only a cold start (no DF
+retried after ``STALE_RETRY_S``. D-064 bounds staleness: past ``MAX_STALENESS_S`` (5 s) after an
+invalidation the old DF is served only while its refresh is in flight; if a refresh failed, or the
+invalidation is more than ``MAX_UNREFRESHED_S`` (30 s) old and still unrefreshed, queries run
+UNFILTERED (no DF) until a refresh succeeds. The cold load has ONE 2 s total budget. Only a cold start (no DF
 yet) blocks, on the single-flight load under the 2 s cap; a cold load that fails yields *no
 filtering* (Phase-0 behaviour) and is not retried for ``RETRY_AFTER_S``. This relaxes Sol 33 #1
 ("the next query sees the write") to "a query ≥ 5 s after the write sees it" by decision D-063.
@@ -49,6 +51,7 @@ REFRESH_TIMEOUT_MS = 2000
 RETRY_AFTER_S = 60.0
 MAX_STALENESS_S = 5.0
 STALE_RETRY_S = 1.0  # a failed background refresh may be retried after this
+MAX_UNREFRESHED_S = 30.0  # D-064: past this, an unrefreshed invalidation means unfiltered queries
 SAMPLE_MAX = 50_000
 MAX_PROJECTS = 64
 MAX_TERMS = 2_000_000
@@ -95,6 +98,8 @@ class _Entry:
     stats: ProjectStats | None  # None: the refresh failed; no filtering until ``at + RETRY_AFTER_S``
     revision: int
     at: float
+    invalid_since: float | None = None  # first query that saw this entry invalidated (D-064)
+    refresh_failed: bool = False  # the last background refresh failed: unfiltered until one succeeds
 
     @property
     def size(self) -> int:
@@ -181,8 +186,11 @@ class StatsCache:
                 finally:
                     with contextlib.suppress(Exception):
                         await bg.close()
-            except Exception as exc:  # noqa: BLE001 - keep the old DF; retry after STALE_RETRY_S
+            except Exception as exc:  # noqa: BLE001 - D-064: unfiltered until a refresh succeeds
                 self._failed_at[key] = time.monotonic()
+                current = self._entries.get(key)
+                if current is not None:
+                    current.refresh_failed = True
                 log.warning(
                     "term statistics refresh for project %s failed (%s); old DF kept", pid, type(exc).__name__
                 )
@@ -199,10 +207,21 @@ class StatsCache:
             return EMPTY
         key = (key_db, pid, created)
         e = self._entries.get(key)
-        if e is not None and e.stats is not None:  # a DF exists: never block (D-063)
-            if not self._fresh(e, revision, time.monotonic()):
-                self._revalidate(conn, key, pid, revision)
+        if e is not None and e.stats is not None:  # a DF exists: never block (D-063/D-064)
             self._entries.move_to_end(key)
+            now = time.monotonic()
+            if self._fresh(e, revision, now):
+                return e.stats
+            if e.invalid_since is None:
+                e.invalid_since = now
+            self._revalidate(conn, key, pid, revision)  # start or join the single flight
+            task = self._tasks.get(key)
+            in_flight = task is not None and not task.done()
+            age = now - e.invalid_since
+            if e.refresh_failed or age > MAX_UNREFRESHED_S:
+                return None  # D-064 (3): never unbounded staleness: run unfiltered
+            if age > MAX_STALENESS_S and not in_flight:
+                return None  # D-064 (2): old DF only while its refresh is in flight
             return e.stats
         e = self._hit(key, revision)
         if e is not None:

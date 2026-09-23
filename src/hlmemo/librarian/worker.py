@@ -54,7 +54,7 @@ from hlmemo.librarian.errors import (
     RoleNotAuthorized,
 )
 from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event
-from hlmemo.librarian.jobs import LIBRARIAN_JOB_KINDS, insert_recorded_jobs
+from hlmemo.librarian.jobs import LIBRARIAN_JOB_KINDS, assign_job_ids, insert_recorded_jobs
 from hlmemo.librarian.provider import Provider, lineage_scope
 from hlmemo.librarian.redact import REDACTION_VERSION
 from hlmemo.librarian.reserved import reserved_ids
@@ -283,7 +283,7 @@ class LibrarianWorker:
             questions.append(
                 {
                     "question_id": str(uuid.uuid5(NS_LIBRARIAN, f"{job.dedupe_key}#{i}")),
-                    "job_id": job.job_id,
+                    "job_key": job.dedupe_key,
                     "batch_id": batch_id,
                     "project_id": job.payload.get("project_id"),
                     "project_ids": touched,
@@ -347,6 +347,10 @@ class LibrarianWorker:
                 except AuthorityLost as exc:
                     outcome, applied, questions, status_changes = "authority_lost", [], [], []
                     detail = error_code(exc)
+            child_jobs = await assign_job_ids(conn, self._child_jobs(job, plan))
+            # run_after as it stands now (a retry/backoff moved it): replay restores it (Sol 37 #8)
+            cur = await conn.execute("SELECT run_after FROM jobs WHERE job_id = %s", (job.job_id,))
+            row = await cur.fetchone()
             resolved: dict[str, Any] = {
                 "recorded_at": actor.ts(T),
                 "outcome": outcome,
@@ -356,8 +360,13 @@ class LibrarianWorker:
                 "question_status": status_changes,
                 "superseded": superseded,
                 "batch_id": batch_id if questions else None,
-                "jobs": self._child_jobs(job, plan),
-                "done": {"dedupe_key": job.dedupe_key, "done_at": actor.ts(T), "attempts": job.attempts},
+                "jobs": child_jobs,
+                "done": {
+                    "dedupe_key": job.dedupe_key,
+                    "done_at": actor.ts(T),
+                    "attempts": job.attempts,
+                    "run_after": actor.ts(row[0]) if row else None,
+                },
             }
             if detail:
                 resolved["detail"] = detail

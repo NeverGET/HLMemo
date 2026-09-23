@@ -103,6 +103,7 @@ async def test_migration_applies_and_device1_reserved(connect) -> None:
             "links",
             "llm_budget",
             "llm_calls",
+            "llm_lineage_calls",
             "llm_reservations",
             "memory_versions",
             "projects",

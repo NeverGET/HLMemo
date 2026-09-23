@@ -69,6 +69,8 @@ MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": 
 class _Stub:
     mode = "stall"
     requests = 0
+    # [start, end | None, mode-at-arrival] per provider request (time.monotonic seconds)
+    hits: list[list] = []
 
 
 class _StubHandler(BaseHTTPRequestHandler):
@@ -76,6 +78,8 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get("Content-Length", 0)))
         _Stub.requests += 1
         mode = _Stub.mode
+        hit = [time.monotonic(), None, mode]
+        _Stub.hits.append(hit)
         if mode == "stall":
             time.sleep(STALL_S)
             mode = "ok"
@@ -94,6 +98,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        hit[1] = time.monotonic()
 
     def log_message(self, *args: object) -> None:
         pass
@@ -176,7 +181,8 @@ async def test_gl3_llm_down_core_unaffected(
     world = retr_world
     make_body = _identifier_body if body_kind == "identifier" else _body
     run = f"gl3{body_kind[0]}"
-    _Stub.mode, _Stub.requests = "stall", 0
+    _Stub.mode, _Stub.requests, _Stub.hits = "stall", 0, []
+    window: list[float] = []  # monotonic bounds of the timed queries
     async with await connect() as conn:
         await seed_reserved(conn)
         for did, tok in ((world.loader_id, LOADER_TOKEN), (world.reader_id, READER_TOKEN)):
@@ -252,6 +258,7 @@ async def test_gl3_llm_down_core_unaffected(
                 k = i
                 while not done.is_set():
                     t0 = time.perf_counter()
+                    window.append(time.monotonic())
                     await _rpc(
                         client,
                         READER_TOKEN,
@@ -259,6 +266,7 @@ async def test_gl3_llm_down_core_unaffected(
                         {"project": MAIN, "query": queries[k % len(queries)], "token_budget": 2000},
                     )
                     lat.append((time.perf_counter() - t0) * 1000)
+                    window.append(time.monotonic())
                     k += CALLERS
 
             async def writer() -> int:
@@ -327,14 +335,20 @@ async def test_gl3_llm_down_core_unaffected(
         stub.shutdown()
 
     p95 = _p95(lat)
+    # Sol 37 #3: the librarian really was stalled / failing WHILE the queries were being timed
+    lo, hi = min(window), max(window)
+    overlap = [m for a, b, m in _Stub.hits if m in ("stall", "503") and a <= hi and (b is None or b >= lo)]
     print(
         f"\nG-L3 [{body_kind} bodies] (real api + librarian processes):"
         f" {len(lat)} queries during {N_WRITES} writes:"
         f" p50 {statistics.median(lat):.1f} ms p95 {p95:.1f} ms max {max(lat):.1f} ms;"
         f" write p50 {statistics.median(write_ms):.1f} ms p95 {_p95(write_ms):.1f} ms;"
         f" stub requests {_Stub.requests}; reference without writes: {len(quiet)} queries"
-        f" p50 {statistics.median(quiet):.1f} ms p95 {_p95(quiet):.1f} ms"
+        f" p50 {statistics.median(quiet):.1f} ms p95 {_p95(quiet):.1f} ms;"
+        f" degraded provider requests overlapping the timed window:"
+        f" stall {overlap.count('stall')} 503 {overlap.count('503')} ({hi - lo:.1f} s window)"
     )
+    assert overlap, f"no stalled/503 provider request overlapped the timed queries: {_Stub.hits[:6]}"
     assert p95 <= P95_LIMIT_MS
     async with await connect() as conn:
         cur = await conn.execute(

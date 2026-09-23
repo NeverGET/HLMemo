@@ -97,3 +97,42 @@ async def test_schema_failure_error_is_content_free(db_dsn, connect, world: Worl
         cur = await conn.execute("SELECT row_to_json(c)::text FROM llm_calls c")
         assert all(SECRET not in r[0] for r in await cur.fetchall())
     assert json.dumps(llm.requests).count("sk-") == 0  # prompts never carried it either
+
+
+async def test_record_mode_normalizes_array_and_tool_call_content(
+    db_dsn, connect, world: World, tmp_path
+) -> None:  # noqa: ANN001
+    """Sol 37 #2: an array-of-parts ``message.content`` carrying a secret is normalized to text and
+    redacted before it is persisted; tool calls and unknown parts become content-free markers."""
+    await _job(connect, world, "rec-array")
+    echo = json.dumps({"contradicts": True, "supersedes": "B", "reason": f"key {SECRET}"})
+    array_msg = {
+        "model": "stub",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": echo},
+                        {"type": "image_url", "image_url": {"url": SECRET}},
+                    ],
+                    "tool_calls": [{"id": "t", "function": {"name": "leak", "arguments": SECRET}}],
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+    llm = ScriptedLLM(default=array_msg)
+    store = CassetteStore(tmp_path, record_name="arr")
+    provider = make_provider(db_dsn, llm, budget_disabled=True, mode="record", cassettes=store)
+    assert await make_worker(lib_settings(db_dsn), provider, connect).drain() == 1
+    await provider.aclose()
+    recorded = (tmp_path / "arr.jsonl").read_text()
+    assert SECRET not in recorded
+    content = json.loads(recorded)["response"]["choices"][0]["message"]["content"]
+    assert (
+        isinstance(content, str)
+        and "⟦CONTENT:unsupported⟧" in content
+        and content.endswith("⟦CONTENT:tool_calls⟧")
+    )

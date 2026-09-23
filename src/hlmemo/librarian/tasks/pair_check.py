@@ -18,6 +18,7 @@ from typing import Any
 
 from hlmemo.core.temporal import fmt_ts
 from hlmemo.librarian import privacy
+from hlmemo.librarian.errors import AuthorityLost, PrivacyDenied
 from hlmemo.librarian.memory import load_rules
 from hlmemo.librarian.prompts import load_task
 from hlmemo.librarian.tasks import Plan, user_message
@@ -71,6 +72,7 @@ class PairCheck:
                 max_rules=w.settings.librarian_memory_rules,
                 max_tokens=w.settings.librarian_memory_tokens,
                 meter=w.meter,
+                redactor=w.provider.redactor,
             )
             await conn.commit()
         task = load_task("contradiction")
@@ -94,9 +96,28 @@ class PairCheck:
                 "A": {"text": _text(cand.title, cand.body), "t_valid": fmt_ts(cand.valid_from)},
                 "B": {"text": _text(subj.title, subj.body), "t_valid": fmt_ts(subj.valid_from)},
             }
-            res = await w.provider.complete(
-                task, user_message("contradiction", payload, rules), job_id=job.job_id, lineage=job.lineage
-            )
+            pair_ids = [subject_vid, c.version_id]
+
+            async def precheck(ids: list[int] = pair_ids) -> None:  # before EVERY provider attempt
+                again, _ = await privacy.gate(w.connect, caps, ids)
+                if not again.device_ok:
+                    raise AuthorityLost("E_AUTHORITY_LOST")
+                if not all(again.allowed(v) for v in ids):
+                    raise PrivacyDenied("E_PRIVACY_DENIED")
+
+            try:
+                res = await w.provider.complete(
+                    task,
+                    user_message("contradiction", payload, rules),
+                    job_id=job.job_id,
+                    lineage=job.lineage,
+                    precheck=precheck,
+                )
+            except AuthorityLost:
+                return Plan(OP, "authority_lost", caps, calls=plan.calls, request_extra=plan.request_extra)
+            except PrivacyDenied:
+                dropped["denied_before_attempt"] = dropped.get("denied_before_attempt", 0) + 1
+                continue
             plan.calls.append(res.audit(w.provider.redactor))
             out = res.output
             if not out.get("contradicts"):

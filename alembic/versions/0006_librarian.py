@@ -64,7 +64,7 @@ ON CONFLICT (slug) DO NOTHING;
 -- replay rebuilds it). `proposal` is redacted JSON; decisions come from `answer` events.
 CREATE TABLE librarian_questions (
   question_id         uuid PRIMARY KEY,
-  job_id              bigint NOT NULL,        -- the proposing job (historical id; no FK, jobs is a projection)
+  job_key             text NOT NULL,          -- the proposing job's dedupe key (stable across replay)
   batch_id            uuid NOT NULL,
   project_id          bigint NOT NULL REFERENCES projects,
   project_ids         bigint[] NOT NULL,      -- every project the proposal touches
@@ -109,6 +109,14 @@ CREATE INDEX llm_calls_job ON llm_calls (job_id) WHERE job_id IS NOT NULL;
 CREATE INDEX llm_calls_lineage ON llm_calls (lineage) WHERE lineage IS NOT NULL;
 CREATE INDEX llm_calls_created ON llm_calls (created_at);
 
+-- Loop-lineage call ceiling (Sol 37 #7): one counter row per lineage, claimed atomically
+-- (INSERT … ON CONFLICT DO UPDATE … WHERE calls < cap) before every network attempt.
+CREATE TABLE llm_lineage_calls (
+  lineage    uuid PRIMARY KEY,
+  calls      integer NOT NULL CHECK (calls >= 0),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE TABLE llm_budget (
   period_kind  text NOT NULL CHECK (period_kind IN ('hour','day','month')),
   period_start timestamptz NOT NULL,
@@ -133,6 +141,7 @@ CREATE INDEX llm_reservations_expiry ON llm_reservations (expires_at);
 
 DOWNGRADE = r"""
 DROP TABLE IF EXISTS librarian_questions;
+DROP TABLE IF EXISTS llm_lineage_calls;
 DROP TABLE IF EXISTS llm_reservations;
 DROP TABLE IF EXISTS llm_budget;
 DROP TABLE IF EXISTS llm_calls;
@@ -167,27 +176,56 @@ WHERE c.relname = 'events_librarian_role' AND NOT i.indisvalid
 """
 
 
-# D-063: the chunk GIN indexes (trigram + lexical) and the title GIN index stop using the pending
-# list: a write burst otherwise leaves unmerged entries that every candidate query scans linearly
-# (measured 6.5 s statements, query p95 6.7 s during 100 writes). ALTER INDEX changes only the
-# reloption (no rewrite); gin_clean_pending_list then merges what is already pending. Writes pay
-# the index maintenance inline instead (measured in the W2a report).
+# D-063/D-064: the chunk GIN indexes (trigram + lexical) and the title GIN index stop using the
+# pending list: a write burst otherwise leaves unmerged entries that every candidate query scans
+# linearly (measured 6.5 s statements, query p95 6.7 s during 100 writes).
+#
+# Lock discipline (neutral verifier, W2a): ALTER INDEX … SET (fastupdate) waits for an exclusive
+# lock on the INDEX behind any running reader. It therefore runs FIRST, in its own autocommit
+# statements, never inside the table-DDL transaction (which would hold AccessExclusive on events/
+# jobs/devices while queued, stalling all traffic). Every step has a short lock_timeout: a busy
+# database makes the migration FAIL FAST with nothing half-applied (a reloption is idempotent),
+# and simply re-running `alembic upgrade` retries. The existing pending list is flushed last,
+# outside every DDL transaction (gin_clean_pending_list).
 GIN_NO_FASTUPDATE = ("chunks_trgm_gin", "chunks_tsv_gin", "mv_title_tsv")
+LOCK_TIMEOUT = "3s"
+RETRY_HINT = (
+    "0006_librarian: lock_timeout ({t}) waiting for {what}; nothing was left half-applied. "
+    "Retry `alembic upgrade` at a quieter moment (deploy stops writers first)."
+)
 
 
-def _gin_fastupdate(enabled: bool) -> None:
-    bind = op.get_bind()
-    for name in GIN_NO_FASTUPDATE:
-        if enabled:
-            bind.exec_driver_sql(f"ALTER INDEX {name} RESET (fastupdate)")
-        else:
-            bind.exec_driver_sql(f"ALTER INDEX {name} SET (fastupdate = off)")
+def _set_fastupdate(enabled: bool) -> None:
+    with op.get_context().autocommit_block():
+        bind = op.get_bind()
+        bind.exec_driver_sql(f"SET lock_timeout = '{LOCK_TIMEOUT}'")
+        try:
+            for name in GIN_NO_FASTUPDATE:
+                verb = "RESET (fastupdate)" if enabled else "SET (fastupdate = off)"
+                try:
+                    bind.exec_driver_sql(f"ALTER INDEX {name} {verb}")
+                except Exception as exc:
+                    raise RuntimeError(RETRY_HINT.format(t=LOCK_TIMEOUT, what=f"index {name}")) from exc
+        finally:
+            bind.exec_driver_sql("RESET lock_timeout")
+
+
+def _flush_pending_lists() -> None:
+    with op.get_context().autocommit_block():
+        bind = op.get_bind()
+        for name in GIN_NO_FASTUPDATE:
             bind.exec_driver_sql(f"SELECT gin_clean_pending_list('{name}'::regclass)")
 
 
 def upgrade() -> None:
-    op.get_bind().exec_driver_sql(UPGRADE)
-    _gin_fastupdate(enabled=False)  # D-063
+    _set_fastupdate(enabled=False)  # D-063/D-064: first, alone, fail-fast
+    bind = op.get_bind()
+    bind.exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")  # the table DDL, one tx
+    try:
+        bind.exec_driver_sql(UPGRADE)
+    except Exception as exc:
+        raise RuntimeError(RETRY_HINT.format(t=LOCK_TIMEOUT, what="the table DDL")) from exc
+    _flush_pending_lists()  # commits the DDL first; no DDL transaction open during the flush
     with op.get_context().autocommit_block():
         bind = op.get_bind()
         if bind.exec_driver_sql(LEFTOVER).fetchall():  # an interrupted concurrent build
@@ -200,5 +238,5 @@ def downgrade() -> None:
     # authoritative events. Reserved rows are removed only while nothing references them.
     with op.get_context().autocommit_block():
         op.get_bind().exec_driver_sql("DROP INDEX CONCURRENTLY IF EXISTS events_librarian_role")
-    _gin_fastupdate(enabled=True)  # D-063, symmetric
+    _set_fastupdate(enabled=True)  # D-063, symmetric
     op.get_bind().exec_driver_sql(DOWNGRADE)
