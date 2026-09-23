@@ -6,6 +6,7 @@ pipeline, never model quality (that is the live run)."""
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +16,7 @@ def test_glive_b_runner_replays_recorded_fixtures() -> None:
     spec = importlib.util.spec_from_file_location("run_w2b", ROOT / "eval" / "live" / "run_w2b.py")
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # the runner's dataclasses resolve their module
     spec.loader.exec_module(mod)
     rc = mod.main(
         [
