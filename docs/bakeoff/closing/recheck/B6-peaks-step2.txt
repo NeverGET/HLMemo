@@ -1,0 +1,7 @@
+samples=12 window=22:46:12..22:46:58 UTC (every ~2 s)
+judge-recheck-api-1: peak MEM USAGE=1253.4 MiB / limit 2.5GiB
+judge-recheck-caddy-1: peak MEM USAGE=61.7 MiB / limit 256MiB
+judge-recheck-db-1: peak MEM USAGE=95.1 MiB / limit 2GiB
+judge-recheck-worker-1: peak MEM USAGE=876.4 MiB / limit 1.5GiB
+max simultaneous total (all stack containers) = 2230.6 MiB at 22:46:33
+sum of per-container peaks = 2286.5 MiB

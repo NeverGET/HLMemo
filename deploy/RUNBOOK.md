@@ -44,7 +44,9 @@ Preparation preserves existing root/password access. `--finalize-ssh` requires a
 public-key SSH session as the deploy user (OpenSSH `ExposeAuthInfo`), validates effective sshd
 configuration, then disables root/password login; a configuration/reload failure restores the
 prior drop-in. Re-running preparation appends no duplicate key, retains completed hardening,
-and keeps installed Docker versions. Patch/upgrade Docker deliberately in a maintenance window.
+and keeps installed Docker versions. After `--finalize-ssh` root login is disabled, so re-run it as
+the deploy user: `sudo --preserve-env=SSH_CONNECTION bash /tmp/bootstrap.sh --ssh-key /tmp/KEY.pub`
+(copy both files to `/tmp` again first; `/tmp` does not survive a reboot). Patch/upgrade Docker deliberately in a maintenance window.
 `--prepare-only` skips service/firewall activation for non-systemd container tests; it does **not**
 produce a ready VPS. Docker publishes ports outside ordinary UFW filtering, so never publish
 API/DB ports; Compose publishes only Caddy. See the optional Terraform path below for managed

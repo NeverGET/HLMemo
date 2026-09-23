@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -uo pipefail
+W=/Users/cemalkurt/Projects/HLMemo-bake/fix-body
+REPO=/Users/cemalkurt/Projects/HLMemo
+L=$REPO/docs/bakeoff/closing/recheck
+E=$L/judge-recheck-env/prod.env
+SP=/private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad
+: > $L/B6-stats-step2.tsv
+echo "## $(date -u +%H:%M:%S) fresh down -v"
+(cd $W && HLM_ENV_FILE=$E bash deploy/scripts/stack.sh down -v 2>&1 | tail -3)
+bash $SP/stats_sampler.sh judge-recheck- $L/B6-stats-step2.tsv & SAMP=$!
+echo "## $(date -u +%H:%M:%S) run_gates (up + G-D1..G-D7, keep up)"
+(cd $REPO && HLM_ENV_FILE=$E JUDGE_ENV_FILE=$E JUDGE_KEEP_UP=1 JUDGE_UP_CMD='bash deploy/scripts/stack.sh up -d --wait --wait-timeout 300' JUDGE_DOWN_CMD='bash deploy/scripts/stack.sh down -v' bash docs/bakeoff/r2/judge/run_gates.sh $W judge-recheck 28080 28443) > $L/B1-rungates.console.txt 2>&1
+echo "run_gates rc=$?"; tail -12 $L/B1-rungates.console.txt
+echo "## $(date -u +%H:%M:%S) load (1 query, 20-item write, 200 queries / 3 callers)"
+(cd $REPO && uv run --frozen python $SP/recheck_load.py $E) 2>&1 | tee $L/B6-load.txt
+echo "load rc=${PIPESTATUS[0]}"
+echo "## $(date -u +%H:%M:%S) neutral G-D4"
+(cd $REPO && HLM_ENV_FILE=$E JUDGE_BACKUP_DIR=$SP/judge-recheck-backups bash docs/bakeoff/r2/judge/logs/neutral_gd4_v5.sh $W judge-recheck 28443 $E 'bash deploy/backup/backup.sh' 'bash deploy/backup/restore.sh "$DUMP" --yes') > $L/B2-gd4-neutral.txt 2>&1
+echo "gd4 rc=$?"; tail -3 $L/B2-gd4-neutral.txt
+sleep 6; kill $SAMP
+echo "## $(date -u +%H:%M:%S) done"

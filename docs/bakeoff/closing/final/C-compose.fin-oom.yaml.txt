@@ -1,0 +1,41 @@
+# Neutral verifier's own minimal stack (not the implementer's harness). Project fin-oom, loopback only.
+name: fin-oom
+x-app-env: &app-env
+  HLM_DB_DSN: postgresql://hlm:hlm@db:5432/hlm
+  HLM_PROFILES_DIR: /app/profiles
+  HLM_MODELS_DIR: /app/models
+  PYTHONUNBUFFERED: "1"
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg17
+    environment: {POSTGRES_USER: hlm, POSTGRES_PASSWORD: hlm, POSTGRES_DB: hlm}
+    ports: ["127.0.0.1:25432:5432"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U hlm -d hlm -h 127.0.0.1"], interval: 2s, timeout: 3s, retries: 30}
+  migrate:
+    image: hlmemo:fin-oom
+    environment: *app-env
+    command: ["alembic", "upgrade", "phase0@head"]
+    depends_on: {db: {condition: service_healthy}}
+    restart: "no"
+  api:
+    image: hlmemo:fin-oom
+    environment: {<<: *app-env, HLM_API_HOST: 0.0.0.0, HLM_API_PORT: "8765"}
+    env_file: [fin.env]
+    command: ["python", "-m", "hlmemo.server.app"]
+    ports: ["127.0.0.1:28765:8765"]
+    depends_on: {db: {condition: service_healthy}, migrate: {condition: service_completed_successfully}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).status == 200 else 1)"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 20s
+  worker:
+    image: hlmemo:fin-oom
+    environment: *app-env
+    command: ["python", "-m", "hlmemo.worker.main"]
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpus: 1.0
+    restart: unless-stopped
+    depends_on: {db: {condition: service_healthy}, migrate: {condition: service_completed_successfully}}

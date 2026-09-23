@@ -1,0 +1,5 @@
+import os, sys, uvicorn
+from hlmemo.config import get_settings
+from hlmemo.server.app import create_app
+s = get_settings()
+uvicorn.run(create_app(s, register_rate_limit=None), host="127.0.0.1", port=int(sys.argv[1]), log_level="warning", proxy_headers=False, backlog=2048)

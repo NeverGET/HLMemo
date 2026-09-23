@@ -1,0 +1,5 @@
+22:46:32 Q1 memory.query status=200 isError=False hits=0 18 ms
+22:46:33 write 20 items status=200 isError=False versions=20
+22:46:33 start 200 queries / 3 callers
+22:46:37 200 queries done: n=200 fails=0 p50=70 ms p95=93 ms max=107 ms wall=3.9s
+LOAD PASS

@@ -1,0 +1,14 @@
+## restart api, wait healthy
+after healthy: cur=511926272 peak=1266069504 oom_kill 0
+idle +20s: cur=526860288 peak=1266069504 oom_kill 0
+RESULT PASS mode=read-marker base=https://localhost:28443
+after 1 query: cur=995532800 peak=1320988672 oom_kill 0
++15s: cur=535633920 peak=1286017024 oom_kill 0
+events:
+1790114773 oom 
+1790114773 die 137
+1790114773 start 
+1790114779 oom 
+1790114780 die 137
+1790114780 start 
+1790114787 health_status: healthy 

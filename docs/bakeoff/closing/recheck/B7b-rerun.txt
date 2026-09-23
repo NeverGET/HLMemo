@@ -1,0 +1,6 @@
+## 22:56:58 RE-RUN (b) via Caddy, host source
+22:57:06 SLOW k=17 after 2 s (no further bytes): {'pending': 17}
+22:57:16 SLOW k=17 after 1 nudge byte + 2 s (first-read results kept): {'pending': 16, 'HTTP/1.1 429 Too Many Requests': 1}
+## 22:57:16 (b) direct to API (container on judge-recheck_frontend -> api-frontend:8765, plain HTTP, bypasses Caddy)
+22:57:24 SLOW k=17 after 2 s (no further bytes): {'pending': 16, 'HTTP/1.1 429 Too Many Requests': 1}
+22:57:34 SLOW k=17 after 1 nudge byte + 2 s (first-read results kept): {'pending': 16, 'HTTP/1.1 429 Too Many Requests': 1}

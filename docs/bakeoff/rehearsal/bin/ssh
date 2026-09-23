@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/ssh -F /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/rehearsal/ssh_config.rehearsal "$@"

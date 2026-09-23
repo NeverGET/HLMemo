@@ -68,6 +68,16 @@ else
   git fetch --prune origin "$ref" </dev/null
   revision=$(git </dev/null rev-parse --verify 'FETCH_HEAD^{commit}')
 fi
+# The runner's umask 077 checks files out 0600, but Compose bind-mounts some of
+# them into non-root containers (worker runs as uid 10001). Checkout never
+# rewrites unchanged files, so fix the mode after every checkout.
+checkout_release() {
+  git checkout --detach "$1" </dev/null || return
+  local mounted
+  for mounted in deploy/Caddyfile deploy/scripts/worker_entrypoint.py deploy/scripts/worker_health.py; do
+    [[ ! -e $mounted ]] || chmod go+r "$mounted"
+  done
+}
 writers_stopped=0
 migration_started=0
 pre_upgrade_dump=
@@ -104,14 +114,14 @@ deployment_failed() {
         recovery_ok=0
       fi
     fi
-    git checkout --detach "$previous" </dev/null >&2 || recovery_ok=0
+    checkout_release "$previous" >&2 || recovery_ok=0
     if [[ $recovery_ok == 1 ]] && rollback up -d --no-deps --wait --wait-timeout 300 db api worker caddy </dev/null >&2; then
       echo "Previous stack restored: $previous" >&2
     else
       echo "Automatic recovery failed; recovery ref=$previous dump=$pre_upgrade_dump (see $run_dir/log)." >&2
     fi
   elif [[ -n $previous ]]; then
-    git checkout --detach "$previous" </dev/null >&2 || true
+    checkout_release "$previous" >&2 || true
     echo 'Deployment failed before writers stopped; previous stack remains running.' >&2
   else
     echo 'Initial deployment failed; no previous stack exists to recover.' >&2
@@ -125,7 +135,7 @@ if [[ -n $previous ]] && ! git diff --quiet "$previous" "$revision" -- deploy/co
   echo 'Compose model changed between releases; refusing automatic deployment before build/stop. Follow RUNBOOK staged Compose upgrade procedure.' >&2
   false
 fi
-git checkout --detach "$revision" </dev/null
+checkout_release "$revision"
 test -f deploy/compose.prod.yaml || { echo 'Requested ref has no production compose file' >&2; false; }
 
 # shellcheck source=deploy/scripts/common.sh

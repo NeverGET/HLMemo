@@ -1,0 +1,43 @@
+$ HLM_ENV_FILE=... bash deploy/scripts/stack.sh down -v
+ Container judge-close-caddy-1 Stopping 
+ Container judge-close-worker-1 Stopping 
+ Container judge-close-caddy-1 Stopped 
+ Container judge-close-caddy-1 Removing 
+ Container judge-close-caddy-1 Removed 
+ Container judge-close-api-1 Stopping 
+ Container judge-close-worker-1 Stopped 
+ Container judge-close-worker-1 Removing 
+ Container judge-close-worker-1 Removed 
+ Container judge-close-api-1 Stopped 
+ Container judge-close-api-1 Removing 
+ Container judge-close-api-1 Removed 
+ Container judge-close-migrate-1 Stopping 
+ Container judge-close-migrate-1 Stopped 
+ Container judge-close-migrate-1 Removing 
+ Container judge-close-migrate-1 Removed 
+ Container judge-close-db-1 Stopping 
+ Container judge-close-db-1 Stopped 
+ Container judge-close-db-1 Removing 
+ Container judge-close-db-1 Removed 
+ Volume judge-close_pgdata Removing 
+ Volume judge-close_caddy_config Removing 
+ Volume judge-close_caddy_data Removing 
+ Network judge-close_frontend Removing 
+ Network judge-close_outbound Removing 
+ Network judge-close_backend Removing 
+ Volume judge-close_caddy_data Removed 
+ Volume judge-close_pgdata Removed 
+ Volume judge-close_caddy_config Removed 
+ Network judge-close_backend Removed 
+ Network judge-close_outbound Removed 
+ Network judge-close_frontend Removed 
+rc=0
+$ docker rmi hlmemo:judge-close
+Untagged: hlmemo:judge-close
+Deleted: sha256:8f261851873cc5db695edf43e5b5f8b64b03f56e7c8c8e9c40657f581f157928
+rc=0
+## leftovers:
+## dev stack untouched:
+hlmemo-worker-1 Up 4 hours
+hlmemo-api-1 Up 4 hours (healthy)
+hlmemo-db-1 Up 4 hours (healthy)

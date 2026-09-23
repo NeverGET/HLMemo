@@ -1,0 +1,8 @@
+ Network judge-authbase_frontend Removed 
+ Network judge-authbase_outbound Removed 
+Deleted: sha256:dabb4e5181a669edfb70d3ce79879d22b2e55ba7e6b7b83598658b57b8680626
+## leftovers:
+(end)
+hlmemo-worker-1 Up 7 hours
+hlmemo-api-1 Up 7 hours (healthy)
+hlmemo-db-1 Up 7 hours (healthy)

@@ -1,0 +1,4 @@
+## worker before: RestartCount=0 OOMKilled=false cgroup memory.peak(before)=1200697344
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/fin-oom/write10.py", line 35, in <module>
+    assert all(len(it["

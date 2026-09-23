@@ -1,0 +1,7 @@
+Host hlm-vm
+  HostName 127.0.0.1
+  Port 2222
+  IdentityFile ~/.ssh/hlmemo_deploy_ed25519
+  IdentitiesOnly yes
+  UserKnownHostsFile /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/rehearsal/known_hosts.rehearsal
+  StrictHostKeyChecking yes

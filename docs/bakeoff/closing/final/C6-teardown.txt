@@ -1,0 +1,20 @@
+ Container fin-oom-worker-1 Stopping 
+ Container fin-oom-api-1 Stopping 
+ Container fin-oom-api-1 Stopped 
+ Container fin-oom-api-1 Removing 
+ Container fin-oom-api-1 Removed 
+ Container fin-oom-worker-1 Stopped 
+ Container fin-oom-worker-1 Removing 
+ Container fin-oom-worker-1 Removed 
+ Container fin-oom-migrate-1 Stopping 
+ Container fin-oom-migrate-1 Stopped 
+ Container fin-oom-migrate-1 Removing 
+ Container fin-oom-migrate-1 Removed 
+ Container fin-oom-db-1 Stopping 
+ Container fin-oom-db-1 Stopped 
+ Container fin-oom-db-1 Removing 
+ Container fin-oom-db-1 Removed 
+ Network fin-oom_default Removing 
+ Network fin-oom_default Removed 
+down rc=0
+(leftovers end)

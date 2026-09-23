@@ -1,0 +1,44 @@
+## 06:10:18 up -d --wait (project fin-oom, image hlmemo:fin-oom @409f30d) [attempt 2, fresh volumes]
+ Network fin-oom_default Creating 
+ Network fin-oom_default Creating 
+ Network fin-oom_default Created 
+ Network fin-oom_default Created 
+ Container fin-oom-db-1 Creating 
+ Container fin-oom-db-1 Created 
+ Container fin-oom-migrate-1 Creating 
+ Container fin-oom-migrate-1 Created 
+ Container fin-oom-worker-1 Creating 
+ Container fin-oom-api-1 Creating 
+ Container fin-oom-worker-1 Created 
+ Container fin-oom-api-1 Created 
+ Container fin-oom-db-1 Starting 
+ Container fin-oom-db-1 Started 
+ Container fin-oom-db-1 Waiting 
+ Container fin-oom-db-1 Healthy 
+ Container fin-oom-migrate-1 Starting 
+ Container fin-oom-migrate-1 Started 
+ Container fin-oom-db-1 Waiting 
+ Container fin-oom-migrate-1 Waiting 
+ Container fin-oom-db-1 Waiting 
+ Container fin-oom-migrate-1 Waiting 
+ Container fin-oom-db-1 Healthy 
+ Container fin-oom-db-1 Healthy 
+ Container fin-oom-migrate-1 Exited 
+ Container fin-oom-migrate-1 Exited 
+ Container fin-oom-worker-1 Starting 
+ Container fin-oom-api-1 Starting 
+ Container fin-oom-worker-1 Started 
+ Container fin-oom-api-1 Started 
+ Container fin-oom-migrate-1 Waiting 
+ Container fin-oom-api-1 Waiting 
+ Container fin-oom-worker-1 Waiting 
+ Container fin-oom-db-1 Waiting 
+ Container fin-oom-db-1 Healthy 
+ Container fin-oom-worker-1 Healthy 
+ Container fin-oom-migrate-1 Exited 
+ Container fin-oom-api-1 Healthy 
+up rc=0
+/fin-oom-worker-1 mem=1610612736 memswap=1610612736 nano_cpus=1000000000
+fin-oom-api-1 Up 5 seconds (healthy) 127.0.0.1:28765->8765/tcp
+fin-oom-db-1 Up 9 seconds (healthy) 127.0.0.1:25432->5432/tcp
+fin-oom-worker-1 Up 5 seconds 8765/tcp

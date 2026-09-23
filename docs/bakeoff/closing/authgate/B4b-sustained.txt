@@ -1,0 +1,9 @@
+03:46:51 write start mode=max wire=38403027 bytes
+03:46:58 WRITE mode=max wire=38403027 status=200 isError=False versions=50/50 7.0s -> PASS
+SUSTAINED invalid  'HTTP/1.1 401 Unauthorized' x368 -> PASS
+SUSTAINED invalid  'HTTP/1.1 503 Service Unavailable' x1 -> FAIL
+SUSTAINED none     'HTTP/1.1 401 Unauthorized' x373 -> PASS
+SUSTAINED revoked  'HTTP/1.1 401 Unauthorized' x366 -> PASS
+SUSTAINED revoked  'HTTP/1.1 503 Service Unavailable' x1 -> FAIL
+SUSTAINED summary attempts=1109 non401=2 worst_t_resp=2.60s worst_sent_before_resp=28573696 concurrent_write=PASS
+rc=1

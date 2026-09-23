@@ -1,0 +1,33 @@
+22:02:36
+judge-close-caddy-1	18.66MiB / 256MiB
+judge-close-db-1	56.5MiB / 2GiB
+22:02:39
+judge-close-db-1	65.41MiB / 2GiB
+22:02:42
+judge-close-api-1	73.29MiB / 1.5GiB
+judge-close-worker-1	846.1MiB / 1.5GiB
+judge-close-db-1	71.32MiB / 2GiB
+22:02:45
+judge-close-api-1	719.3MiB / 1.5GiB
+judge-close-worker-1	846.4MiB / 1.5GiB
+judge-close-db-1	71.32MiB / 2GiB
+22:02:48
+judge-close-caddy-1	13.63MiB / 256MiB
+judge-close-api-1	494.8MiB / 1.5GiB
+judge-close-worker-1	846.4MiB / 1.5GiB
+judge-close-db-1	71.47MiB / 2GiB
+22:02:51
+judge-close-caddy-1	13.79MiB / 256MiB
+judge-close-api-1	494.4MiB / 1.5GiB
+judge-close-worker-1	847.9MiB / 1.5GiB
+judge-close-db-1	71.45MiB / 2GiB
+22:02:54
+judge-close-caddy-1	13.18MiB / 256MiB
+judge-close-worker-1	838.2MiB / 1.5GiB
+judge-close-db-1	67.43MiB / 2GiB
+judge-close-api-1	105.8MiB / 1.5GiB
+22:02:57
+judge-close-caddy-1	13.68MiB / 256MiB
+judge-close-api-1	924.5MiB / 1.5GiB
+judge-close-worker-1	838.4MiB / 1.5GiB
+judge-close-db-1	72.55MiB / 2GiB

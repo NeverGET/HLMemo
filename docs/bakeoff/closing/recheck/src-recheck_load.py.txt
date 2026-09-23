@@ -1,0 +1,139 @@
+"""Recheck step 2 load: bootstrap a device, 1 memory.query, small write, 200 queries / 3 callers."""
+
+import json
+import statistics
+import sys
+import threading
+import time
+import uuid
+
+import httpx
+
+env = dict(
+    line.split("=", 1) for line in open(sys.argv[1]).read().splitlines() if "=" in line and not line.startswith("#")
+)
+ADMIN, REG = env["HLM_ADMIN_TOKEN"], env["HLM_REGISTRATION_SECRET"]
+B = "https://localhost:28443"
+PROJ = sys.argv[2] if len(sys.argv) > 2 else "judge-load"
+A = {"Authorization": f"Bearer {ADMIN}"}
+
+
+def ts() -> str:
+    return time.strftime("%H:%M:%S", time.gmtime())
+
+
+c = httpx.Client(base_url=B, verify=False, timeout=120)
+n = f"load-{uuid.uuid4().hex[:8]}"
+r = c.post(
+    "/devices/register",
+    json={"name": n, "fingerprint": "fp-" + n, "os": "linux", "client": "judge-load/0"},
+    headers={"X-HLM-Registration-Secret": REG},
+)
+assert r.status_code == 201, r.text
+did, tok = r.json()["device"]["id"], r.json()["token"]
+r = c.post("/admin/projects", json={"slug": PROJ, "name": "Judge load"}, headers=A)
+assert r.status_code in (200, 201), r.text
+r = c.post(f"/admin/devices/{did}/approve", json={"class": "ci", "grants": [{"project": PROJ, "role": "write"}]}, headers=A)
+assert r.status_code == 200, r.text
+
+
+class Session:
+    def __init__(self) -> None:
+        self.c = httpx.Client(base_url=B, verify=False, timeout=120)
+        self.h = {
+            "Authorization": f"Bearer {tok}",
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        r = self.c.post(
+            "/mcp",
+            headers=self.h,
+            json={
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "judge-load", "version": "0"}},
+            },
+        )
+        assert r.status_code == 200, r.text
+        if r.headers.get("mcp-session-id"):
+            self.h["mcp-session-id"] = r.headers["mcp-session-id"]
+        self.h["mcp-protocol-version"] = "2025-06-18"
+        self.c.post("/mcp", headers=self.h, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def tool(self, name: str, args: dict) -> tuple[int, bool, dict]:
+        r = self.c.post(
+            "/mcp",
+            headers=self.h,
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}},
+        )
+        body = r.text
+        if "text/event-stream" in r.headers.get("content-type", ""):
+            body = next((ln[5:].strip() for ln in body.splitlines() if ln.startswith("data:")), "{}")
+        try:
+            res = json.loads(body).get("result", {})
+            return r.status_code, bool(res.get("isError")), json.loads(res["content"][0]["text"])
+        except Exception:
+            return r.status_code, True, {"raw": body[:200]}
+
+
+s = Session()
+t = time.monotonic()
+st, err, p = s.tool("memory.query", {"project": PROJ, "query": "first query after fresh start", "token_budget": 1024})
+print(f"{ts()} Q1 memory.query status={st} isError={err} hits={len(p.get('hits', []))} {1000 * (time.monotonic() - t):.0f} ms")
+ok = st == 200 and not err
+
+items = [
+    {"kind": "fact", "title": f"load fact {i}", "body": f"Service svc-{i:03d} latency was reduced by caching the auth token {i}."}
+    for i in range(20)
+]
+st, err, p = s.tool("memory.write", {"project": PROJ, "request_id": str(uuid.uuid4()), "client": "judge-load/0", "items": items})
+print(f"{ts()} write 20 items status={st} isError={err} versions={len(p.get('versions', []))}")
+ok &= st == 200 and not err
+
+lat: list[float] = []
+fails: list[str] = []
+lock = threading.Lock()
+QUERIES = [
+    "how was latency reduced in svc-{:03d}",
+    "auth token caching decision {}",
+    "Wie wurde die Latenz im Dienst svc-{:03d} gesenkt?",
+    "svc-{:03d} servisinde gecikme nasıl azaltıldı",
+]
+
+
+def caller(k: int, count: int) -> None:
+    sess = Session()
+    for j in range(count):
+        q = QUERIES[j % len(QUERIES)].format((k * 100 + j) % 20)
+        t0 = time.monotonic()
+        try:
+            st, err, _ = sess.tool("memory.query", {"project": PROJ, "query": q, "token_budget": 1024})
+        except httpx.HTTPError as exc:
+            st, err = 0, True
+            q += f" ({type(exc).__name__})"
+        dt = 1000 * (time.monotonic() - t0)
+        with lock:
+            lat.append(dt)
+            if st != 200 or err:
+                fails.append(f"caller{k} #{j} status={st} err={err} {q}")
+
+
+print(f"{ts()} start 200 queries / 3 callers")
+t = time.monotonic()
+ths = [threading.Thread(target=caller, args=(k, cnt)) for k, cnt in enumerate((67, 67, 66))]
+for th in ths:
+    th.start()
+for th in ths:
+    th.join()
+wall = time.monotonic() - t
+lat.sort()
+print(
+    f"{ts()} 200 queries done: n={len(lat)} fails={len(fails)} p50={statistics.median(lat):.0f} ms "
+    f"p95={lat[int(0.95 * len(lat)) - 1]:.0f} ms max={lat[-1]:.0f} ms wall={wall:.1f}s"
+)
+for f in fails[:10]:
+    print("  FAIL", f)
+ok &= not fails and len(lat) == 200
+print("LOAD", "PASS" if ok else "FAIL")
+sys.exit(0 if ok else 1)

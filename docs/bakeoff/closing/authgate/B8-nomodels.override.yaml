@@ -1,0 +1,8 @@
+# judge-only override: hide the baked models with an empty tmpfs
+services:
+  api:
+    volumes:
+      - type: tmpfs
+        target: /app/models
+        tmpfs:
+          size: 1048576

@@ -1,0 +1,43 @@
+"""Neutral verifier: register+approve a device, grant write, send ONE memory.write of 10 x 64,000-char items."""
+import json, os, random, string, sys, time, uuid
+import httpx
+B = "http://127.0.0.1:28765"
+env = dict(l.strip().split("=", 1) for l in open(sys.argv[1]) if "=" in l)
+adm = {"Authorization": f"Bearer {env['HLM_ADMIN_TOKEN']}"}
+h = httpx.Client(base_url=B, timeout=300)
+r = h.post("/devices/register", json={"name": "fin-oom-w", "class": "ci", "fingerprint": str(uuid.uuid4()),
+           "os": sys.platform, "client": "fin-oom/1"}, headers={"X-HLM-Registration-Secret": env["HLM_REGISTRATION_SECRET"]})
+assert r.status_code == 201, r.text; tok = r.json()["token"]; did = r.json()["device"]["id"]
+assert h.post(f"/admin/devices/{did}/approve", json={"class": "ci"}, headers=adm).status_code == 200
+assert h.post("/admin/projects", json={"slug": "finoom", "name": "finoom"}, headers=adm).status_code == 201
+assert h.post("/admin/projects/finoom/grants", json={"device": did, "role": "write"}, headers=adm).status_code == 200
+H = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json", "Authorization": f"Bearer {tok}"}
+def rpc(i, m, p, pv=None):
+    hh = dict(H); 
+    if pv: hh["MCP-Protocol-Version"] = pv
+    return h.post("/mcp", json={"jsonrpc": "2.0", "id": i, "method": m, "params": p}, headers=hh)
+def parse(r):
+    if r.headers.get("content-type", "").startswith("text/event-stream"):
+        for line in r.text.splitlines()[::-1]:
+            if line.startswith("data:") and line[5:].strip(): return json.loads(line[5:])
+    return r.json()
+r = rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "fin", "version": "1"}})
+pv = parse(r)["result"]["protocolVersion"]
+h.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers={**H, "MCP-Protocol-Version": pv})
+rnd = random.Random(20260923)
+alpha = string.ascii_lowercase + "çğıöşü"
+def body(n):
+    out, L = [], 0
+    while L <= n + 1:
+        w = "".join(rnd.choice(alpha) for _ in range(rnd.randint(2, 11))); out.append(w); L += len(w) + 1
+    return " ".join(out)[:n]
+items = [{"kind": "fact", "title": f"fin-oom item {i}", "body": body(64000), "tags": ["finoom"]} for i in range(10)]
+assert all(len(it["body"]) == 64000 for it in items)
+args = {"project": "finoom", "request_id": str(uuid.uuid4()), "client": "fin-oom/1", "items": items}
+wire = len(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "memory.write", "arguments": args}}).encode())
+t = time.time(); r = rpc(2, "tools/call", {"name": "memory.write", "arguments": args}, pv)
+res = parse(r).get("result", {}); pl = json.loads(res["content"][0]["text"])
+vids = [v["version_id"] for v in pl.get("versions", [])]
+print(f"WRITE t={time.strftime('%H:%M:%S')} items=10x64000 chars wire={wire} bytes status={r.status_code} isError={res.get('isError')} "
+      f"versions={len(vids)} ids={vids} {time.time()-t:.1f}s")
+print("VIDS " + ",".join(map(str, vids)))

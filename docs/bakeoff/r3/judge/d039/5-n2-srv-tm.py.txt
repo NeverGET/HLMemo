@@ -1,0 +1,12 @@
+import sys, threading, time, tracemalloc, uvicorn
+tracemalloc.start(1)
+from hlmemo.config import get_settings
+from hlmemo.server.app import create_app
+s = get_settings()
+def mon():
+    while True:
+        time.sleep(5)
+        cur, peak = tracemalloc.get_traced_memory()
+        print(f"TM current={cur/2**20:.0f}MiB peak={peak/2**20:.0f}MiB", flush=True)
+threading.Thread(target=mon, daemon=True).start()
+uvicorn.run(create_app(s, register_rate_limit=None), host="127.0.0.1", port=int(sys.argv[1]), log_level="warning", proxy_headers=False, backlog=2048)

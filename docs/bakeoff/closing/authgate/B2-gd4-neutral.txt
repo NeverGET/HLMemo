@@ -1,0 +1,73 @@
+$ JUDGE_BACKUP_DIR=<scratch>/judge-auth-backups HLM_ENV_FILE=<scratch>/judge-auth-env/prod.env bash docs/bakeoff/r2/judge/logs/neutral_gd4_v5.sh $PWD judge-auth 28443 <env> 'bash deploy/backup/backup.sh' 'bash deploy/backup/restore.sh "$DUMP" --yes'
+## marker=JUDGE-judge-auth-d1836824f7f8 pg_user=hlm pg_db=hlm
+## 1 write-marker
+PASS device/register status=201 name=judge-f801a523
+PASS device/approve status=200 id=3 body={"device":{"id":3,"name":"judge-f801a523","class":"ci","status":"trusted","is_admin":false,"reserved":false,"os":"darwin","token_generation":1,"registered_at":"2026-09-23T00:44:21.169085+00:00","appro
+PASS project/create slug=judge create_status=400 exists=True
+PASS project/grant-write status=200 body={"grant":{"device":3,"project":"judge","role":"write"}}
+PASS device/whoami status=200 grants=[{'project': 'judge', 'project_id': 1, 'role': 'write'}]
+PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+PASS mcp/write-marker status=200 version_id=1
+VERSION_ID 1
+RESULT PASS mode=write-marker base=https://localhost:28443
+exit=0
+## 2 backup: bash deploy/backup/backup.sh
+Backup completed: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-auth-backups/daily/hlmemo-2026-09-23T004421Z-8QiSaM.dump (7 daily / 4 weekly retention)
+exit=0 dump=/private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-auth-backups/daily/hlmemo-2026-09-23T004421Z-8QiSaM.dump (1s)
+## 3 wipe (judge): stop api worker; dropdb/createdb hlm
+ Container judge-auth-worker-1 Stopping 
+ Container judge-auth-api-1 Stopping 
+ Container judge-auth-worker-1 Stopped 
+ Container judge-auth-api-1 Stopped 
+stop exit=0
+dropdb exit=0
+createdb exit=0
+public tables after wipe: 0
+## 4 restore: bash deploy/backup/restore.sh "$DUMP" --yes
+ Container judge-auth-caddy-1 Stopping 
+ Container judge-auth-worker-1 Stopping 
+ Container judge-auth-worker-1 Stopped 
+ Container judge-auth-caddy-1 Stopped 
+ Container judge-auth-api-1 Stopping 
+ Container judge-auth-api-1 Stopped 
+Writers stopped; creating the pre-restore safety dump.
+Safety dump: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-auth-backups/pre-restore/hlmemo-2026-09-23T004423Z.dump.QInbPQ; on failure writers remain stopped. Restore it with this script.
+ Container judge-auth-migrate-run-71f1bc8bdb25 Creating 
+ Container judge-auth-migrate-run-71f1bc8bdb25 Created 
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+ Container judge-auth-db-1 Running 
+ Container judge-auth-db-1 Waiting 
+ Container judge-auth-db-1 Waiting 
+ Container judge-auth-db-1 Healthy 
+ Container judge-auth-db-1 Healthy 
+ Container judge-auth-api-1 Starting 
+ Container judge-auth-worker-1 Starting 
+ Container judge-auth-api-1 Started 
+ Container judge-auth-api-1 Waiting 
+ Container judge-auth-worker-1 Started 
+ Container judge-auth-api-1 Healthy 
+ Container judge-auth-caddy-1 Starting 
+ Container judge-auth-caddy-1 Started 
+ Container judge-auth-api-1 Waiting 
+ Container judge-auth-worker-1 Waiting 
+ Container judge-auth-caddy-1 Waiting 
+ Container judge-auth-db-1 Waiting 
+ Container judge-auth-api-1 Healthy 
+ Container judge-auth-worker-1 Healthy 
+ Container judge-auth-db-1 Healthy 
+ Container judge-auth-caddy-1 Healthy 
+Restore completed; stack healthy. Safety dump retained: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-auth-backups/pre-restore/hlmemo-2026-09-23T004423Z.dump.QInbPQ
+exit=0 (13s)
+## 5 start api+worker
+env file /Users/cemalkurt/Projects/HLMemo-bake/fix-auth/deploy/app.env not found: stat /Users/cemalkurt/Projects/HLMemo-bake/fix-auth/deploy/app.env: no such file or directory
+exit=1
+## 5b edge /ready -> 200 after 0s
+## 6 read-marker
+PASS device/state reused device id=3 project=judge
+PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+PASS mcp/read-marker hits=1 clue=v1.0
+RESULT PASS mode=read-marker base=https://localhost:28443
+exit=0
+NEUTRAL-GD4 PASS judge-auth
+gd4 rc=0

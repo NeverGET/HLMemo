@@ -1,0 +1,22 @@
+$ bash /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/stdin/harness.sh deploy/scripts/deploy.sh CLOSE
+=== CLOSE: deploy.sh exit=1  workdir=/var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Q2ZE
+--- client output (tail):
+done.
+From /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Q2ZE/origin
+ * branch            main       -> FETCH_HEAD
+HEAD is now at 2be4a78 ref
+HEAD is now at 2be4a78 ref
+Release image revision mismatch: hlmemo:2be4a78cd293b46f1abea6064069b0a9642ea795 expected 2be4a78cd293b46f1abea6064069b0a9642ea795, found <missing>; refusing deployment.
+Initial deployment failed; no previous stack exists to recover.
+
+--- docker exec/run calls:
+--- calls after last drain:
+ssh umask 077; mkdir -p /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Q2ZE/opt/.deploy-runs; mktemp -d /var/folders/tc
+ssh umask 077; for required in nohup setsid bash git flock ps grep; do command -v "$required" >/dev/null || { echo "Missing required remote 
+ssh if test -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Q2ZE/opt/.deploy-runs/run.WSp3d9Zm/status; then tail -c +
+ssh if test -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Q2ZE/opt/.deploy-runs/run.WSp3d9Zm/status; then tail -c +
+docker compose -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Q2ZE/opt/app/deploy/compose.prod.yaml --env-file /var/f
+docker compose -p judgefake -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Q2ZE/opt/app/deploy/compose.prod.yaml --en
+docker compose -p judgefake -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Q2ZE/opt/app/deploy/compose.prod.yaml --en
+docker compose -p judgefake -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Q2ZE/opt/app/deploy/compose.prod.yaml --en
+VERDICT CLOSE: DID NOT REACH SUCCESS LINE

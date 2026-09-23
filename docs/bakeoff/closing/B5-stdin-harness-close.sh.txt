@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Judge's own minimal STDIN harness. usage: harness.sh DEPLOY_SH LABEL
+# fake ssh runs the remote command locally (stdin inherited); fake docker exec/run drain stdin.
+set -uo pipefail
+DEPLOY_SH=$1; LABEL=$2
+REPO=/Users/cemalkurt/Projects/HLMemo
+W=$(mktemp -d "${TMPDIR:-/tmp}/judge-stdin-$LABEL.XXXX")
+B=$W/bin; mkdir -p "$B" "$W/etc" "$W/opt" "$W/backups"
+export JUDGE_LOG=$W/calls.log
+# origin repo = current working-tree deploy/ (same ref content for old and new client)
+git init -q -b main "$W/origin"; cp -R "$REPO/deploy" "$W/origin/deploy"; rm -rf "$W/origin/deploy/terraform/hetzner/.terraform" "$W/origin/deploy/.fable"
+git -C "$W/origin" add -A >/dev/null; git -C "$W/origin" -c user.email=j@j -c user.name=judge commit -qm ref
+for f in prod app api db backup; do : > "$W/etc/$f.env"; done
+cat > "$B/ssh" <<'S'
+#!/usr/bin/env bash
+echo "ssh ${*: -1}" | head -c 200 >> "$JUDGE_LOG"; echo >> "$JUDGE_LOG"
+exec bash -c "${@: -1}"
+S
+cat > "$B/setsid" <<'S'
+#!/usr/bin/env bash
+exec "$@"
+S
+cat > "$B/curl" <<'S'
+#!/usr/bin/env bash
+echo "curl $*" >> "$JUDGE_LOG"; echo '{"status":"ready"}'
+S
+cat > "$B/docker" <<'S'
+#!/usr/bin/env bash
+echo "docker $*" >> "$JUDGE_LOG"
+a=" $* "
+if [[ $a == *" exec "* || $a == *" run "* ]]; then cat >/dev/null; echo "  (drained stdin)" >> "$JUDGE_LOG"; exit 0; fi
+if [[ $a == *"hlmemo-backup-config"* ]]; then cat >/dev/null; echo '{"services":{"settings":{"environment":{}}}}'; exit 0; fi
+if [[ $a == *"config --environment"* ]]; then printf 'HLM_DOMAIN=localhost\nBAKE_PROJECT=judgefake\n'; exit 0; fi
+if [[ $a == *"config --format json"* ]]; then echo '{"name":"judgefake","services":{"db":{},"api":{},"worker":{},"caddy":{}}}'; exit 0; fi
+if [[ $a == *" ps "* && $a == *"-q"* ]]; then echo deadbeef; exit 0; fi
+if [[ $1 == inspect ]]; then echo sha256:feed; exit 0; fi
+# D-041/D4: release images carry org.opencontainers.image.revision == the <sha> in repository:<sha>
+if [[ $1 == image && $2 == inspect && $a == *"image.revision"* ]]; then img="${*: -1}"; echo "${img##*:}"; exit 0; fi
+if [[ $1 == image && $2 == inspect ]]; then echo sha256:feed; exit 0; fi
+exit 0
+S
+chmod +x "$B"/*
+export PATH="$B:$PATH" HLM_REMOTE_DIR="$W/opt/app" HLM_REMOTE_ENV="$W/etc/prod.env" HLM_BACKUP_DIR="$W/backups" HLM_DEPLOY_POLL_SECONDS=0.2
+( bash "$DEPLOY_SH" judge@fakehost main "$W/origin" ) > "$W/out.txt" 2>&1 &
+pid=$!; for _ in $(seq 1 300); do kill -0 $pid 2>/dev/null || break; sleep 0.2; done
+if kill -0 $pid 2>/dev/null; then kill $pid; echo "TIMEOUT (killed after 60s)"; fi
+wait $pid; rc=$?
+echo "=== $LABEL: deploy.sh exit=$rc  workdir=$W"
+echo "--- client output (tail):"; tail -n 8 "$W/out.txt"
+echo "--- docker exec/run calls:"; grep -E 'docker .* (exec|run) ' "$JUDGE_LOG" | cut -c1-140
+echo "--- calls after last drain:"; awk '/drained stdin/{n=NR} {l[NR]=$0} END{for(i=n+1;i<=NR;i++) print l[i]}' "$JUDGE_LOG" | cut -c1-140 | head -8
+if grep -q '^Deployment ready:' "$W/out.txt"; then echo "VERDICT $LABEL: REACHED SUCCESS LINE"; else echo "VERDICT $LABEL: DID NOT REACH SUCCESS LINE"; fi

@@ -1,0 +1,20 @@
+#!/bin/bash
+# usage: sampler.sh VIDS(csv) OUT_TSV  — samples worker docker stats + embedding progress ~1/s until all embeddings exist
+[[ -n "$1" ]] || { echo "NO VIDS"; exit 2; }
+V="$1"; OUT="$2"; W=fin-oom-worker-1
+q() { PGPASSWORD=hlm psql -h 127.0.0.1 -p 25432 -U hlm -d hlm -Atc "$1"; }
+printf 'time\tworker_mem\tmem_pct\tcpu\trestarts\toom\tchunks\tembeddings\tjobs_done\tjobs_total\n' > "$OUT"
+S=$(date +%s)
+while :; do
+  st=$(docker stats --no-stream --format '{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}' $W 2>/dev/null)
+  ins=$(docker inspect -f '{{.RestartCount}}\t{{.State.OOMKilled}}' $W)
+  p=$(q "select (select count(*) from chunks where version_id in ($V)),
+                (select count(*) from embeddings e join chunks c using(chunk_id) where c.version_id in ($V)),
+                (select count(*) from jobs where kind='embed' and status='done' and (payload->>'version_id')::bigint in ($V)),
+                (select count(*) from jobs where kind='embed' and (payload->>'version_id')::bigint in ($V))" | tr '|' '\t')
+  printf '%s\t%s\t%s\t%s\n' "$(date +%T)" "$st" "$ins" "$p" >> "$OUT"
+  set -- $p
+  if [[ "$3" == "10" && "$1" -gt 0 && "$1" == "$2" ]]; then echo "ALL_EMBEDDED elapsed_from_sampler_start=$(( $(date +%s)-S ))s chunks=$1 embeddings=$2 jobs_done=$3/$4"; break; fi
+  (( $(date +%s)-S > 3600 )) && { echo "TIMEOUT"; break; }
+  sleep 0.5
+done

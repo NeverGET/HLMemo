@@ -1,0 +1,18 @@
+import http.client, json, os, socket, ssl, sys, uuid
+host, port, label, n = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+xff = sys.argv[5] if len(sys.argv) > 5 else None
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+try:
+    print(f"{label} own address: {socket.gethostbyname(socket.gethostname())}", flush=True)
+except OSError:
+    pass
+for i in range(1, n + 1):
+    c = http.client.HTTPSConnection(host, port, context=ctx, timeout=20)
+    c.sock = ctx.wrap_socket(socket.create_connection((host, port)), server_hostname="localhost")
+    nm = f"b3-{label.lower()}-{uuid.uuid4().hex[:6]}"
+    h = {"Host": "localhost", "Content-Type": "application/json", "X-HLM-Registration-Secret": os.environ["REG"]}
+    if xff:
+        h["X-Forwarded-For"] = xff
+    c.request("POST", "/devices/register", json.dumps({"name": nm, "fingerprint": "fp-" + nm, "os": "linux", "client": "b3/0"}), h)
+    r = c.getresponse(); body = r.read()
+    print(f"{label}-{i} {r.status}" + ("" if r.status in (201, 429) else f" {body[:160]!r}"), flush=True)

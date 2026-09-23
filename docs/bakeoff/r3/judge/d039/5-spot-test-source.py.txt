@@ -1,0 +1,468 @@
+"""Neutral verifier spot checks for D-039 (temporary; deleted after the run)."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import socket
+import subprocess
+import time
+import uuid
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+
+import httpx
+import psycopg
+import pytest
+import uvicorn
+
+from hlmemo.config import get_settings
+from hlmemo.server import app as server
+from hlmemo.server.app import create_app
+from hlmemo.server.middleware import AuthMiddleware
+from tests.integration._mcp_fixtures import (
+    ADMIN_TOKEN,
+    MCP_HEADERS,
+    bearer,
+    create_project,
+    running_app,
+    trusted_device,
+    write_args,
+)
+
+pytestmark = pytest.mark.integration
+
+
+def _payload(result):
+    return json.loads(result["content"][0]["text"])
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def _rss_mb() -> float:
+    out = subprocess.run(["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True).stdout
+    return int(out.strip()) / 1024
+
+
+@asynccontextmanager
+async def real_server(db_dsn, **kw):
+    settings = get_settings(db_dsn=db_dsn, admin_token=ADMIN_TOKEN, registration_secret=None, **kw)
+    app = create_app(settings, register_rate_limit=None)
+    port = _free_port()
+    srv = uvicorn.Server(
+        uvicorn.Config(
+            app, host="127.0.0.1", port=port, log_level="warning", lifespan="on", proxy_headers=False,
+            backlog=2048, timeout_keep_alive=30,
+        )
+    )
+    task = asyncio.create_task(srv.serve())
+    try:
+        for _ in range(400):
+            if srv.started:
+                break
+            await asyncio.sleep(0.05)
+        assert srv.started
+        yield app, port
+    finally:
+        srv.should_exit = True
+        await task
+
+
+def _auth_mw(app) -> AuthMiddleware:
+    obj = app.middleware_stack
+    seen = 0
+    while obj is not None and seen < 50:
+        if isinstance(obj, AuthMiddleware):
+            return obj
+        obj = getattr(obj, "app", None)
+        seen += 1
+    raise AssertionError("AuthMiddleware not found")
+
+
+# ------------------------------------------------------------------ a. N1
+
+
+async def test_n1_ready_flood(db_dsn, monkeypatch):
+    real_connect = server.AsyncConnection.connect
+    stats = {"calls": 0, "active": 0, "peak": 0}
+
+    @asynccontextmanager
+    async def tracked(conn):
+        stats["active"] += 1
+        stats["peak"] = max(stats["peak"], stats["active"])
+        try:
+            async with conn:
+                yield conn
+        finally:
+            stats["active"] -= 1
+
+    async def connect(*a, **k):
+        stats["calls"] += 1
+        return tracked(await real_connect(*a, **k))
+
+    monkeypatch.setattr(server, "AsyncConnection", SimpleNamespace(connect=connect))
+    async with real_server(db_dsn) as (app, port):
+        base = f"http://127.0.0.1:{port}"
+        limits = httpx.Limits(max_connections=600, max_keepalive_connections=600)
+        async with httpx.AsyncClient(base_url=base, timeout=60, limits=limits) as c:
+            await create_project(c, "p-ready")
+            _did, tok = await trusted_device(c, "reader", grants=[{"project": "p-ready", "role": "write"}])
+            warm = await c.get("/ready")
+            print("N1 warm /ready:", warm.status_code)
+            stats.update(calls=0, peak=0)
+            # pg_stat_activity sampler on its own connection.
+            sampler = await psycopg.AsyncConnection.connect(db_dsn, autocommit=True)
+            q = (
+                "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+                "AND pid<>pg_backend_pid() AND backend_type='client backend'"
+            )
+            baseline = (await (await sampler.execute(q)).fetchone())[0]
+            samples: list[int] = []
+            stop = asyncio.Event()
+
+            async def sample():
+                while not stop.is_set():
+                    samples.append((await (await sampler.execute(q)).fetchone())[0])
+                    await asyncio.sleep(0.005)
+
+            st = asyncio.create_task(sample())
+            results = {}
+            query_status = []
+            for wave in range(3):
+                app.state.readiness_probe.expires_at = 0  # force a fresh probe window each wave
+                t0 = time.monotonic()
+                qtask = asyncio.create_task(
+                    c.post(
+                        "/mcp",
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "memory.query",
+                                "arguments": {"project": "p-ready", "query": "anything", "token_budget": 1000},
+                            },
+                        },
+                        headers={**MCP_HEADERS, **bearer(tok)},
+                    )
+                )
+                rs = await asyncio.gather(*(c.get("/ready") for _ in range(500)), return_exceptions=True)
+                qr = await qtask
+                for r in rs:
+                    k = r.status_code if isinstance(r, httpx.Response) else type(r).__name__
+                    results[k] = results.get(k, 0) + 1
+                ok = qr.status_code == 200 and not qr.json()["result"].get("isError")
+                query_status.append((qr.status_code, ok))
+                print(f"N1 wave {wave}: {time.monotonic() - t0:.2f}s query={qr.status_code} ok={ok}")
+                await asyncio.sleep(1.2)
+            stop.set()
+            await st
+            await sampler.close()
+            print(
+                f"N1 ready statuses={results} readiness connects={stats['calls']} peak_concurrent={stats['peak']} "
+                f"pg_backends baseline={baseline} peak={max(samples)} samples={len(samples)} query={query_status}"
+            )
+            assert stats["peak"] <= 1
+            assert all(ok for _s, ok in query_status)
+
+
+# ------------------------------------------------------------------ b. N3
+
+
+async def test_n3_self_token_revoke_flood(db_dsn, monkeypatch):
+    monkeypatch.setenv("HLM_POOL_MAX_SIZE", "2")
+    async with running_app(db_dsn) as client:
+        await create_project(client, "p-n3")
+        ok = 0
+        codes: dict = {}
+        for attempt in range(10):
+            other_id, _ = await trusted_device(client, f"o-{attempt}")
+            did, tok = await trusted_device(client, f"d-{attempt}", grants=[{"project": "p-n3", "role": "write"}])
+
+            async def one(i, tok=tok, other_id=other_id):
+                try:
+                    k = i % 6
+                    if k == 0:
+                        r = await client.post("/admin/devices/1/revoke", json={}, headers=bearer(tok))
+                    elif k == 1:
+                        r = await client.post(f"/admin/devices/{other_id}/revoke", json={}, headers=bearer(tok))
+                    elif k == 2:
+                        r = await client.post("/admin/devices/999999/revoke", json={}, headers=bearer(tok))
+                    elif k == 3:
+                        r = await client.post("/devices/revoke", json={"id": 1}, headers=bearer(tok))
+                    elif k == 4:
+                        r = await client.post("/devices/revoke", json={"id": other_id}, headers=bearer(tok))
+                    else:
+                        r = await client.post(
+                            "/mcp",
+                            json={
+                                "jsonrpc": "2.0",
+                                "id": i,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "memory.write",
+                                    "arguments": write_args(
+                                        "p-n3", [{"kind": "fact", "title": f"t{i}", "body": "x" * 500}]
+                                    ),
+                                },
+                            },
+                            headers={**MCP_HEADERS, **bearer(tok)},
+                        )
+                    return (k, r.status_code)
+                except Exception as exc:  # noqa: BLE001
+                    return (i % 6, type(exc).__name__)
+
+            stop = asyncio.Event()
+            seen = []
+
+            async def worker(w, one=one, stop=stop, seen=seen):
+                out = []
+                i = w
+                while not stop.is_set():
+                    out.append(await one(i))
+                    seen.append(1)
+                    i += 150
+                return out
+
+            workers = [asyncio.create_task(worker(w)) for w in range(150)]
+            while len(seen) < 300:
+                await asyncio.sleep(0.01)
+            waiting = client.app.state.pool.get_stats().get("requests_waiting", 0)
+            pre = len(seen)
+            t0 = time.monotonic()
+            try:
+                r = await asyncio.wait_for(
+                    client.post(f"/admin/devices/{did}/revoke", json={}, headers=bearer(ADMIN_TOKEN)), timeout=15
+                )
+                rs, rtxt = r.status_code, r.text[:120]
+            except TimeoutError:
+                rs, rtxt = "timeout", ""
+            dt = time.monotonic() - t0
+            during = len(seen) - pre
+            stop.set()
+            statuses = [x for lst in await asyncio.gather(*workers) for x in lst]
+            for s in statuses:
+                codes[s] = codes.get(s, 0) + 1
+            after = await client.get("/devices/whoami", headers=bearer(tok))
+            mcp_after = await client.post(
+                "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers={**MCP_HEADERS, **bearer(tok)}
+            )
+            print(
+                f"N3 attempt {attempt}: flood_done_before={pre} pool_waiting={waiting} completed_during_revoke={during} admin revoke={rs} in {dt:.2f}s {rtxt if rs != 200 else ''} "
+                f"D whoami={after.status_code}/{after.json().get('code')} D mcp={mcp_after.status_code}/{mcp_after.json().get('code')}"
+            )
+            if rs == 200:
+                ok += 1
+            assert after.status_code == 401 and after.json()["code"] == "E_AUTH"
+            assert mcp_after.status_code == 401 and mcp_after.json()["code"] == "E_AUTH"
+        print("N3 admin ok:", ok, "/10; flood (kind,status) histogram:", dict(sorted(codes.items(), key=str)))
+        assert ok == 10
+
+
+# ------------------------------------------------------------------ c. N2
+
+
+async def _trickle(port, xff, total, rate_bps, chunk, results, declared=False, hold=None):
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    except OSError as exc:
+        results.append(("connect", type(exc).__name__))
+        return
+    hdr = [
+        "POST /mcp HTTP/1.1",
+        f"Host: 127.0.0.1:{port}",
+        "Authorization: Bearer x",
+        "Content-Type: application/json",
+        "Accept: application/json, text/event-stream",
+    ]
+    if xff:
+        hdr.append(f"X-Forwarded-For: {xff}")
+    hdr.append(f"Content-Length: {total}" if declared else "Transfer-Encoding: chunked")
+    writer.write(("\r\n".join(hdr) + "\r\n\r\n").encode())
+    sent = 0
+    start = time.monotonic()
+    status = None
+
+    async def read_status():
+        line = await reader.readline()
+        return line.decode(errors="replace").strip()
+
+    rtask = asyncio.create_task(read_status())
+    try:
+        while sent < total and not rtask.done():
+            if hold is not None and time.monotonic() - start > hold:
+                break
+            n = min(chunk, total - sent)
+            data = b"a" * n
+            if declared:
+                writer.write(data)
+            else:
+                writer.write(f"{n:x}\r\n".encode() + data + b"\r\n")
+            await writer.drain()
+            sent += n
+            # keep average rate at rate_bps
+            target = start + sent / rate_bps
+            delay = target - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+        if not rtask.done() and not declared and sent >= total:
+            writer.write(b"0\r\n\r\n")
+            await writer.drain()
+        try:
+            status = await asyncio.wait_for(rtask, 5)
+        except TimeoutError:
+            status = "no-response"
+    except (ConnectionError, OSError) as exc:
+        status = status or ("reset:" + (rtask.result() if rtask.done() else type(exc).__name__))
+    finally:
+        if not rtask.done():
+            rtask.cancel()
+        writer.close()
+    results.append((status, sent))
+
+
+async def test_n2_trickle_budget_and_38mb_write(db_dsn):
+    async with real_server(db_dsn, trusted_proxy_ips="127.0.0.1/32") as (app, port):
+        base = f"http://127.0.0.1:{port}"
+        async with httpx.AsyncClient(base_url=base, timeout=600) as c:
+            await create_project(c, "p-wire")
+            _did, tok = await trusted_device(c, "wire", grants=[{"project": "p-wire", "role": "write"}])
+            mw = _auth_mw(app)
+            budget = mw.body_budget
+            s = app.state.settings
+            print(
+                f"N2 settings: global={s.request_body_global_budget_bytes} client={s.request_body_client_budget_bytes} "
+                f"min_rate={s.request_body_min_rate_bytes_s} grace={s.request_body_rate_grace_bytes}"
+            )
+            for label, distinct in (("distinct-XFF", True), ("same-client", False)):
+                rss0 = _rss_mb()
+                results: list = []
+                peak_used = 0
+                peak_rss = rss0
+                rate = int(s.request_body_min_rate_bytes_s * 1.15)  # just above minimum
+                tasks = [
+                    asyncio.create_task(
+                        _trickle(
+                            port, f"198.51.{i // 256}.{i % 256}" if distinct else None, 4 * 1024 * 1024, rate,
+                            16 * 1024, results,
+                        )
+                    )
+                    for i in range(300)
+                ]
+                t0 = time.monotonic()
+                while not all(t.done() for t in tasks):
+                    peak_used = max(peak_used, budget.used)
+                    peak_rss = max(peak_rss, _rss_mb()) if int((time.monotonic() - t0) * 10) % 5 == 0 else peak_rss
+                    await asyncio.sleep(0.05)
+                hist: dict = {}
+                for st, _sent in results:
+                    hist[st] = hist.get(st, 0) + 1
+                print(
+                    f"N2 trickle[{label}] 300 conns x 4MiB @ {rate} B/s: peak budget.used={peak_used} "
+                    f"({peak_used / 2**20:.1f} MiB) global_limit={budget.global_limit} rss0={rss0:.0f}MB "
+                    f"peak_rss={peak_rss:.0f}MB delta={peak_rss - rss0:.0f}MB wall={time.monotonic() - t0:.1f}s "
+                    f"statuses={hist} used_after={budget.used}"
+                )
+                assert peak_used <= budget.global_limit
+                if not distinct:
+                    assert peak_used <= budget.client_limit
+            # Extra: declared Content-Length, trickling 1 byte / 5 s below the grace threshold.
+            results = []
+            tasks = [
+                asyncio.create_task(
+                    _trickle(port, f"203.0.113.{i}", 4 * 1024 * 1024, 0.2, 1, results, declared=True, hold=25)
+                )
+                for i in range(70)
+            ]
+            await asyncio.sleep(3)
+            held = budget.used
+            items = [{"kind": "fact", "title": f"Max {i}", "body": "😀" * 64000} for i in range(50)]
+            msg = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "memory.write", "arguments": write_args("p-wire", items, token_budget=32000)},
+            }
+            wire = json.dumps(msg, ensure_ascii=True).encode()
+            r_during = await c.post("/mcp", content=wire, headers={**MCP_HEADERS, **bearer(tok)})
+            await asyncio.sleep(15)
+            held_later = budget.used
+            print(
+                f"N2 declared-CL slowloris: 70 conns x 4MiB declared, 1 byte/5s: budget.used@3s={held} "
+                f"@18s={held_later} ({held_later / 2**20:.0f} MiB); legit 38MB write during: {r_during.status_code} "
+                f"{r_during.text[:120]}"
+            )
+            await asyncio.gather(*tasks)
+            # Legitimate 38 MB write over the real HTTP transport.
+            msg["params"]["arguments"] = write_args("p-wire", items, token_budget=32000)
+            wire = json.dumps(msg, ensure_ascii=True).encode()
+            t0 = time.monotonic()
+            r = await c.post("/mcp", content=wire, headers={**MCP_HEADERS, **bearer(tok)})
+            print(f"N2 legit write: bytes={len(wire)} status={r.status_code} in {time.monotonic() - t0:.1f}s")
+            assert r.status_code == 200, r.text[:300]
+            res = r.json()["result"]
+            assert not res.get("isError"), res["content"][0]["text"][:300]
+            print("N2 legit write versions:", len(_payload(res)["versions"]))
+            assert len(_payload(res)["versions"]) == 50
+
+
+# ------------------------------------------------------------------ d. N4
+
+
+@asynccontextmanager
+async def _app_with_peer(db_dsn, peer, **kw):
+    settings = get_settings(db_dsn=db_dsn, admin_token=ADMIN_TOKEN, registration_secret=None, **kw)
+    app = create_app(settings, register_rate_limit=5)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app, client=peer)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+
+
+def _reg(n):
+    return {"name": n, "fingerprint": f"fp-{uuid.uuid4()}", "os": "linux", "client": "pytest/0"}
+
+
+@pytest.mark.parametrize("proxy_env", [None, "172.30.39.0/24"])
+async def test_n4_xff(db_dsn, monkeypatch, proxy_env):
+    if proxy_env is None:
+        monkeypatch.delenv("HLM_TRUSTED_PROXY_IPS", raising=False)
+    else:
+        monkeypatch.setenv("HLM_TRUSTED_PROXY_IPS", proxy_env)
+    peer = ("172.30.39.5", 44321)
+    async with _app_with_peer(db_dsn, peer) as c:
+        print(f"N4 env={proxy_env!r} settings.trusted_proxy_ips={c._transport.app.state.settings.trusted_proxy_ips!r}")
+        codes = []
+        for i in range(5):
+            r = await c.post("/devices/register", json=_reg(f"a-{i}"), headers={"X-Forwarded-For": "203.0.113.66"})
+            codes.append(r.status_code)
+        same = await c.post("/devices/register", json=_reg("a-6"), headers={"X-Forwarded-For": "203.0.113.66"})
+        victim = await c.post("/devices/register", json=_reg("victim"), headers={"X-Forwarded-For": "198.51.100.7"})
+        print(f"N4 env={proxy_env!r}: 5x XFF=A -> {codes}; 6th XFF=A -> {same.status_code}; XFF=B -> {victim.status_code}")
+        assert codes == [201] * 5 and same.status_code == 429
+        if proxy_env is None:
+            assert victim.status_code == 429, "XFF must be ignored from an untrusted peer"
+        else:
+            assert victim.status_code == 201, "XFF must be honoured behind a trusted proxy"
+
+
+# ------------------------------------------------------------------ e. F15
+
+
+async def test_f15_reregister(db_dsn):
+    async with running_app(db_dsn) as client:
+        body = {"name": "m1", "fingerprint": "fp-verifier-" + uuid.uuid4().hex, "client": "pytest/0"}
+        r1 = await client.post("/devices/register", json=body)
+        did = r1.json()["device"]["id"]
+        rv = await client.post(f"/admin/devices/{did}/revoke", json={}, headers=bearer(ADMIN_TOKEN))
+        assert rv.status_code == 200
+        r2 = await client.post("/devices/register", json=body)
+        print("F15 r1:", r1.status_code, "revoke:", rv.status_code, "r2:", r2.status_code, r2.text[:200])
+        assert r2.status_code in (200, 201), "same name+fingerprint re-register fails"

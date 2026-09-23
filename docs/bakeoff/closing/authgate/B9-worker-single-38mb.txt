@@ -1,0 +1,11 @@
+## 00:55:15 worker before: RestartCount=0 OOMKilled=false
+03:55:15 write start mode=max wire=38403027 bytes
+03:55:19 WRITE mode=max wire=38403027 status=200 isError=False versions=50/50 3.8s -> PASS
+00:55:34 worker RestartCount=4 OOMKilled=false status=running mem=838.4MiB / 1.5GiB
+00:55:50 worker RestartCount=4 OOMKilled=false status=running mem=840.7MiB / 1.5GiB
+00:56:06 worker RestartCount=4 OOMKilled=false status=running mem=841MiB / 1.5GiB
+00:56:22 worker RestartCount=4 OOMKilled=false status=running mem=840.7MiB / 1.5GiB
+00:56:38 worker RestartCount=4 OOMKilled=false status=running mem=840.5MiB / 1.5GiB
+00:56:54 worker RestartCount=4 OOMKilled=false status=running mem=840.5MiB / 1.5GiB
+00:57:10 worker RestartCount=4 OOMKilled=false status=running mem=840.5MiB / 1.5GiB
+00:57:26 worker RestartCount=6 OOMKilled=false status=running mem=57.55MiB / 1.5GiB

@@ -1,0 +1,7 @@
+22:47:42 Q1 memory.query status=200 isError=False hits=0 11 ms
+22:47:42 write 20 items status=200 isError=False versions=20
+22:47:42 start 200 queries / 3 callers
+22:47:46 200 queries done: n=200 fails=0 p50=68 ms p95=85 ms max=108 ms wall=3.9s
+LOAD PASS
+api cgroup (lifetime since 2026-09-22T22:46:41.373787542Z): peak=1328603136 oom_kill 0
+worker cgroup (lifetime since 2026-09-22T22:46:41.304336459Z): peak=1202360320 oom_kill 0

@@ -1,0 +1,15 @@
+$ docker run --rm ubuntu:24.04 bash /b/bootstrap.sh --ssh-key /k/key.pub --dry-run
+VERIFY: Ubuntu 24.04, root, SSH port 22 and operator public key.
+INSTALL: ca-certificates curl git python3 sudo openssh-server ufw fail2ban unattended-upgrades.
+INSTALL: Docker official signed apt repository; docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin (keep installed versions on re-run).
+CONFIGURE: user hlmdeploy, docker/sudo groups, passwordless sudo, append operator public key.
+CREATE: /opt/hlmemo /var/backups/hlmemo /etc/hlmemo; owner hlmdeploy, mode 0750.
+CONFIGURE: ufw TCP 22 from anywhere; TCP 80/443 and UDP 443; preserve unrelated rules.
+CONFIGURE: fail2ban sshd/systemd, unattended upgrades without automatic reboot.
+CONFIGURE: public-key SSH and ExposeAuthInfo; preserve current login until --finalize-ssh.
+ACTIVATE: ufw; enable/start docker, fail2ban, unattended-upgrades; validate/reload SSH.
+rc=0
+$ ... --finalize-ssh --dry-run
+VERIFY: active deploy-user public-key SSH session; sshd syntax/effective access.
+WRITE: root/password SSH disabled; validate and reload ssh.service, roll back on failure.
+rc=0

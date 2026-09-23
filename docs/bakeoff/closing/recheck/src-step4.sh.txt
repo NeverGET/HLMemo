@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -uo pipefail
+SP=/private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad
+L=/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/closing/recheck
+export TOK=$(cat $SP/body.token.secret) PROJ=judge-body
+CADDY=172.20.0.4
+run_c() { docker run --rm --name "$1" --network judge-recheck_outbound -e TOK -e PROJ -v $SP/bodytest.py:/bodytest.py:ro python:3.12-slim python -u /bodytest.py "${@:2}"; }
+: > $L/B8-stats-step4.tsv
+bash $SP/stats_sampler.sh judge-recheck- $L/B8-stats-step4.tsv 0 & SAMP=$!
+echo "## $(date -u +%H:%M:%S) (c) container body-c: 38.4 MB memory.write at 64 KiB/s with a 25 s pause at 50%"
+run_c body-c write $CADDY 443 38.4 0.5 65536 25 > $L/B7c-throttled.txt 2>&1 & PC=$!
+sleep 5
+echo "## $(date -u +%H:%M:%S) (a) 100 tricklers from 7 containers (15x6 + 10) -> caddy $CADDY:443"
+PA=()
+for i in 1 2 3 4 5 6 7; do n=15; [[ $i == 7 ]] && n=10; run_c body-a$i trickle $CADDY 443 $n > $L/B7a-trickle-c$i.txt 2>&1 & PA+=($!); done
+sleep 12
+echo "## $(date -u +%H:%M:%S) (a) concurrent host 38.4 MB memory.write while tricklers hold"
+python3 -u $SP/bodytest.py write 127.0.0.1 28443 38.4 0 0 0 2>&1 | tee $L/B7a-concurrent-write.txt
+sleep 3
+echo "## $(date -u +%H:%M:%S) (b) 17 concurrent slow bodies from the host (one source)"
+python3 -u $SP/bodytest.py slow 127.0.0.1 28443 17 2>&1 | tee $L/B7b-slow17.txt
+for p in "${PA[@]}"; do wait $p; done
+echo "## $(date -u +%H:%M:%S) (a) tricklers finished"; grep -h TRICKLE $L/B7a-trickle-c*.txt
+wait $PC; echo "## $(date -u +%H:%M:%S) (c) finished"; cat $L/B7c-throttled.txt
+sleep 4; kill $SAMP

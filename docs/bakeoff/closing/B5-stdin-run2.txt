@@ -1,0 +1,25 @@
+$ bash harness-close.sh deploy/scripts/deploy.sh CLOSE  (judge harness + fake 'docker image inspect' returning the tag sha as revision label)
+=== CLOSE: deploy.sh exit=0  workdir=/var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Tx0l
+--- client output (tail):
+HEAD is now at 3362da6 ref
+HEAD is now at 3362da6 ref
+Pre-upgrade backup completed: /private/var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Tx0l/backups/pre-upgrade/3362da646fdbb7a77ce891aa6fe84dc8e30489a2-2026-09-22T220904Z-mu56ZS.dump (retained until explicit prune)
+{"status":"ready"}
+
+Pre-upgrade prune completed: removed 0; keeping latest 5
+Deployment ready: 3362da646fdbb7a77ce891aa6fe84dc8e30489a2 (localhost)
+
+--- docker exec/run calls:
+docker compose -p judgefake -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Tx0l/opt/app/deploy/compose.prod.yaml --en
+docker compose -p judgefake -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Tx0l/opt/app/deploy/compose.prod.yaml --en
+docker compose -p judgefake -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Tx0l/opt/app/deploy/compose.prod.yaml --en
+docker compose -p judgefake -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Tx0l/opt/app/deploy/compose.prod.yaml --en
+docker compose -p judgefake -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Tx0l/opt/app/deploy/compose.prod.yaml --en
+--- calls after last drain:
+ssh if test -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Tx0l/opt/.deploy-runs/run.PoRrPqUk/status; then tail -c +
+curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 --connect-timeout 10 --max-time 20 https://localhost/ready
+docker compose -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T/judge-stdin-CLOSE.Tx0l/opt/app/deploy/compose.prod.yaml --env-file /var/f
+docker compose -p hlmemo-backup-config --env-file /dev/null -f - config --format json
+ssh if test -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Tx0l/opt/.deploy-runs/run.PoRrPqUk/status; then tail -c +
+ssh if test -f /var/folders/tc/w9p4wh09393b3j8p_14b_y4h0000gn/T//judge-stdin-CLOSE.Tx0l/opt/.deploy-runs/run.PoRrPqUk/status; then tail -c +
+VERDICT CLOSE: REACHED SUCCESS LINE

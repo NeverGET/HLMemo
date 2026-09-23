@@ -1,0 +1,31 @@
+$ docker compose -p judge-auth -f deploy/compose.prod.yaml -f B8-nomodels.override.yaml --env-file <env> up -d --no-deps --force-recreate api
+ Container judge-auth-api-1 Recreated 
+ Container judge-auth-api-1 Starting 
+ Container judge-auth-api-1 Started 
+## 00:53:49 /app/models entries in container:        0
+## +15s internal /ready:
+503 {"status":"not_ready","checks":{"embed_config":{"ok":true,"pinned":"intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3","configured":"intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3"},"trusted_proxy_ips":{"ok":true},"db":{"ok":true},"migration":{"ok":true,"expected":"0001_phase0","applied":["0001_phase0"]},"models":{"dir":"/app/models/multilingual-e5-small","ok":false,"error":"model files missing; run `make models`","missing":["onnx/model.onnx","onnx/tokenizer.json","tokenizer_config.json","config.json"]}}}
+## edge /ready: 503 ; edge /health: {"status":"ok"}
+## +65s inspect: status=running RestartCount=0 OOMKilled=false health=starting StartedAt=2026-09-23T00:53:49.619600921Z
+## internal /ready again:
+503 {"status":"not_ready","checks":{"embed_config":{"ok":true,"pinned":"intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3","configured":"intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3"},"trusted_proxy_ips":{"ok":true},"db":{"ok":true},"migration":{"ok":true,"expected":"0001_phase0","applied":["0001_phase0"]},"models":{"dir":"/app/models/multilingual-e5-small","ok":false,"error":"model files missing; run `make models`","missing":["onnx/model.onnx","onnx/tokenizer.json","tokenizer_config.json","config.json"]}}}
+## api log (non-ready lines):
+2026-09-23 00:53:50,443 INFO hlmemo.server hlmemo api: MCP streamable HTTP at /mcp (memory.query/drilldown/raw/write/call_the_day)
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+2026-09-23 00:53:50,466 INFO hlmemo.server admin device bound from HLM_ADMIN_TOKEN (token_generation=3)
+2026-09-23 00:53:50,469 INFO mcp.server.streamable_http_manager StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+2026-09-23 00:53:54,938 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-09-23 00:53:54,938 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-09-23 00:53:54,938 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-09-23 00:53:54,938 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-09-23 00:53:54,938 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-09-23 00:53:54,938 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+2026-09-23 00:53:54,938 INFO alembic.runtime.plugins setup plugin alembic.ext.checkconstraint_byname
+INFO:     172.30.39.3:43956 - "GET /health HTTP/1.1" 200 OK
+## restore: recreate api without override
+ Container judge-auth-api-1 Waiting 
+ Container judge-auth-api-1 Healthy 
+## after restore: RestartCount=0 health=healthy edge /ready=200

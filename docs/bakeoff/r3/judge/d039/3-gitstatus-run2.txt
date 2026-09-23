@@ -1,0 +1,2 @@
+ M HARDWARE.md
+?? tests/integration/_v039_spot.py

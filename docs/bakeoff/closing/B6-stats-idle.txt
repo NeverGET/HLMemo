@@ -1,0 +1,4 @@
+judge-close-caddy-1	28.87MiB / 256MiB	0.00%
+judge-close-api-1	511.4MiB / 1.5GiB	0.24%
+judge-close-worker-1	838.3MiB / 1.5GiB	0.30%
+judge-close-db-1	52.18MiB / 2GiB	0.16%

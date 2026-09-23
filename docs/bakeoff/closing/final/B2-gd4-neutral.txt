@@ -1,0 +1,73 @@
+$ JUDGE_BACKUP_DIR=<scratch>/judge-fin-backups HLM_ENV_FILE=<scratch>/judge-fin-env/prod.env bash docs/bakeoff/r2/judge/logs/neutral_gd4_v5.sh $PWD judge-fin 28443 <env> 'bash deploy/backup/backup.sh' 'bash deploy/backup/restore.sh "$DUMP" --yes'
+## marker=JUDGE-judge-fin-3e2bb264abcb pg_user=hlm pg_db=hlm
+## 1 write-marker
+PASS device/register status=201 name=judge-71162870
+PASS device/approve status=200 id=3 body={"device":{"id":3,"name":"judge-71162870","class":"ci","status":"trusted","is_admin":false,"reserved":false,"os":"darwin","token_generation":1,"registered_at":"2026-09-23T03:16:58.708687+00:00","appro
+PASS project/create slug=judge create_status=400 exists=True
+PASS project/grant-write status=200 body={"grant":{"device":3,"project":"judge","role":"write"}}
+PASS device/whoami status=200 grants=[{'project': 'judge', 'project_id': 1, 'role': 'write'}]
+PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+PASS mcp/write-marker status=200 version_id=1
+VERSION_ID 1
+RESULT PASS mode=write-marker base=https://localhost:28443
+exit=0
+## 2 backup: bash deploy/backup/backup.sh
+Backup completed: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-fin-backups/daily/hlmemo-2026-09-23T031659Z-vRezjQ.dump (7 daily / 4 weekly retention)
+exit=0 dump=/private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-fin-backups/daily/hlmemo-2026-09-23T031659Z-vRezjQ.dump (0s)
+## 3 wipe (judge): stop api worker; dropdb/createdb hlm
+ Container judge-fin-worker-1 Stopping 
+ Container judge-fin-api-1 Stopping 
+ Container judge-fin-worker-1 Stopped 
+ Container judge-fin-api-1 Stopped 
+stop exit=0
+dropdb exit=0
+createdb exit=0
+public tables after wipe: 0
+## 4 restore: bash deploy/backup/restore.sh "$DUMP" --yes
+ Container judge-fin-caddy-1 Stopping 
+ Container judge-fin-worker-1 Stopping 
+ Container judge-fin-worker-1 Stopped 
+ Container judge-fin-caddy-1 Stopped 
+ Container judge-fin-api-1 Stopping 
+ Container judge-fin-api-1 Stopped 
+Writers stopped; creating the pre-restore safety dump.
+Safety dump: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-fin-backups/pre-restore/hlmemo-2026-09-23T031701Z.dump.IpzuUn; on failure writers remain stopped. Restore it with this script.
+ Container judge-fin-migrate-run-cd3f0b7a2d0d Creating 
+ Container judge-fin-migrate-run-cd3f0b7a2d0d Created 
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+ Container judge-fin-db-1 Running 
+ Container judge-fin-db-1 Waiting 
+ Container judge-fin-db-1 Waiting 
+ Container judge-fin-db-1 Healthy 
+ Container judge-fin-db-1 Healthy 
+ Container judge-fin-worker-1 Starting 
+ Container judge-fin-api-1 Starting 
+ Container judge-fin-worker-1 Started 
+ Container judge-fin-api-1 Started 
+ Container judge-fin-api-1 Waiting 
+ Container judge-fin-api-1 Healthy 
+ Container judge-fin-caddy-1 Starting 
+ Container judge-fin-caddy-1 Started 
+ Container judge-fin-api-1 Waiting 
+ Container judge-fin-worker-1 Waiting 
+ Container judge-fin-caddy-1 Waiting 
+ Container judge-fin-db-1 Waiting 
+ Container judge-fin-worker-1 Healthy 
+ Container judge-fin-db-1 Healthy 
+ Container judge-fin-api-1 Healthy 
+ Container judge-fin-caddy-1 Healthy 
+Restore completed; stack healthy. Safety dump retained: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-fin-backups/pre-restore/hlmemo-2026-09-23T031701Z.dump.IpzuUn
+exit=0 (14s)
+## 5 start api+worker
+env file /Users/cemalkurt/Projects/HLMemo-bake/fix-auth/deploy/app.env not found: stat /Users/cemalkurt/Projects/HLMemo-bake/fix-auth/deploy/app.env: no such file or directory
+exit=1
+## 5b edge /ready -> 200 after 0s
+## 6 read-marker
+PASS device/state reused device id=3 project=judge
+PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+PASS mcp/read-marker hits=1 clue=v1.0
+RESULT PASS mode=read-marker base=https://localhost:28443
+exit=0
+NEUTRAL-GD4 PASS judge-fin
+rc=0

@@ -1,0 +1,218 @@
+"""Judge A6 (closing): independent D1 abuse + F15 CLI checks against a real server subprocess.
+
+Server: `python -m hlmemo.server.app` (production entrypoint, default body settings, no trusted proxy).
+D1: 70 raw TCP connections declare Content-Length 4 MiB on /mcp and send 1 byte / 5 s; meanwhile a
+    38 MB memory.write goes over real MCP streamable HTTP (initialize -> initialized -> tools/call).
+F15: real `hlm` CLI: register (default name + fingerprint) -> approve -> revoke -> register again => 201.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from contextlib import suppress
+
+import httpx
+
+REPO = "/Users/cemalkurt/Projects/HLMemo"
+DSN = os.environ["HLM_TEST_DSN"]
+PORT = 28765
+BASE = f"http://127.0.0.1:{PORT}"
+ADMIN = "hlm_" + "J" * 43
+CFG = tempfile.mkdtemp(prefix="judge-a6-")
+
+
+def env() -> dict[str, str]:
+    e = {k: v for k, v in os.environ.items() if not k.startswith("HLM_")}
+    e.update(
+        HLM_DB_DSN=DSN,
+        HLM_ADMIN_TOKEN=ADMIN,
+        HLM_API_HOST="127.0.0.1",
+        HLM_API_PORT=str(PORT),
+        HLM_CONFIG_DIR=CFG,
+        HLM_MODELS_DIR=f"{REPO}/models",
+        HLM_SERVER_URL=BASE,
+        PYTHON_KEYRING_BACKEND="keyring.backends.fail.Keyring",  # never touch the real keychain
+    )
+    return e
+
+
+def hlm(*args: str, admin: bool = False) -> subprocess.CompletedProcess:
+    cmd = ["uv", "run", "--frozen", "hlm", "--json"] + (["--admin"] if admin else []) + list(args)
+    p = subprocess.run(cmd, cwd=REPO, env=env(), capture_output=True, text=True, timeout=60)
+    print(f"$ hlm {'--admin ' if admin else ''}{' '.join(args)} -> exit={p.returncode}")
+    print("  out:", p.stdout.strip()[:400].replace(ADMIN, "<admin>"))
+    if p.stderr.strip():
+        print("  err:", p.stderr.strip()[-400:])
+    return p
+
+
+async def trickle(i: int, sent: list[int], alive: list[bool]) -> None:
+    reader, writer = await asyncio.open_connection("127.0.0.1", PORT)
+    try:
+        writer.write(
+            (
+                f"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nAuthorization: Bearer hlm_attacker{i}\r\n"
+                "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+                f"Content-Length: {4 * 1024 * 1024}\r\n\r\n"
+            ).encode()
+        )
+        while True:
+            writer.write(b"{" if sent[i] == 0 else b" ")
+            await writer.drain()
+            sent[i] += 1
+            try:
+                data = await asyncio.wait_for(reader.read(1), 5)
+                if data == b"" or data:
+                    alive[i] = False  # server answered/closed -> connection no longer held
+                    return
+            except TimeoutError:
+                pass
+    except (ConnectionError, OSError):
+        alive[i] = False
+    finally:
+        writer.close()
+        with suppress(Exception):
+            await writer.wait_closed()
+
+
+async def d1(token: str) -> bool:
+    sent, alive = [0] * 70, [True] * 70
+    tasks = [asyncio.create_task(trickle(i, sent, alive)) for i in range(70)]
+    ok = False
+    try:
+        while min(sent) < 2:
+            await asyncio.sleep(0.2)
+        print(f"D1 tricklers: 70 connected, bytes sent so far={sum(sent)}, alive={sum(alive)}")
+        hdr = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(base_url=BASE, timeout=300) as c:
+            r = await c.post(
+                "/mcp",
+                headers=hdr,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "judge-a6", "version": "0"},
+                    },
+                },
+            )
+            print("D1 initialize:", r.status_code, r.headers.get("content-type"))
+            sid = r.headers.get("mcp-session-id")
+            if sid:
+                hdr["mcp-session-id"] = sid
+            hdr["mcp-protocol-version"] = "2025-06-18"
+            r = await c.post("/mcp", headers=hdr, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+            print("D1 initialized notification:", r.status_code)
+            items = [
+                {"kind": "fact", "title": f"judge-a6 big {i}", "body": ("🧪" * 63990) + f"{i:010d}"}
+                for i in range(50)
+            ]
+            wire = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "memory.write",
+                        "arguments": {
+                            "project": "judge-a6",
+                            "request_id": str(uuid.uuid4()),
+                            "client": "judge-a6/0",
+                            "items": items,
+                            "token_budget": 32000,
+                        },
+                    },
+                },
+                ensure_ascii=True,
+            ).encode()
+            t = time.monotonic()
+            r = await c.post("/mcp", headers=hdr, content=wire)
+            dt = time.monotonic() - t
+            print(f"D1 38MB write: wire={len(wire)} bytes status={r.status_code} in {dt:.1f}s")
+            body = r.text
+            if "text/event-stream" in r.headers.get("content-type", ""):
+                body = next(ln[5:].strip() for ln in body.splitlines() if ln.startswith("data:"))
+            res = json.loads(body).get("result", {})
+            txt = json.loads(res["content"][0]["text"]) if res.get("content") else {}
+            nver = len(txt.get("versions", []))
+            print(f"D1 result isError={res.get('isError')} versions={nver} alive_tricklers={sum(alive)}")
+            ok = r.status_code == 200 and not res.get("isError") and nver == 50 and sum(alive) == 70
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return ok
+
+
+def main() -> int:
+    subprocess.run(["uv", "run", "--frozen", "alembic", "upgrade", "phase0@head"], cwd=REPO, env=env(), check=True)
+    log = open(os.path.join(CFG, "server.log"), "w")
+    srv = subprocess.Popen(
+        ["uv", "run", "--frozen", "python", "-m", "hlmemo.server.app"], cwd=REPO, env=env(), stdout=log, stderr=log
+    )
+    try:
+        for _ in range(120):
+            with suppress(Exception):
+                if httpx.get(f"{BASE}/ready", timeout=2).status_code == 200:
+                    break
+            time.sleep(1)
+        else:
+            print("server not ready")
+            return 2
+        # ---------------- F15 through the real CLI
+        print("== F15 (real CLI, default name + fingerprint)")
+        p1 = hlm("device", "register", "--class", "ci")
+        d1_ = json.loads(p1.stdout)["device"]
+        name = d1_["name"]
+        hlm("project", "create", "judge-a6", "--name", "Judge A6", admin=True)
+        hlm("device", "approve", str(d1_["id"]), "--class", "ci", "--grant", "judge-a6:write", admin=True)
+        pdup = hlm("device", "register", "--class", "ci")  # active name collision must be rejected
+        hlm("device", "revoke", str(d1_["id"]), admin=True)
+        p2 = hlm("device", "register", "--class", "ci")
+        d2_ = json.loads(p2.stdout)["device"] if p2.returncode == 0 else {}
+        f15 = p1.returncode == 0 and p2.returncode == 0 and d2_.get("name") == name and d2_["id"] != d1_["id"]
+        f15 = f15 and pdup.returncode != 0
+        import re
+
+        codes = re.findall(r'"POST /devices/register HTTP/1.1" (\d{3})', open(os.path.join(CFG, "server.log")).read())
+        print("F15 register status codes in server access log:", codes)
+        f15 = f15 and len(codes) == 3 and codes[0] == codes[2] == "201" and codes[1].startswith("4")
+        print(f"F15 {'PASS' if f15 else 'FAIL'}: name={name} old_id={d1_['id']} new_id={d2_.get('id')}")
+        # approve the re-registered device and use it for D1
+        hlm("device", "approve", str(d2_["id"]), "--class", "ci", "--grant", "judge-a6:write", admin=True)
+        import tomllib
+
+        creds = tomllib.load(open(os.path.join(CFG, "credentials.toml"), "rb"))["tokens"]
+        assert len(creds) == 1, list(creds)
+        token = next(iter(creds.values()))
+        print("== D1 (70 x declared 4 MiB at 1 B/5 s + concurrent 38 MB memory.write)")
+        ok = asyncio.run(d1(token))
+        print(f"D1 {'PASS' if ok else 'FAIL'}")
+        return 0 if (ok and f15) else 1
+    finally:
+        srv.terminate()
+        with suppress(Exception):
+            srv.wait(15)
+        log.close()
+        print("server log tail:")
+        print("".join(open(os.path.join(CFG, "server.log")).readlines()[-15:]).replace(ADMIN, "<admin>"))
+        shutil.rmtree(CFG, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

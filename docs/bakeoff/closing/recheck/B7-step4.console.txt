@@ -1,0 +1,19 @@
+## 22:54:19 (c) container body-c: 38.4 MB memory.write at 64 KiB/s with a 25 s pause at 50%
+## 22:54:25 (a) 100 tricklers from 7 containers (15x6 + 10) -> caddy 172.20.0.4:443
+## 22:54:37 (a) concurrent host 38.4 MB memory.write while tricklers hold
+22:54:37 write start wire=38397558 bytes rate=max B/s pause=0.0s at 0%
+22:54:39 WRITE wire=38397558 status=200 isError=False versions=50/50 2.5s -> PASS 
+## 22:54:42 (b) 17 concurrent slow bodies from the host (one source)
+22:54:54 SLOW k=17 statuses={'pending': 17}
+## 22:55:53 (a) tricklers finished
+22:55:53 TRICKLE n=15 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 15}
+22:55:52 TRICKLE n=15 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 15}
+22:55:53 TRICKLE n=15 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 15}
+22:55:53 TRICKLE n=15 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 15}
+22:55:52 TRICKLE n=15 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 15}
+22:55:52 TRICKLE n=15 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 15}
+22:55:52 TRICKLE n=10 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 10}
+## 23:04:33 (c) finished
+22:54:20 write start wire=38397558 bytes rate=65536 B/s pause=25.0s at 50%
+22:59:13 pausing 25.0s at 19202048 bytes (293s)
+23:04:33 WRITE wire=38397558 status=200 isError=False versions=50/50 613.1s -> PASS 

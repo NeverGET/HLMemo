@@ -1,0 +1,7 @@
+03:49:28 write start mode=max wire=38403027 bytes
+03:49:32 WRITE mode=max wire=38403027 status=200 isError=False versions=50/50 3.7s -> PASS
+rc=0
+03:49:32 write start mode=slow wire=4872629 bytes
+03:50:10 slow write: pausing 25.0s at 2441216 bytes
+03:51:12 WRITE mode=slow wire=4872629 status=200 isError=False versions=7/7 100.2s -> PASS
+rc=0

@@ -1,0 +1,2 @@
+22:54:25 trickle start n=15
+22:55:52 TRICKLE n=15 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 15}

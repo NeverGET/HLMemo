@@ -1,0 +1,9 @@
+## 22:57:44 RE-RUN (a) timing split: X = 15 tricklers via Caddy (1 byte / 29 s, as before); Y = 15 via Caddy with 1 byte / 5 s; Z = 15 direct to API (frontend net, plain, 1 byte / 29 s)
+[ax] 22:59:11 TRICKLE n=15 cut_min=87.0s cut_max=87.0s statuses={'HTTP/1.1 408 Request Timeout': 15}
+[ay] 22:58:49 TRICKLE n=15 cut_min=65.0s cut_max=65.0s statuses={'HTTP/1.1 408 Request Timeout': 15}
+[az] 22:57:54 TRICKLE n=15 cut_min=10.0s cut_max=10.0s statuses={'reset:TimeoutError': 15}
+## 22:59:20 Z re-run (script bug fixed: plain socket kept a 10 s client timeout): 15 tricklers direct to API, 1 byte / 29 s
+[az] 23:00:23 TRICKLE n=15 cut_min=61.9s cut_max=61.9s statuses={'HTTP/1.1 408 Request Timeout': 15}
+## 23:00:36 edge-hold probe: 1 connection via Caddy sends 255 KiB then goes silent for 150 s (API inactivity cut expected at ~30 s)
+[ah] 23:03:07 TRICKLE n=1 cut_min=150.0s cut_max=150.0s statuses={'HTTP/1.1 408 Request Timeout': 1}
+16

@@ -1,0 +1,188 @@
+"""Neutral verifier spot checks for D-037 (temporary; deleted after the run)."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import socket
+import uuid
+
+import httpx
+import pytest
+import uvicorn
+
+from hlmemo.config import get_settings
+from hlmemo.server.app import create_app
+from tests.integration._mcp_fixtures import (
+    ADMIN_TOKEN,
+    MCP_HEADERS,
+    bearer,
+    call_tool_raw,
+    create_project,
+    register,
+    running_app,
+    trusted_device,
+    write_args,
+)
+
+pytestmark = pytest.mark.integration
+
+
+def _payload(result):
+    return json.loads(result["content"][0]["text"])
+
+
+async def test_r07_card_scope(db_dsn):
+    async with running_app(db_dsn) as client:
+        await create_project(client, "p-card")
+        grants = [{"project": "p-card", "role": "write"}]
+        a_id, a_tok = await trusted_device(client, "dev-a", grants=grants)
+        _b_id, b_tok = await trusted_device(client, "dev-b", grants=grants)
+        card = {"kind": "project_card", "title": "Card", "body": "card body"}
+        res = await call_tool_raw(
+            client, a_tok, "memory.write", write_args("p-card", [{**card, "device_scope": f"device:{a_id}"}])
+        )
+        print("R07 scoped:", res)
+        assert res.get("isError") is True and _payload(res)["code"] == "E_INVALID_ARG"
+        res = await call_tool_raw(
+            client, a_tok, "memory.write", write_args("p-card", [{**card, "device_scope": "all"}])
+        )
+        print("R07 all:", res)
+        assert not res.get("isError"), res
+        ver = _payload(res)["versions"][0]
+        res = await call_tool_raw(
+            client,
+            b_tok,
+            "memory.write",
+            write_args(
+                "p-card",
+                [
+                    {
+                        **card,
+                        "body": "updated by B",
+                        "logical_id": ver["logical_id"],
+                        "expected_version_id": ver["version_id"],
+                    }
+                ],
+            ),
+        )
+        print("R07 B update:", res)
+        assert not res.get("isError"), res
+
+
+async def test_r05_revoke_under_500_flood(db_dsn, monkeypatch):
+    monkeypatch.setenv("HLM_POOL_MAX_SIZE", "2")
+    async with running_app(db_dsn) as client:
+        await create_project(client, "p-flood")
+        ok = 0
+        codes: dict = {}
+        for attempt in range(10):
+            did, tok = await trusted_device(client, f"x-{attempt}", grants=[{"project": "p-flood", "role": "write"}])
+
+            async def one(i, tok=tok):
+                try:
+                    if i % 2:
+                        r = await client.get("/devices/whoami", headers=bearer(tok))
+                    else:
+                        r = await client.post(
+                            "/mcp",
+                            json={
+                                "jsonrpc": "2.0",
+                                "id": i,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "memory.write",
+                                    "arguments": write_args(
+                                        "p-flood", [{"kind": "fact", "title": f"t{i}", "body": "x" * 2000}]
+                                    ),
+                                },
+                            },
+                            headers={**MCP_HEADERS, **bearer(tok)},
+                        )
+                    return r.status_code
+                except Exception as exc:  # noqa: BLE001
+                    return type(exc).__name__
+
+            tasks = [asyncio.create_task(one(i)) for i in range(500)]
+            await asyncio.sleep(0.05)
+            waiting = client.app.state.pool.get_stats().get("requests_waiting", 0)
+            r = await asyncio.wait_for(
+                client.post(f"/admin/devices/{did}/revoke", json={}, headers=bearer(ADMIN_TOKEN)), timeout=10
+            )
+            statuses = await asyncio.gather(*tasks)
+            for s in statuses:
+                codes[s] = codes.get(s, 0) + 1
+            print(f"R05 attempt {attempt}: revoke={r.status_code} pool_waiting_at_revoke={waiting}")
+            if r.status_code == 200:
+                ok += 1
+            after = await client.get("/devices/whoami", headers=bearer(tok))
+            assert after.status_code == 401 and after.json()["code"] == "E_AUTH", after.text
+            mcp_after = await client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                headers={**MCP_HEADERS, **bearer(tok)},
+            )
+            assert mcp_after.status_code == 401 and mcp_after.json()["code"] == "E_AUTH"
+        print("R05 revoke ok:", ok, "/10; flood status histogram:", codes)
+        assert ok == 10
+
+
+async def test_f15_reregister(db_dsn):
+    async with running_app(db_dsn) as client:
+        body = {"name": "m1", "fingerprint": "fp-verifier-" + uuid.uuid4().hex, "client": "pytest/0"}
+        r1 = await client.post("/devices/register", json=body)
+        did = r1.json()["device"]["id"]
+        rv = await client.post(f"/admin/devices/{did}/revoke", json={}, headers=bearer(ADMIN_TOKEN))
+        assert rv.status_code == 200
+        r2 = await client.post("/devices/register", json=body)
+        print("F15 r2 raw:", r2.status_code, r2.text)
+        r3 = await client.post("/devices/register", json={**body, "name": "m1-renamed"})
+        print("F15 renamed:", r3.status_code, r3.text[:200])
+        assert r3.status_code in (200, 201) and r3.json()["device"]["id"] != did
+        assert r2.status_code in (200, 201), "same name+fingerprint re-register fails"
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+@pytest.mark.parametrize("ensure_ascii", [False, True])
+async def test_wire_max_write_real_uvicorn(db_dsn, ensure_ascii):
+    settings = get_settings(db_dsn=db_dsn, admin_token=ADMIN_TOKEN, registration_secret=None)
+    app = create_app(settings, register_rate_limit=None)
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="on"))
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        assert server.started
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=600) as client:
+            slug = f"p-wire-{int(ensure_ascii)}"
+            await create_project(client, slug)
+            _did, tok = await trusted_device(client, "wire", grants=[{"project": slug, "role": "write"}])
+            items = [{"kind": "fact", "title": f"Max {i}", "body": "😀" * 64000} for i in range(50)]
+            assert all(len(it["body"]) == 64000 for it in items)
+            msg = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "memory.write", "arguments": write_args(slug, items, token_budget=32000)},
+            }
+            wire = json.dumps(msg, ensure_ascii=ensure_ascii).encode()
+            r = await client.post("/mcp", content=wire, headers={**MCP_HEADERS, **bearer(tok)})
+            print(f"WIRE ensure_ascii={ensure_ascii}: bytes={len(wire)} status={r.status_code}")
+            assert r.status_code == 200, r.text[:300]
+            res = r.json()["result"]
+            assert not res.get("isError"), res["content"][0]["text"][:300]
+            print("WIRE versions:", len(_payload(res)["versions"]))
+            assert len(_payload(res)["versions"]) == 50
+    finally:
+        server.should_exit = True
+        await task

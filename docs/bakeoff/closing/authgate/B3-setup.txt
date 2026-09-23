@@ -1,0 +1,5 @@
+03:44:48 project create 201
+03:44:48 revoked-device whoami before revoke 200
+03:44:48 revoke 200 {"device":{"id":5,"name":"ag-revoked-18e44b","class":"ci","status":"revoked","is_admin":false,"reserved":false,"os":"dar
+03:44:48 revoked-device whoami after revoke 401 {"code":"E_AUTH","message":"unknown or revoked token","retryable":false,"details
+03:44:48 SETUP PASS writer id 4 revoked id 5

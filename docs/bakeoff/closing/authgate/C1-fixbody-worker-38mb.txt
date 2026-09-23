@@ -1,0 +1,18 @@
+## baseline: fix-body @ 0e352e6, project judge-authbase, same env/ports
+build rc=0
+ Container judge-authbase-caddy-1 Healthy 
+edge /ready=200
+03:58:19 SETUP PASS writer id 2 revoked id 3
+## 00:58:19 worker before: RestartCount=0
+03:58:19 write start mode=max wire=38403027 bytes
+03:58:23 WRITE mode=max wire=38403027 status=200 isError=False versions=50/50 4.0s -> PASS
+00:58:38 worker RestartCount=4 status=running mem=841MiB / 1.5GiB
+00:58:54 worker RestartCount=4 status=running mem=842.8MiB / 1.5GiB
+00:59:10 worker RestartCount=4 status=running mem=842.6MiB / 1.5GiB
+00:59:27 worker RestartCount=4 status=running mem=842.9MiB / 1.5GiB
+00:59:43 worker RestartCount=4 status=running mem=842.8MiB / 1.5GiB
+00:59:59 worker RestartCount=4 status=running mem=842.7MiB / 1.5GiB
+01:00:15 worker RestartCount=4 status=running mem=842.9MiB / 1.5GiB
+01:00:31 worker RestartCount=6 status=running mem=0B / 0B
+01:00:46 worker RestartCount=8 status=running mem=842.3MiB / 1.5GiB
+oom events:        4

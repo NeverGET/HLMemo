@@ -1,0 +1,23 @@
+## 00:51:38 down -v
+ Network judge-auth_outbound Removed 
+ Network judge-auth_backend Removed 
+## 00:51:40 up -d --wait
+ Container judge-auth-db-1 Healthy 
+ Container judge-auth-caddy-1 Healthy 
+up rc=0
+## 00:51:58 edge /ready=200
+03:51:58 project create 201
+03:51:58 revoked-device whoami before revoke 200
+03:51:58 revoke 200 {"device":{"id":3,"name":"ag-revoked-aebf7c","class":"ci","status":"revoked","is_admin":false,"reserved":false,"os":"dar
+03:51:58 revoked-device whoami after revoke 401 {"code":"E_AUTH","message":"unknown or revoked token","retryable":false,"details
+03:51:58 SETUP PASS writer id 2 revoked id 3
+## 00:51:58 load
+03:51:58 Q1 status=200 ok=True 28 ms
+03:52:01 200 queries/3 callers: n=200 fails=0 codes={200: 200} p50=21 ms p95=75 ms max=83 ms wall=2.6s
+LOAD PASS
+load rc=0
+## 00:52:06 inspect
+api OOMKilled=false RestartCount=0 cgroup_peak_MiB=1192 oom_kill 0 
+worker OOMKilled=false RestartCount=0 cgroup_peak_MiB=1531 oom_kill 0 
+caddy OOMKilled=false RestartCount=0 cgroup_peak_MiB=46 oom_kill 0 
+db OOMKilled=false RestartCount=0 cgroup_peak_MiB=142 oom_kill 0 

@@ -1,0 +1,44 @@
+$ HLM_ENV_FILE=... bash deploy/scripts/stack.sh down -v
+ Container judge-recheck-caddy-1 Stopping 
+ Container judge-recheck-worker-1 Stopping 
+ Container judge-recheck-caddy-1 Stopped 
+ Container judge-recheck-caddy-1 Removing 
+ Container judge-recheck-caddy-1 Removed 
+ Container judge-recheck-api-1 Stopping 
+ Container judge-recheck-worker-1 Stopped 
+ Container judge-recheck-worker-1 Removing 
+ Container judge-recheck-worker-1 Removed 
+ Container judge-recheck-api-1 Stopped 
+ Container judge-recheck-api-1 Removing 
+ Container judge-recheck-api-1 Removed 
+ Container judge-recheck-migrate-1 Stopping 
+ Container judge-recheck-migrate-1 Stopped 
+ Container judge-recheck-migrate-1 Removing 
+ Container judge-recheck-migrate-1 Removed 
+ Container judge-recheck-db-1 Stopping 
+ Container judge-recheck-db-1 Stopped 
+ Container judge-recheck-db-1 Removing 
+ Container judge-recheck-db-1 Removed 
+ Network judge-recheck_frontend Removing 
+ Network judge-recheck_outbound Removing 
+ Volume judge-recheck_caddy_config Removing 
+ Volume judge-recheck_pgdata Removing 
+ Network judge-recheck_backend Removing 
+ Volume judge-recheck_caddy_data Removing 
+ Volume judge-recheck_caddy_config Removed 
+ Volume judge-recheck_pgdata Removed 
+ Volume judge-recheck_caddy_data Removed 
+ Network judge-recheck_frontend Removed 
+ Network judge-recheck_outbound Removed 
+ Network judge-recheck_backend Removed 
+rc=0
+$ docker rmi hlmemo:judge-recheck
+Untagged: hlmemo:judge-recheck
+Deleted: sha256:bce99da0075a00cc494a414f43e5e798d037cad9b131850619fc212778d851d0
+rc=0
+## leftovers (containers/volumes/networks/images matching judge-recheck|body-|b3-):
+(none above = clean)
+## dev stack untouched:
+hlmemo-worker-1 Up 5 hours
+hlmemo-api-1 Up 5 hours (healthy)
+hlmemo-db-1 Up 5 hours (healthy)

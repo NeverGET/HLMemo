@@ -1,0 +1,6 @@
+step4 samples=302
+judge-recheck-api-1: peak 1516.5 MiB
+judge-recheck-caddy-1: peak 60.4 MiB
+judge-recheck-db-1: peak 135.5 MiB
+judge-recheck-worker-1: peak 913.5 MiB
+max simultaneous total 2609.7 MiB at 22:54:37

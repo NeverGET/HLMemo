@@ -1,0 +1,19 @@
+clean stack healthy: cur=526336000 peak=1282121728 oom_kill 0
+RESULT PASS mode=write-marker base=https://localhost:28443
+after small write: cur=838971392 peak=1282121728 oom_kill 0
+RESULT PASS mode=read-marker base=https://localhost:28443
+after query 1: cur=1031454720 peak=1358450688 oom_kill 0
+RESULT PASS mode=read-marker base=https://localhost:28443
+after query 2: cur=1031409664 peak=1358450688 oom_kill 0
+RESULT PASS mode=read-marker base=https://localhost:28443
+after query 3: cur=1032019968 peak=1358450688 oom_kill 0
++15s: cur=586498048 peak=1339158528 oom_kill 0
+events:
+1790115002 oom 
+1790115002 die 137
+1790115002 start 
+1790115009 oom 
+1790115009 die 137
+1790115009 start 
+1790115016 health_status: healthy 
+restarts=2

@@ -1,0 +1,66 @@
+$ HLM_ENV_FILE=JUDGE_ENV_FILE=/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/closing/judge-close-env/prod.env JUDGE_KEEP_UP=1 JUDGE_UP_CMD='bash deploy/scripts/stack.sh up -d --wait --wait-timeout 300' JUDGE_DOWN_CMD='bash deploy/scripts/stack.sh down -v' bash docs/bakeoff/r2/judge/run_gates.sh /Users/cemalkurt/Projects/HLMemo judge-close 28080 28443
+21:57:48 judge run: worktree=/Users/cemalkurt/Projects/HLMemo project=judge-close http=28080 https=28443
+21:57:48 worktree HEAD: cc67687 branch: main
+21:57:48 [G-D1] $ (cd /Users/cemalkurt/Projects/HLMemo && env HLM_APP_ENV_FILE=/Users/cemalkurt/Projects/HLMemo/deploy/app.env.example HLM_API_ENV_FILE=/Users/cemalkurt/Projects/HLMemo/deploy/api.env.example HLM_DB_ENV_FILE=/Users/cemalkurt/Projects/HLMemo/deploy/db.env.example HLM_BACKUP_ENV_FILE=/Users/cemalkurt/Projects/HLMemo/deploy/backup.env.example docker compose -f deploy/compose.prod.yaml --env-file deploy/.env.prod.example config -q)
+21:57:48 [G-D1] exit=0
+21:57:48 [G-D5] $ (cd /Users/cemalkurt/Projects/HLMemo && terraform -chdir=deploy/terraform/hetzner init -backend=false -input=false -no-color)
+21:57:49 [G-D5] exit=0
+21:57:49 [G-D5] $ (cd /Users/cemalkurt/Projects/HLMemo && terraform -chdir=deploy/terraform/hetzner validate -no-color)
+21:57:49 [G-D5] exit=0
+21:57:49 [G-D5] $ (cd /Users/cemalkurt/Projects/HLMemo && terraform fmt -check -recursive deploy/terraform)
+21:57:49 [G-D5] exit=0
+21:57:49 [G-D6] files: deploy/backup/backup.sh deploy/backup/restore.sh deploy/bootstrap.sh deploy/scripts/common.sh deploy/scripts/deploy.sh deploy/scripts/drill_backup_restore.sh deploy/scripts/drill_deploy_backup.sh deploy/scripts/remote-deploy.sh deploy/scripts/smoke_edge.sh deploy/scripts/smoke_mcp.sh deploy/scripts/smoke_tls.sh deploy/scripts/stack.sh
+21:57:49 [G-D6] $ (cd /Users/cemalkurt/Projects/HLMemo && shellcheck deploy/backup/backup.sh deploy/backup/restore.sh deploy/bootstrap.sh deploy/scripts/common.sh deploy/scripts/deploy.sh deploy/scripts/drill_backup_restore.sh deploy/scripts/drill_deploy_backup.sh deploy/scripts/remote-deploy.sh deploy/scripts/smoke_edge.sh deploy/scripts/smoke_mcp.sh deploy/scripts/smoke_tls.sh deploy/scripts/stack.sh)
+21:57:50 [G-D6] exit=0
+21:57:50 [G-D7] $ (cd /Users/cemalkurt/Projects/HLMemo && gitleaks dir deploy --no-banner)
+21:57:50 [G-D7] exit=0
+21:57:50 using provided env file /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/closing/judge-close-env/prod.env
+21:57:50 [G-D2-up] $ (cd /Users/cemalkurt/Projects/HLMemo && bash -c 'bash deploy/scripts/stack.sh up -d --wait --wait-timeout 300')
+21:58:09 [G-D2-up] exit=0
+21:58:09 [G-D2-ps] $ (cd /Users/cemalkurt/Projects/HLMemo && bash -c 'docker compose -p "$JUDGE_PROJECT" ps -a')
+21:58:09 [G-D2-ps] exit=0
+21:58:09 [G-D2] $ curl -sk https://localhost:28443/ready -> 200
+21:58:09 [G-D2] $ curl -sk https://localhost:28443/anything-else -> 404
+21:58:09 [G-D2] (info) $ curl -s http://localhost:28080/ready -> 308 (redirect expected, not gated)
+21:58:09 [G-D2-db] $ (cd /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge && bash /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/db_exposure.sh judge-close 28080 28443)
+21:58:10 [G-D2-db] exit=0
+21:58:10 [G-D3] $ HLM_ADMIN_TOKEN=<redacted> uv run --frozen python /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py --base https://localhost:28443 --insecure --mode smoke --project judge --state /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/logs/judge-close-20260922T215748Z.probe-state.secret.json
+PASS http/ready status=200 body={"status":"ready","checks":{"embed_config":{"ok":true,"pinned":"intfloat/multilingual-e5-small@614241f622f53c4eeff9890bd
+PASS http/health status=200 body={"status":"ok"}
+PASS http/unknown-route-404 status=404 body=Not found
+PASS device/register status=201 name=judge-6557505e
+PASS device/approve status=200 id=2 body={"device":{"id":2,"name":"judge-6557505e","class":"ci","status":"trusted","is_admin":false,"reserved":false,"os":"darwin","token_generation":1,"registered_at":"2026-09-22T21:58:10.476932+00:00","appro
+PASS project/create slug=judge created
+PASS project/grant-write status=200 body={"grant":{"device":2,"project":"judge","role":"write"}}
+PASS device/whoami status=200 grants=[{'project': 'judge', 'project_id': 1, 'role': 'write'}]
+PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+PASS mcp/tools-list status=200 tools=['memory.call_the_day', 'memory.drilldown', 'memory.query', 'memory.raw', 'memory.write']
+RESULT PASS mode=smoke base=https://localhost:28443
+21:58:10 [G-D3] probe exit=0
+21:58:10 [G-D3] JUDGE_CONTESTANT_SMOKE_CMD not set; contestant smoke not run (judge probe is authoritative)
+
+---- G-D4 (backup/restore) — run by hand; stack must be up (re-run with JUDGE_KEEP_UP=1) ----
+  export HLM_ADMIN_TOKEN=$(sed -n 's/^HLM_ADMIN_TOKEN=//p' /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/closing/judge-close-env/prod.env)
+  P="uv run --frozen python /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py --base https://localhost:28443 --insecure --state /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/logs/judge-close-20260922T215748Z.probe-state.secret.json"
+  M=judge-drill-$(date +%s)
+  (cd /Users/cemalkurt/Projects/HLMemo && $P --mode write-marker --marker $M)          # 1. write via API
+  (cd /Users/cemalkurt/Projects/HLMemo && <contestant backup.sh per RUNBOOK>)             # 2. backup
+  (cd /Users/cemalkurt/Projects/HLMemo && <wipe DB per RUNBOOK, or down -v db volume + up>) # 3. wipe
+  (cd /Users/cemalkurt/Projects/HLMemo && $P --mode read-marker --marker $M --wait 5)  # 3b. must FAIL now
+  (cd /Users/cemalkurt/Projects/HLMemo && <contestant restore.sh per RUNBOOK>)            # 4. restore
+  (cd /Users/cemalkurt/Projects/HLMemo && $P --mode read-marker --marker $M)          # 5. must PASS
+  Also run the contestant's own: (cd /Users/cemalkurt/Projects/HLMemo && deploy/scripts/drill_backup_restore.sh ...)
+  Note: if the wipe drops the devices table, the stored device token is gone; the probe then
+  re-bootstraps a fresh device and step 5 still proves the data came back.
+21:58:10 JUDGE_KEEP_UP=1: leaving project judge-close running; tear down with: (cd /Users/cemalkurt/Projects/HLMemo && JUDGE_ENV_FILE=/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/closing/judge-close-env/prod.env JUDGE_PROJECT=judge-close bash -c 'bash deploy/scripts/stack.sh down -v')
+
+==================== judge-close  (20260922T215748Z) ====================
+GATE   RESULT
+G-D1   PASS
+G-D2   PASS
+G-D3   PASS
+G-D4   MANUAL
+G-D5   PASS
+G-D6   PASS
+G-D7   PASS
+log: /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/logs/judge-close-20260922T215748Z.log

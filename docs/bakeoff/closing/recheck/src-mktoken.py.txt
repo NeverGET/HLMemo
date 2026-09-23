@@ -1,0 +1,16 @@
+import json, os, ssl, sys, uuid, urllib.request
+env = dict(l.split("=", 1) for l in open(sys.argv[1]).read().splitlines() if "=" in l and not l.startswith("#"))
+B = "https://localhost:28443"; ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+def call(path, body, headers):
+    req = urllib.request.Request(B + path, json.dumps(body).encode(), {"Content-Type": "application/json", **headers}, method="POST")
+    try:
+        with urllib.request.urlopen(req, context=ctx) as r: return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e: return e.code, e.read()[:200]
+n = f"body-{uuid.uuid4().hex[:8]}"
+st, d = call("/devices/register", {"name": n, "fingerprint": "fp-" + n, "os": "linux", "client": "judge-body/0"}, {"X-HLM-Registration-Secret": env["HLM_REGISTRATION_SECRET"]})
+assert st == 201, (st, d)
+A = {"Authorization": "Bearer " + env["HLM_ADMIN_TOKEN"]}
+print("project", call("/admin/projects", {"slug": "judge-body", "name": "Judge body"}, A)[0], file=sys.stderr)
+st, _ = call(f"/admin/devices/{d['device']['id']}/approve", {"class": "ci", "grants": [{"project": "judge-body", "role": "write"}]}, A)
+assert st == 200, st
+print(d["token"])

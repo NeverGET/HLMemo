@@ -1,0 +1,7 @@
+## 06:11:03 worker idle before write: RestartCount=0 OOMKilled=false cgroup memory.current=893739008 memory.peak(since start)=1219723264
+WRITE t=06:11:04 items=10x64000 chars wire=1161346 bytes status=200 isError=False versions=10 ids=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10] 1.0s
+VIDS 1,2,3,4,5,6,7,8,9,10
+ALL_EMBEDDED elapsed_from_sampler_start=277s chunks=1075 embeddings=1075 jobs_done=10/10
+elapsed write-start -> all embeddings present: 278s
+## 06:15:41 worker after: RestartCount=0 OOMKilled=false Status=running StartedAt=2026-09-23T03:10:22.317724546Z
+cgroup memory.peak=1219723264 bytes; memory.max=1610612736; memory.swap.max=0; memory.events: low 0 high 0 max 0 oom 0 oom_kill 0 oom_group_kill 0 sock_throttled 0 

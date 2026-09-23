@@ -1,0 +1,28 @@
+## 22:46:08 fresh down -v
+## 22:46:08 run_gates (up + G-D1..G-D7, keep up)
+run_gates rc=0
+22:46:32 JUDGE_KEEP_UP=1: leaving project judge-recheck running; tear down with: (cd /Users/cemalkurt/Projects/HLMemo-bake/fix-body && JUDGE_ENV_FILE=/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/closing/recheck/judge-recheck-env/prod.env JUDGE_PROJECT=judge-recheck bash -c 'bash deploy/scripts/stack.sh down -v')
+
+==================== judge-recheck  (20260922T224608Z) ====================
+GATE   RESULT
+G-D1   PASS
+G-D2   PASS
+G-D3   PASS
+G-D4   MANUAL
+G-D5   PASS
+G-D6   PASS
+G-D7   PASS
+log: /Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/logs/judge-recheck-20260922T224608Z.log
+## 22:46:32 load (1 query, 20-item write, 200 queries / 3 callers)
+22:46:32 Q1 memory.query status=200 isError=False hits=0 18 ms
+22:46:33 write 20 items status=200 isError=False versions=20
+22:46:33 start 200 queries / 3 callers
+22:46:37 200 queries done: n=200 fails=0 p50=70 ms p95=93 ms max=107 ms wall=3.9s
+LOAD PASS
+load rc=0
+## 22:46:37 neutral G-D4
+gd4 rc=0
+RESULT PASS mode=read-marker base=https://localhost:28443
+exit=0
+NEUTRAL-GD4 PASS judge-recheck
+## 22:46:58 done

@@ -1,0 +1,12 @@
+## 00:57:39 final inspect
+api OOMKilled=false RestartCount=0
+worker OOMKilled=false RestartCount=8
+caddy OOMKilled=false RestartCount=0
+db OOMKilled=false RestartCount=0
+## down -v
+ Network judge-auth_outbound Removed 
+ Network judge-auth_backend Removed 
+ Network judge-auth_frontend Removed 
+Deleted: sha256:f906b06023fcb49b7f210f549fe62b50cd862a360caac3ad9d1bf6f1c8bad83b
+## leftovers:
+(end)

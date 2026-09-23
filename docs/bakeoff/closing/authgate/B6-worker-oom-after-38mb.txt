@@ -1,0 +1,12 @@
+## inspect before fresh restack 00:51:23
+api OOMKilled=false RestartCount=0 ExitCode=0
+worker OOMKilled=true RestartCount=26 ExitCode=137
+caddy OOMKilled=false RestartCount=0 ExitCode=0
+db OOMKilled=false RestartCount=0 ExitCode=0
+## docker events oom/die for worker since 00:44Z
+1790124617 oom exit=<no value>
+1790124617 die exit=137
+1790124671 oom exit=<no value>
+1790124671 die exit=137
+## worker log (non-heartbeat) tail
+27

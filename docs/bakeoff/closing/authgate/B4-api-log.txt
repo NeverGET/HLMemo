@@ -1,0 +1,27 @@
+INFO:     172.30.39.3:46418 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46434 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46450 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46454 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46464 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46486 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46480 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46546 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46540 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46536 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46520 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46510 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46502 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46496 - "POST /mcp HTTP/1.1" 401 Unauthorized
+INFO:     172.30.39.3:46550 - "POST /mcp HTTP/1.1" 401 Unauthorized
+2026-09-23 00:45:01,512 INFO hlmemo.server.mcp mcp tools/call memory.write device=4 client=python-httpx/0.28.1 outcome=ok ms=3726
+2026-09-23 00:45:01,513 INFO mcp.server.streamable_http Terminating session: None
+INFO:     172.30.39.3:46562 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44238 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36082 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60948 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48794 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49950 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48108 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33928 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36442 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47894 - "GET /ready HTTP/1.1" 200 OK

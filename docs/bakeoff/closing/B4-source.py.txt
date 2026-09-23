@@ -1,0 +1,96 @@
+import json
+import subprocess
+import sys
+import time
+import uuid
+
+import httpx
+
+env = dict(
+    line.split("=", 1) for line in open(sys.argv[1]).read().splitlines() if "=" in line and not line.startswith("#")
+)
+ADMIN, REG = env["HLM_ADMIN_TOKEN"], env["HLM_REGISTRATION_SECRET"]
+B = "https://localhost:28443"
+c = httpx.Client(base_url=B, verify=False, timeout=600)
+A = {"Authorization": f"Bearer {ADMIN}"}
+
+
+def api_register_lines() -> int:
+    out = subprocess.run(["docker", "logs", "judge-close-api-1"], capture_output=True, text=True)
+    return (out.stdout + out.stderr).count("POST /devices/register")
+
+
+# 70 KiB register -> Caddy 413
+before = api_register_lines()
+big = {"name": "b4-big", "fingerprint": "fp-b4-big", "os": "linux", "client": "x" * (70 * 1024)}
+r = c.post("/devices/register", json=big, headers={"X-HLM-Registration-Secret": REG})
+time.sleep(1)
+after = api_register_lines()
+print(
+    f"B4 70KiB POST /devices/register: body={len(json.dumps(big))} bytes status={r.status_code} "
+    f"server={r.headers.get('server')!r} body={r.text[:80]!r} api_register_lines_delta={after - before}"
+)
+
+n = f"b4-{uuid.uuid4().hex[:8]}"
+r = c.post(
+    "/devices/register",
+    json={"name": n, "fingerprint": "fp-" + n, "os": "linux", "client": "judge-b4/0"},
+    headers={"X-HLM-Registration-Secret": REG},
+)
+assert r.status_code == 201, r.text
+did, tok = r.json()["device"]["id"], r.json()["token"]
+r = c.post("/admin/projects", json={"slug": "judge-b4", "name": "Judge B4"}, headers=A)
+print("project create", r.status_code)
+r = c.post(
+    f"/admin/devices/{did}/approve", json={"class": "ci", "grants": [{"project": "judge-b4", "role": "write"}]}, headers=A
+)
+assert r.status_code == 200, r.text
+H = {"Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+r = c.post(
+    "/mcp",
+    headers=H,
+    json={
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "judge-b4", "version": "0"}},
+    },
+)
+print("initialize", r.status_code)
+if r.headers.get("mcp-session-id"):
+    H["mcp-session-id"] = r.headers["mcp-session-id"]
+H["mcp-protocol-version"] = "2025-06-18"
+c.post("/mcp", headers=H, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+ok = True
+for label, nitems in (("5MB", 7), ("38MB", 50)):
+    items = [{"kind": "fact", "title": f"b4 {label} {i}", "body": "🧪" * 63990 + f"{i:010d}"} for i in range(nitems)]
+    wire = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "memory.write",
+                "arguments": {"project": "judge-b4", "request_id": str(uuid.uuid4()), "client": "judge-b4/0", "items": items},
+            },
+        },
+        ensure_ascii=True,
+    ).encode()
+    t = time.monotonic()
+    r = c.post("/mcp", headers=H, content=wire)
+    body = r.text
+    if "text/event-stream" in r.headers.get("content-type", ""):
+        body = next(ln[5:].strip() for ln in body.splitlines() if ln.startswith("data:"))
+    try:
+        res = json.loads(body).get("result", {})
+        nv = len(json.loads(res["content"][0]["text"]).get("versions", []))
+    except Exception:
+        res, nv = {"raw": body[:200]}, 0
+    good = r.status_code == 200 and not res.get("isError") and nv == nitems
+    ok &= good
+    print(
+        f"B4 {label} memory.write via Caddy TLS /mcp: wire={len(wire)} bytes status={r.status_code} "
+        f"isError={res.get('isError')} versions={nv} {time.monotonic() - t:.1f}s -> {'PASS' if good else 'FAIL'}"
+    )
+sys.exit(0 if ok else 1)

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# usage: stats_sampler.sh PREFIX OUT ; samples docker stats every 2 s until killed
+P="$1"; OUT="$2"
+while true; do
+  ts=$(date -u +%H:%M:%S)
+  docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}' 2>/dev/null | grep "^$P" | sed "s/^/$ts\t/" >> "$OUT"
+  sleep ${3:-2}
+done

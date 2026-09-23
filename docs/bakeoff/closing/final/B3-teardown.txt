@@ -1,0 +1,54 @@
+## 06:17:29 final inspect judge-fin
+api OOMKilled=false RestartCount=0
+worker OOMKilled=false RestartCount=0
+caddy OOMKilled=false RestartCount=0
+db OOMKilled=false RestartCount=0
+## down -v judge-fin
+ Container judge-fin-worker-1 Stopping 
+ Container judge-fin-caddy-1 Stopping 
+ Container judge-fin-caddy-1 Stopped 
+ Container judge-fin-caddy-1 Removing 
+ Container judge-fin-caddy-1 Removed 
+ Container judge-fin-api-1 Stopping 
+ Container judge-fin-worker-1 Stopped 
+ Container judge-fin-worker-1 Removing 
+ Container judge-fin-worker-1 Removed 
+ Container judge-fin-api-1 Stopped 
+ Container judge-fin-api-1 Removing 
+ Container judge-fin-api-1 Removed 
+ Container judge-fin-migrate-1 Stopping 
+ Container judge-fin-migrate-1 Stopped 
+ Container judge-fin-migrate-1 Removing 
+ Container judge-fin-migrate-1 Removed 
+ Container judge-fin-db-1 Stopping 
+ Container judge-fin-db-1 Stopped 
+ Container judge-fin-db-1 Removing 
+ Container judge-fin-db-1 Removed 
+ Volume judge-fin_pgdata Removing 
+ Volume judge-fin_caddy_config Removing 
+ Network judge-fin_backend Removing 
+ Network judge-fin_frontend Removing 
+ Network judge-fin_outbound Removing 
+ Volume judge-fin_pgdata Removed 
+ Volume judge-fin_caddy_data Removing 
+ Volume judge-fin_caddy_config Removed 
+ Volume judge-fin_caddy_data Removed 
+ Network judge-fin_frontend Removed 
+ Network judge-fin_backend Removed 
+ Network judge-fin_outbound Removed 
+down rc=0
+## rmi
+Untagged: hlmemo:judge-fin
+Deleted: sha256:ecfeff6695a15fb528f2e6195b95f3c997dda3d2974789a65a7fc9a0691a1204
+Untagged: hlmemo:fin-oom
+Deleted: sha256:4bdd8e9753ce5a898072f33f07ab366812c6780bb141dddc6534e80b96e0cc68
+rmi rc=0
+## leftovers:
+lsof: WARNING: can't stat() smbfs file system /Volumes/.timemachine/Keenetic-1432._smb._tcp.local./0CBA8B83-0D1E-425F-80B7-1619EB8E4C75/Cemal-Macbook-TimeMachine
+      Output information may be incomplete.
+      assuming "dev=36000061" from mount table
+(end)
+## dev stack untouched:
+hlmemo-worker-1 Up 9 hours
+hlmemo-api-1 Up 9 hours (healthy)
+hlmemo-db-1 Up 9 hours (healthy)

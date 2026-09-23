@@ -1,0 +1,18 @@
+import asyncio, subprocess, sys, time
+sys.path.insert(0, "/Users/cemalkurt/Projects/HLMemo-bake/fix-d039")
+from tests.integration._v039_spot import _trickle
+port, pid = int(sys.argv[1]), sys.argv[2]
+def rss():
+    return int(subprocess.run(["ps","-o","rss=","-p",pid],capture_output=True,text=True).stdout.strip())/1024
+async def main():
+    for label, distinct in (("distinct-XFF", True), ("same-client", False)):
+        r0 = rss(); peak = r0; res = []
+        rate = int(131072*1.15)
+        tasks = [asyncio.create_task(_trickle(port, f"198.51.{i//256}.{i%256}" if distinct else None, 4*1024*1024, rate, 16*1024, res)) for i in range(300)]
+        t0 = time.monotonic()
+        while not all(t.done() for t in tasks):
+            peak = max(peak, rss()); await asyncio.sleep(0.2)
+        hist = {}
+        for st,_ in res: hist[st] = hist.get(st,0)+1
+        print(f"N2-sep[{label}] server rss0={r0:.0f}MB peak={peak:.0f}MB delta={peak-r0:.0f}MB after={rss():.0f}MB wall={time.monotonic()-t0:.1f}s {hist}", flush=True)
+asyncio.run(main())

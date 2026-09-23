@@ -1,0 +1,71 @@
+## marker=JUDGE-judge-recheck-411fd8bb4c11 pg_user=hlm pg_db=hlm
+## 1 write-marker
+PASS device/register status=201 name=judge-30acb92c
+PASS device/approve status=200 id=4 body={"device":{"id":4,"name":"judge-30acb92c","class":"ci","status":"trusted","is_admin":false,"reserved":false,"os":"darwin","token_generation":1,"registered_at":"2026-09-22T22:46:37.285667+00:00","appro
+PASS project/create slug=judge create_status=400 exists=True
+PASS project/grant-write status=200 body={"grant":{"device":4,"project":"judge","role":"write"}}
+PASS device/whoami status=200 grants=[{'project': 'judge', 'project_id': 1, 'role': 'write'}]
+PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+PASS mcp/write-marker status=200 version_id=21
+VERSION_ID 21
+RESULT PASS mode=write-marker base=https://localhost:28443
+exit=0
+## 2 backup: bash deploy/backup/backup.sh
+Backup completed: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-recheck-backups/daily/hlmemo-2026-09-22T224637Z-hCaBZa.dump (7 daily / 4 weekly retention)
+exit=0 dump=/private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-recheck-backups/daily/hlmemo-2026-09-22T224637Z-hCaBZa.dump (0s)
+## 3 wipe (judge): stop api worker; dropdb/createdb hlm
+ Container judge-recheck-worker-1 Stopping 
+ Container judge-recheck-api-1 Stopping 
+ Container judge-recheck-worker-1 Stopped 
+ Container judge-recheck-api-1 Stopped 
+stop exit=0
+dropdb exit=0
+createdb exit=0
+public tables after wipe: 0
+## 4 restore: bash deploy/backup/restore.sh "$DUMP" --yes
+ Container judge-recheck-caddy-1 Stopping 
+ Container judge-recheck-worker-1 Stopping 
+ Container judge-recheck-worker-1 Stopped 
+ Container judge-recheck-caddy-1 Stopped 
+ Container judge-recheck-api-1 Stopping 
+ Container judge-recheck-api-1 Stopped 
+Writers stopped; creating the pre-restore safety dump.
+Safety dump: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-recheck-backups/pre-restore/hlmemo-2026-09-22T224639Z.dump.uUhVXA; on failure writers remain stopped. Restore it with this script.
+ Container judge-recheck-migrate-run-f4377ad50ee0 Creating 
+ Container judge-recheck-migrate-run-f4377ad50ee0 Created 
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+ Container judge-recheck-db-1 Running 
+ Container judge-recheck-db-1 Waiting 
+ Container judge-recheck-db-1 Waiting 
+ Container judge-recheck-db-1 Healthy 
+ Container judge-recheck-db-1 Healthy 
+ Container judge-recheck-worker-1 Starting 
+ Container judge-recheck-api-1 Starting 
+ Container judge-recheck-worker-1 Started 
+ Container judge-recheck-api-1 Started 
+ Container judge-recheck-api-1 Waiting 
+ Container judge-recheck-api-1 Healthy 
+ Container judge-recheck-caddy-1 Starting 
+ Container judge-recheck-caddy-1 Started 
+ Container judge-recheck-api-1 Waiting 
+ Container judge-recheck-worker-1 Waiting 
+ Container judge-recheck-caddy-1 Waiting 
+ Container judge-recheck-db-1 Waiting 
+ Container judge-recheck-db-1 Healthy 
+ Container judge-recheck-api-1 Healthy 
+ Container judge-recheck-worker-1 Healthy 
+ Container judge-recheck-caddy-1 Healthy 
+Restore completed; stack healthy. Safety dump retained: /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/3aacf803-644a-4ddb-83b0-6cf474ae4519/scratchpad/judge-recheck-backups/pre-restore/hlmemo-2026-09-22T224639Z.dump.uUhVXA
+exit=0 (14s)
+## 5 start api+worker
+env file /Users/cemalkurt/Projects/HLMemo-bake/fix-body/deploy/app.env not found: stat /Users/cemalkurt/Projects/HLMemo-bake/fix-body/deploy/app.env: no such file or directory
+exit=1
+## 5b edge /ready -> 200 after 0s
+## 6 read-marker
+PASS device/state reused device id=4 project=judge
+PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+PASS mcp/read-marker hits=1 clue=v21.0
+RESULT PASS mode=read-marker base=https://localhost:28443
+exit=0
+NEUTRAL-GD4 PASS judge-recheck

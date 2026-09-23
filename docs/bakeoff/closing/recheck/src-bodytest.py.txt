@@ -1,0 +1,232 @@
+"""Recheck step 4 body scenarios (stdlib only; runs on the host and inside throwaway containers).
+
+usage: bodytest.py MODE HOST PORT   (env: TOK = device bearer, PROJ = project slug)
+  trickle N      N connections: headers (Content-Length 1 MiB) + 255 KiB, then 1 byte every 29 s;
+                 prints per-connection seconds-until-cut and status
+  slow K         K concurrent slow bodies (headers + 1 KiB, then hold); report statuses; close all
+  write MB PAUSE_AT RATE PAUSE   one memory.write of ~MB MB; RATE bytes/s (0 = unthrottled);
+                 pause PAUSE s once PAUSE_AT fraction of the body is sent
+"""
+
+import http.client
+import json
+import os
+import socket
+import ssl
+import sys
+import threading
+import time
+import uuid
+
+MODE, HOST, PORT = sys.argv[1], sys.argv[2], int(sys.argv[3])
+TOK, PROJ = os.environ["TOK"], os.environ["PROJ"]
+CTX = ssl.create_default_context()
+CTX.check_hostname = False
+CTX.verify_mode = ssl.CERT_NONE
+
+
+def now() -> str:
+    return time.strftime("%H:%M:%S", time.gmtime())
+
+
+def tls_sock() -> ssl.SSLSocket:
+    s = socket.create_connection((HOST, PORT), timeout=10)
+    if os.environ.get("PLAIN"):
+        s.settimeout(None)
+        return s
+    s = CTX.wrap_socket(s, server_hostname="localhost")
+    s.settimeout(None)
+    return s
+
+
+def head(length: int) -> bytes:
+    return (
+        f"POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOK}\r\n"
+        "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+        f"Content-Length: {length}\r\n\r\n"
+    ).encode()
+
+
+def status_of(s: ssl.SSLSocket) -> str:
+    try:
+        data = s.recv(4096)
+    except OSError as exc:
+        return f"reset:{type(exc).__name__}"
+    if not data:
+        return "closed"
+    return data.split(b"\r\n", 1)[0].decode(errors="replace")
+
+
+def trickle(n: int) -> None:
+    res: list[tuple[float, str]] = []
+    lock = threading.Lock()
+
+    def one(i: int) -> None:
+        t0 = time.monotonic()
+        try:
+            s = tls_sock()
+            s.sendall(head(1024 * 1024) + b"x" * (255 * 1024))
+        except OSError as exc:
+            with lock:
+                res.append((time.monotonic() - t0, f"connect-fail:{exc}"))
+            return
+        got: list[str] = []
+
+        def reader() -> None:
+            got.append(status_of(s))
+
+        rt = threading.Thread(target=reader, daemon=True)
+        rt.start()
+        while rt.is_alive() and time.monotonic() - t0 < 200:
+            rt.join(float(os.environ.get('CAD', '29')))
+            if rt.is_alive():
+                try:
+                    s.sendall(b"x")
+                except OSError:
+                    rt.join(5)
+                    break
+        dt = time.monotonic() - t0
+        with lock:
+            res.append((dt, got[0] if got else "still-open-at-200s"))
+        s.close()
+
+    print(f"{now()} trickle start n={n}", flush=True)
+    ths = [threading.Thread(target=one, args=(i,)) for i in range(n)]
+    for th in ths:
+        th.start()
+        time.sleep(0.02)
+    for th in ths:
+        th.join()
+    ts = sorted(d for d, _ in res)
+    kinds: dict[str, int] = {}
+    for _, st in res:
+        kinds[st] = kinds.get(st, 0) + 1
+    print(f"{now()} TRICKLE n={len(res)} cut_min={ts[0]:.1f}s cut_max={ts[-1]:.1f}s statuses={kinds}", flush=True)
+
+
+def slow(k: int) -> None:
+    socks = []
+    for _ in range(k):
+        s = tls_sock()
+        s.sendall(head(1024 * 1024) + b"x" * 1024)
+        socks.append(s)
+        time.sleep(0.05)
+    time.sleep(2)
+    first = []
+    for s in socks:
+        s.settimeout(0.3)
+        try:
+            d = s.recv(4096)
+            first.append(d.split(b"\r\n", 1)[0].decode(errors="replace") if d else "closed")
+        except TimeoutError:
+            first.append("pending")
+        except OSError as exc:
+            first.append(f"err:{type(exc).__name__}")
+    fk: dict[str, int] = {}
+    for o in first:
+        fk[o] = fk.get(o, 0) + 1
+    print(f"{now()} SLOW k={k} after 2 s (no further bytes): {fk}", flush=True)
+    for s, f in zip(socks, first):
+        if f == "pending":
+            try:
+                s.sendall(b"x")  # nudge: one more body byte per connection
+            except OSError:
+                pass
+    time.sleep(2)
+    out = []
+    for s, f in zip(socks, first):
+        if f != "pending":
+            out.append(f)
+            continue
+        s.settimeout(0.5)
+        try:
+            data = s.recv(4096)
+            out.append(data.split(b"\r\n", 1)[0].decode(errors="replace") if data else "closed")
+        except TimeoutError:
+            out.append("pending")
+        except OSError as exc:
+            out.append(f"err:{type(exc).__name__}")
+    for s in socks:
+        s.close()
+    kinds: dict[str, int] = {}
+    for o in out:
+        kinds[o] = kinds.get(o, 0) + 1
+    print(f"{now()} SLOW k={k} after 1 nudge byte + 2 s (first-read results kept): {kinds}", flush=True)
+
+
+def write(mb: float, pause_at: float, rate: int, pause: float) -> None:
+    conn = http.client.HTTPSConnection(HOST, PORT, context=CTX, timeout=6000)
+    conn.sock = tls_sock()  # SNI localhost regardless of the dialled address
+    H = {"Host": "localhost", "Authorization": f"Bearer {TOK}", "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    init = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "judge-body", "version": "0"}},
+    }
+    conn.request("POST", "/mcp", json.dumps(init), H)
+    r = conn.getresponse()
+    r.read()
+    sid = r.getheader("mcp-session-id")
+    if sid:
+        H["mcp-session-id"] = sid
+    H["mcp-protocol-version"] = "2025-06-18"
+    conn.request("POST", "/mcp", json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}), H)
+    conn.getresponse().read()
+    nitems = max(1, round(mb / 0.768))
+    items = [{"kind": "fact", "title": f"body {mb}MB {i}", "body": "🧪" * 63990 + f"{i:010d}"} for i in range(nitems)]
+    wire = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "memory.write",
+                "arguments": {"project": PROJ, "request_id": str(uuid.uuid4()), "client": "judge-body/0", "items": items},
+            },
+        },
+        ensure_ascii=True,
+    ).encode()
+    t0 = time.monotonic()
+    conn.putrequest("POST", "/mcp", skip_host=True, skip_accept_encoding=True)
+    for k, v in {**H, "Content-Length": str(len(wire))}.items():
+        conn.putheader(k, v)
+    conn.endheaders()
+    print(f"{now()} write start wire={len(wire)} bytes rate={rate or 'max'} B/s pause={pause}s at {pause_at:.0%}", flush=True)
+    sent, paused, chunk = 0, False, 16384
+    while sent < len(wire):
+        if pause and not paused and sent >= pause_at * len(wire):
+            print(f"{now()} pausing {pause}s at {sent} bytes ({time.monotonic() - t0:.0f}s)", flush=True)
+            time.sleep(pause)
+            paused = True
+        part = wire[sent : sent + chunk]
+        conn.send(part)
+        sent += len(part)
+        if rate:
+            target = t0 + sent / rate + (pause if paused else 0)
+            d = target - time.monotonic()
+            if d > 0:
+                time.sleep(d)
+    r = conn.getresponse()
+    body = r.read().decode(errors="replace")
+    if "text/event-stream" in (r.getheader("content-type") or ""):
+        body = next((ln[5:].strip() for ln in body.splitlines() if ln.startswith("data:")), "{}")
+    try:
+        res = json.loads(body).get("result", {})
+        nv = len(json.loads(res["content"][0]["text"]).get("versions", []))
+    except Exception:
+        res, nv = {"raw": body[:200]}, 0
+    good = r.status == 200 and not res.get("isError") and nv == nitems
+    print(
+        f"{now()} WRITE wire={len(wire)} status={r.status} isError={res.get('isError')} versions={nv}/{nitems} "
+        f"{time.monotonic() - t0:.1f}s -> {'PASS' if good else 'FAIL'} {'' if good else str(res)[:200]}",
+        flush=True,
+    )
+
+
+if MODE == "trickle":
+    trickle(int(sys.argv[4]))
+elif MODE == "slow":
+    slow(int(sys.argv[4]))
+elif MODE == "write":
+    write(float(sys.argv[4]), float(sys.argv[5]), int(sys.argv[6]), float(sys.argv[7]))
