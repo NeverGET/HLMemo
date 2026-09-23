@@ -198,6 +198,34 @@ Error output for HTTP/tool errors is `error <CODE>: <message>` on stderr (+ the 
 details exist). Exit codes: `E_AUTH`/`E_DEVICE_PENDING`/`E_FORBIDDEN*` → 77, `E_UNAVAILABLE` → 69,
 `E_INVALID_ARG`/`E_NOT_FOUND`/`E_BUDGET_*` → 64, other spec codes → 1.
 
+## Import and export (W1.5)
+
+```sh
+hlm import markdown docs/ --project hlmemo --dry-run          # classify against the server, write nothing
+hlm import markdown docs/ --project hlmemo                    # new → write, changed → revision, unchanged → 0 writes
+hlm import serena  ~/proj/.serena/memories --project p --repo ~/proj
+hlm import automemory ~/.claude/projects/<proj>/memory --project p
+hlm import context ~/proj --project p                         # CLAUDE.md / AGENTS.md / GEMINI.md / .mcp.json
+hlm import markdown docs/ --project p --offline --json        # parse only, no server (everything "new")
+hlm export --project hlmemo --out export/                     # one file per current item + CARD.md + INDEX.md
+hlm import markdown export/ --project hlmemo                  # re-import maps files back by logical_id
+```
+
+- Each item carries `source {system, path, sha256, mtime, commit, commit_date}`; `path` is relative to the git
+  work tree (else the given directory), with `#anchor` for a part (`DECISIONS.md#D-047`, `USAGE.md#configuration`).
+  One `memory.write` per item, `request_id = uuid5(project ‖ source_key ‖ sha256)`: a re-run makes 0 writes, an
+  edited file makes one revision, an mtime-only change makes nothing, an interrupted run resumes.
+- **Dates:** `recorded_at` is always server time. `valid_from` only from explicit evidence: frontmatter
+  `valid_from`/`date`, a decision-log row `D-047 | 2026-09-23 |` (one item per row), or a dated heading (a log with
+  dated headings becomes one item per entry). Otherwise it is the import time — never the mtime or commit date.
+  A date without a time is read in `--tz` (default: this machine's zone). Evidence more than 5 minutes in the
+  future rejects that item (listed under `rejected`).
+- Long files (> `--section-chars`, default 8000) become one item per heading section; identical copies are
+  imported once, `@import` stubs are skipped, files matching a secret pattern are never read into a payload.
+- `describes`: repository files mentioned in the text (`src/x.py`) that exist under `--repo` → `code_refs`.
+- The report lists new/changed/unchanged/skipped/rejected, duplicate groups, `missing` (imported earlier, no
+  longer produced — reported, never closed) and an o200k token estimate.
+
 ## Troubleshooting
 
 | symptom | cause / fix |
