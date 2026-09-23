@@ -1,0 +1,3282 @@
+{
+ "task": "consolidation",
+ "family": "T8",
+ "version": 1,
+ "pack": "public",
+ "description": "12-25 related memory snippets (with in-set updates, restatements, trivia, TR/DE lines) -> topic summary <= 200 words plus atomic facts. Scored by gold fact key coverage, hallucinated specific tokens and length.",
+ "changelog": [
+  "v1: removed bare-number key variants that match dates (review before blind pass)"
+ ],
+ "cases": [
+  {
+   "id": "T8-01",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Plain fact list with one restatement and one trivia item.",
+   "topic": "orbitq job retries",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-03-02",
+     "text": "orbitq retries a failing job with exponential backoff starting at 2 s."
+    },
+    {
+     "id": "m02",
+     "date": "2026-03-03",
+     "text": "The retry cap is max_attempts = 5; after that the job lands in jobs_dead."
+    },
+    {
+     "id": "m03",
+     "date": "2026-03-04",
+     "text": "Dead-lettered jobs raise an alert in the queue-alerts channel."
+    },
+    {
+     "id": "m04",
+     "date": "2026-03-05",
+     "text": "Backoff doubles with each attempt and is capped at 5 minutes."
+    },
+    {
+     "id": "m05",
+     "date": "2026-03-06",
+     "text": "Someone asked whether jitter is applied: yes, a jitter of 20% is added to every delay."
+    },
+    {
+     "id": "m06",
+     "date": "2026-03-07",
+     "text": "Per-job overrides use the @job(max_attempts=...) decorator."
+    },
+    {
+     "id": "m07",
+     "date": "2026-03-08",
+     "text": "Lunch order for the Friday retro is pizza."
+    },
+    {
+     "id": "m08",
+     "date": "2026-03-09",
+     "text": "Reminder: max_attempts is 5 by default."
+    },
+    {
+     "id": "m09",
+     "date": "2026-03-10",
+     "text": "jobs_dead rows are kept for 30 days and then purged by a nightly task."
+    },
+    {
+     "id": "m10",
+     "date": "2026-03-11",
+     "text": "Replaying a dead job: orbitq replay <job_id> moves it back to ready with attempts reset."
+    },
+    {
+     "id": "m11",
+     "date": "2026-03-12",
+     "text": "The retry counter is stored in the attempts column of the jobs table."
+    },
+    {
+     "id": "m12",
+     "date": "2026-03-13",
+     "text": "Payment webhooks are excluded from retries because the provider retries on its own."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "exponential",
+       "2 s|2s|2 seconds"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "max_attempts",
+       "5"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "jobs_dead"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "5 minutes|5 min"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "jitter",
+       "20%"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "@job"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "30 days"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "replay"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "webhook"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "alert"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-02",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Storage facts plus a German trivia line and a restatement.",
+   "topic": "ledgerd invoice PDF storage",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-02-01",
+     "text": "ledgerd renders invoice PDFs with WeasyPrint inside the render worker."
+    },
+    {
+     "id": "m02",
+     "date": "2026-02-02",
+     "text": "Rendered PDFs are uploaded to the bucket invoices-archive under yyyy/mm/ prefixes."
+    },
+    {
+     "id": "m03",
+     "date": "2026-02-03",
+     "text": "The bucket is versioned, so an overwritten PDF can be restored."
+    },
+    {
+     "id": "m04",
+     "date": "2026-02-04",
+     "text": "Objects older than 400 days move to the cold tier via a lifecycle rule."
+    },
+    {
+     "id": "m05",
+     "date": "2026-02-05",
+     "text": "Temporary renders live in /var/lib/ledgerd/tmp and are deleted after upload."
+    },
+    {
+     "id": "m06",
+     "date": "2026-02-06",
+     "text": "Invoice numbers follow the pattern INV-YYYY-NNNNN and are never reused."
+    },
+    {
+     "id": "m07",
+     "date": "2026-02-07",
+     "text": "The render queue is called render_queue and runs with concurrency 2."
+    },
+    {
+     "id": "m08",
+     "date": "2026-02-08",
+     "text": "Die Kaffeemaschine im dritten Stock ist wieder kaputt."
+    },
+    {
+     "id": "m09",
+     "date": "2026-02-09",
+     "text": "Fonts are embedded in the PDF so customers see the same layout offline."
+    },
+    {
+     "id": "m10",
+     "date": "2026-02-10",
+     "text": "A failed render is retried 3 times before an operator is paged."
+    },
+    {
+     "id": "m11",
+     "date": "2026-02-11",
+     "text": "Again: PDFs go to invoices-archive, never to the public assets bucket."
+    },
+    {
+     "id": "m12",
+     "date": "2026-02-12",
+     "text": "Credit notes use the prefix CN- and are stored next to the original invoice."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "WeasyPrint"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "invoices-archive"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "versioned"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "400 days"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "/var/lib/ledgerd/tmp"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "INV-YYYY-NNNNN"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "render_queue"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "font"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "3 times|three times|3 retries|3 attempts"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "CN-"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-03",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Backup facts with a Turkish/English mixed line and a restatement.",
+   "topic": "Tessera backups and restore",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-04-01",
+     "text": "Tessera nightly backups are produced by the tessera-backup.timer unit at 02:30."
+    },
+    {
+     "id": "m02",
+     "date": "2026-04-02",
+     "text": "Dumps are compressed pg_dump files written to /srv/tessera/backups."
+    },
+    {
+     "id": "m03",
+     "date": "2026-04-03",
+     "text": "Retention keeps 7 daily and 4 weekly dumps."
+    },
+    {
+     "id": "m04",
+     "date": "2026-04-04",
+     "text": "Restore command: tessera-admin restore --from <dump-file>."
+    },
+    {
+     "id": "m05",
+     "date": "2026-04-05",
+     "text": "Restore drops and recreates the schema, replays the dump, then runs pending migrations."
+    },
+    {
+     "id": "m06",
+     "date": "2026-04-06",
+     "text": "Stop the web service before restoring."
+    },
+    {
+     "id": "m07",
+     "date": "2026-04-07",
+     "text": "A restore drill is expected once a month."
+    },
+    {
+     "id": "m08",
+     "date": "2026-04-08",
+     "text": "The last drill took 11 minutes for a 3 GB dump."
+    },
+    {
+     "id": "m09",
+     "date": "2026-04-09",
+     "text": "Uploaded attachments are not in the dump; they are synced separately with rclone to offsite storage."
+    },
+    {
+     "id": "m10",
+     "date": "2026-04-10",
+     "text": "Team photo day moved to Thursday."
+    },
+    {
+     "id": "m11",
+     "date": "2026-04-11",
+     "text": "Backup failures send an alert through the healthcheck ping."
+    },
+    {
+     "id": "m12",
+     "date": "2026-04-12",
+     "text": "Yedekler henüz şifreli değil; offsite copies will be encrypted with age (planned)."
+    },
+    {
+     "id": "m13",
+     "date": "2026-04-13",
+     "text": "Reminder: the timer runs at 02:30 every night."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "tessera-backup.timer"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "02:30"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "/srv/tessera/backups"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "7 daily|seven daily",
+       "4 weekly|four weekly"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "tessera-admin restore"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "migration"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "month"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "11 minutes|11 min"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "rclone"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "encrypt"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-04",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Rate-limit facts, one trivia item, one restatement.",
+   "topic": "Kestrel API rate limiting",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-05-04",
+     "text": "Kestrel API limits each API key to 120 requests per minute."
+    },
+    {
+     "id": "m02",
+     "date": "2026-05-05",
+     "text": "The limit comes from RATE_LIMIT_PER_MIN."
+    },
+    {
+     "id": "m03",
+     "date": "2026-05-06",
+     "text": "The implementation is a token-bucket middleware in front of all /v1 routes."
+    },
+    {
+     "id": "m04",
+     "date": "2026-05-07",
+     "text": "Bursts up to 2x are allowed for 10 seconds."
+    },
+    {
+     "id": "m05",
+     "date": "2026-05-08",
+     "text": "Exceeding the limit returns HTTP 429 with a Retry-After header."
+    },
+    {
+     "id": "m06",
+     "date": "2026-05-09",
+     "text": "Internal service keys are exempt from limiting."
+    },
+    {
+     "id": "m07",
+     "date": "2026-05-10",
+     "text": "Buckets live in Redis with a TTL of two minutes."
+    },
+    {
+     "id": "m08",
+     "date": "2026-05-11",
+     "text": "Limits are per key, not per client address."
+    },
+    {
+     "id": "m09",
+     "date": "2026-05-12",
+     "text": "Standup moved to 09:45."
+    },
+    {
+     "id": "m10",
+     "date": "2026-05-13",
+     "text": "The /health endpoint is never rate limited."
+    },
+    {
+     "id": "m11",
+     "date": "2026-05-14",
+     "text": "Rejected requests are counted in ratelimit_rejected_total."
+    },
+    {
+     "id": "m12",
+     "date": "2026-05-15",
+     "text": "Yes, it is still 120 per minute; nobody changed it."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "120"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "RATE_LIMIT_PER_MIN"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "token-bucket|token bucket"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "10 seconds|10 s"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "429"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "Retry-After"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "Redis"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "internal"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "per key|per api key"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "/health"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "ratelimit_rejected_total"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-05",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Build facts; the Astro proposal is not a fact to preserve.",
+   "topic": "Quillstack docs build",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-06-02",
+     "text": "Quillstack builds the docs site with a custom static site generator."
+    },
+    {
+     "id": "m02",
+     "date": "2026-06-03",
+     "text": "Minimum runtime is Node 20.11, enforced by engines.node in package.json."
+    },
+    {
+     "id": "m03",
+     "date": "2026-06-04",
+     "text": "The local version is pinned in .nvmrc."
+    },
+    {
+     "id": "m04",
+     "date": "2026-06-05",
+     "text": "pnpm is the package manager; the lockfile is pnpm-lock.yaml."
+    },
+    {
+     "id": "m05",
+     "date": "2026-06-06",
+     "text": "The build command is pnpm build:docs."
+    },
+    {
+     "id": "m06",
+     "date": "2026-06-07",
+     "text": "Output goes to dist/ and is uploaded to the CDN by the deploy job."
+    },
+    {
+     "id": "m07",
+     "date": "2026-06-08",
+     "text": "HTML is served with Cache-Control max-age=3600; hashed assets are immutable."
+    },
+    {
+     "id": "m08",
+     "date": "2026-06-09",
+     "text": "The deploy job purges the CDN only on the main branch."
+    },
+    {
+     "id": "m09",
+     "date": "2026-06-10",
+     "text": "A build takes about 4 minutes on CI."
+    },
+    {
+     "id": "m10",
+     "date": "2026-06-11",
+     "text": "The search index is generated at build time into dist/search.json."
+    },
+    {
+     "id": "m11",
+     "date": "2026-06-12",
+     "text": "Someone proposed moving to Astro; no decision yet."
+    },
+    {
+     "id": "m12",
+     "date": "2026-06-13",
+     "text": "Broken links fail the build via the link-check step."
+    },
+    {
+     "id": "m13",
+     "date": "2026-06-14",
+     "text": "The new office plant is called Gerald."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "20.11"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "engines.node"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       ".nvmrc"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "pnpm-lock.yaml"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "build:docs"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "dist/"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "3600"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "purge",
+       "main"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "4 minutes|4 min"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "search.json"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "link-check"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-06",
+   "tier": "easy",
+   "source": "synthetic",
+   "rationale": "Thumbnail facts, trivia and a restatement.",
+   "topic": "Heron image thumbnails",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-07-06",
+     "text": "Heron generates thumbnails with libvips in the thumbs worker."
+    },
+    {
+     "id": "m02",
+     "date": "2026-07-07",
+     "text": "Three sizes are produced: 128, 512 and 1024 pixels on the long edge."
+    },
+    {
+     "id": "m03",
+     "date": "2026-07-08",
+     "text": "Thumbnails are stored as WebP with quality 80."
+    },
+    {
+     "id": "m04",
+     "date": "2026-07-09",
+     "text": "Originals stay untouched in the bucket heron-originals."
+    },
+    {
+     "id": "m05",
+     "date": "2026-07-10",
+     "text": "Thumbnails go to heron-thumbs with a one-year cache header."
+    },
+    {
+     "id": "m06",
+     "date": "2026-07-11",
+     "text": "Animated GIFs get only a static first-frame thumbnail."
+    },
+    {
+     "id": "m07",
+     "date": "2026-07-12",
+     "text": "EXIF data is stripped from thumbnails for privacy."
+    },
+    {
+     "id": "m08",
+     "date": "2026-07-13",
+     "text": "The thumbs worker processes at most 4 images in parallel."
+    },
+    {
+     "id": "m09",
+     "date": "2026-07-14",
+     "text": "Someone brought cookies."
+    },
+    {
+     "id": "m10",
+     "date": "2026-07-15",
+     "text": "Missing thumbnails are regenerated on first request by the fallback route /thumb/regen."
+    },
+    {
+     "id": "m11",
+     "date": "2026-07-16",
+     "text": "Uploads larger than 40 MB are rejected before thumbnailing."
+    },
+    {
+     "id": "m12",
+     "date": "2026-07-17",
+     "text": "Yes, still WebP at quality 80, confirmed in review."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "libvips"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "128",
+       "1024"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "WebP"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "heron-originals"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "heron-thumbs"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "GIF"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "EXIF"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "4 images|4 in parallel"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "/thumb/regen"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "40 MB"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-07",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "One in-set update (Berlin -> UTC, 00:30 local -> 22:30 UTC); keys use the current values.",
+   "topic": "orbitq scheduled jobs (cron)",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-05-01",
+     "text": "orbitq evaluates cron expressions in cron_timezone, default UTC."
+    },
+    {
+     "id": "m02",
+     "date": "2026-05-02",
+     "text": "Production schedules were configured with cron_timezone = Europe/Berlin."
+    },
+    {
+     "id": "m03",
+     "date": "2026-05-03",
+     "text": "The nightly settlement job is scheduled at 00:30 local time."
+    },
+    {
+     "id": "m04",
+     "date": "2026-05-04",
+     "text": "On the daylight-saving switch the settlement job ran twice."
+    },
+    {
+     "id": "m05",
+     "date": "2026-05-06",
+     "text": "Fix: production cron_timezone changed to UTC; the settlement job now runs at 22:30 UTC."
+    },
+    {
+     "id": "m06",
+     "date": "2026-05-06",
+     "text": "cron_dedupe = true deduplicates runs by fire time."
+    },
+    {
+     "id": "m07",
+     "date": "2026-05-07",
+     "text": "cron_dedupe was enabled in all environments on the same day."
+    },
+    {
+     "id": "m08",
+     "date": "2026-05-08",
+     "text": "Missed fires while a worker is down run once on startup; they are not replayed one by one."
+    },
+    {
+     "id": "m09",
+     "date": "2026-05-09",
+     "text": "Der Report-Job läuft jeden Montag um 06:00 UTC."
+    },
+    {
+     "id": "m10",
+     "date": "2026-05-10",
+     "text": "Schedules are defined in schedules.yaml and reviewed like code."
+    },
+    {
+     "id": "m11",
+     "date": "2026-05-11",
+     "text": "The team channel topic was updated."
+    },
+    {
+     "id": "m12",
+     "date": "2026-05-12",
+     "text": "A schedule change needs a deploy; there is no runtime API for it."
+    },
+    {
+     "id": "m13",
+     "date": "2026-05-13",
+     "text": "orbitq exports next_fire_at per schedule as a metric."
+    },
+    {
+     "id": "m14",
+     "date": "2026-05-14",
+     "text": "Reminder: settlement runs at 22:30 UTC."
+    },
+    {
+     "id": "m15",
+     "date": "2026-05-15",
+     "text": "Proposal: allow per-schedule time zones; not decided."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "cron_timezone"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "UTC",
+       "22:30"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "twice|daylight"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "cron_dedupe"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "startup"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "06:00"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "schedules.yaml"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "deploy"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "next_fire_at"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-08",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Two updates (prod APNS_ENV fixed, pruning 60 -> 30 days) and a Turkish incident line.",
+   "topic": "Kestrel push notifications",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-05-25",
+     "text": "iOS pushes use token-based auth against APNs."
+    },
+    {
+     "id": "m02",
+     "date": "2026-05-26",
+     "text": "APNS_ENV selects sandbox for staging and production for App Store builds."
+    },
+    {
+     "id": "m03",
+     "date": "2026-05-27",
+     "text": "Prod'da bildirimler gelmiyordu; sebep APNS_ENV'in sandbox kalmasıydı."
+    },
+    {
+     "id": "m04",
+     "date": "2026-06-02",
+     "text": "Fixed: the production APNS_ENV is now set to production."
+    },
+    {
+     "id": "m05",
+     "date": "2026-06-02",
+     "text": "Android uses FCM with a single project for both environments."
+    },
+    {
+     "id": "m06",
+     "date": "2026-06-02",
+     "text": "Device tokens are stored in the device_tokens table with last_seen_at."
+    },
+    {
+     "id": "m07",
+     "date": "2026-06-02",
+     "text": "Tokens not seen for 60 days are pruned."
+    },
+    {
+     "id": "m08",
+     "date": "2026-06-10",
+     "text": "The pruning window was reduced to 30 days to cut BadDeviceToken errors."
+    },
+    {
+     "id": "m09",
+     "date": "2026-06-10",
+     "text": "Pushes are sent in batches of 500 via push_queue."
+    },
+    {
+     "id": "m10",
+     "date": "2026-06-10",
+     "text": "NOTIF_BATCH_SIZE controls the batch size."
+    },
+    {
+     "id": "m11",
+     "date": "2026-06-10",
+     "text": "Quiet hours: no marketing pushes between 22:00 and 08:00 local time."
+    },
+    {
+     "id": "m12",
+     "date": "2026-06-10",
+     "text": "Transactional pushes ignore quiet hours."
+    },
+    {
+     "id": "m13",
+     "date": "2026-06-10",
+     "text": "Birthday cake on Friday."
+    },
+    {
+     "id": "m14",
+     "date": "2026-06-10",
+     "text": "The APNs auth key rotates yearly; its id is configured in APNS_KEY_ID."
+    },
+    {
+     "id": "m15",
+     "date": "2026-06-10",
+     "text": "Delivery receipts are sampled at 10%."
+    },
+    {
+     "id": "m16",
+     "date": "2026-06-10",
+     "text": "Again: production builds need APNS_ENV=production."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "APNS_ENV"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "token-based|token based"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "FCM"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "device_tokens"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "30 days"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "push_queue",
+       "500"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "NOTIF_BATCH_SIZE"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "22:00",
+       "08:00"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "transactional"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "APNS_KEY_ID"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "10%"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-09",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Rounding mode updated HALF_UP -> HALF_EVEN; the wish list line is superseded by the shipped report.",
+   "topic": "ledgerd rounding and tax",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-04-01",
+     "text": "Monetary amounts are stored as integer minor units."
+    },
+    {
+     "id": "m02",
+     "date": "2026-04-02",
+     "text": "Line totals use Python Decimal."
+    },
+    {
+     "id": "m03",
+     "date": "2026-04-03",
+     "text": "The rounding mode was ROUND_HALF_UP at launch."
+    },
+    {
+     "id": "m04",
+     "date": "2026-04-15",
+     "text": "Switched to ROUND_HALF_EVEN to follow the tax office's guidance."
+    },
+    {
+     "id": "m05",
+     "date": "2026-04-15",
+     "text": "Rounding happens per line, not on the invoice total."
+    },
+    {
+     "id": "m06",
+     "date": "2026-04-15",
+     "text": "Tax is computed per line as well."
+    },
+    {
+     "id": "m07",
+     "date": "2026-04-15",
+     "text": "Supported currencies: EUR, TRY, USD."
+    },
+    {
+     "id": "m08",
+     "date": "2026-04-15",
+     "text": "fx_rates are fetched daily at 06:00 from the central bank feed."
+    },
+    {
+     "id": "m09",
+     "date": "2026-04-15",
+     "text": "TRY invoices show amounts with 2 decimals; JPY support is not planned."
+    },
+    {
+     "id": "m10",
+     "date": "2026-04-15",
+     "text": "Kuruş farkları tablolarla karşılaştırınca normal; banker's rounding yüzünden oluyor."
+    },
+    {
+     "id": "m11",
+     "date": "2026-04-15",
+     "text": "Credit notes reverse the original line rounding exactly."
+    },
+    {
+     "id": "m12",
+     "date": "2026-04-15",
+     "text": "Discounts are applied before tax."
+    },
+    {
+     "id": "m13",
+     "date": "2026-04-15",
+     "text": "The finance team would like a monthly reconciliation report."
+    },
+    {
+     "id": "m14",
+     "date": "2026-04-15",
+     "text": "The reconciliation report ships as recon_monthly.csv on the 1st of each month."
+    },
+    {
+     "id": "m15",
+     "date": "2026-04-15",
+     "text": "We have a new coffee supplier."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "minor units"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "Decimal"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "ROUND_HALF_EVEN"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "per line"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "EUR",
+       "USD"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "fx_rates",
+       "06:00"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "discount"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "credit note"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "recon_monthly.csv"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-10",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Backend switch Meilisearch -> Postgres FTS; a good summary names both old and new.",
+   "topic": "Tessera search",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-06-10",
+     "text": "Page edits are pushed to the search index asynchronously by the indexer worker."
+    },
+    {
+     "id": "m02",
+     "date": "2026-06-11",
+     "text": "The search backend is Meilisearch."
+    },
+    {
+     "id": "m03",
+     "date": "2026-07-01",
+     "text": "The search backend switched from Meilisearch to Postgres full-text search to drop one service."
+    },
+    {
+     "id": "m04",
+     "date": "2026-07-01",
+     "text": "tessera-admin reindex --since 2d rebuilds recently changed entries."
+    },
+    {
+     "id": "m05",
+     "date": "2026-07-01",
+     "text": "Without --since, reindex does a full rebuild."
+    },
+    {
+     "id": "m06",
+     "date": "2026-07-01",
+     "text": "A full rebuild of 40k pages takes about 25 minutes."
+    },
+    {
+     "id": "m07",
+     "date": "2026-07-01",
+     "text": "indexer_lag_seconds exposes the indexing delay."
+    },
+    {
+     "id": "m08",
+     "date": "2026-07-01",
+     "text": "An alert fires when indexer_lag_seconds exceeds 300."
+    },
+    {
+     "id": "m09",
+     "date": "2026-07-01",
+     "text": "Attachments are indexed by filename only."
+    },
+    {
+     "id": "m10",
+     "date": "2026-07-01",
+     "text": "Arama Türkçe karakterleri unaccent ile normalize ediyor."
+    },
+    {
+     "id": "m11",
+     "date": "2026-07-01",
+     "text": "Stopwords are not removed; ranking uses ts_rank_cd."
+    },
+    {
+     "id": "m12",
+     "date": "2026-07-01",
+     "text": "Private pages are filtered by space permissions at query time."
+    },
+    {
+     "id": "m13",
+     "date": "2026-07-01",
+     "text": "Hackathon next month."
+    },
+    {
+     "id": "m14",
+     "date": "2026-07-01",
+     "text": "The indexer worker restarts together with the web deploy."
+    },
+    {
+     "id": "m15",
+     "date": "2026-07-01",
+     "text": "Proposal: vector search for similar pages; parked."
+    },
+    {
+     "id": "m16",
+     "date": "2026-07-01",
+     "text": "Postgres FTS confirmed working in production; the Meilisearch container was removed."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "Postgres",
+       "full-text|FTS"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "Meilisearch"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "--since"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "25 minutes|25 min"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "indexer_lag_seconds"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "300"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "filename"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "unaccent"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "ts_rank_cd"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "permission"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-11",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Pool lowered 20 -> 10, pgbouncer added; staging limit is a scope detail.",
+   "topic": "Kestrel database connection pool",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-05-12",
+     "text": "Each API replica opens up to DB_POOL_MAX connections, default 20."
+    },
+    {
+     "id": "m02",
+     "date": "2026-05-13",
+     "text": "Production runs 6 replicas."
+    },
+    {
+     "id": "m03",
+     "date": "2026-05-14",
+     "text": "Postgres max_connections is 100."
+    },
+    {
+     "id": "m04",
+     "date": "2026-05-15",
+     "text": "Bursts failed with too many connections."
+    },
+    {
+     "id": "m05",
+     "date": "2026-05-20",
+     "text": "DB_POOL_MAX lowered to 10 in production."
+    },
+    {
+     "id": "m06",
+     "date": "2026-05-22",
+     "text": "A pgbouncer sidecar was added in transaction mode."
+    },
+    {
+     "id": "m07",
+     "date": "2026-05-22",
+     "text": "With pgbouncer, prepared statements are disabled in the driver."
+    },
+    {
+     "id": "m08",
+     "date": "2026-05-22",
+     "text": "DB_STATEMENT_TIMEOUT is 5 s for API queries."
+    },
+    {
+     "id": "m09",
+     "date": "2026-05-22",
+     "text": "Migrations bypass pgbouncer and connect directly."
+    },
+    {
+     "id": "m10",
+     "date": "2026-05-22",
+     "text": "Die Replikate skalieren bis maximal 8."
+    },
+    {
+     "id": "m11",
+     "date": "2026-05-22",
+     "text": "Read replicas are not used yet."
+    },
+    {
+     "id": "m12",
+     "date": "2026-05-23",
+     "text": "The staging database has max_connections 50."
+    },
+    {
+     "id": "m13",
+     "date": "2026-05-24",
+     "text": "Office closed on the 3rd."
+    },
+    {
+     "id": "m14",
+     "date": "2026-05-25",
+     "text": "Pool size 10 confirmed after the load test: p95 180 ms."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "DB_POOL_MAX",
+       "10"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "6 replicas"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "100"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "pgbouncer",
+       "transaction"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "prepared statement"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "5 s|5s|5 seconds"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "migration"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "staging",
+       "50"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "180"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-12",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Threshold lowered 3 -> 1 and weekly option added; Turkish line on language, proposal not a fact.",
+   "topic": "Wren email digest",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-06-01",
+     "text": "Wren sends a daily email digest of unread notifications."
+    },
+    {
+     "id": "m02",
+     "date": "2026-06-02",
+     "text": "The digest job digest_daily runs at 07:00 in the user's time zone."
+    },
+    {
+     "id": "m03",
+     "date": "2026-06-03",
+     "text": "Users with fewer than 3 unread items get no digest."
+    },
+    {
+     "id": "m04",
+     "date": "2026-06-15",
+     "text": "The minimum was lowered from 3 to 1 unread item after user feedback."
+    },
+    {
+     "id": "m05",
+     "date": "2026-06-15",
+     "text": "Digests are rendered with MJML templates stored in templates/digest/."
+    },
+    {
+     "id": "m06",
+     "date": "2026-06-15",
+     "text": "Emails are sent via the transactional provider with a dedicated IP pool."
+    },
+    {
+     "id": "m07",
+     "date": "2026-06-15",
+     "text": "An unsubscribe link with a signed token is included in every digest."
+    },
+    {
+     "id": "m08",
+     "date": "2026-06-15",
+     "text": "Bounced addresses are suppressed for 30 days."
+    },
+    {
+     "id": "m09",
+     "date": "2026-06-15",
+     "text": "Özet e-postası kullanıcının diline göre gönderiliyor (tr, de, en)."
+    },
+    {
+     "id": "m10",
+     "date": "2026-06-20",
+     "text": "A weekly digest option was added; users choose daily or weekly in settings."
+    },
+    {
+     "id": "m11",
+     "date": "2026-06-20",
+     "text": "The weekly digest goes out on Monday."
+    },
+    {
+     "id": "m12",
+     "date": "2026-06-20",
+     "text": "Open rate of the daily digest is 38%."
+    },
+    {
+     "id": "m13",
+     "date": "2026-06-20",
+     "text": "Kickoff party on Thursday."
+    },
+    {
+     "id": "m14",
+     "date": "2026-06-20",
+     "text": "Proposal: push notifications instead of email for mobile users; not decided."
+    },
+    {
+     "id": "m15",
+     "date": "2026-06-20",
+     "text": "digest_daily skips users who logged in within the last 2 hours."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "digest_daily"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "07:00"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "1 unread|one unread"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "MJML"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "templates/digest/"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "transactional"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "unsubscribe"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "30 days"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "weekly"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "Monday"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "38%"
+      ]
+     },
+     {
+      "id": "f12",
+      "keys": [
+       "2 hours"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-13",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Two updates (TTL 30 -> 5 s, rollout 25 -> 50%) plus a German access-control line.",
+   "topic": "Wren feature flags",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-07-20",
+     "text": "Wren stores feature flags in the flags table, cached for 30 s."
+    },
+    {
+     "id": "m02",
+     "date": "2026-07-21",
+     "text": "Flag evaluation happens server-side via flag_eval()."
+    },
+    {
+     "id": "m03",
+     "date": "2026-07-22",
+     "text": "Flags default to off when the cache is empty."
+    },
+    {
+     "id": "m04",
+     "date": "2026-08-01",
+     "text": "The flag cache TTL was reduced from 30 s to 5 s after a slow rollout."
+    },
+    {
+     "id": "m05",
+     "date": "2026-08-01",
+     "text": "Percentage rollouts hash the user id together with the flag name."
+    },
+    {
+     "id": "m06",
+     "date": "2026-08-01",
+     "text": "Kill switches bypass the cache entirely."
+    },
+    {
+     "id": "m07",
+     "date": "2026-08-01",
+     "text": "Flags older than 90 days trigger a cleanup reminder."
+    },
+    {
+     "id": "m08",
+     "date": "2026-08-01",
+     "text": "Die Flag-Verwaltung ist nur für Admins sichtbar."
+    },
+    {
+     "id": "m09",
+     "date": "2026-08-01",
+     "text": "The audit log records who toggled a flag and when."
+    },
+    {
+     "id": "m10",
+     "date": "2026-08-01",
+     "text": "Client SDKs receive flags in the bootstrap payload."
+    },
+    {
+     "id": "m11",
+     "date": "2026-08-01",
+     "text": "Mobile clients refresh flags every 15 minutes."
+    },
+    {
+     "id": "m12",
+     "date": "2026-08-01",
+     "text": "Pizza vote result: margherita."
+    },
+    {
+     "id": "m13",
+     "date": "2026-08-01",
+     "text": "new_checkout is at 25% rollout."
+    },
+    {
+     "id": "m14",
+     "date": "2026-08-05",
+     "text": "new_checkout raised to 50%."
+    },
+    {
+     "id": "m15",
+     "date": "2026-08-05",
+     "text": "Flags cannot be renamed; create a new one and migrate."
+    },
+    {
+     "id": "m16",
+     "date": "2026-08-05",
+     "text": "Proposal: expose flags to the support team; undecided."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "flags table"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "flag_eval"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "5 s|5s|5 seconds"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "hash"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "kill switch"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "90 days"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "admin"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "audit"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "bootstrap"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "15 minutes|15 min"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "new_checkout",
+       "50%"
+      ]
+     },
+     {
+      "id": "f12",
+      "keys": [
+       "rename"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-14",
+   "tier": "medium",
+   "source": "synthetic",
+   "rationale": "Turkish translation moved from agency to in-house (stated first in Turkish); German unchanged.",
+   "topic": "Quillstack translations",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-06-01",
+     "text": "Quillstack docs are authored in English and translated to Turkish and German."
+    },
+    {
+     "id": "m02",
+     "date": "2026-06-02",
+     "text": "Translations live under i18n/<locale>/ mirroring the English tree."
+    },
+    {
+     "id": "m03",
+     "date": "2026-06-03",
+     "text": "Missing translations fall back to English with a banner."
+    },
+    {
+     "id": "m04",
+     "date": "2026-06-04",
+     "text": "The translation memory is exported weekly as tm_export.tmx."
+    },
+    {
+     "id": "m05",
+     "date": "2026-06-05",
+     "text": "Türkçe çeviriler bir ajans tarafından yapılıyordu."
+    },
+    {
+     "id": "m06",
+     "date": "2026-06-20",
+     "text": "Turkish translation moved in-house to the support team."
+    },
+    {
+     "id": "m07",
+     "date": "2026-06-20",
+     "text": "German stays with the agency."
+    },
+    {
+     "id": "m08",
+     "date": "2026-06-20",
+     "text": "Machine translation is used only for first drafts and must be reviewed."
+    },
+    {
+     "id": "m09",
+     "date": "2026-06-20",
+     "text": "Locale codes: en, tr, de."
+    },
+    {
+     "id": "m10",
+     "date": "2026-06-20",
+     "text": "URLs keep the English slug; the locale is a path prefix like /tr/."
+    },
+    {
+     "id": "m11",
+     "date": "2026-06-20",
+     "text": "Glossary terms are enforced by the terminology check in CI."
+    },
+    {
+     "id": "m12",
+     "date": "2026-06-20",
+     "text": "The glossary file is glossary.csv."
+    },
+    {
+     "id": "m13",
+     "date": "2026-06-20",
+     "text": "Team offsite in Izmir."
+    },
+    {
+     "id": "m14",
+     "date": "2026-06-20",
+     "text": "Translations older than the English page by 30 days are flagged as stale."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "i18n/"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "banner"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "tm_export.tmx"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "in-house"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "agency"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "machine translation"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "/tr/"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "glossary.csv"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "terminology"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "30 days"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-15",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Several updates (per-queue max_attempts, retention 30 -> 90 d, cap 5 -> 2 min), a German exception, a proposal.",
+   "topic": "orbitq retry policy history",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-01-10",
+     "text": "orbitq retries failing jobs with exponential backoff starting at 2 s."
+    },
+    {
+     "id": "m02",
+     "date": "2026-01-11",
+     "text": "max_attempts defaults to 5."
+    },
+    {
+     "id": "m03",
+     "date": "2026-01-12",
+     "text": "Dead jobs go to jobs_dead."
+    },
+    {
+     "id": "m04",
+     "date": "2026-01-13",
+     "text": "The backoff cap is 5 minutes."
+    },
+    {
+     "id": "m05",
+     "date": "2026-02-02",
+     "text": "After the payment outage, max_attempts was raised to 8 for the payments queue only."
+    },
+    {
+     "id": "m06",
+     "date": "2026-02-02",
+     "text": "Other queues keep max_attempts 5."
+    },
+    {
+     "id": "m07",
+     "date": "2026-02-10",
+     "text": "A jitter of 20% was added to all delays."
+    },
+    {
+     "id": "m08",
+     "date": "2026-02-10",
+     "text": "jobs_dead rows are kept 30 days."
+    },
+    {
+     "id": "m09",
+     "date": "2026-03-01",
+     "text": "Retention of jobs_dead extended to 90 days for audit."
+    },
+    {
+     "id": "m10",
+     "date": "2026-03-01",
+     "text": "Replay: orbitq replay <job_id> resets attempts."
+    },
+    {
+     "id": "m11",
+     "date": "2026-03-01",
+     "text": "Bulk replay: orbitq replay --queue <name> --since 1h."
+    },
+    {
+     "id": "m12",
+     "date": "2026-03-01",
+     "text": "Die Warteschlange 'emails' hat keine Retries, weil der Provider selbst wiederholt."
+    },
+    {
+     "id": "m13",
+     "date": "2026-03-15",
+     "text": "The backoff cap was lowered from 5 minutes to 2 minutes to recover faster."
+    },
+    {
+     "id": "m14",
+     "date": "2026-03-15",
+     "text": "Alert when jobs_dead grows by more than 50 per hour."
+    },
+    {
+     "id": "m15",
+     "date": "2026-03-15",
+     "text": "Lunch: tacos."
+    },
+    {
+     "id": "m16",
+     "date": "2026-03-15",
+     "text": "visibility_timeout defaults to 60 s; it is unrelated to retries but often confused with them."
+    },
+    {
+     "id": "m17",
+     "date": "2026-03-15",
+     "text": "Retries keep the original enqueue time for ordering."
+    },
+    {
+     "id": "m18",
+     "date": "2026-04-02",
+     "text": "Proposal: a circuit breaker per queue; not decided."
+    },
+    {
+     "id": "m19",
+     "date": "2026-04-02",
+     "text": "Reminder: the payments queue max_attempts is 8."
+    },
+    {
+     "id": "m20",
+     "date": "2026-04-02",
+     "text": "Attempts are counted in the attempts column."
+    },
+    {
+     "id": "m21",
+     "date": "2026-04-10",
+     "text": "The webhooks queue uses max_attempts 3 because callers retry themselves."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "2 s|2s|2 seconds"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "payments",
+       "8"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "jobs_dead",
+       "90 days"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "20%"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "2 minutes|2 min"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "--since"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "emails"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "50"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "visibility_timeout"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "enqueue"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "webhooks",
+       "3"
+      ]
+     },
+     {
+      "id": "f12",
+      "keys": [
+       "replay"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-16",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Laptop -> CI deploy, 90 -> 180 s health check, TR and DE rules; needs old context (stdin incident) and new values.",
+   "topic": "Tessera deployment process",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-02-01",
+     "text": "Tessera deploys with deploy.sh from the operator laptop."
+    },
+    {
+     "id": "m02",
+     "date": "2026-02-02",
+     "text": "deploy.sh pipes a remote script into bash over ssh."
+    },
+    {
+     "id": "m03",
+     "date": "2026-02-03",
+     "text": "Incident: a docker compose exec inside the remote script consumed stdin, so the rest never ran; the exit code was 0."
+    },
+    {
+     "id": "m04",
+     "date": "2026-02-04",
+     "text": "Fix: exec -T and ssh -n in all remote scripts."
+    },
+    {
+     "id": "m05",
+     "date": "2026-03-10",
+     "text": "Deploys moved from the laptop to a CI job named deploy-prod."
+    },
+    {
+     "id": "m06",
+     "date": "2026-03-10",
+     "text": "deploy-prod runs only for tags matching v*."
+    },
+    {
+     "id": "m07",
+     "date": "2026-03-10",
+     "text": "The runner checks out with umask 077."
+    },
+    {
+     "id": "m08",
+     "date": "2026-03-10",
+     "text": "Container crash loop on a fresh host: uid 1500 could not read the bind-mounted entrypoint."
+    },
+    {
+     "id": "m09",
+     "date": "2026-03-10",
+     "text": "The runner now sets file modes 0644 after every checkout, including rollback."
+    },
+    {
+     "id": "m10",
+     "date": "2026-03-10",
+     "text": "Rollback = running deploy-prod with the previous tag."
+    },
+    {
+     "id": "m11",
+     "date": "2026-03-10",
+     "text": "Rollback'te veritabanı migration'ları geri alınmıyor; sadece forward-compatible migration yazıyoruz."
+    },
+    {
+     "id": "m12",
+     "date": "2026-03-10",
+     "text": "The health check waits up to 90 s for /ready."
+    },
+    {
+     "id": "m13",
+     "date": "2026-04-01",
+     "text": "The health check timeout was raised to 180 s because cold starts load a model."
+    },
+    {
+     "id": "m14",
+     "date": "2026-04-01",
+     "text": "Blue/green: the new web container starts next to the old one; traffic switches after /ready."
+    },
+    {
+     "id": "m15",
+     "date": "2026-04-01",
+     "text": "Deploys are frozen on Fridays after 15:00."
+    },
+    {
+     "id": "m16",
+     "date": "2026-04-01",
+     "text": "Der Freitags-Freeze gilt nicht für Hotfixes mit zwei Reviews."
+    },
+    {
+     "id": "m17",
+     "date": "2026-04-01",
+     "text": "Snack budget approved."
+    },
+    {
+     "id": "m18",
+     "date": "2026-04-01",
+     "text": "A backup runs before migrations in every deploy."
+    },
+    {
+     "id": "m19",
+     "date": "2026-04-01",
+     "text": "If the backup fails, the deploy aborts before stopping anything."
+    },
+    {
+     "id": "m20",
+     "date": "2026-04-01",
+     "text": "Deploy logs are kept in /var/log/tessera/deploy/."
+    },
+    {
+     "id": "m21",
+     "date": "2026-04-01",
+     "text": "Reminder: deploys only from tags."
+    },
+    {
+     "id": "m22",
+     "date": "2026-04-01",
+     "text": "Proposal: canary with 10% of traffic; not decided."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "deploy-prod"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "tag"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "ssh -n"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "umask"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "0644"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "forward-compatible|forward compatible"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "180"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "blue/green|blue-green"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "15:00"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "hotfix"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "backup",
+       "abort"
+      ]
+     },
+     {
+      "id": "f12",
+      "keys": [
+       "/var/log/tessera/deploy/"
+      ]
+     },
+     {
+      "id": "f13",
+      "keys": [
+       "stdin"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-17",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Two updates (access 15 -> 30 min, partner keys never -> 365 d) among 23 snippets with TR/DE lines.",
+   "topic": "Kestrel authentication tokens",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-04-20",
+     "text": "Kestrel issues access tokens as JWTs valid for 15 minutes."
+    },
+    {
+     "id": "m02",
+     "date": "2026-04-21",
+     "text": "Refresh tokens are valid 30 days and rotate on every use."
+    },
+    {
+     "id": "m03",
+     "date": "2026-04-22",
+     "text": "Reusing an old refresh token revokes the whole token family."
+    },
+    {
+     "id": "m04",
+     "date": "2026-05-05",
+     "text": "Access token lifetime increased to 30 minutes to reduce refresh traffic."
+    },
+    {
+     "id": "m05",
+     "date": "2026-05-05",
+     "text": "JWT_AUDIENCE must match the client app id."
+    },
+    {
+     "id": "m06",
+     "date": "2026-05-05",
+     "text": "Signing uses ES256; signing keys rotate every 90 days."
+    },
+    {
+     "id": "m07",
+     "date": "2026-05-05",
+     "text": "Old signing keys stay in the JWKS for 7 days after rotation."
+    },
+    {
+     "id": "m08",
+     "date": "2026-05-05",
+     "text": "Partner API keys are separate from user tokens and never expire automatically."
+    },
+    {
+     "id": "m09",
+     "date": "2026-06-01",
+     "text": "Partner API keys now expire after 365 days."
+    },
+    {
+     "id": "m10",
+     "date": "2026-06-01",
+     "text": "API_KEY_TTL controls partner key expiry."
+    },
+    {
+     "id": "m11",
+     "date": "2026-06-01",
+     "text": "Logout revokes the refresh token family."
+    },
+    {
+     "id": "m12",
+     "date": "2026-06-01",
+     "text": "Mobil uygulama refresh işlemini arka planda sessizce yapıyor."
+    },
+    {
+     "id": "m13",
+     "date": "2026-06-01",
+     "text": "Web sessions keep the refresh token in an httpOnly cookie."
+    },
+    {
+     "id": "m14",
+     "date": "2026-06-01",
+     "text": "CORS_ORIGINS lists the allowed web origins."
+    },
+    {
+     "id": "m15",
+     "date": "2026-06-01",
+     "text": "Password reset links expire after 1 hour."
+    },
+    {
+     "id": "m16",
+     "date": "2026-06-01",
+     "text": "2FA is mandatory for admin accounts."
+    },
+    {
+     "id": "m17",
+     "date": "2026-06-01",
+     "text": "Team retro notes archived."
+    },
+    {
+     "id": "m18",
+     "date": "2026-06-01",
+     "text": "The /auth/token endpoint allows 10 requests per minute per client address."
+    },
+    {
+     "id": "m19",
+     "date": "2026-06-01",
+     "text": "Revoked tokens are cached in Redis until their natural expiry."
+    },
+    {
+     "id": "m20",
+     "date": "2026-06-01",
+     "text": "Proposal: passkeys; research spike only."
+    },
+    {
+     "id": "m21",
+     "date": "2026-06-01",
+     "text": "Die Admin-Konsole erzwingt 2FA seit Juni."
+    },
+    {
+     "id": "m22",
+     "date": "2026-06-01",
+     "text": "Reminder: access tokens last 30 minutes now."
+    },
+    {
+     "id": "m23",
+     "date": "2026-06-01",
+     "text": "Clock skew tolerance is 60 s."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "30 minutes|30 min"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "rotate"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "family"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "JWT_AUDIENCE"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "ES256"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "JWKS",
+       "7 days"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "365"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "API_KEY_TTL"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "httpOnly"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "CORS_ORIGINS"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "1 hour"
+      ]
+     },
+     {
+      "id": "f12",
+      "keys": [
+       "2FA"
+      ]
+     },
+     {
+      "id": "f13",
+      "keys": [
+       "/auth/token"
+      ]
+     },
+     {
+      "id": "f14",
+      "keys": [
+       "skew"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-18",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Retention 180 -> 90 d and late window 48 -> 24 h, one Turkish schema line, one parked proposal.",
+   "topic": "Wren analytics pipeline",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-06-01",
+     "text": "Wren collects events through the ingest service into the Kafka topic events_raw."
+    },
+    {
+     "id": "m02",
+     "date": "2026-06-02",
+     "text": "A Flink job enriches events and writes them to events_enriched."
+    },
+    {
+     "id": "m03",
+     "date": "2026-06-03",
+     "text": "Enriched events land in the ClickHouse table events_v2."
+    },
+    {
+     "id": "m04",
+     "date": "2026-06-04",
+     "text": "Retention in ClickHouse is 180 days."
+    },
+    {
+     "id": "m05",
+     "date": "2026-07-01",
+     "text": "Retention reduced to 90 days, cutting storage cost by 40%."
+    },
+    {
+     "id": "m06",
+     "date": "2026-07-01",
+     "text": "Raw events are also archived to object storage as Parquet and kept 2 years."
+    },
+    {
+     "id": "m07",
+     "date": "2026-07-01",
+     "text": "PII fields (email address, phone) are hashed at ingest with a per-tenant salt."
+    },
+    {
+     "id": "m08",
+     "date": "2026-07-01",
+     "text": "Late events up to 48 h are accepted."
+    },
+    {
+     "id": "m09",
+     "date": "2026-07-15",
+     "text": "The late-event window was reduced to 24 h."
+    },
+    {
+     "id": "m10",
+     "date": "2026-07-15",
+     "text": "Dashboards query events_v2 through the materialized view mv_daily."
+    },
+    {
+     "id": "m11",
+     "date": "2026-07-15",
+     "text": "mv_daily refreshes every 10 minutes."
+    },
+    {
+     "id": "m12",
+     "date": "2026-07-15",
+     "text": "Backfills use the backfill_events CLI with --from and --to."
+    },
+    {
+     "id": "m13",
+     "date": "2026-07-15",
+     "text": "Olay şeması Avro; schema registry'de tutuluyor."
+    },
+    {
+     "id": "m14",
+     "date": "2026-07-15",
+     "text": "Breaking schema changes need a new topic version."
+    },
+    {
+     "id": "m15",
+     "date": "2026-07-15",
+     "text": "Consumer lag alert at 100k messages."
+    },
+    {
+     "id": "m16",
+     "date": "2026-07-15",
+     "text": "Fun fact: the cluster is named after a bird."
+    },
+    {
+     "id": "m17",
+     "date": "2026-07-15",
+     "text": "Ingest p99 is 35 ms."
+    },
+    {
+     "id": "m18",
+     "date": "2026-07-15",
+     "text": "Proposal: move from Flink to Kafka Streams; parked."
+    },
+    {
+     "id": "m19",
+     "date": "2026-07-15",
+     "text": "Reminder: ClickHouse retention is 90 days."
+    },
+    {
+     "id": "m20",
+     "date": "2026-07-15",
+     "text": "Tenants can export their raw events monthly."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "events_raw"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "events_enriched"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "events_v2"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "90 days"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "Parquet"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "salt"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "24 h|24h|24 hours"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "mv_daily"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "backfill_events"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "Avro"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "100k"
+      ]
+     },
+     {
+      "id": "f12",
+      "keys": [
+       "35 ms"
+      ]
+     },
+     {
+      "id": "f13",
+      "keys": [
+       "40%"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-19",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "First reminder 7 -> 3 days, TRY fee exception (scope), 24 snippets with TR/DE lines and a proposal.",
+   "topic": "ledgerd dunning (payment reminders)",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-02-10",
+     "text": "ledgerd sends dunning emails for unpaid invoices."
+    },
+    {
+     "id": "m02",
+     "date": "2026-02-11",
+     "text": "The first reminder goes out 7 days after the due date."
+    },
+    {
+     "id": "m03",
+     "date": "2026-02-12",
+     "text": "The second reminder follows 14 days after the due date, with a 5 EUR late fee."
+    },
+    {
+     "id": "m04",
+     "date": "2026-02-13",
+     "text": "The third reminder follows 30 days after the due date; the account can be suspended after that."
+    },
+    {
+     "id": "m05",
+     "date": "2026-03-01",
+     "text": "No late fee for TRY invoices because of local rules."
+    },
+    {
+     "id": "m06",
+     "date": "2026-04-01",
+     "text": "The first reminder moved to 3 days after the due date."
+    },
+    {
+     "id": "m07",
+     "date": "2026-04-01",
+     "text": "Dunning runs daily at 07:00 UTC via dunning_job."
+    },
+    {
+     "id": "m08",
+     "date": "2026-04-01",
+     "text": "Suspension after the third reminder is manual; there is no automatic suspend."
+    },
+    {
+     "id": "m09",
+     "date": "2026-04-01",
+     "text": "Hatırlatma e-postaları müşterinin diline göre gönderiliyor (tr, de, en)."
+    },
+    {
+     "id": "m10",
+     "date": "2026-04-01",
+     "text": "Customers on annual plans get only one reminder before a call from sales."
+    },
+    {
+     "id": "m11",
+     "date": "2026-04-01",
+     "text": "A paid invoice stops the sequence within 1 hour via the payment webhook."
+    },
+    {
+     "id": "m12",
+     "date": "2026-04-01",
+     "text": "Dunning is paused during a dispute."
+    },
+    {
+     "id": "m13",
+     "date": "2026-04-01",
+     "text": "Templates live in templates/dunning/."
+    },
+    {
+     "id": "m14",
+     "date": "2026-04-01",
+     "text": "Emails go through the transactional provider, not the marketing one."
+    },
+    {
+     "id": "m15",
+     "date": "2026-04-01",
+     "text": "Bounced dunning emails create a task for support."
+    },
+    {
+     "id": "m16",
+     "date": "2026-04-01",
+     "text": "Quarterly all-hands moved."
+    },
+    {
+     "id": "m17",
+     "date": "2026-04-01",
+     "text": "Proposal: SMS reminders; legal review pending."
+    },
+    {
+     "id": "m18",
+     "date": "2026-04-01",
+     "text": "The late fee for EUR invoices is still 5 EUR."
+    },
+    {
+     "id": "m19",
+     "date": "2026-04-01",
+     "text": "Dunning metrics: dunning_sent_total and dunning_recovered_total."
+    },
+    {
+     "id": "m20",
+     "date": "2026-04-01",
+     "text": "The recovery rate after the first reminder is 62%."
+    },
+    {
+     "id": "m21",
+     "date": "2026-04-01",
+     "text": "Die Mahngebühr wird auf der nächsten Rechnung ausgewiesen."
+    },
+    {
+     "id": "m22",
+     "date": "2026-04-01",
+     "text": "The sequence restarts if the due date is changed."
+    },
+    {
+     "id": "m23",
+     "date": "2026-04-01",
+     "text": "Reminder: first dunning at 3 days now, not 7."
+    },
+    {
+     "id": "m24",
+     "date": "2026-04-01",
+     "text": "dunning_job has a --dry-run flag."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "3 days"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "14 days",
+       "5 EUR"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "30 days"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "TRY"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "dunning_job",
+       "07:00"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "manual"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "dispute"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "annual"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "1 hour"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "templates/dunning/"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "transactional"
+      ]
+     },
+     {
+      "id": "f12",
+      "keys": [
+       "62%"
+      ]
+     },
+     {
+      "id": "f13",
+      "keys": [
+       "dunning_sent_total"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  },
+  {
+   "id": "T8-20",
+   "tier": "hard",
+   "source": "synthetic",
+   "rationale": "Backend volume -> ci-cache and weekly -> nightly image; the Turkish line carries the per-repo limit.",
+   "topic": "Pelican CI dependency caches",
+   "snippets": [
+    {
+     "id": "m01",
+     "date": "2026-05-01",
+     "text": "Pelican CI caches dependencies keyed by the lockfile hash."
+    },
+    {
+     "id": "m02",
+     "date": "2026-05-02",
+     "text": "The cache backend is the shared 200 GB volume."
+    },
+    {
+     "id": "m03",
+     "date": "2026-05-10",
+     "text": "The cache backend moved to the object storage bucket ci-cache because the volume filled up."
+    },
+    {
+     "id": "m04",
+     "date": "2026-05-10",
+     "text": "Cache entries expire after 14 days without a hit."
+    },
+    {
+     "id": "m05",
+     "date": "2026-05-10",
+     "text": "The Docker layer cache uses registry cache mode max."
+    },
+    {
+     "id": "m06",
+     "date": "2026-05-10",
+     "text": "Cache poisoning incident: a PR from a fork wrote to the main cache."
+    },
+    {
+     "id": "m07",
+     "date": "2026-05-10",
+     "text": "Fix: fork PRs get read-only cache access."
+    },
+    {
+     "id": "m08",
+     "date": "2026-05-10",
+     "text": "The cache key prefix includes the runner image version."
+    },
+    {
+     "id": "m09",
+     "date": "2026-05-10",
+     "text": "The golden image is rebuilt every Monday."
+    },
+    {
+     "id": "m10",
+     "date": "2026-06-01",
+     "text": "The golden image is now rebuilt nightly instead of weekly."
+    },
+    {
+     "id": "m11",
+     "date": "2026-06-01",
+     "text": "Rebuilding the image invalidates all caches with the old prefix."
+    },
+    {
+     "id": "m12",
+     "date": "2026-06-01",
+     "text": "Hit rate target is 80%; the current hit rate is 71%."
+    },
+    {
+     "id": "m13",
+     "date": "2026-06-01",
+     "text": "Önbellek boyutu depo başına 10 GB ile sınırlı."
+    },
+    {
+     "id": "m14",
+     "date": "2026-06-01",
+     "text": "Evictions are LRU once the limit is reached."
+    },
+    {
+     "id": "m15",
+     "date": "2026-06-01",
+     "text": "The monorepo gets a raised limit of 25 GB."
+    },
+    {
+     "id": "m16",
+     "date": "2026-06-01",
+     "text": "Retro snacks."
+    },
+    {
+     "id": "m17",
+     "date": "2026-06-01",
+     "text": "Proposal: a remote build cache via Bazel; parked."
+    },
+    {
+     "id": "m18",
+     "date": "2026-06-01",
+     "text": "The cache-stats job reports the hit rate daily."
+    },
+    {
+     "id": "m19",
+     "date": "2026-06-01",
+     "text": "Restoring a cache takes 40 s median."
+    },
+    {
+     "id": "m20",
+     "date": "2026-06-01",
+     "text": "Reminder: fork PRs never write to caches."
+    },
+    {
+     "id": "m21",
+     "date": "2026-06-01",
+     "text": "Cache keys also include the OS name."
+    },
+    {
+     "id": "m22",
+     "date": "2026-06-01",
+     "text": "Yarn projects migrated to pnpm, so their cache keys changed."
+    }
+   ],
+   "gold": {
+    "facts": [
+     {
+      "id": "f1",
+      "keys": [
+       "lockfile"
+      ]
+     },
+     {
+      "id": "f2",
+      "keys": [
+       "ci-cache"
+      ]
+     },
+     {
+      "id": "f3",
+      "keys": [
+       "14 days"
+      ]
+     },
+     {
+      "id": "f4",
+      "keys": [
+       "mode max"
+      ]
+     },
+     {
+      "id": "f5",
+      "keys": [
+       "read-only|read only"
+      ]
+     },
+     {
+      "id": "f6",
+      "keys": [
+       "image version"
+      ]
+     },
+     {
+      "id": "f7",
+      "keys": [
+       "nightly"
+      ]
+     },
+     {
+      "id": "f8",
+      "keys": [
+       "71%"
+      ]
+     },
+     {
+      "id": "f9",
+      "keys": [
+       "10 GB"
+      ]
+     },
+     {
+      "id": "f10",
+      "keys": [
+       "LRU"
+      ]
+     },
+     {
+      "id": "f11",
+      "keys": [
+       "25 GB"
+      ]
+     },
+     {
+      "id": "f12",
+      "keys": [
+       "40 s|40s"
+      ]
+     },
+     {
+      "id": "f13",
+      "keys": [
+       "cache-stats"
+      ]
+     }
+    ],
+    "max_words": 200
+   }
+  }
+ ]
+}
