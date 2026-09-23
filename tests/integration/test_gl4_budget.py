@@ -201,6 +201,27 @@ async def test_gl4_synthetic_loop_trips_hour_window_within_a_minute(db_dsn, conn
         assert await count(conn, "jobs", "status = 'failed'") == 0
 
 
+async def test_gl4_new_id_loop_hits_lineage_ceiling(db_dsn, connect, world: World) -> None:  # noqa: ANN001
+    """Sol 35 #7: each loop iteration is a NEW job id; the lineage it inherits carries the 20-call
+    ceiling across them, so the loop stops at 20 calls even with generous money caps."""
+    await _enqueue(connect, world, "loop")
+    llm = ScriptedLLM(default=chat(CONTRADICTS_B))
+    async with _pool(db_dsn) as pool:
+        p = _provider(llm, pool.connection, Caps(BIG, BIG, BIG))
+        worker = make_worker(lib_settings(db_dsn), p, connect, handlers={"loop": _LoopHandler()})
+        for _ in range(40):
+            if await worker.run_once() == 0:
+                break
+        await p.aclose()
+    assert llm.calls == 20 and worker.breaker_state == "budget"
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT count(DISTINCT lineage), count(*) FROM llm_calls")
+        assert await cur.fetchone() == (1, 20)
+        cur = await conn.execute("SELECT count(*), min(last_error) FROM jobs WHERE status = 'failed'")
+        assert await cur.fetchone() == (1, "E_CALL_CAP")
+        assert await count(conn, "jobs", "kind = 'librarian_write' AND status = 'done'") == 20
+
+
 async def test_gl4_per_job_call_ceiling(db_dsn, connect, world: World) -> None:  # noqa: ANN001
     await _enqueue(connect, world, "chatty")
     llm = ScriptedLLM(default=chat(CONTRADICTS_B))

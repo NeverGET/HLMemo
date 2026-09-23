@@ -23,12 +23,14 @@ replay (strict cassettes) / off. The raw provider response is never stored anywh
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import hashlib
 import json
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -58,6 +60,19 @@ TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 
 _FENCE = re.compile(r"^\s*```(?:json|JSON)?\s*|\s*```\s*$", re.S)
 
 Validator = Callable[[dict[str, Any]], str | None]
+#: loop lineage of the call being made (per asyncio task; concurrent calls never share it)
+_LINEAGE: contextvars.ContextVar[str | None] = contextvars.ContextVar("hlm_llm_lineage", default=None)
+
+
+@contextlib.contextmanager
+def lineage_scope(lineage: str | None) -> Iterator[None]:
+    """Every provider call made inside (by any handler) counts against ``lineage``'s ceiling;
+    the worker wraps each job's plan in it, so a handler cannot forget to pass it."""
+    token = _LINEAGE.set(lineage)
+    try:
+        yield
+    finally:
+        _LINEAGE.reset(token)
 
 
 class Clock:
@@ -317,6 +332,23 @@ class Provider:
         job_id: int | None = None,
         validate: Validator | None = None,
         chain: list[LlmProfile] | None = None,
+        lineage: str | None = None,
+    ) -> LlmResult:
+        token = _LINEAGE.set(lineage) if lineage is not None else None
+        try:
+            return await self._complete(task, user, job_id=job_id, validate=validate, chain=chain)
+        finally:
+            if token is not None:
+                _LINEAGE.reset(token)
+
+    async def _complete(
+        self,
+        task: TaskSpec,
+        user: str,
+        *,
+        job_id: int | None,
+        validate: Validator | None,
+        chain: list[LlmProfile] | None,
     ) -> LlmResult:
         if self.mode == "off":
             raise LlmDisabled("HLM_LLM_MODE=off")
@@ -359,6 +391,7 @@ class Provider:
             mode="replay" if self.mode == "replay" else self.mode,
             outcome=outcome,
             job_id=job_id,
+            lineage=_LINEAGE.get(),
             **kw,
         )
 
@@ -414,11 +447,17 @@ class Provider:
             await self.ledger.record(att.row)
             schema_fails += 1
             if schema_fails >= 2:
-                raise SchemaFail(f"{task.name}: {err}")
+                raise SchemaFail(f"E_SCHEMA_FAIL task={task.name}")  # never the model output
 
     async def _check_job_cap(self, job_id: int | None) -> None:
-        if job_id is not None and await self.ledger.job_calls(job_id) >= self.job_call_cap:
-            raise JobCallCapExceeded(f"job {job_id} reached {self.job_call_cap} provider calls")
+        """The call ceiling applies per loop LINEAGE (a re-enqueued job inherits its parent's), so
+        a job that re-enqueues itself under new ids cannot escape it; per job id otherwise."""
+        lineage = _LINEAGE.get()
+        if lineage is not None:
+            if await self.ledger.lineage_calls(lineage) >= self.job_call_cap:
+                raise JobCallCapExceeded(f"E_CALL_CAP lineage reached {self.job_call_cap} calls")
+        elif job_id is not None and await self.ledger.job_calls(job_id) >= self.job_call_cap:
+            raise JobCallCapExceeded(f"E_CALL_CAP job reached {self.job_call_cap} calls")
 
     async def _attempt(
         self,
@@ -476,7 +515,8 @@ class Provider:
             )
             return _Attempt("transient")
         except httpx.TransportError:
-            await self.budget.settle(call_id, Decimal(0))
+            # the request may have reached the provider: billing is uncertain -> worst case
+            await self.budget.settle(call_id, None)
             await self.ledger.record(
                 self._row(
                     profile,
@@ -486,6 +526,7 @@ class Provider:
                     call_id=call_id,
                     request_sha256=request_sha,
                     reserved_usd=worst,
+                    cost_usd=worst,
                     latency_ms=_ms(t0),
                 )
             )
@@ -504,7 +545,11 @@ class Provider:
             (data.get("error") and not data.get("choices")) or choice.get("finish_reason") == "error"
         )
         if resp.status_code != 200 or data is None or provider_error:
-            await self.budget.settle(call_id, Decimal(0))
+            # Only a 4xx is a definitive no-charge answer (rejected before generation). A 5xx,
+            # an unparseable 200 or a mid-generation provider error may have been billed.
+            no_charge = 400 <= resp.status_code < 500
+            charged = Decimal(0) if no_charge else worst
+            await self.budget.settle(call_id, charged)
             await self.ledger.record(
                 self._row(
                     profile,
@@ -515,6 +560,7 @@ class Provider:
                     request_sha256=request_sha,
                     response_sha256=_sha(raw_bytes),
                     reserved_usd=worst,
+                    cost_usd=charged,
                     latency_ms=latency,
                 )
             )
@@ -531,7 +577,7 @@ class Provider:
                 schema_version=task.schema_version,
                 messages=messages,
                 params=params,
-                response=data,
+                response=self._redacted_response(data),
             )
         usage = data.get("usage") or {}
         actual = self._actual_cost(profile, usage)
@@ -543,6 +589,20 @@ class Provider:
         att.row.call_id = call_id
         att.row.cost_usd = worst if actual is None else actual
         return att
+
+    def _redacted_response(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Record mode: the assistant content passes the redactor before it is persisted."""
+        out = dict(data)
+        choices = []
+        for ch in data.get("choices") or []:
+            ch = dict(ch or {})
+            msg = dict(ch.get("message") or {})
+            if isinstance(msg.get("content"), str):
+                msg["content"] = self.redactor.text(msg["content"])
+            ch["message"] = msg
+            choices.append(ch)
+        out["choices"] = choices
+        return out
 
     def _actual_cost(self, profile: LlmProfile, usage: dict[str, Any]) -> Decimal | None:
         cost = usage.get("cost")
@@ -609,5 +669,6 @@ __all__ = [
     "Clock",
     "LlmResult",
     "Provider",
+    "lineage_scope",
     "parse_json_object",
 ]

@@ -166,7 +166,6 @@ class Settings(BaseSettings):
     # --- librarian runtime (PHASE2-4-ROADMAP W2a) ---
     librarian_enabled: bool = False  # off until R2
     librarian_role: str = Field(default="observer", pattern="^(observer|assistant|autonomous)$")
-    librarian_send_device_scoped: bool = False  # device:* items never reach an LLM
     librarian_lease_s: int = Field(default=120, gt=0)
     librarian_lease_renew_s: float = Field(default=30.0, gt=0)
     librarian_poll_s: float = Field(default=1.0, gt=0)

@@ -105,6 +105,8 @@ class ScriptedLLM:
                 entry = entry[2]
                 continue
             break
+        if entry == "connect_error":
+            raise httpx.ConnectError("scripted transport failure")
         if isinstance(entry, int):
             return httpx.Response(entry, json={"error": {"code": entry, "message": "scripted"}})
         if isinstance(entry, dict) and "choices" in entry:
@@ -226,6 +228,26 @@ async def outcomes(conn: psycopg.AsyncConnection) -> list[str]:
         " AND payload->'request'->>'audit' = 'llm/1' ORDER BY event_id"
     )
     return [r[0] for r in await cur.fetchall()]
+
+
+async def dump_full_jobs_and_questions(conn: psycopg.AsyncConnection) -> dict[str, list[str]]:
+    """The full jobs projection (Sol 35 #8) and the question rows, for replay equality.
+
+    Every job column except the surrogate ``job_id`` and the transient lease/error columns
+    (``lease_token``, ``lease_until``, ``last_error``: NULL on a finished job, never replayed).
+    ``created_at`` is compared for librarian kinds; phase-0 embed jobs are created with the
+    database clock on the live path (pre-existing, audit-only), so theirs is excluded.
+    """
+    cur = await conn.execute(
+        """
+        SELECT (kind, dedupe_key, payload::text, source_event_id, status, attempts, priority, run_after,
+                done_at, CASE WHEN kind IN ('embed', 'reembed') THEN NULL ELSE created_at END)::text
+          FROM jobs ORDER BY dedupe_key
+        """
+    )
+    jobs = [r[0] for r in await cur.fetchall()]
+    cur = await conn.execute("SELECT t::text FROM librarian_questions t ORDER BY question_id")
+    return {"jobs": jobs, "librarian_questions": [r[0] for r in await cur.fetchall()]}
 
 
 async def ledger_rows(conn: psycopg.AsyncConnection) -> list[tuple[str, str]]:

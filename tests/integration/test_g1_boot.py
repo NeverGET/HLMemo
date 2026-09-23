@@ -99,6 +99,7 @@ async def test_migration_applies_and_device1_reserved(connect) -> None:
             "embeddings",
             "events",
             "jobs",
+            "librarian_questions",
             "links",
             "llm_budget",
             "llm_calls",

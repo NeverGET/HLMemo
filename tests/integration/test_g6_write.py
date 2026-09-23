@@ -18,7 +18,7 @@ from hlmemo.core.temporal import ONE_US, parse_ts
 from hlmemo.core.write_service import call_the_day, default_deps, write
 from hlmemo.db import write_queries as q
 from hlmemo.db.replay import rebuild_projections
-from tests.integration._librarian_fixtures import add_new_kind_events
+from tests.integration._librarian_fixtures import add_new_kind_events, dump_full_jobs_and_questions
 from tests.integration._write_fixtures import (
     MAIN,
     OTHER,
@@ -640,12 +640,12 @@ async def test_rebuild_projections_from_events_identical(connect, world, deps, d
         assert NEW_EVENT_KINDS <= kinds, NEW_EVENT_KINDS - kinds
         await conn.commit()
 
-        before = await dump_projections(conn)
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
         assert len(before["memory_versions"]) >= 8 and before["links"] and before["jobs"]
         monkeypatch.setenv("HLM_LLM_MODE", "off")
         stats = await rebuild_projections(conn)
         await conn.commit()
-        after = await dump_projections(conn)
+        after = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
         assert after == before
         assert stats.events == 4 + added and stats.versions == len(before["memory_versions"])
 

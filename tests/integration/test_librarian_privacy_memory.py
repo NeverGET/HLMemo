@@ -2,8 +2,8 @@
 
 * ``projects.policy.librarian = off`` → no provider call, outcome ``policy_off``.
 * ``device:*``-scoped subjects are skipped and ``device:*`` candidates never reach a request
-  (``HLM_LIBRARIAN_SEND_DEVICE_SCOPED=false``); candidates the triggering device cannot read are
-  dropped too.
+  (hard-pinned, not configurable); candidates the triggering device cannot read are dropped too
+  (the full exclusion matrix is in ``test_librarian_privacy_gate.py``).
 * Working memory: ``librarian-rule`` facts in ``hlm-librarian`` are loaded (top-N, token-capped)
   into the prompt; the ``librarian_memory`` capability writes only that project.
 * Heartbeat fields are present (ready, in_flight, oldest_ready_age_s, failed_24h, spend_*,
@@ -115,7 +115,7 @@ async def test_device_scoped_items_never_sent(db_dsn, connect, world: World, dep
             "SELECT payload->'request'->>'dropped_candidates' FROM events"
             " WHERE payload->'resolved'->>'outcome' = 'proposed'"
         )
-        assert (await cur.fetchone())[0] == "1"
+        assert json.loads((await cur.fetchone())[0]) == {"device_scoped": 1}
 
 
 async def test_unreadable_candidate_dropped(db_dsn, connect, world: World, deps) -> None:  # noqa: ANN001

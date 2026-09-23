@@ -11,7 +11,11 @@ import pytest
 
 from hlmemo.core.write_service import default_deps
 from hlmemo.db.replay import rebuild_projections
-from tests.integration._librarian_fixtures import add_new_kind_events, seed_reserved
+from tests.integration._librarian_fixtures import (
+    add_new_kind_events,
+    dump_full_jobs_and_questions,
+    seed_reserved,
+)
 from tests.integration._write_fixtures import World, dump_projections, seed_world
 
 pytestmark = pytest.mark.integration
@@ -45,13 +49,13 @@ async def test_gl5_replay_never_calls_llm(db_dsn, connect, world: World, deps, m
 
     monkeypatch.setenv("HLM_LLM_MODE", "off")
     async with await connect() as conn:  # libpq's socket is native, not Python's: the DB still works
-        before = await dump_projections(conn)
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
         monkeypatch.setattr(socket.socket, "connect", deny)
         monkeypatch.setattr(socket, "create_connection", deny)
         monkeypatch.setattr(httpx.AsyncClient, "send", deny_send)
         stats = await rebuild_projections(conn)
         await conn.commit()
-        after = await dump_projections(conn)
+        after = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
     assert attempts == []
     assert after == before
     assert stats.links == len(before["links"]) and stats.links > 0

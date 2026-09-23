@@ -26,7 +26,7 @@ from hlmemo.core.normalize import normalize
 from hlmemo.core.temporal import parse_opt_ts, parse_ts
 from hlmemo.db import write_queries as q
 
-PROJECTION_TABLES = ("jobs", "links", "embeddings", "chunks", "memory_versions")
+PROJECTION_TABLES = ("librarian_questions", "jobs", "links", "embeddings", "chunks", "memory_versions")
 
 
 @dataclass(slots=True)
@@ -238,10 +238,17 @@ SYSTEM_EVENT_KINDS = frozenset(
 async def _replay_system(
     conn: AsyncConnection, stats: RebuildStats, event_id: int, payload: dict[str, Any]
 ) -> None:
-    """System-actor events: ``resolved.mutations`` (ids recorded), ``resolved.jobs`` (full
-    descriptors, ``run_after = created_at = T``), ``resolved.done_job`` (the job this event
-    completed). Never calls a provider: the LLM output lives only in the audit ``request``."""
-    from hlmemo.librarian.actor import apply_mutations, mark_done_by_key
+    """System-actor events: ``resolved.mutations`` (ids recorded), ``resolved.questions`` (question
+    rows) and ``resolved.question_status`` (decisions, supersession), ``resolved.jobs`` (full
+    descriptors, ``run_after = created_at = T``), ``resolved.done`` (the job this event completed,
+    with its completion time and attempts). Never calls a provider: the LLM output lives only in
+    the audit ``request``."""
+    from hlmemo.librarian.actor import (
+        apply_mutations,
+        insert_questions,
+        mark_done_by_key,
+        set_question_status,
+    )
     from hlmemo.librarian.jobs import insert_recorded_jobs
 
     res = payload.get("resolved") or {}
@@ -251,10 +258,12 @@ async def _replay_system(
     mutations = list(res.get("mutations") or [])
     stats.links += sum(1 for m in mutations if m.get("op") == "link_insert")
     await apply_mutations(conn, mutations, event_id, T)
+    await insert_questions(conn, list(res.get("questions") or []), event_id, T)
+    await set_question_status(conn, list(res.get("question_status") or []), T)
     jobs = list(res.get("jobs") or [])
     stats.jobs += await insert_recorded_jobs(conn, jobs, event_id, T)
-    if res.get("done_job"):
-        await mark_done_by_key(conn, str(res["done_job"]), T)
+    if res.get("done"):
+        await mark_done_by_key(conn, res["done"], T)
 
 
 def _chunk_rows(
