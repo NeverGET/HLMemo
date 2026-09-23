@@ -1,0 +1,315 @@
+{
+ "gate": "G-I4",
+ "commit": "82200ae",
+ "questions": 34,
+ "files": 34,
+ "alt_spans": 8,
+ "evidence_recall_at_5": 0.794,
+ "drill_recall_at_5": 0.853,
+ "item_recall_at_5": 0.853,
+ "threshold": 0.9,
+ "pass": false,
+ "import": {
+  "counts": {
+   "new": 277,
+   "changed": 0,
+   "unchanged": 0,
+   "skipped": 0,
+   "rejected": 0,
+   "missing": 0
+  },
+  "written": 277,
+  "chunks_embedded": 817
+ },
+ "misses": [
+  {
+   "id": "q07",
+   "file": "docs/consults/05-codex-go.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q12",
+   "file": "docs/consults/25-codex-oom.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q19",
+   "file": "docs/decisions/VALIDATION-GATES.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q25",
+   "file": "docs/consults/13-codex-d035.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q26",
+   "file": "docs/consults/01-codex-architecture-critique.md",
+   "rank": null,
+   "drill_rank": 2,
+   "item_rank": 2
+  },
+  {
+   "id": "q30",
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q33",
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "rank": null,
+   "drill_rank": 1,
+   "item_rank": 1
+  }
+ ],
+ "results": [
+  {
+   "id": "q01",
+   "file": "docs/research/01-librarian-model-analysis.md",
+   "rank": 3,
+   "drill_rank": 3,
+   "item_rank": 3
+  },
+  {
+   "id": "q02",
+   "file": "docs/research/02-vps-analysis.md",
+   "rank": 5,
+   "drill_rank": 5,
+   "item_rank": 5
+  },
+  {
+   "id": "q03",
+   "file": "docs/research/05-embedding-models-2026-09.md",
+   "rank": 3,
+   "drill_rank": 3,
+   "item_rank": 3
+  },
+  {
+   "id": "q04",
+   "file": "docs/research/04-vps-turkey-analysis.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q05",
+   "file": "docs/research/06-vps-small-tier-2026-09.md",
+   "rank": 5,
+   "drill_rank": 5,
+   "item_rank": 5
+  },
+  {
+   "id": "q06",
+   "file": "docs/status/BACKLOG.md",
+   "rank": 3,
+   "drill_rank": 3,
+   "item_rank": 3
+  },
+  {
+   "id": "q07",
+   "file": "docs/consults/05-codex-go.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q08",
+   "file": "docs/consults/06-codex-go2.md",
+   "rank": 3,
+   "drill_rank": 3,
+   "item_rank": 3
+  },
+  {
+   "id": "q09",
+   "file": "docs/consults/19-codex-f15.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q10",
+   "file": "docs/consults/22-codex-final-src.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q11",
+   "file": "docs/consults/24-codex-body.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q12",
+   "file": "docs/consults/25-codex-oom.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q13",
+   "file": "docs/consults/27-codex-auth-gate.md",
+   "rank": 3,
+   "drill_rank": 3,
+   "item_rank": 3
+  },
+  {
+   "id": "q14",
+   "file": "docs/bakeoff/PROTOCOL.md",
+   "rank": 5,
+   "drill_rank": 5,
+   "item_rank": 5
+  },
+  {
+   "id": "q15",
+   "file": "docs/bakeoff/SCOREBOARD.md",
+   "rank": 3,
+   "drill_rank": 3,
+   "item_rank": 3
+  },
+  {
+   "id": "q16",
+   "file": "docs/bakeoff/r1/RESULT.md",
+   "rank": 2,
+   "drill_rank": 2,
+   "item_rank": 2
+  },
+  {
+   "id": "q17",
+   "file": "docs/bakeoff/r2/RESULT.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q18",
+   "file": "docs/bakeoff/r3/RESULT.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q19",
+   "file": "docs/decisions/VALIDATION-GATES.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q20",
+   "file": "docs/status/STATUS.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q21",
+   "file": "docs/consults/31-opus-position-roadmap.md",
+   "rank": 2,
+   "drill_rank": 2,
+   "item_rank": 2
+  },
+  {
+   "id": "q22",
+   "file": "docs/USAGE.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q23",
+   "file": "docs/consults/00-claude-position.md",
+   "rank": 2,
+   "drill_rank": 2,
+   "item_rank": 2
+  },
+  {
+   "id": "q24",
+   "file": "docs/consults/33-sol-review-d055.md",
+   "rank": 3,
+   "drill_rank": 3,
+   "item_rank": 3
+  },
+  {
+   "id": "q25",
+   "file": "docs/consults/13-codex-d035.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q26",
+   "file": "docs/consults/01-codex-architecture-critique.md",
+   "rank": null,
+   "drill_rank": 2,
+   "item_rank": 2
+  },
+  {
+   "id": "q27",
+   "file": "docs/decisions/PHASE0-CONFLICTS.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q28",
+   "file": "docs/decisions/DECISIONS.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q29",
+   "file": "docs/research/00-deep-research-report.md",
+   "rank": 4,
+   "drill_rank": 4,
+   "item_rank": 4
+  },
+  {
+   "id": "q30",
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "rank": null,
+   "drill_rank": null,
+   "item_rank": null
+  },
+  {
+   "id": "q31",
+   "file": "docs/research/03-legacy-memory-inventory-public.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q32",
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "rank": 1,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q33",
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "rank": null,
+   "drill_rank": 1,
+   "item_rank": 1
+  },
+  {
+   "id": "q34",
+   "file": "docs/consults/32-sol-review-roadmap.md",
+   "rank": 3,
+   "drill_rank": 3,
+   "item_rank": 3
+  }
+ ]
+}
