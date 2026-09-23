@@ -95,6 +95,8 @@ def _device_line(d: dict[str, Any]) -> str:
 
 async def run(args: argparse.Namespace) -> int:
     settings = get_settings()
+    if args.group == "status":
+        return await _status(args, settings)
     async with await AsyncConnection.connect(settings.db_dsn, autocommit=False, connect_timeout=10) as conn:
         await conn.execute("SET TIME ZONE 'UTC'")
         for name, value in (
@@ -165,25 +167,45 @@ async def _dispatch(conn: AsyncConnection, args: argparse.Namespace, settings: A
             for p in rows:
                 sys.stdout.write(f"{p['id']:>4}  {p['slug']:<28} {p['name']}\n")
         return 0
-    if group == "status":
-        st = await service.status(conn)
-        if args.json:
-            _print(st)
-        else:
-            w = st["worker"]
-            rd = st["ready"]
-            failing = sorted(k for k, v in (rd.get("checks") or {}).items() if not v.get("ok"))
-            sys.stdout.write(f"ready       {rd.get('status')} failing={','.join(failing) or '-'}\n")
-            sys.stdout.write(f"migration   {','.join(st['migration'])}\n")
-            sys.stdout.write(f"devices     {st['devices']}\n")
-            sys.stdout.write(
-                f"worker      ready={w['ready_jobs']} oldest_ready_age_s={w['oldest_ready_age_s']} "
-                f"last_done_at={w['last_done_at']} expired_leases={w['expired_leases']}\n"
-            )
-            for j in st["jobs"]:
-                sys.stdout.write(f"jobs        {j['kind']:<14} {j['status']:<8} {j['count']}\n")
-        return 0
     raise HlmError("E_INVALID_ARG", f"unknown command {group} {action}")
+
+
+async def _status(args: argparse.Namespace, settings: Any) -> int:
+    """Sol 36 M2: the loopback /ready diagnostics come FIRST and are printed even when the
+    database is down; the DB ledger is best-effort (exit 69 when it is unavailable)."""
+    st: dict[str, Any] = {"ready": service.loopback_readiness()}
+    rc = 0
+    try:
+        async with await AsyncConnection.connect(settings.db_dsn, autocommit=True, connect_timeout=5) as conn:
+            await conn.execute("SELECT set_config('statement_timeout', '5000ms', false)")
+            st.update(await service.status(conn))
+        st["db"] = {"ok": True}
+    except (DatabaseError, OSError) as exc:
+        st["db"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc).strip()[:200]}"}
+        rc = EX_UNAVAILABLE
+    if args.json:
+        _print(st)
+        return rc
+    rd = st["ready"]
+    failing = sorted(k for k, v in (rd.get("checks") or {}).items() if not v.get("ok"))
+    sys.stdout.write(f"ready       {rd.get('status')} failing={','.join(failing) or '-'}\n")
+    for name, check in sorted((rd.get("checks") or {}).items()):
+        if not check.get("ok"):
+            detail = check.get("error") or check.get("reasons") or check
+            sys.stdout.write(f"  check     {name}: {detail}\n")
+    if not st["db"]["ok"]:
+        sys.stdout.write(f"db          UNAVAILABLE {st['db']['error']}\n")
+        return rc
+    w = st["worker"]
+    sys.stdout.write(f"migration   {','.join(st['migration'])}\n")
+    sys.stdout.write(f"devices     {st['devices']}\n")
+    sys.stdout.write(
+        f"worker      ready={w['ready_jobs']} oldest_ready_age_s={w['oldest_ready_age_s']} "
+        f"last_done_at={w['last_done_at']} expired_leases={w['expired_leases']}\n"
+    )
+    for j in st["jobs"]:
+        sys.stdout.write(f"jobs        {j['kind']:<14} {j['status']:<8} {j['count']}\n")
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:

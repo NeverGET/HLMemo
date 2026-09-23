@@ -222,3 +222,55 @@ def test_revoke_other_device_on_closed_admin_http_hints_ops(api: FakeApi) -> Non
     assert "hlm_ops.sh device revoke 7" in res.output
     res = runner().invoke(app, ["device", "revoke", "7", "--self"])
     assert res.exit_code == EX_USAGE
+
+
+# --------------------------------------------------------------------------- ops status (Sol 36 M2)
+
+
+@pytest.fixture
+def loopback_ready(monkeypatch: pytest.MonkeyPatch):
+    """A stand-in API loopback listener answering /ready 503 with diagnostics; no database."""
+    import http.server
+    import threading
+
+    body = json.dumps(
+        {
+            "status": "not_ready",
+            "checks": {
+                "db": {"ok": False, "error": "OperationalError: connection refused"},
+                "models": {"ok": True},
+            },
+        }
+    ).encode()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(503 if self.path == "/ready" else 404)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv("HLM_API_PORT", str(server.server_address[1]))
+    monkeypatch.setenv("HLM_DB_DSN", "postgresql://hlm:hlm@127.0.0.1:1/unreachable")  # nothing listens
+    yield
+    server.shutdown()
+
+
+def test_ops_status_shows_ready_diagnostics_with_the_database_down(loopback_ready, capsys) -> None:
+    from hlmemo.ops.cli import EX_UNAVAILABLE, main
+
+    assert main(["status", "--json"]) == EX_UNAVAILABLE
+    out = json.loads(capsys.readouterr().out)
+    assert out["ready"]["checks"]["db"]["error"] == "OperationalError: connection refused"
+    assert out["db"]["ok"] is False and "jobs" not in out
+    assert main(["status"]) == EX_UNAVAILABLE
+    text = capsys.readouterr().out
+    assert "ready       not_ready failing=db" in text
+    assert "check     db: OperationalError: connection refused" in text
+    assert "db          UNAVAILABLE" in text
