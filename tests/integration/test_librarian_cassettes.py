@@ -28,6 +28,7 @@ from hlmemo.librarian.provider import Provider
 from hlmemo.librarian.redact import Redactor
 from tests.integration._librarian_fixtures import (
     conn_ctx,
+    dump_full_jobs_and_questions,
     enqueue_pair,
     lib_settings,
     make_worker,
@@ -121,20 +122,36 @@ async def _run(db_dsn, connect, world: World) -> list[dict]:  # noqa: ANN001
 
 async def test_pair_check_replays_recorded_model_output(db_dsn, connect, world: World) -> None:  # noqa: ANN001
     (payload,) = await _run(db_dsn, connect, world)
-    call = payload["request"]["calls"][0]
+    call = payload["request"]  # one provider call: the CC-5 llm/1 fields are flat
+    for key in (
+        "task",
+        "job_id",
+        "capabilities",
+        "profile",
+        "model_id",
+        "prompt_version",
+        "schema_version",
+        "redaction_version",
+        "input_digest",
+        "output",
+    ):
+        assert key in call, key
     assert call["model_id"] == "deepseek/deepseek-v4.1-flash" and call["prompt_version"] == "v1"
     assert call["output"]["contradicts"] is True and call["output"]["supersedes"] == "B"
     resolved = payload["resolved"]
     assert resolved["outcome"] == "proposed" and resolved["mutations"] == []
-    assert {p["mutation"]["rel"] for p in resolved["proposals"]} == {"contradicts", "supersedes"}
+    assert {qn["proposal"]["mutation"]["rel"] for qn in resolved["questions"]} == {
+        "contradicts",
+        "supersedes",
+    }
     async with await connect() as conn:
         assert await count(conn, "links") == 0
         cur = await conn.execute("SELECT mode, outcome FROM llm_calls")
         assert await cur.fetchall() == [(_mode(), "ok")]
-        before = await dump_projections(conn)
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
         await rebuild_projections(conn)
         await conn.commit()
-        assert await dump_projections(conn) == before
+        assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
 
 
 async def test_pair_check_replay_is_deterministic(db_dsn, connect, world: World) -> None:  # noqa: ANN001
@@ -149,7 +166,8 @@ async def test_pair_check_replay_is_deterministic(db_dsn, connect, world: World)
         w2 = await seed_world(conn)
         await seed_reserved(conn)
     (second,) = await _run(db_dsn, connect, w2)
-    assert first["request"]["calls"] == second["request"]["calls"]
+    assert first["request"]["output"] == second["request"]["output"]
+    assert first["request"]["input_digest"] == second["request"]["input_digest"]
 
 
 def test_live_runner_replays_all_recorded_fixtures() -> None:

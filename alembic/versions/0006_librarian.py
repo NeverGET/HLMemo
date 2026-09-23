@@ -13,6 +13,7 @@ Adds, never rewrites (CC-1):
     ``token_sha256 = 'reserved:librarian'``: no bearer can ever hash to it, CC-3; not admin);
   * ``llm_calls`` (ledger, no content), ``llm_budget`` (hour/day/month windows) and
     ``llm_reservations`` (atomic worst-case reservations, swept as spent after ``expires_at``);
+  * ``librarian_questions`` (CC-3 ``question(P)``: proposals as rows, a projection of events);
   * the reserved projects ``hlm-librarian`` (librarian working memory) and ``hlm-global``
     (cross-project experience). Neither gets any grant here: ``hlm-global`` grants are issued
     explicitly by ops (D-058); the librarian writes ``hlm-librarian`` through its capability only.
@@ -46,14 +47,6 @@ ALTER TABLE events ADD CONSTRAINT events_kind_check CHECK (kind IN (
   'device_registered','device_approved','device_revoked','grant_added','grant_revoked',
   'librarian','question','answer','import','ingest','consolidation','pack_import','device_minted'));
 
--- Small partial indexes for the librarian's event lookups (role decisions, proposal batches).
-CREATE INDEX events_librarian_role ON events (project_id, event_id)
-  WHERE kind = 'librarian' AND (payload->'request'->>'op') = 'set_role';
-CREATE INDEX events_librarian_batch ON events ((payload->'resolved'->>'batch_id'))
-  WHERE kind = 'librarian';
-CREATE INDEX events_answer_batch ON events ((payload->'request'->>'batch_id'))
-  WHERE kind = 'answer';
-
 ALTER TABLE devices ADD COLUMN is_system boolean NOT NULL DEFAULT false;
 INSERT INTO devices (user_id, name, class, fingerprint, os, status, is_admin, is_system,
                      token_sha256, notes, approved_at, approved_by_device_id)
@@ -67,9 +60,33 @@ INSERT INTO projects (slug, name, policy) VALUES
   ('hlm-global', 'Global experience (reserved)', '{"reserved": true, "librarian": "off"}')
 ON CONFLICT (slug) DO NOTHING;
 
+-- CC-3 question(P): librarian proposals as rows (a projection of `librarian`/`answer` events;
+-- replay rebuilds it). `proposal` is redacted JSON; decisions come from `answer` events.
+CREATE TABLE librarian_questions (
+  question_id         uuid PRIMARY KEY,
+  job_id              bigint NOT NULL,        -- the proposing job (historical id; no FK, jobs is a projection)
+  batch_id            uuid NOT NULL,
+  project_id          bigint NOT NULL REFERENCES projects,
+  project_ids         bigint[] NOT NULL,      -- every project the proposal touches
+  kind                text NOT NULL CHECK (kind IN ('contradiction','widen_scope','merge','promote',
+                                                    'card_refresh','quarantine','pack_accept','link')),
+  subject_clues       text[] NOT NULL,
+  subject_version_ids bigint[] NOT NULL,      -- the versions the model assessed (stale check at apply)
+  proposal            jsonb NOT NULL,
+  status              text NOT NULL DEFAULT 'open'
+                      CHECK (status IN ('open','approved','rejected','superseded')),
+  created_at          timestamptz NOT NULL,
+  decided_at          timestamptz,
+  decided_by          bigint REFERENCES devices,
+  source_event_id     bigint NOT NULL REFERENCES events
+);
+CREATE INDEX librarian_questions_batch ON librarian_questions (batch_id, status);
+CREATE INDEX librarian_questions_open ON librarian_questions (project_id, created_at) WHERE status = 'open';
+
 CREATE TABLE llm_calls (
   call_id             uuid PRIMARY KEY,
   job_id              bigint,                 -- no FK: jobs is a projection truncated by replay
+  lineage             uuid,                   -- loop lineage: re-enqueued jobs inherit it (call ceiling)
   task                text NOT NULL,
   profile             text NOT NULL,
   model_id            text NOT NULL,
@@ -89,6 +106,7 @@ CREATE TABLE llm_calls (
   created_at          timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX llm_calls_job ON llm_calls (job_id) WHERE job_id IS NOT NULL;
+CREATE INDEX llm_calls_lineage ON llm_calls (lineage) WHERE lineage IS NOT NULL;
 CREATE INDEX llm_calls_created ON llm_calls (created_at);
 
 CREATE TABLE llm_budget (
@@ -114,6 +132,7 @@ CREATE INDEX llm_reservations_expiry ON llm_reservations (expires_at);
 """
 
 DOWNGRADE = r"""
+DROP TABLE IF EXISTS librarian_questions;
 DROP TABLE IF EXISTS llm_reservations;
 DROP TABLE IF EXISTS llm_budget;
 DROP TABLE IF EXISTS llm_calls;
@@ -124,9 +143,6 @@ DELETE FROM projects p WHERE p.slug IN ('hlm-librarian', 'hlm-global')
 DELETE FROM devices d WHERE d.is_system AND d.name = 'librarian'
   AND NOT EXISTS (SELECT 1 FROM events e WHERE e.device_id = d.device_id);
 ALTER TABLE devices DROP COLUMN is_system;
-DROP INDEX IF EXISTS events_answer_batch;
-DROP INDEX IF EXISTS events_librarian_batch;
-DROP INDEX IF EXISTS events_librarian_role;
 ALTER TABLE events DROP CONSTRAINT events_kind_check;
 ALTER TABLE events ADD CONSTRAINT events_kind_check CHECK (kind IN (
   'write','call_the_day','access','archive','restore','project_created',
@@ -138,11 +154,31 @@ ALTER TABLE jobs ADD CONSTRAINT jobs_kind_check CHECK (kind IN ('embed','reembed
 """
 
 
+# The role-decision lookup runs per librarian job. Measured on a 100k-event clone (2026-09-23):
+# 17 ms parallel seq scan per project lookup without it (linear in events), 0.01 ms with it;
+# the build took 19 ms. Built CONCURRENTLY (no write lock on events), like 0004's reindex.
+ROLE_INDEX = (
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS events_librarian_role ON events (project_id, event_id)"
+    " WHERE kind = 'librarian' AND (payload->'request'->>'op') = 'set_role'"
+)
+LEFTOVER = """
+SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE c.relname = 'events_librarian_role' AND NOT i.indisvalid
+"""
+
+
 def upgrade() -> None:
     op.get_bind().exec_driver_sql(UPGRADE)
+    with op.get_context().autocommit_block():
+        bind = op.get_bind()
+        if bind.exec_driver_sql(LEFTOVER).fetchall():  # an interrupted concurrent build
+            bind.exec_driver_sql("DROP INDEX CONCURRENTLY IF EXISTS events_librarian_role")
+        bind.exec_driver_sql(ROLE_INDEX)
 
 
 def downgrade() -> None:
     # Refuses (CHECK violation) if librarian-era job/event kinds exist: a downgrade never drops
     # authoritative events. Reserved rows are removed only while nothing references them.
+    with op.get_context().autocommit_block():
+        op.get_bind().exec_driver_sql("DROP INDEX CONCURRENTLY IF EXISTS events_librarian_role")
     op.get_bind().exec_driver_sql(DOWNGRADE)

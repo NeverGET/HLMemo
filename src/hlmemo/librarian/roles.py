@@ -20,6 +20,7 @@ from hlmemo.auth.context import AuthContext, Role
 from hlmemo.core.errors import ToolError
 from hlmemo.core.temporal import fmt_ts
 from hlmemo.db import write_queries as q
+from hlmemo.librarian.actor import set_question_status
 from hlmemo.librarian.errors import RoleNotAuthorized
 from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event
 from hlmemo.librarian.jobs import insert_recorded_jobs, job_spec
@@ -105,40 +106,20 @@ async def effective_role(conn: AsyncConnection, configured: str, project_id: int
 
 
 # --------------------------------------------------------------------------- batch approval
-async def batch_proposals(conn: AsyncConnection, batch_id: str) -> tuple[int | None, list[dict[str, Any]]]:
-    """``(project_id, proposals)`` recorded by the librarian events of ``batch_id``."""
+async def batch_questions(
+    conn: AsyncConnection, batch_id: str, status: str | None = None
+) -> list[dict[str, Any]]:
+    """The question rows of ``batch_id`` (optionally only one status), locked for update."""
     cur = await conn.execute(
         """
-        SELECT project_id, payload->'resolved'->'proposals' FROM events
-         WHERE kind = 'librarian' AND payload->'resolved'->>'batch_id' = %s
-         ORDER BY event_id
+        SELECT question_id::text, project_id, project_ids, status, proposal FROM librarian_questions
+         WHERE batch_id = %s AND (%s::text IS NULL OR status = %s)
+         ORDER BY question_id FOR UPDATE
         """,
-        (batch_id,),
+        (batch_id, status, status),
     )
-    project_id: int | None = None
-    proposals: list[dict[str, Any]] = []
-    for pid, props in await cur.fetchall():
-        project_id = pid
-        proposals.extend(props or [])
-    return project_id, proposals
-
-
-async def batch_decisions(conn: AsyncConnection, batch_id: str) -> dict[str, str]:
-    """``question_id -> decision`` from the ``answer`` events of the batch (latest wins)."""
-    cur = await conn.execute(
-        """
-        SELECT payload->'request'->>'question_id', payload->'request'->>'decision' FROM events
-         WHERE kind = 'answer' AND payload->'request'->>'batch_id' = %s
-         ORDER BY event_id
-        """,
-        (batch_id,),
-    )
-    return {qid: d for qid, d in await cur.fetchall()}
-
-
-def _mutation_projects(p: dict[str, Any]) -> set[int]:
-    m = p.get("mutation") or {}
-    return {int(x) for x in m.get("project_ids", [])} | {int(x) for x in m.get("dst_project_ids", [])}
+    keys = ("question_id", "project_id", "project_ids", "status", "proposal")
+    return [dict(zip(keys, r, strict=True)) for r in await cur.fetchall()]
 
 
 async def record_batch_decision(
@@ -149,37 +130,36 @@ async def record_batch_decision(
     decision: str,
     except_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Owner approval of a proposal batch: one ``answer`` event per proposal (CC-3 authorization).
+    """Owner decision on the OPEN questions of a batch: one ``answer`` event per question (CC-3).
 
-    ``accept`` approves every proposal except ``except_ids`` (which are rejected); ``reject``
-    rejects all. The approver must hold ``write`` on every project any proposal touches, else
-    ``E_FORBIDDEN_PROJECT``; an unknown batch is ``E_NOT_FOUND``. When anything is accepted, the
-    last answer event enqueues the batch's ``apply_batch`` job (recorded in its ``resolved.jobs``).
-    Rejections become ``librarian-rule`` facts in a separate step (``memory.write_rule``).
+    ``accept`` approves every open question except ``except_ids`` (which are rejected); ``reject``
+    rejects all. The approver must hold ``write`` on every project any question touches, else
+    ``E_FORBIDDEN_PROJECT``; a batch without open questions is ``E_NOT_FOUND``. Each answer event
+    records ``resolved.question_status`` (the row update, replayed as-is); when anything is
+    approved, the last one enqueues the batch's ``apply_batch`` job (``resolved.jobs``).
     """
     if decision not in ("accept", "reject"):
         raise ToolError("E_INVALID_ARG", "decision must be accept or reject")
-    project_id, proposals = await batch_proposals(conn, batch_id)
-    if project_id is None or not proposals:
+    rows = await batch_questions(conn, batch_id, "open")
+    if not rows:
         raise ToolError("E_NOT_FOUND", "batch not found")
-    touched = set().union(*(_mutation_projects(p) for p in proposals)) | {project_id}
+    project_id = int(rows[0]["project_id"])
+    touched = {int(x) for r in rows for x in r["project_ids"]} | {project_id}
     if not all(approver.has(pid, Role.WRITE) for pid in touched):
         raise ToolError("E_FORBIDDEN_PROJECT", "approval needs write on every project the batch touches")
     excepted = set(except_ids or [])
-    unknown = excepted - {p["proposal_id"] for p in proposals}
+    unknown = excepted - {r["question_id"] for r in rows}
     if unknown:
-        raise ToolError("E_INVALID_ARG", f"unknown proposal ids {sorted(unknown)}")
+        raise ToolError("E_INVALID_ARG", f"unknown question ids {sorted(unknown)}")
     at = await q.clock_now(conn)
     decided: dict[str, str] = {}
-    accepted = 0
-    for i, p in enumerate(proposals):
-        d = "reject" if decision == "reject" or p["proposal_id"] in excepted else "accept"
-        decided[p["proposal_id"]] = d
-        accepted += d == "accept"
-        last = i == len(proposals) - 1
+    approved = 0
+    for i, r in enumerate(rows):
+        status = "rejected" if decision == "reject" or r["question_id"] in excepted else "approved"
+        decided[r["question_id"]] = status
+        approved += status == "approved"
         jobs = []
-        if last and accepted:
-            first = proposals[0]
+        if i == len(rows) - 1 and approved:
             jobs = [
                 job_spec(
                     kind="librarian_write",
@@ -189,41 +169,44 @@ async def record_batch_decision(
                         "op": "apply_batch",
                         "batch_id": batch_id,
                         "project_id": project_id,
-                        "capabilities": first.get("capabilities") or {},
+                        "capabilities": rows[0]["proposal"].get("capabilities") or {},
+                        "lineage": str(uuid.uuid5(NS_LIBRARIAN, f"lineage:librarian_apply:{batch_id}")),
                     },
                 )
             ]
-        request = {
-            "op": "batch_decision",
-            "batch_id": batch_id,
-            "question_id": p["proposal_id"],
-            "decision": d,
-        }
+        change = {"question_id": r["question_id"], "status": status, "decided_by": approver.device_id}
         event_id = await insert_system_event(
             conn,
             kind="answer",
             project_id=project_id,
             device_id=approver.device_id,
             client=approver.client,
-            request_id=uuid.uuid5(NS_LIBRARIAN, f"answer:{p['proposal_id']}:{approver.device_id}:{d}"),
-            request=request,
-            resolved={"recorded_at": fmt_ts(at), "jobs": jobs},
+            request_id=uuid.uuid5(NS_LIBRARIAN, f"answer:{r['question_id']}:{approver.device_id}:{status}"),
+            request={
+                "op": "batch_decision",
+                "batch_id": batch_id,
+                "question_id": r["question_id"],
+                "decision": status,
+            },
+            resolved={"recorded_at": fmt_ts(at), "question_status": [change], "jobs": jobs},
             at=at,
         )
-        if event_id is not None and jobs:
+        if event_id is None:
+            continue
+        await set_question_status(conn, [change], at)
+        if jobs:
             await insert_recorded_jobs(conn, jobs, event_id, at)
     return {
         "batch_id": batch_id,
-        "accepted": accepted,
-        "rejected": len(proposals) - accepted,
+        "accepted": approved,
+        "rejected": len(rows) - approved,
         "decisions": decided,
     }
 
 
 __all__ = [
     "ROLES",
-    "batch_decisions",
-    "batch_proposals",
+    "batch_questions",
     "check_role_at_start",
     "effective_role",
     "latest_role_decision",

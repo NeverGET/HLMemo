@@ -101,12 +101,15 @@ async def test_gl8_observer_500_jobs_zero_mutations(db_dsn, connect, world: Worl
         assert await _snapshot(conn) == before  # 0 mutations of user items or links
         assert await outcomes(conn) == ["proposed"] * 500
         cur = await conn.execute(
-            "SELECT count(*), sum(jsonb_array_length(payload->'resolved'->'proposals')),"
+            "SELECT count(*), sum(jsonb_array_length(payload->'resolved'->'questions')),"
             " sum(jsonb_array_length(payload->'resolved'->'mutations')), min(schema_version)"
             " FROM events WHERE kind = 'librarian' AND payload->'request'->>'audit' = 'llm/1'"
         )
-        n, proposals, mutations, schema_version = await cur.fetchone()
-        assert (n, proposals, mutations, schema_version) == (500, 1000, 0, 2)
+        n, questions, mutations, schema_version = await cur.fetchone()
+        assert (n, questions, mutations, schema_version) == (500, 1000, 0, 2)
+        # CC-3 question(P): the proposals are rows, all open
+        cur = await conn.execute("SELECT status, kind, count(*) FROM librarian_questions GROUP BY 1, 2")
+        assert await cur.fetchall() == [("open", "contradiction", 1000)]
         assert await count(conn, "jobs", "kind = 'librarian_write' AND status <> 'done'") == 0
     await provider.aclose()
 
@@ -129,10 +132,11 @@ async def _proposals_job(db_dsn, connect, world, deps, role: str):  # noqa: ANN0
     assert await worker.drain() == 1
     async with await connect() as conn:
         cur = await conn.execute(
-            "SELECT payload->'resolved'->>'batch_id', payload->'resolved'->'proposals' FROM events"
-            " WHERE kind = 'librarian' AND payload->'resolved'->>'outcome' = 'proposed'"
+            "SELECT batch_id::text, question_id::text, proposal FROM librarian_questions ORDER BY question_id"
         )
-        batch_id, proposals = await cur.fetchone()
+        rows = await cur.fetchall()
+    batch_id = rows[0][0]
+    proposals = [{"question_id": qid, **proposal} for _, qid, proposal in rows]
     return worker, provider, batch_id, proposals
 
 
@@ -149,7 +153,7 @@ async def test_gl8_assistant_applies_only_approved_batches(db_dsn, connect, worl
             await record_batch_decision(conn, batch_id=batch_id, approver=world.ctx_b, decision="accept")
         await conn.rollback()
         assert ei.value.code == "E_FORBIDDEN_PROJECT"
-        rejected = next(p["proposal_id"] for p in proposals if p["mutation"]["rel"] == "supersedes")
+        rejected = next(p["question_id"] for p in proposals if p["mutation"]["rel"] == "supersedes")
         summary = await record_batch_decision(
             conn, batch_id=batch_id, approver=world.ctx_a, decision="accept", except_ids=[rejected]
         )
@@ -161,6 +165,8 @@ async def test_gl8_assistant_applies_only_approved_batches(db_dsn, connect, worl
         cur = await conn.execute("SELECT rel, props->>'by' FROM links ORDER BY link_id")
         assert await cur.fetchall() == [("contradicts", "librarian")]
         assert (await outcomes(conn))[-1] == "applied"
+        cur = await conn.execute("SELECT status, decided_by FROM librarian_questions ORDER BY status")
+        assert await cur.fetchall() == [("approved", world.dev_a), ("rejected", world.dev_a)]
     await provider.aclose()
 
 

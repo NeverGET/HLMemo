@@ -59,7 +59,7 @@ async def _applied_events(connect) -> int:  # noqa: ANN001
         return await count(
             conn,
             "events",
-            "kind = 'librarian' AND payload->'resolved'->>'done_job' = %s",
+            "kind = 'librarian' AND payload->'resolved'->'done'->>'dedupe_key' = %s",
             ("librarian_write:slow:1",),
         )
 

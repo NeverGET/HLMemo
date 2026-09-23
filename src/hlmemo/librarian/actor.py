@@ -24,6 +24,7 @@ from typing import Any
 
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.auth.resolve import context_from_row, lock_device_access
@@ -141,6 +142,7 @@ async def materialize_links(
                 "props": m.get("props") or {},
                 "valid_from": m["valid_from"],
                 "valid_to": m.get("valid_to"),
+                "assessed": m.get("assessed") or {},
             }
         )
     ids = await q.allocate_ids(conn, "links", len(out))
@@ -182,13 +184,73 @@ async def apply_mutations(
     return n
 
 
-async def mark_done_by_key(conn: AsyncConnection, dedupe_key: str, at: datetime) -> None:
-    """Replay: the job whose effect an event records is done."""
+async def mark_done_by_key(conn: AsyncConnection, done: dict[str, Any], at: datetime) -> None:
+    """Replay: the job whose effect an event records is done, at the recorded completion time and
+    attempt count (``resolved.done``), so the jobs projection rebuilds identically."""
     await conn.execute(
-        "UPDATE jobs SET status = 'done', done_at = %s, lease_token = NULL, lease_until = NULL"
-        " WHERE dedupe_key = %s",
-        (at, dedupe_key),
+        "UPDATE jobs SET status = 'done', done_at = %s, attempts = %s, lease_token = NULL,"
+        " lease_until = NULL, last_error = NULL WHERE dedupe_key = %s",
+        (
+            parse_ts(done.get("done_at") or fmt_ts(at), field="done_at"),
+            int(done.get("attempts", 0)),
+            done["dedupe_key"],
+        ),
     )
+
+
+# --------------------------------------------------------------------------- stale proposals (Sol #5)
+async def is_stale(conn: AsyncConnection, mutation: dict[str, Any]) -> bool:
+    """Lock every assessed logical item (the write path's per-item lock, sorted) and compare its
+    head with the version the model assessed. A revision since then makes the mutation stale."""
+    assessed = {int(k): int(v) for k, v in (mutation.get("assessed") or {}).items()}
+    if not assessed:
+        return False
+    await q.lock_logical_ids(conn, list(assessed))
+    for lid, vid in assessed.items():
+        ep = await head_endpoint(conn, lid)
+        if ep is None or ep.version_id != vid:
+            return True
+    return False
+
+
+# --------------------------------------------------------------------------- question rows (CC-3)
+async def insert_questions(
+    conn: AsyncConnection, rows: list[dict[str, Any]], event_id: int, at: datetime
+) -> None:
+    """Insert recorded question rows (live path after the event row, and replay)."""
+    for r in rows:
+        await conn.execute(
+            """
+            INSERT INTO librarian_questions (question_id, job_id, batch_id, project_id, project_ids, kind,
+                                             subject_clues, subject_version_ids, proposal, status,
+                                             created_at, source_event_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                r["question_id"],
+                int(r["job_id"]),
+                r["batch_id"],
+                int(r["project_id"]),
+                [int(x) for x in r["project_ids"]],
+                r["kind"],
+                list(r["subject_clues"]),
+                [int(x) for x in r["subject_version_ids"]],
+                Jsonb(r["proposal"]),
+                r.get("status", "open"),
+                at,
+                event_id,
+            ),
+        )
+
+
+async def set_question_status(conn: AsyncConnection, changes: list[dict[str, Any]], at: datetime) -> None:
+    """Apply recorded status changes ``{question_id, status, decided_by?}`` (live and replay)."""
+    for c in changes:
+        await conn.execute(
+            "UPDATE librarian_questions SET status = %s, decided_at = %s,"
+            " decided_by = COALESCE(%s, decided_by) WHERE question_id = %s",
+            (c["status"], at, c.get("decided_by"), c["question_id"]),
+        )
 
 
 def ts(dt: datetime) -> str:
@@ -203,6 +265,9 @@ __all__ = [
     "allowed",
     "apply_mutations",
     "check_link",
+    "insert_questions",
+    "is_stale",
+    "set_question_status",
     "head_endpoint",
     "link_exists",
     "mark_done_by_key",

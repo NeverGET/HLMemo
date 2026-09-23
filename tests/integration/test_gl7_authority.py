@@ -16,6 +16,7 @@ from hlmemo.librarian.roles import record_role_decision
 from tests.integration._librarian_fixtures import (
     CONTRADICTS_B,
     ScriptedLLM,
+    dump_full_jobs_and_questions,
     enqueue_pair,
     lib_settings,
     make_provider,
@@ -129,13 +130,13 @@ async def test_gl7_authority_lost_between_enqueue_and_apply(
             " AND payload->'resolved'->>'outcome' = 'authority_lost'"
         )
         (resolved,) = await cur.fetchone()
-        assert resolved["mutations"] == [] and resolved["proposals"] == [] and resolved["batch_id"] is None
+        assert resolved["mutations"] == [] and resolved["questions"] == [] and resolved["batch_id"] is None
         assert await count(conn, "links") == 0
         assert await count(conn, "jobs", "kind = 'librarian_write' AND status = 'done'") == 1
-        before = await dump_projections(conn)
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
         await rebuild_projections(conn)
         await conn.commit()
-        assert await dump_projections(conn) == before
+        assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
     await provider.aclose()
 
 

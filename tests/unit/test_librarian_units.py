@@ -43,7 +43,7 @@ def test_librarian_settings_defaults_are_safe() -> None:
     f = Settings.model_fields
     assert f["librarian_enabled"].default is False
     assert f["librarian_role"].default == "observer"
-    assert f["librarian_send_device_scoped"].default is False
+    assert "librarian_send_device_scoped" not in f  # hard-pinned: device:* content is never sent
     assert f["llm_budget_day_usd"].default == 10 and f["llm_budget_month_usd"].default == 60
     assert f["llm_budget_hour_usd"].default == 3 and f["llm_job_call_cap"].default == 20
     assert f["llm_budget_disabled"].default is False

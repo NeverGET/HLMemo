@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from hlmemo.librarian.roles import batch_decisions, batch_proposals
 from hlmemo.librarian.tasks import Plan
 
 OP = "apply_batch"
@@ -22,21 +21,26 @@ class ApplyBatch:
     async def plan(self, w: Any, job: Any) -> Plan:
         batch_id = str(job.payload["batch_id"])
         async with await w.connect() as conn:
-            _, proposals = await batch_proposals(conn, batch_id)
-            decisions = await batch_decisions(conn, batch_id)
+            cur = await conn.execute(
+                "SELECT question_id::text, proposal FROM librarian_questions"
+                " WHERE batch_id = %s AND status = 'approved' ORDER BY question_id",
+                (batch_id,),
+            )
+            approved = await cur.fetchall()
             await conn.commit()
-        accepted = [p for p in proposals if decisions.get(p["proposal_id"]) == "accept"]
-        caps = job.payload.get("capabilities") or (accepted[0].get("capabilities") if accepted else {}) or {}
+        caps = (
+            job.payload.get("capabilities") or (approved[0][1].get("capabilities") if approved else {}) or {}
+        )
         plan = Plan(
             OP,
-            "approved" if accepted else "not_approved",
+            "approved" if approved else "not_approved",
             caps,
-            request_extra={"batch_id": batch_id, "accepted": [p["proposal_id"] for p in accepted]},
+            request_extra={"batch_id": batch_id, "approved": [qid for qid, _ in approved]},
         )
-        for p in accepted:
-            plan.mutations.append(p["mutation"])
+        for qid, proposal in approved:
+            plan.mutations.append(proposal["mutation"])
             plan.auto_ok.append(True)
-            plan.meta.append({"proposal_id": p["proposal_id"]})
+            plan.meta.append({"question_id": qid})
         return plan
 
 

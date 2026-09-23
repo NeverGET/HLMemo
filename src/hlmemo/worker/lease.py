@@ -40,6 +40,13 @@ class LeasedJob:
     lease_token: str
     priority: int = 5
 
+    @property
+    def lineage(self) -> str:
+        """Loop lineage (librarian call ceiling): recorded at enqueue, inherited by re-enqueues."""
+        return str(
+            self.payload.get("lineage") or uuid.uuid5(uuid.NAMESPACE_URL, f"hlm-job:{self.dedupe_key}")
+        )
+
 
 async def lease_jobs(
     conn: AsyncConnection, kinds: list[str] | tuple[str, ...], limit: int, *, lease_seconds: int
@@ -123,12 +130,13 @@ async def keep_lease(
             await task
 
 
-async def mark_done(conn: AsyncConnection, job: LeasedJob) -> bool:
-    """Fenced; call inside the job's final transaction."""
+async def mark_done(conn: AsyncConnection, job: LeasedJob, at: Any = None) -> bool:
+    """Fenced; call inside the job's final transaction. ``at`` (the event's T) makes ``done_at``
+    reproducible by replay; ``None`` keeps the database clock."""
     cur = await conn.execute(
-        "UPDATE jobs SET status = 'done', done_at = now(), lease_token = NULL, lease_until = NULL"
-        " WHERE job_id = %s AND lease_token = %s AND status = 'running'",
-        (job.job_id, job.lease_token),
+        "UPDATE jobs SET status = 'done', done_at = COALESCE(%s, now()), lease_token = NULL,"
+        " lease_until = NULL WHERE job_id = %s AND lease_token = %s AND status = 'running'",
+        (at, job.job_id, job.lease_token),
     )
     return cur.rowcount == 1
 

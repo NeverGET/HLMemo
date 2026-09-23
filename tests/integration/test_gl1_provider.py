@@ -92,7 +92,12 @@ async def test_gl1_5xx_six_times_falls_back(db_dsn, connect) -> None:  # noqa: A
             (FALLBACK, "ok"),
         ]
         ledger, spent = await _spend(conn)
-        assert ledger == spent == Decimal("0.00002")
+        cur = await conn.execute(
+            "SELECT count(*) FROM llm_calls WHERE outcome = 'http_error' AND cost_usd = reserved_usd"
+            " AND reserved_usd > 0"
+        )
+        assert (await cur.fetchone())[0] == 6  # a 5xx may have been billed: charged at worst case
+        assert ledger == spent > Decimal("0.00002")
     await p.aclose()
 
 
@@ -166,3 +171,26 @@ async def test_gl1_unpriced_profile_refuses_live(db_dsn) -> None:  # noqa: ANN00
     assert (await ok.complete(load_task("contradiction"), USER)).output == CONTRADICTS_B
     await p.aclose()
     await ok.aclose()
+
+
+async def test_gl1_transport_error_charged_worst_case(db_dsn, connect) -> None:  # noqa: ANN001
+    """Sol 35 #7: a transport failure may have reached the provider: settle at the worst case;
+    only a 4xx (rejected before generation) settles at zero."""
+    llm = ScriptedLLM(["connect_error", 400, chat(CONTRADICTS_B, cost=0.00001)])
+    clock = FakeClock()
+    p = make_provider(db_dsn, llm, clock=clock)
+    res = await p.complete(load_task("contradiction"), USER, job_id=11)
+    assert res.profile == FALLBACK  # 400 is non-retryable on the primary: fallback answers
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT profile, outcome, cost_usd = reserved_usd AND reserved_usd > 0, cost_usd = 0"
+            " FROM llm_calls ORDER BY created_at, call_id"
+        )
+        assert await cur.fetchall() == [
+            (PRIMARY, "http_error", True, False),  # transport: worst case
+            (PRIMARY, "http_error", False, True),  # 4xx: definitive no-charge
+            (FALLBACK, "ok", False, False),
+        ]
+        ledger, spent = await _spend(conn)
+        assert ledger == spent
+    await p.aclose()

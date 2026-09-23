@@ -138,7 +138,7 @@ def connect(db_dsn: str) -> ConnectFactory:
 
 # Projection/event tables in FK-safe truncate order; `devices` handled separately (row 1 stays).
 TRUNCATE_SQL = """
-TRUNCATE TABLE jobs, links, embeddings, chunks, memory_versions, events,
+TRUNCATE TABLE librarian_questions, jobs, links, embeddings, chunks, memory_versions, events,
                device_project_grants, projects, llm_calls, llm_budget, llm_reservations
     RESTART IDENTITY CASCADE;
 DELETE FROM devices WHERE device_id <> 1;

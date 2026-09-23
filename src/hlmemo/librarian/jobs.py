@@ -138,6 +138,7 @@ async def enqueue(
         payload = dict(s["payload"])
         subject_projects = sorted({project_id, *payload.get("project_ids", [])})
         payload["project_id"] = project_id
+        payload.setdefault("lineage", str(uuid.uuid5(NS_LIBRARIAN, "lineage:" + s["dedupe_key"])))
         payload["capabilities"] = await compute_capabilities(conn, trigger_device_id, subject_projects)
         jobs.append({**s, "payload": payload})
     keys = sorted(j["dedupe_key"] for j in jobs)

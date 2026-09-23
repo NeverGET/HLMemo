@@ -37,6 +37,7 @@ class LedgerRow:
     mode: str
     outcome: str
     job_id: int | None = None
+    lineage: str | None = None
     request_sha256: str | None = None
     response_sha256: str | None = None
     input_tokens: int | None = None
@@ -57,6 +58,8 @@ class Ledger(Protocol):
 
     async def job_calls(self, job_id: int) -> int: ...
 
+    async def lineage_calls(self, lineage: str) -> int: ...
+
 
 class DbLedger:
     def __init__(self, conn: ConnCtx) -> None:
@@ -66,15 +69,16 @@ class DbLedger:
         async with self._conn() as conn:
             await conn.execute(
                 """
-                INSERT INTO llm_calls (call_id, job_id, task, profile, model_id, prompt_version,
+                INSERT INTO llm_calls (call_id, job_id, lineage, task, profile, model_id, prompt_version,
                                        schema_version, mode, request_sha256, response_sha256,
                                        input_tokens, cached_input_tokens, output_tokens, reserved_usd,
                                        cost_usd, latency_ms, outcome)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     row.call_id,
                     row.job_id,
+                    row.lineage,
                     row.task,
                     row.profile,
                     row.model_id,
@@ -106,6 +110,17 @@ class DbLedger:
                 await conn.commit()
         return int(n)
 
+    async def lineage_calls(self, lineage: str) -> int:
+        async with self._conn() as conn:
+            cur = await conn.execute(
+                "SELECT count(*) FROM llm_calls WHERE lineage = %s AND outcome = ANY(%s)",
+                (lineage, list(NETWORK_OUTCOMES)),
+            )
+            (n,) = await cur.fetchone()
+            if not conn.autocommit:
+                await conn.commit()
+        return int(n)
+
 
 class MemoryLedger:
     def __init__(self) -> None:
@@ -116,6 +131,9 @@ class MemoryLedger:
 
     async def job_calls(self, job_id: int) -> int:
         return sum(1 for r in self.rows if r.job_id == job_id and r.outcome in NETWORK_OUTCOMES)
+
+    async def lineage_calls(self, lineage: str) -> int:
+        return sum(1 for r in self.rows if r.lineage == lineage and r.outcome in NETWORK_OUTCOMES)
 
     def as_dicts(self) -> list[dict]:
         out = []
