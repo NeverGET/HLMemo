@@ -446,7 +446,7 @@ HEARTBEAT_MAX_AGE_S = 120.0
 LEDGER_WINDOW = "15 minutes"
 
 
-async def librarian_status(conn: AsyncConnection) -> dict[str, Any]:
+async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[str, Any]:
     """The W2a heartbeat fields for the operator (carried item, D-069): ``ready``, ``in_flight``,
     ``oldest_ready_age_s``, ``failed_24h``, spend (``spend_today_usd``, ``spend_hour_usd``,
     ``reserved_usd``), the effective ``role`` and ``breaker_state``.
@@ -463,7 +463,7 @@ async def librarian_status(conn: AsyncConnection) -> dict[str, Any]:
     from hlmemo.config import get_settings
     from hlmemo.librarian.worker import heartbeat_fields
 
-    settings = get_settings()
+    settings = settings or get_settings()
     out: dict[str, Any] = dict(await heartbeat_fields(conn, settings.librarian_role))
     hb = _read_heartbeat(settings.librarian_heartbeat_file)
     age = _time.time() - float(hb.get("ts", 0)) if hb is not None else None

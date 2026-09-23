@@ -18,6 +18,17 @@ Mapping (deterministic):
                    (--git-dir/--git-rev: --root is an export of that commit; dates and git days stop there)
   * files longer than --max-item-chars are split at markdown headings (whole sections where possible)
 
+Temporal rule (--temporal-rule, PHASE2-4-ROADMAP W1.5 / Sol #6):
+  * eval (default): valid_from = commit date / mtime as above. Acceptable for eval corpora only; it
+    keeps the D-054/D-057 baselines reproducible.
+  * prod: the production rule of `hlm import`: recorded_at is server time, the commit date / mtime
+    become provenance only (`source.commit_date` / `source.mtime`, with `source.sha256`), and
+    valid_from comes only from explicit evidence in the text — frontmatter `valid_from`/`date`,
+    the piece's own dated first heading, or the piece's single dated decision row
+    (`D-047 | 2026-09-23 |`); otherwise it is omitted (the server's import time). A date without a
+    time is read in the machine's local zone; evidence more than 5 minutes in the future rejects
+    the item (excluded as `future-evidence`). Git-day items keep their day (a dated heading).
+
 Idempotency: request_id = uuid5(project + sorted (key, content sha256)) of the batch, so re-sending the
 same batch replays. The manifest (JSONL) remembers what was written: unchanged items are skipped,
 changed items are written as revisions (logical_id + expected_version_id).
@@ -48,7 +59,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -264,14 +275,67 @@ class Item:
     kind: str
     body: str
     tags: list[str]
-    valid_from: str
+    valid_from: str | None
     source: str
+    provenance: str | None = None  # prod rule: the commit date / mtime, provenance only
+    provenance_kind: str | None = None  # "commit_date" | "mtime"
 
     @property
     def sha(self) -> str:
         return hashlib.sha256(
             json.dumps([self.kind, self.title, self.body, self.tags, self.valid_from]).encode()
         ).hexdigest()
+
+
+FM_DATE_RE = re.compile(r"^(?:valid_from|date):\s*[\"']?(\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+\-Z]+)?)", re.M)
+ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+DECISION_ROW_RE = re.compile(r"^D-\d{3,4} \| (\d{4}-\d{2}-\d{2}) \| ", re.M)
+FUTURE_SLACK_S = 300
+
+
+def evidence_iso(raw: str) -> str | None:
+    """Explicit evidence → UTC ISO; a date without a time is read in the local zone."""
+    s = raw.strip().replace(" ", "T")
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        s += "T00:00:00"
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.astimezone()  # local zone of the writer's machine
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def prod_valid_from(piece: str, file_text: str) -> tuple[str | None, str]:
+    """(valid_from, evidence) under the production temporal rule (never a commit date or mtime)."""
+    fm = re.match(r"^---\n(.*?)\n---\n", file_text, re.S)
+    if fm:
+        m = FM_DATE_RE.search(fm.group(1))
+        if m and evidence_iso(m.group(1)):
+            return evidence_iso(m.group(1)), "frontmatter"
+    hs = headings(piece)
+    dated = [t for _o, _l, t in hs if ISO_DATE_RE.search(t)]
+    if hs and len(dated) == 1 and ISO_DATE_RE.search(hs[0][2]):
+        return evidence_iso(ISO_DATE_RE.search(hs[0][2]).group(1)), "dated-heading"
+    rows = DECISION_ROW_RE.findall(piece)
+    if len(rows) == 1:
+        return evidence_iso(rows[0]), "decision-row"
+    return None, "none"
+
+
+def apply_prod_rule(items: list[Item], file_text: str, origin: str) -> list[tuple[Item, str]]:
+    """Move the eval date into provenance and set valid_from from evidence; returns rejects."""
+    rejected: list[tuple[Item, str]] = []
+    now = datetime.now(UTC).timestamp()
+    for it in items:
+        it.provenance, it.provenance_kind = it.valid_from, ("commit_date" if origin == "commit" else "mtime")
+        it.valid_from, _why = prod_valid_from(it.body, file_text)
+        if it.valid_from and datetime.fromisoformat(it.valid_from.replace("Z", "+00:00")).timestamp() > (
+            now + FUTURE_SLACK_S
+        ):
+            rejected.append((it, it.valid_from))
+    return rejected
 
 
 def clip_title(t: str) -> str:
@@ -726,6 +790,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     ap.add_argument("--dry-run", action="store_true", help="select, split, scan and report; send nothing")
     ap.add_argument(
+        "--temporal-rule",
+        choices=["eval", "prod"],
+        default="eval",
+        help="eval (default): valid_from = commit date/mtime (baseline-compatible); prod: the W1.5 rule",
+    )
+    ap.add_argument(
         "--wait", action="store_true", help="after writing, poll memory.query until indexing_pending=false"
     )
     ap.add_argument("--wait-timeout", type=float, default=3600.0)
@@ -742,6 +812,7 @@ def main(argv: list[str] | None = None) -> int:
     a = parse_args(argv)
     root = a.root.resolve()
     report: dict[str, Any] = {
+        "temporal_rule": a.temporal_rule,
         "root_name": root.name,
         "project": a.project,
         "git_rev": a.git_rev,
@@ -753,6 +824,7 @@ def main(argv: list[str] | None = None) -> int:
     git_root = (a.git_dir or root).resolve()
     dates, origin = file_dates(root, sel.files, git_root, a.git_rev)
     items: list[Item] = []
+    prod = a.temporal_rule == "prod"
     for rel in sel.files:
         text, why = read_text(root / rel)
         if why:
@@ -760,7 +832,14 @@ def main(argv: list[str] | None = None) -> int:
             continue
         src = source_of(rel)
         top = rel.split("/", 1)[0] if "/" in rel else "root"
-        items.extend(file_items(rel, text, src, top, dates[rel], a.max_item_chars))
+        its = file_items(rel, text, src, top, dates[rel], a.max_item_chars)
+        if prod:
+            bad = {id(it) for it, _d in apply_prod_rule(its, text, origin[rel])}
+            for it in its:
+                if id(it) in bad:
+                    sel.exclude("future-evidence", it.key)
+            its = [it for it in its if id(it) not in bad]
+        items.extend(its)
     for spec in a.extra_root:
         label, _, d = spec.partition("=")
         if not label or not d:
@@ -771,7 +850,14 @@ def main(argv: list[str] | None = None) -> int:
             if why:
                 sel.exclude(why, rel)
                 continue
-            items.extend(file_items(rel, text, label, label, mtime_iso(p), a.max_item_chars))
+            its = file_items(rel, text, label, label, mtime_iso(p), a.max_item_chars)
+            if prod:
+                bad = {id(it) for it, _d in apply_prod_rule(its, text, "mtime")}
+                for it in its:
+                    if id(it) in bad:
+                        sel.exclude("future-evidence", it.key)
+                its = [it for it in its if id(it) not in bad]
+            items.extend(its)
             origin[rel] = "mtime(untracked)"
     if a.git_log and is_git_repo(git_root):
         for it in git_day_items(git_root, a.max_item_chars, a.git_rev):
@@ -839,26 +925,30 @@ def main(argv: list[str] | None = None) -> int:
         rid = str(uuid.uuid5(NAMESPACE, f"{a.project}\n{keys}"))
         wire = []
         for it in group:
-            w: dict[str, Any] = {
-                "kind": it.kind,
-                "title": it.title,
-                "body": it.body,
-                "tags": it.tags,
-                "valid_from": it.valid_from,
-            }
+            w: dict[str, Any] = {"kind": it.kind, "title": it.title, "body": it.body, "tags": it.tags}
+            if it.valid_from:
+                w["valid_from"] = it.valid_from
+            if prod and it.source != "git":  # provenance only (W1.5 Item.source)
+                w["source"] = {
+                    "system": it.source,
+                    "path": it.key,
+                    "sha256": hashlib.sha256(it.body.encode()).hexdigest(),
+                }
+                if it.provenance and it.provenance_kind:
+                    w["source"][it.provenance_kind] = it.provenance
             prev = manifest.get(it.key)
             if prev:
                 w["logical_id"], w["expected_version_id"] = prev["logical_id"], prev["version_id"]
             wire.append(w)
-        occurred = max(group, key=lambda it: datetime.fromisoformat(it.valid_from)).valid_from
         args = {
             "project": a.project,
             "request_id": rid,
             "client": CLIENT,
-            "occurred_at": occurred,
             "items": wire,
             "token_budget": a.token_budget,
         }
+        if not prod:  # eval rule: the batch happened at its newest file date (baseline behaviour)
+            args["occurred_at"] = max(group, key=lambda it: datetime.fromisoformat(it.valid_from)).valid_from
         ack = mcp.call_retry("memory.write", args, report["errors"], f"batch {bn}/{len(groups)}")
         for v in ack["versions"]:
             it = group[v["index"]]
