@@ -12,6 +12,14 @@ Updated: 2026-09-23 — PRODUCTION LIVE at https://mcp.hlmemo.com; e2e COMPLETE 
 - Upgrade: `bash deploy/scripts/deploy.sh` (see deploy/RUNBOOK.md). Gates: `bash deploy/scripts/remote_gates.sh --url https://mcp.hlmemo.com --admin-token-file deploy/.local/153.92.1.166/admin.token` (add --no-drill to skip the restore over live data).
 - The three CLIs on the owner's Mac are registered to production (`hlm` MCP, device g7-<host>, project gates-g7); config backups in deploy/.local/backups/g7-*.
 
+## OVERNIGHT PLAN (owner, 2026-09-23 22:32) — execute on wake (effort xhigh), in roadmap order, skip nothing
+Deliverable by morning: a FINAL e2e PROD TEST REPORT (docs/status/E2E-PROD-REPORT.md + summary to the owner).
+1. Test the current R1 system; fix/optimize what is found (carried items: D-015 skeleton card on project create, ops status/librarian subcommands, bench-v2 gold adjudication of the 11 ceiling misses).
+2. Make the LLM infrastructure + librarian work with the primary models (gpt-6-luna default, deepseek-v4.1-flash fallback; D-066/D-067): W2b (placement/contradiction/cross-project, observer role), the needed W1.5 importer + `hlm export`, the D-067 robustness guards; every gate (G-L*, G-L3 on the 2 vCPU VM, the live gate, Sol review).
+3. Librarian tests (bench v2 live gate, real-data corpus A/B); fix/optimize.
+4. Only when everything works as promised: release to prod (R2: librarian ON, observer role; llm.env with the OpenRouter key on the server), then import HLMemo's own memory (a TEST import: it will be wiped and redone from scratch in the final release; the controlled "cold-start" supervised librarian training on owner projects is Phase 5 with the owner) and run the first e2e prod test (corpus B dev + sealed where allowed, agent A/B if feasible). Report results, gaps, bugs, improvements.
+Owner framing: the librarian's gradual supervised learning (observe → apply) happens during the per-project migration (Phase 5), done by us as the cold-start; end users get the prepared infrastructure. After the report: fallback-model research (pro-tier fallback), evaluate the e2e test, then 3-4 owner projects for supervised librarian training.
+
 ## GOAL (D-051/D-058) — active
 Phases 2-5 per docs/decisions/PHASE2-4-ROADMAP.md → gates → incremental releases → final acceptance (HLMemo self-migration, then the corpus-A project) → delete local dev stack + lima VMs.
 State 2026-09-23 night: **R1 is LIVE in production** (ee6ce9c, D-068): D-055 retrieval, W0a access hardening (ops over SSH, closed registration), W2a librarian foundation (DISABLED). Owner device id 21 `cemals-mb-pro-3` (hlmemo:write); the three CLIs point to production; the repo hlm.toml points to production, project hlmemo. **Dogfood D1 starts in the next chat** (a restart is needed so the MCP connection uses device 21).
