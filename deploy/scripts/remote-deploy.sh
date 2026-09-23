@@ -50,8 +50,13 @@ previous=
 if [[ $new_checkout == 0 ]]; then
   [[ -z $(git </dev/null status --porcelain --untracked-files=no) ]] || { echo 'Refusing to replace tracked local changes' >&2; exit 1; }
 fi
-if [[ -f $parent_dir/current-ref ]]; then
-  previous=$(cat "$parent_dir/current-ref")
+# release-state.json (atomic, Sol 36 M1) wins over the derived legacy marker files.
+state_current=
+if [[ -f $parent_dir/release-state.json ]]; then
+  state_current=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("current_ref") or "")' "$parent_dir/release-state.json" </dev/null)
+fi
+if [[ -n $state_current || -f $parent_dir/current-ref ]]; then
+  previous=${state_current:-$(cat "$parent_dir/current-ref")}
   [[ $previous =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]] || { echo 'Invalid last successful deployment ref' >&2; exit 1; }
   [[ $(git </dev/null rev-parse --verify "$previous^{commit}") == "$previous" ]] || { echo 'Last successful deployment commit is unavailable' >&2; exit 1; }
 elif [[ $new_checkout == 0 && ! -e $parent_dir/.deploy-managed ]]; then
@@ -350,14 +355,17 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 # Once internally healthy, preserve accepted writes even on marker/disk or public
 # network errors. Publish rollback markers only for this successful cutover.
+# One atomic document (tmp + fsync + rename) holds the whole rollback tuple: previous ref, its
+# quiesced dump, its image + verified ID and this run's env-file backups (retired secrets). The
+# legacy current-ref/previous-ref/previous-dump files are derived from it for compatibility.
+state_args=(--current "$revision")
 if [[ -n $previous ]]; then
-  printf '%s\n' "$previous" > "$parent_dir/previous-ref.tmp"
-  printf '%s\n' "$pre_upgrade_dump" > "$parent_dir/previous-dump.tmp"
-  mv "$parent_dir/previous-ref.tmp" "$parent_dir/previous-ref" </dev/null
-  mv "$parent_dir/previous-dump.tmp" "$parent_dir/previous-dump" </dev/null
+  state_args+=(--previous "$previous" --previous-dump "$pre_upgrade_dump" --previous-image "$previous_image" --previous-image-id "$previous_id")
+  for pair in "${env_w0_restore[@]}"; do
+    state_args+=(--env-backup "${pair%%|*}=${pair#*|}")
+  done
 fi
-printf '%s\n' "$revision" > "$parent_dir/current-ref.tmp"
-mv "$parent_dir/current-ref.tmp" "$parent_dir/current-ref" </dev/null
+python3 deploy/scripts/release_state.py publish "$parent_dir" "${state_args[@]}" </dev/null
 if ! curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 \
   --connect-timeout 10 --max-time 20 "https://$domain/ready" </dev/null; then
   echo 'External HTTPS readiness failed; internally healthy new stack left running (no database rollback). Check DNS A/AAAA, firewall, ACME and Caddy logs; retry the public /ready probe.' >&2

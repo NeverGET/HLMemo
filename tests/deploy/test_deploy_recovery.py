@@ -65,11 +65,19 @@ elif args[0] == "inspect": print("sha256:old-image")
 elif "config" in args and "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
     print(Path(args[args.index("-f")+1]).read_text())  # the captured rollback model, as rendered
 elif "config" in args:
+    rendered = {"name":"bake-astra", "services":{
+        s:{"image":"mutable:prod", "environment":{"TOKEN":"literal$$VAR"}}
+        for s in ("api","worker","db","caddy")}}
     if "-f" in args and ".compose-previous." in args[args.index("-f")+1]:
         Path(os.environ["EVENTS"]+".previous-model").write_text(Path(args[args.index("-f")+1]).read_text())
-    print(json.dumps({"name":"bake-astra", "services":{
-        s:{"image":"mutable:prod", "environment":{"TOKEN":"literal$$VAR"}}
-        for s in ("api","worker","db","caddy")}}))
+        # Like Compose: the api service's env_file (HLM_API_ENV_FILE) lands in its environment.
+        api_env = Path(os.environ.get("HLM_API_ENV_FILE") or "/nonexistent")
+        if api_env.is_file():
+            for line in api_env.read_text().splitlines():
+                key, sep, value = line.removeprefix("export ").partition("=")
+                if sep and not key.startswith("#"):
+                    rendered["services"]["api"]["environment"][key.strip()] = value
+    print(json.dumps(rendered))
 elif "ps" in args:
     if os.environ.get("INITIAL") != "1": print("db-container")
 elif "exec" in args and "hlmemo.ops" in args:
@@ -126,6 +134,8 @@ if args[0] == "show":
         path = Path(os.environ["HLM_REMOTE_DIR"])/"deploy"/name
         if not path.exists(): path = Path(os.environ["HLM_REMOTE_DIR"])/"deploy/compose.prod.yaml"
         sys.stdout.write(path.read_text())
+    elif args[-1].endswith(":deploy/scripts/rollback.sh"):
+        sys.stdout.write((Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/rollback.sh").read_text())
     else:
         print((Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
     sys.exit()
