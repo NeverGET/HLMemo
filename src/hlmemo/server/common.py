@@ -69,6 +69,8 @@ def device_view(row: dict[str, Any]) -> dict[str, Any]:
         "approved_by_device_id": row.get("approved_by_device_id"),
         "revoked_at": iso(row.get("revoked_at")),
         "last_seen_at": iso(row.get("last_seen_at")),
+        "expires_at": iso(row.get("expires_at")),
+        "expired": bool(row.get("expired")),
         "notes": row.get("notes"),
     }
 

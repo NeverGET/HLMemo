@@ -158,7 +158,7 @@ def _wait_for_migrated_db(dsn: str, timeout: float = 300) -> None:
         except psycopg.Error as exc:  # noqa: PERF203 - polling a container that is still booting
             last = exc
         time.sleep(1.0)
-    raise AssertionError(f"isolated db never reached phase0@head: {last}")
+    raise AssertionError(f"isolated db never reached main@head: {last}")
 
 
 # --------------------------------------------------------------------------- SQL seeding

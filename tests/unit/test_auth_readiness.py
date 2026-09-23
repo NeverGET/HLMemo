@@ -26,7 +26,7 @@ def missing_model_app(monkeypatch, tmp_path):
         return 1
 
     async def fetchall():
-        return [(server.phase0_head(),)]
+        return [(server.migration_head(),)]
 
     async def execute(_sql):
         return SimpleNamespace(fetchall=fetchall)

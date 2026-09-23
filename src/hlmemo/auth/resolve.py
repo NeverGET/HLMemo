@@ -69,7 +69,12 @@ async def resolve(
     row = await q.select_device_by_hash_for_share(conn, token_hash)
     if row is None or int(row["device_id"]) != int(identity[0]):
         raise HlmError("E_AUTH", "unknown token")
+    if row.get("expired") and row["status"] != "revoked":
+        # W0a (D-061): expired is treated exactly like revoked, here and in the pre-body gate.
+        row = {**row, "status": "revoked"}
     status = row["status"]
+    if status == "revoked" and row.get("expired") and not allow_revoked:
+        raise HlmError("E_AUTH", "device expired")
     if status == "revoked" and not allow_revoked:
         raise HlmError("E_AUTH", "device revoked")
     if status == "pending" and not allow_pending:

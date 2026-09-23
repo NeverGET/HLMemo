@@ -1,9 +1,11 @@
 """Device onboarding + grants (PHASE0-SPEC §2 "Device onboarding flow").
 
-Routes (both spellings share one implementation):
+Routes (both spellings share one implementation; with W0a's fail-closed settings the middleware
+answers 404 for register (registration_mode=closed) and every admin route (admin_http=disabled)):
   POST /devices/register                      {name, class?, fingerprint, os?, client}
   POST /devices/approve  | POST /admin/devices/{id}/approve   {id?, class, notes?, grants?:[{project,role}]}
   POST /devices/revoke   | POST /admin/devices/{id}/revoke    {id?}
+                         (admin_http=disabled: self-only; any other id -> 404, D-061)
   POST /devices/grant    | POST /admin/projects/{slug}/grants {device, project?, role}
   DELETE /devices/grant  | DELETE /admin/projects/{slug}/grants {device, project?}
   GET  /devices/list, GET /devices/whoami
@@ -96,6 +98,10 @@ async def register(request: Request) -> JSONResponse:
         if not limiter.allow(ip):
             raise HlmError("E_RATE_LIMITED", "too many registrations from this address; retry in a minute")
     secret = app_state.settings.registration_secret
+    if app_state.settings.registration_mode == "closed":  # the middleware already answered 404
+        raise HlmError("E_NOT_FOUND", "not found")
+    if app_state.settings.registration_mode == "secret" and secret is None:
+        raise HlmError("E_AUTH", "registration requires a secret and none is configured")
     if secret is not None:
         presented = request.headers.get("x-hlm-registration-secret", "")
         from hlmemo.auth.tokens import constant_time_equal
@@ -238,6 +244,10 @@ async def approve(request: Request) -> JSONResponse:
 async def _revoke(request: Request, target_id: int) -> JSONResponse:
     ctx = auth_of(request)
     conn = conn_of(request)
+    if not request.app.state.settings.admin_http_enabled and target_id != ctx.device_id:
+        # W0a self-only mode (D-061): revoking another device is an operator action
+        # (`python -m hlmemo.ops device revoke`). Existing and unknown ids answer identically.
+        raise HlmError("E_NOT_FOUND", "device not found")
     if target_id == 1:
         raise HlmError("E_FORBIDDEN", "device 1 is reserved")
     if not (ctx.is_admin or target_id == ctx.device_id):

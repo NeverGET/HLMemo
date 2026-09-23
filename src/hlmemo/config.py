@@ -15,7 +15,7 @@ import os
 import re
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import (
@@ -159,6 +159,16 @@ class Settings(BaseSettings):
     # --- server / auth (§2) ---
     admin_token: SecretStr | None = None
     registration_secret: SecretStr | None = None
+    # W0a (D-052, D-061), fail-closed: only local compose.yaml and the test fixtures opt in.
+    #   closed -> POST /devices/register answers 404 before any body byte is read;
+    #   secret -> registration requires X-HLM-Registration-Secret (none configured: always refused);
+    #   open   -> Phase-0 behaviour (the secret is still required when one is configured).
+    registration_mode: Literal["open", "secret", "closed"] = "closed"
+    # disabled -> every admin HTTP route (/admin/*, /devices/{approve,grant,list}) answers 404,
+    # POST /devices/revoke is self-only, device 1 is never bound; admin work goes via hlmemo.ops.
+    admin_http: Literal["enabled", "disabled"] = "disabled"
+    # production -> startup refuses unless registration_mode=closed and admin_http=disabled.
+    deployment: Literal["development", "production"] = "development"
     server_url: str = "http://127.0.0.1:8765/mcp"
     api_host: str = "0.0.0.0"
     api_port: int = 8765
@@ -225,9 +235,34 @@ class Settings(BaseSettings):
         # env > hlm.toml > profile (both inside HlmTomlSource) > defaults
         return (init_settings, env_settings, HlmTomlSource(settings_cls))
 
+    @field_validator("registration_mode", "admin_http", "deployment", mode="before")
+    @classmethod
+    def _normalise_mode(cls, v: Any) -> Any:
+        return v.strip().lower() if isinstance(v, str) else v
+
+    @property
+    def admin_http_enabled(self) -> bool:
+        return self.admin_http == "enabled"
+
     @property
     def admin_enabled(self) -> bool:
-        return self.admin_token is not None and bool(self.admin_token.get_secret_value())
+        """Device 1 is bound only with a token AND admin HTTP enabled (D-061: disabled in production)."""
+        return (
+            self.admin_http_enabled
+            and self.admin_token is not None
+            and bool(self.admin_token.get_secret_value())
+        )
+
+    def unsafe_config(self) -> list[str]:
+        """Reasons a production deployment must refuse to start (empty list: safe)."""
+        if self.deployment != "production":
+            return []
+        reasons = []
+        if self.registration_mode != "closed":
+            reasons.append(f"HLM_REGISTRATION_MODE={self.registration_mode} (production requires closed)")
+        if self.admin_http != "disabled":
+            reasons.append(f"HLM_ADMIN_HTTP={self.admin_http} (production requires disabled)")
+        return reasons
 
 
 def get_settings(**overrides: Any) -> Settings:
