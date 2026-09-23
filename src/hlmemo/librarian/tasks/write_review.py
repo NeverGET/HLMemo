@@ -163,25 +163,44 @@ def relate_texts(s: Any, cands: list[tuple[Any, bool]]) -> list[guards.PairText]
     ]
 
 
-def _side(row: Any, is_new: bool) -> dict[str, Any]:
+def _side(row: Any, is_new: bool, project: str) -> dict[str, Any]:
     return {
         "title": row.title,
         "text": _cut(row.body, NEW_TEXT_CHARS if is_new else OLD_TEXT_CHARS),
         "t_valid": fmt_ts(row.valid_from),
+        "project": project,
     }
 
 
-def verify_payload(pairs: list[tuple[Any, Any]], start: int = 0) -> list[dict[str, Any]]:
-    """``relate_verify`` items for ``[(subject, candidate)]``: chronological (A never later than B;
-    on a tie the new subject is B), ids ``p<start+1>`` …"""
+def verify_payload(pairs: list[tuple[Any, Any, bool]], start: int = 0) -> list[dict[str, Any]]:
+    """``relate_verify`` items for ``[(subject, candidate, cross_project)]``: chronological (A never
+    later than B; on a tie the new subject is B), ids ``p<start+1>`` …; each side says whether it
+    lives in the new item's project (``same``) or another one (``other``, Sol 41 #6)."""
     items = []
-    for k, (s, c) in enumerate(pairs):
+    for k, (s, c, cross) in enumerate(pairs):
         new_is_b = s.valid_from >= c.valid_from
         first, second = (c, s) if new_is_b else (s, c)
         items.append(
-            {"id": f"p{start + k + 1}", "A": _side(first, first is s), "B": _side(second, second is s)}
+            {
+                "id": f"p{start + k + 1}",
+                "A": _side(first, first is s, "same" if first is s or not cross else "other"),
+                "B": _side(second, second is s, "same" if second is s or not cross else "other"),
+            }
         )
     return items
+
+
+async def readable_rules(conn: Any, rules: list[dict[str, Any]], allowed: list[int]) -> list[dict[str, Any]]:
+    """Working-memory rules whose clue refs all point to versions of projects the triggering device
+    may read now: a rule never carries another project's clue ids into a prompt (Sol 41 #1)."""
+    refs = sorted({int(r[1:].split(".")[0]) for rule in rules for r in rule.get("refs") or []})
+    if not refs:
+        return rules
+    cur = await conn.execute(
+        "SELECT version_id, project_ids FROM memory_versions WHERE version_id = ANY(%s)", (refs,)
+    )
+    ok = {int(v) for v, pids in await cur.fetchall() if set(pids) <= set(allowed)}
+    return [rule for rule in rules if all(int(r[1:].split(".")[0]) in ok for r in rule.get("refs") or [])]
 
 
 class _Pair:
@@ -261,7 +280,11 @@ class WriteReview:
                 meter=w.meter,
                 redactor=w.provider.redactor,
             )
+            rules = await readable_rules(conn, rules, allowed)
             await conn.commit()
+        if p.get("owner_note"):  # a custom answer's note: this job only (never working memory)
+            note = w.provider.redactor.text(str(p["owner_note"]))[:500]
+            rules = [*rules, {"clue": "owner", "rule": f"Owner note for this re-check: {note}", "refs": []}]
         if lexical_only:
             extra["lexical_only"] = lexical_only
         extra["candidates"] = cand_audit
@@ -468,7 +491,7 @@ class WriteReview:
             chain = verifier_chain(w, profile)
             for i in range(0, len(group), PAIRS_PER_CALL):
                 chunk = group[i : i + PAIRS_PER_CALL]
-                items = verify_payload([(pr.subject, pr.cand) for pr, _kind in chunk], n)
+                items = verify_payload([(pr.subject, pr.cand, pr.cross) for pr, _kind in chunk], n)
                 ids: list[int] = [
                     v for pr, _kind in chunk for v in (pr.subject.version_id, pr.cand.version_id)
                 ]

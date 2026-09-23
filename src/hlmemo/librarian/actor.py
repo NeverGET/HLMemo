@@ -230,11 +230,17 @@ async def materialize(
     ctx: AuthContext | None,
     capabilities: dict[str, Any] | None,
     actions: list[dict[str, Any]],
+    planned: dict[str, set[Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[datetime]]:
     """Recheck (``ctx``/``capabilities``; ``None`` = the caller already authorized the actions,
     e.g. ``memory.answer`` against the answering device) and materialize ``actions`` into records
     with allocated ids. Returns ``(records, recorded_at of every row a close supersedes)``.
-    Raises ``AuthorityLost`` if any action fails its capability (then nothing is applied)."""
+    Raises ``AuthorityLost`` if any action fails its capability (then nothing is applied).
+
+    ``planned`` (shared across calls that end in ONE event) remembers the links and closes already
+    materialized: a repeated link is skipped and a second close of the same logical item is
+    skipped, so two proposals can never plan conflicting rows (Sol 41 #3)."""
+    planned = planned if planned is not None else {"links": set(), "closed": set()}
     out: list[dict[str, Any]] = []
     superseded_recorded: list[datetime] = []
     for m in actions:
@@ -247,17 +253,18 @@ async def materialize(
                 if src is None or await head_endpoint(conn, int(m["dst_logical_id"])) is None:
                     raise AuthorityLost("a link endpoint is no longer current")
             rec = await _link_record(conn, src, m)
-            if rec is not None and not any(
-                o.get("op") == "link_insert"
-                and (o["src_logical_id"], o["dst_logical_id"], o["rel"])
-                == (rec["src_logical_id"], rec["dst_logical_id"], rec["rel"])
-                for o in out
-            ):
-                out.append(rec)
+            if rec is not None:
+                key = (rec["src_logical_id"], rec["dst_logical_id"], rec["rel"])
+                if key not in planned["links"]:
+                    planned["links"].add(key)
+                    out.append(rec)
         elif op == "version_close":
             if ctx is not None and capabilities is not None:
                 await check_correct(conn, ctx, capabilities, m)
+            if int(m["logical_id"]) in planned["closed"]:
+                continue
             rec, recorded = await _close_record(conn, m)
+            planned["closed"].add(int(m["logical_id"]))
             out.append(rec)
             superseded_recorded.extend(recorded)
         elif op == "signal_upsert":
