@@ -1,0 +1,24 @@
+## Verdict — MERGE-WITH-FIXES
+
+## Findings
+
+| # | Severity | File:line | Trigger | Observed vs expected | Fix | Confidence |
+|---|---|---|---|---|---|---|
+| 1 | Medium | [term_stats.py:80](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/core/term_stats.py:80) | A project is revised, shrinks, or receives fewer than 64 new chunks | The global chunk-ID watermark leaves its DF cache stale for up to 600 seconds; workers can disagree. Filtering should reflect project changes. | Invalidate on a project-local corpus revision; retain TTL as a fallback. | High |
+| 2 | Medium | [0003_title_lexical.py:28](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/alembic/versions/0003_title_lexical.py:28) | Unicode title containing Greek final sigma, for example | SQL `lower()` does not match Python `casefold()`; an indexed title can miss its normalized query. | Index a Python-normalized title value, or prove SQL equivalence against a Unicode corpus. | High |
+| 3 | Medium | [term_stats.py:85](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/core/term_stats.py:85) | Concurrent cold queries or TTL expiry | Each request independently runs full-corpus counts and two `ts_stat` scans while occupying a DB connection. | Coalesce refreshes per cache key and bound cold-start work. | High |
+| 4 | Medium | [0003_title_lexical.py:37](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/alembic/versions/0003_title_lexical.py:37) | Retry after a failed concurrent index build | Recovery uses ordinary `DROP INDEX`, which can block writes despite the online migration claim. | Drop the invalid index concurrently in an autocommit block. | High |
+| 5 | Medium | [retrieval.py:31](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/core/retrieval.py:31) | Assessing the claimed L2 .50→.75 gain | The 20% DF cutoff, 100-chunk floor, and title-list cap were chosen after aggregate hold-out feedback; L2 also changes from top-3 to top-5 drilling. The gain is not a clean hold-out estimate. | Freeze settings; compare both commits at both drill depths on sealed corpus B, by category. | High |
+| 6 | Low | [read_queries.py:309](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/db/read_queries.py:309) | Historical `valid_at` or `known_at` query | DF comes from today’s current corpus, so a historically distinctive term may be filtered using future data. | Make DF temporal-aware or bypass filtering for historical queries. | High |
+| 7 | Low | [client_config.py:189](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/cli/client_config.py:189) | Two first registrations share a config directory | Both can generate IDs; the later replace makes the first registered fingerprint differ from the persisted one. | Create atomically and reread the winning ID. | High |
+| 8 | Low | [term_stats.py:75](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/core/term_stats.py:75) | Many projects queried over a long-running worker | Full vocabularies accumulate without eviction. | Bound cache entries by size or LRU expiry. | High |
+
+## Checked and sound
+
+- [retrieval.py:429](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/core/retrieval.py:429) settles packing against the actual budget after reserve, extension, and refill. The `…` is in the measured JSON; reserve alone does not create a new `E_BUDGET_TOO_SMALL` path.
+- [mcp_server.py:226](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/server/mcp_server.py:226) emits that canonical JSON as one text block.
+- [read_queries.py:292](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/db/read_queries.py:292) applies project, device, temporal, status, and kind filters before title results are limited.
+- [retrieval.py:192](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/core/retrieval.py:192) deduplicates boosted chunks by logical item, preventing one title match from flooding final hits.
+- [read_queries.py:309](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ac9570b74e0459215/src/hlmemo/db/read_queries.py:309) limits DF to shared rows in the requested project; private device vocabulary does not enter the filter. Existing bearer credentials remain usable after the fingerprint change.
+
+Static review only; no tests, edits, or Docker commands were run.
