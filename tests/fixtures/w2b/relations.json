@@ -1,0 +1,2956 @@
+{
+ "version": 1,
+ "about": "W2b relation fixture (G-P1 CI replay, G-LIVE-B). One NEW item per group, compared with its EXISTING items; gold per pair. class: contra_new | contra_old | contra_none | duplicate | refines | near_miss | none. project: same | other (other = cross-project). t = valid_from (UTC midnight).",
+ "groups": [
+  {
+   "id": "g01",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "API cache TTL raised",
+    "text": "Since June the API response cache TTL is 300 seconds; it used to be 60 seconds.",
+    "t": "2026-06-01"
+   },
+   "existing": [
+    {
+     "id": "g01a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "API cache TTL",
+     "text": "The API response cache TTL is 60 seconds.",
+     "t": "2026-01-10",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g01b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Session cookie lifetime",
+     "text": "Session cookies expire after 60 minutes of inactivity.",
+     "t": "2026-01-10",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g01c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "CDN cache TTL",
+     "text": "The CDN caches static assets for 7 days.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g01d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Redis memory limit",
+     "text": "The Redis instance is capped at 512 MB with maxmemory.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g01e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Public API rate limit",
+     "text": "The public API allows 100 requests per minute per token.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g02",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Production database version",
+    "text": "Production now runs PostgreSQL 17 after the May upgrade.",
+    "t": "2026-05-01"
+   },
+   "existing": [
+    {
+     "id": "g02a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Production database",
+     "text": "Production runs PostgreSQL 16.",
+     "t": "2025-11-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g02b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "PostgreSQL 18 evaluation",
+     "text": "We plan to evaluate PostgreSQL 18 after its first minor release.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g02c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Local dev database",
+     "text": "Local development uses PostgreSQL 15 in docker compose.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g02d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Connection pool size",
+     "text": "The api keeps at most 8 database connections in its pool.",
+     "t": "2026-01-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g02e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Backup format",
+     "text": "Database backups use pg_dump in custom format.",
+     "t": "2026-01-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g03",
+   "new": {
+    "kind": "lesson",
+    "lang": "en",
+    "title": "ssh in loops swallows stdin",
+    "text": "Inside a shell loop, ssh without -n reads the loop's stdin and the loop ends early; always use ssh -n or redirect from /dev/null.",
+    "t": "2026-09-20"
+   },
+   "existing": [
+    {
+     "id": "g03a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "ssh eats loop input",
+     "text": "ssh without -n consumes the stdin of the surrounding loop, so the loop stops early; pass -n or redirect stdin from /dev/null.",
+     "t": "2026-09-10",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g03b",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "pkill over ssh",
+     "text": "pkill -f over ssh can match its own command line; check with pgrep and an exact pattern first.",
+     "t": "2026-09-12",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g03c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Deploy transport",
+     "text": "deploy.sh copies the release to the server with rsync over ssh.",
+     "t": "2026-08-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g03d",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "Quote remote commands",
+     "text": "Quote every remote ssh command argument with printf %q to avoid word splitting.",
+     "t": "2026-08-15",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g03e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Deploy SSH key",
+     "text": "The deploy user authenticates with the hlmemo_deploy_ed25519 key.",
+     "t": "2026-07-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g04",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Backup schedule",
+    "text": "The database is backed up every night at 03:30 Europe/Vilnius, and each backup is kept for 14 days.",
+    "t": "2026-07-01"
+   },
+   "existing": [
+    {
+     "id": "g04a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Nightly backups",
+     "text": "The database is backed up every night.",
+     "t": "2026-03-01",
+     "gold": [
+      "refines",
+      "none"
+     ],
+     "class": "refines"
+    },
+    {
+     "id": "g04b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Backup retention",
+     "text": "Each database backup is kept for 30 days.",
+     "t": "2026-03-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g04c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Log retention",
+     "text": "Application logs are kept for 14 days.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g04d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Restore drill",
+     "text": "A restore drill replays the latest dump into a scratch database.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g04e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Weekly vacuum",
+     "text": "VACUUM ANALYZE runs every Sunday at 04:00.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g05",
+   "new": {
+    "kind": "fact",
+    "lang": "tr",
+    "title": "Üretim API portu",
+    "text": "Üretimdeki API artık 8765 portunda dinliyor; eskiden 8080 portundaydı.",
+    "t": "2026-05-01"
+   },
+   "existing": [
+    {
+     "id": "g05a",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "same",
+     "title": "Üretim API portu",
+     "text": "Üretimdeki API 8080 portunda dinliyor.",
+     "t": "2026-01-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g05b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "PostgreSQL port",
+     "text": "PostgreSQL listens on port 5432, bound to 127.0.0.1 only.",
+     "t": "2026-01-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g05c",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "same",
+     "title": "Caddy portları",
+     "text": "Caddy dışarıya yalnızca 80 ve 443 portlarını açıyor.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g05d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Health endpoint",
+     "text": "GET /health returns 200 while the process is up.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g05e",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "Staging-API-Port",
+     "text": "Die Staging-API läuft auf Port 9876.",
+     "t": "2026-05-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g06",
+   "new": {
+    "kind": "fact",
+    "lang": "de",
+    "title": "Worker-Threads",
+    "text": "Der Embedding-Worker läuft seit Juni mit 4 Intra-Op-Threads statt 2.",
+    "t": "2026-06-10"
+   },
+   "existing": [
+    {
+     "id": "g06a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Embedding worker threads",
+     "text": "The embedding worker runs with 2 intra-op threads.",
+     "t": "2026-01-15",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g06b",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "API-Thread-Pool",
+     "text": "Die API nutzt einen Thread-Pool mit 2 Threads für lange Request-Bodies.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g06c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Embedding batch size",
+     "text": "The worker embeds chunks in batches of 32.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g06d",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "Worker-Speicherlimit",
+     "text": "Der Worker-Container hat ein Speicherlimit von 1536 MiB.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g06e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Embedding model",
+     "text": "Embeddings use intfloat/multilingual-e5-small pinned by its revision hash.",
+     "t": "2026-01-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g07",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Production registration closed",
+    "text": "Public device registration is closed in production; the operator mints devices with hlm.ops instead.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g07a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Production device registration",
+     "text": "In production any client can register a device through POST /devices/register and the admin approves it.",
+     "t": "2026-05-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g07b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Local registration mode",
+     "text": "Local docker compose sets HLM_REGISTRATION_MODE=open for development.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g07c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Token format",
+     "text": "Device tokens start with hlm_ and are 47 characters long.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g07d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Self revoke",
+     "text": "A device can revoke itself with POST /devices/revoke.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g07e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Expired devices",
+     "text": "An expired device is treated exactly like a revoked one.",
+     "t": "2026-09-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g08",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Staging database port",
+    "text": "The staging database listens on port 5433.",
+    "t": "2026-04-01"
+   },
+   "existing": [
+    {
+     "id": "g08a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Production database port",
+     "text": "The production database listens on port 5432.",
+     "t": "2026-01-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g08b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Staging database version",
+     "text": "The staging database runs PostgreSQL 17.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g08c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Staging API port",
+     "text": "The staging API listens on port 9876.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g08d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Test database",
+     "text": "The pytest suite uses the compose Postgres on port 5432 with its own database.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g08e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "VM port forward",
+     "text": "The local lima VM forwards host port 5434 to its SSH daemon.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g09",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "CI on push",
+    "text": "GitHub Actions runs lint and the unit tests on every push to main.",
+    "t": "2026-08-01"
+   },
+   "existing": [
+    {
+     "id": "g09a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "CI trigger",
+     "text": "Every push to main triggers GitHub Actions, which runs lint and the unit tests.",
+     "t": "2026-03-01",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g09b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Integration tests location",
+     "text": "Integration tests run only locally against docker compose, never in CI.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g09c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Manual releases",
+     "text": "Releases are deployed by hand with deploy.sh; CI never deploys.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g09d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Pre-commit hook",
+     "text": "The pre-commit hook runs gitleaks on the staged files.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g09e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "CI Python version",
+     "text": "CI runs on Python 3.13 installed with uv.",
+     "t": "2026-05-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g10",
+   "new": {
+    "kind": "lesson",
+    "lang": "en",
+    "title": "Dedicated test database",
+    "text": "Always point HLM_TEST_DSN at a dedicated database before running pytest, because the suite truncates every table.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g10a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "Set HLM_TEST_DSN first",
+     "text": "Before running pytest, set HLM_TEST_DSN to a dedicated database: the test suite truncates all tables.",
+     "t": "2026-09-23",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g10b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Dev database name",
+     "text": "The local dev stack's database is called hlm.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g10c",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "Do not migrate the dev database",
+     "text": "Never run migrations against the shared dev database from an implementer session.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g10d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Retrieval clone",
+     "text": "hlm_retr holds the loaded G3 retrieval world and is read-only for implementers.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g10e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Fixture world reuse",
+     "text": "The G3 fixture world is reused across sessions when its rows are intact.",
+     "t": "2026-09-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g11",
+   "new": {
+    "kind": "lesson",
+    "lang": "en",
+    "title": "Pin model revisions",
+    "text": "Always pin embedding models by their commit revision; a floating download once changed our vectors silently.",
+    "t": "2026-09-01"
+   },
+   "existing": [
+    {
+     "id": "g11a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Pin Hugging Face revisions",
+     "text": "Pin every Hugging Face model by its commit revision: an unpinned download once changed the embeddings without notice.",
+     "t": "2026-05-01",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g11b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "other",
+     "title": "Model cache directory",
+     "text": "Models are cached in ~/.cache/huggingface on the build machine.",
+     "t": "2026-05-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g11c",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Frozen installs",
+     "text": "Install Python packages with uv sync --frozen so CI and production resolve the same versions.",
+     "t": "2026-05-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g11d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "other",
+     "title": "Tokenizer hash",
+     "text": "The tokenizer file's sha256 is recorded in every write event.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g11e",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "GPU inference dropped",
+     "text": "Local GPU inference was tried and dropped: CPU ONNX Runtime is fast enough for our load.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g12",
+   "new": {
+    "kind": "lesson",
+    "lang": "tr",
+    "title": "umask 077 ile checkout",
+    "text": "Sunucuda umask 077 ile yapılan git checkout, container kullanıcısının dosyaları okuyamamasına yol açtı; checkout öncesi umask 022 kullan.",
+    "t": "2026-09-18"
+   },
+   "existing": [
+    {
+     "id": "g12a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "umask 077 checkout",
+     "text": "A git checkout on the server under umask 077 left the files unreadable for the container user; use umask 022 before the checkout.",
+     "t": "2026-08-01",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g12b",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Secret file modes",
+     "text": "Secret files must be mode 0600 and owned by the deploy user.",
+     "t": "2026-08-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g12c",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "other",
+     "title": "Deploy kullanıcısı",
+     "text": "Deploy işlemi hlmdeploy kullanıcısıyla yapılır.",
+     "t": "2026-07-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g12d",
+     "kind": "lesson",
+     "lang": "de",
+     "project": "other",
+     "title": "Kein git add -A",
+     "text": "Nie git add -A im Repository-Root ausführen: es fegt lokale Dateien mit in den Commit.",
+     "t": "2026-07-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g12e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "other",
+     "title": "Container user id",
+     "text": "The api container runs as uid 10001.",
+     "t": "2026-07-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g13",
+   "new": {
+    "kind": "lesson",
+    "lang": "de",
+    "title": "ssh -n in Schleifen",
+    "text": "In Skripten mit Schleifen immer ssh -n verwenden, sonst liest ssh den stdin der Schleife leer.",
+    "t": "2026-09-21"
+   },
+   "existing": [
+    {
+     "id": "g13a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "ssh -n in loops",
+     "text": "Always use ssh -n in scripts with loops; otherwise ssh reads the loop's stdin empty.",
+     "t": "2026-06-01",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g13b",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "ssh ControlMaster",
+     "text": "Enable ssh ControlMaster so deploy scripts reuse one connection.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g13c",
+     "kind": "fact",
+     "lang": "de",
+     "project": "other",
+     "title": "Deploy-Host-Alias",
+     "text": "Der Deploy-Host ist über den SSH-Alias hlm-deploy erreichbar.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g13d",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "No ssh -t in scripts",
+     "text": "Do not use ssh -t in non-interactive scripts; the forced tty mangles the output.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g13e",
+     "kind": "lesson",
+     "lang": "tr",
+     "project": "other",
+     "title": "Uzakta bash -s kullanma",
+     "text": "Uzak sunucuda betik çalıştırmak için ssh ile bash -s kullanma; betiği önce kopyala, sonra çalıştır.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g14",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Deploy target (imported)",
+    "text": "Deploys go to the Hetzner CX33 server in Falkenstein.",
+    "t": "2025-10-01"
+   },
+   "existing": [
+    {
+     "id": "g14a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Production moved",
+     "text": "Production moved to a Hostinger KVM 2 in Vilnius; the Hetzner CX33 server was decommissioned.",
+     "t": "2026-09-01",
+     "gold": [
+      "contradicts",
+      "old"
+     ],
+     "class": "contra_old"
+    },
+    {
+     "id": "g14b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Server size",
+     "text": "The production VPS has 2 vCPU and 8 GiB of RAM.",
+     "t": "2026-09-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g14c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "VPS firewall",
+     "text": "The Hostinger VPS firewall accepts only 22, 80 and 443 inbound.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g14d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "TLS",
+     "text": "TLS certificates are issued by Let's Encrypt through Caddy.",
+     "t": "2026-09-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g14e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Rehearsal VM",
+     "text": "Releases are rehearsed first on the hlm-2604 lima VM.",
+     "t": "2026-09-15",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g15",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Staging VM memory",
+    "text": "The staging VM has 4 GB of RAM.",
+    "t": "2026-03-01"
+   },
+   "existing": [
+    {
+     "id": "g15a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Staging VM memory",
+     "text": "The staging VM has 8 GB of RAM.",
+     "t": "2026-03-01",
+     "gold": [
+      "contradicts",
+      "none"
+     ],
+     "class": "contra_none"
+    },
+    {
+     "id": "g15b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Production VM memory",
+     "text": "The production VM has 8 GB of RAM.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g15c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Staging VM disk",
+     "text": "The staging VM has a 40 GB disk.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g15d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Swap disabled",
+     "text": "Swap is disabled on every VM.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g15e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Staging OS",
+     "text": "The staging VM runs Ubuntu 26.04.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g16",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Query latency target",
+    "text": "memory.query must answer within 500 ms at p95 with 3 concurrent callers, even while 100 writes are running.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g16a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Query p95 target",
+     "text": "memory.query must answer within 500 ms at p95.",
+     "t": "2026-05-01",
+     "gold": [
+      "refines",
+      "none"
+     ],
+     "class": "refines"
+    },
+    {
+     "id": "g16b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Write latency target",
+     "text": "memory.write must acknowledge within 2 seconds at p95.",
+     "t": "2026-05-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g16c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Query token budget",
+     "text": "memory.query requires a token_budget between 256 and 32000.",
+     "t": "2026-05-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g16d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Measured query latency",
+     "text": "The measured query p50 on corpus A is 59 ms.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g16e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Recall gate",
+     "text": "G3 requires recall at 5 of at least 0.98 on the fixture.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g17",
+   "new": {
+    "kind": "fact",
+    "lang": "de",
+    "title": "Budget-Obergrenzen",
+    "text": "Während der Entwicklung gilt eine LLM-Obergrenze von 10 $ pro Tag, 60 $ pro Monat und 3 $ pro Stunde.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g17a",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "Tagesobergrenze",
+     "text": "Während der Entwicklung gilt eine LLM-Obergrenze von 10 $ pro Tag.",
+     "t": "2026-09-20",
+     "gold": [
+      "refines",
+      "none"
+     ],
+     "class": "refines"
+    },
+    {
+     "id": "g17b",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "OpenRouter-Guthaben",
+     "text": "Das OpenRouter-Guthaben beträgt etwa 23 $.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g17c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Live gate cap",
+     "text": "Each live gate run is aborted above 5 dollars.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g17d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Call ceiling",
+     "text": "A job lineage may make at most 20 provider calls.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g17e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Production budget",
+     "text": "The production LLM budget will be set after development from price/performance data.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g18",
+   "new": {
+    "kind": "fact",
+    "lang": "tr",
+    "title": "Varsayılan kütüphaneci modeli",
+    "text": "Varsayılan kütüphaneci modeli artık openai/gpt-6-luna.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g18a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Default librarian model",
+     "text": "The default librarian model is deepseek/deepseek-v4.1-flash.",
+     "t": "2026-09-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g18b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Fallback librarian profile",
+     "text": "The fallback librarian profile uses deepseek/deepseek-v4.1-flash.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g18c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Embedding model choice",
+     "text": "Embeddings use the local e5-small model; gemini-embedding-2 is only an opt-in profile.",
+     "t": "2026-09-10",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g18d",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "same",
+     "title": "Hariç tutulan model",
+     "text": "google/gemini-3.1-flash-lite prompt injection testinde başarısız olduğu için kullanılmıyor.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g18e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Pro tier plan",
+     "text": "A pro tier with gpt-6-luna-pro is planned for hard tasks in Phase 5.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g19",
+   "new": {
+    "kind": "lesson",
+    "lang": "en",
+    "title": "Accept a release after a soak",
+    "text": "Run deploy.sh --accept-release only after the release has soaked for 24 hours, never right after the gates pass.",
+    "t": "2026-09-24"
+   },
+   "existing": [
+    {
+     "id": "g19a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "Accept a release immediately",
+     "text": "Run deploy.sh --accept-release right after the remote gates pass.",
+     "t": "2026-09-10",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g19b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Pre-W0 rollback refused",
+     "text": "Manual rollback to a release before W0 is refused.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g19c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Remote gates",
+     "text": "remote_gates.sh runs 8 gates against the public URL.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g19d",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "Soak before the backup timer",
+     "text": "Install the backup timer only after the first release has soaked for a week.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g19e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Secret backups",
+     "text": "--accept-release deletes the retired pre-W0 secret backups.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g20",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Librarian container limits",
+    "text": "The librarian container is limited to 512 MiB of memory and 0.5 CPU.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g20a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Librarian memory limit",
+     "text": "The librarian container is limited to 512 MiB of memory.",
+     "t": "2026-09-20",
+     "gold": [
+      "refines",
+      "none"
+     ],
+     "class": "refines"
+    },
+    {
+     "id": "g20b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "API memory limit",
+     "text": "The api container is limited to 2560 MiB of memory.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g20c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Worker memory limit",
+     "text": "The worker container is limited to 1536 MiB of memory.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g20d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Librarian loads no model",
+     "text": "The librarian service loads no ONNX model.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g20e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Caddy memory limit",
+     "text": "The caddy container is limited to 192 MiB.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g21",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Decision log",
+    "text": "Decisions are logged append-only in docs/decisions/DECISIONS.md.",
+    "t": "2026-09-22"
+   },
+   "existing": [
+    {
+     "id": "g21a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "ADR log file",
+     "text": "docs/decisions/DECISIONS.md is the append-only log of decisions.",
+     "t": "2026-09-22",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g21b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Consult records",
+     "text": "Design consults with codex are stored in docs/consults/.",
+     "t": "2026-09-22",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g21c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Status file",
+     "text": "docs/status/STATUS.md is the first file to read when resuming.",
+     "t": "2026-09-22",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g21d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Research report",
+     "text": "The deep-research report in docs/research is the design baseline.",
+     "t": "2026-09-22",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g21e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Backlog",
+     "text": "Non-blocking issues are tracked in docs/status/BACKLOG.md.",
+     "t": "2026-09-22",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g22",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "API base image",
+    "text": "The api image is built from python:3.13-slim.",
+    "t": "2026-08-01"
+   },
+   "existing": [
+    {
+     "id": "g22a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Shared Dockerfile",
+     "text": "The worker image is built from the same Dockerfile as the api image.",
+     "t": "2026-08-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g22b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "CI Python",
+     "text": "The CI runner uses Python 3.12.",
+     "t": "2026-08-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g22c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Test image",
+     "text": "The test image adds pytest and playwright on top of the api image.",
+     "t": "2026-08-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g22d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Python 3.14 plan",
+     "text": "An upgrade of the images to Python 3.14 is planned for next year.",
+     "t": "2026-08-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g22e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "uv version",
+     "text": "The Dockerfile pins uv 0.11.",
+     "t": "2026-08-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g23",
+   "new": {
+    "kind": "fact",
+    "lang": "tr",
+    "title": "Soruların süresi",
+    "text": "Cevaplanmayan kütüphaneci soruları 30 gün sonra otomatik olarak sona erer.",
+    "t": "2026-09-24"
+   },
+   "existing": [
+    {
+     "id": "g23a",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "same",
+     "title": "Soruların sona ermesi",
+     "text": "Cevaplanmayan kütüphaneci soruları bir süre sonra sona erer.",
+     "t": "2026-09-20",
+     "gold": [
+      "refines",
+      "none"
+     ],
+     "class": "refines"
+    },
+    {
+     "id": "g23b",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "same",
+     "title": "Grup boyutu",
+     "text": "Bir onay grubu en fazla 25 öneri içerir.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g23c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Approval batches",
+     "text": "Proposals are grouped into approval batches for the owner.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g23d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Archive threshold",
+     "text": "An item idle for about 47 days becomes an archive candidate.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g23e",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "Antwort-Werkzeug",
+     "text": "Fragen werden mit dem Werkzeug memory.answer beantwortet.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g24",
+   "new": {
+    "kind": "fact",
+    "lang": "de",
+    "title": "Produktions-Domain",
+    "text": "Die Produktions-Domain ist seit September mcp.hlmemo.com.",
+    "t": "2026-09-20"
+   },
+   "existing": [
+    {
+     "id": "g24a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Production endpoint",
+     "text": "The production endpoint domain is hlmemo.example.net.",
+     "t": "2026-05-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g24b",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "Staging-Domain",
+     "text": "Die Staging-Domain ist staging.hlmemo.com.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g24c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "TLS issuer",
+     "text": "TLS certificates come from Let's Encrypt.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g24d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "MCP path",
+     "text": "The MCP endpoint is served under the /mcp path.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g24e",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "same",
+     "title": "DNS sağlayıcı",
+     "text": "DNS kayıtları Hostinger panelinden yönetiliyor.",
+     "t": "2026-09-20",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g25",
+   "new": {
+    "kind": "lesson",
+    "lang": "en",
+    "title": "Restore drill after backup changes",
+    "text": "Test backups by restoring them: after every backup-script change, restore the newest dump into a scratch database and compare row counts.",
+    "t": "2026-09-15"
+   },
+   "existing": [
+    {
+     "id": "g25a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Test backups",
+     "text": "Test backups by restoring them.",
+     "t": "2026-04-01",
+     "gold": [
+      "refines",
+      "none"
+     ],
+     "class": "refines"
+    },
+    {
+     "id": "g25b",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Encrypt backups",
+     "text": "Backups must be encrypted at rest.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g25c",
+     "kind": "lesson",
+     "lang": "de",
+     "project": "other",
+     "title": "Embeddings nicht sichern",
+     "text": "Die Embeddings-Tabelle nicht sichern: sie lässt sich neu berechnen.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g25d",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Rotate backup keys",
+     "text": "Rotate the backup encryption keys once a year.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g26",
+   "new": {
+    "kind": "lesson",
+    "lang": "en",
+    "title": "Tokens via stdin",
+    "text": "Never print secrets in logs; pass tokens via stdin, never via argv.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g26a",
+     "kind": "lesson",
+     "lang": "tr",
+     "project": "other",
+     "title": "Token'ları stdin ile ilet",
+     "text": "Gizli anahtarları asla loglara yazma; token'ları argv ile değil stdin ile ilet.",
+     "t": "2026-06-01",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g26b",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Rotate device tokens",
+     "text": "Rotate device tokens every 90 days.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g26c",
+     "kind": "lesson",
+     "lang": "de",
+     "project": "other",
+     "title": "Secrets nicht ins Git",
+     "text": "Secrets gehören nie ins Git-Repository; gitleaks prüft jeden Commit.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g26d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "other",
+     "title": "Env files outside the repo",
+     "text": "Environment files live outside the repository.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g27",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Call ceiling per lineage",
+    "text": "The per-job LLM call ceiling is now 20 calls per lineage.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g27a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Call ceiling",
+     "text": "The per-job LLM call ceiling is 10 calls.",
+     "t": "2026-09-10",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g27b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Breaker threshold",
+     "text": "The circuit breaker opens after 5 consecutive failures.",
+     "t": "2026-09-10",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g27c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Retry backoff",
+     "text": "Transient provider errors back off 1, 2, 4 and 8 seconds.",
+     "t": "2026-09-10",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g27d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Job attempts",
+     "text": "A librarian job fails permanently after 5 attempts.",
+     "t": "2026-09-10",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g27e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Hour window",
+     "text": "The hourly spend window is 3 dollars.",
+     "t": "2026-09-10",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g28",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Embedding hardware (imported)",
+    "text": "Embeddings run on the GPU inference server.",
+    "t": "2025-12-01"
+   },
+   "existing": [
+    {
+     "id": "g28a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Embedding hardware",
+     "text": "Since April embeddings run on CPU with ONNX Runtime; the GPU inference server was retired.",
+     "t": "2026-04-01",
+     "gold": [
+      "contradicts",
+      "old"
+     ],
+     "class": "contra_old"
+    },
+    {
+     "id": "g28b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "No reranker",
+     "text": "No reranking model is used.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g28c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Embedder threads",
+     "text": "The embedder uses 2 intra-op threads.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g28d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Vector index",
+     "text": "Vector search is an exact scan below 200k rows.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g28e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "GPU for the benchmark",
+     "text": "The model benchmark in bench/ ran on a rented GPU.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g29",
+   "new": {
+    "kind": "fact",
+    "lang": "de",
+    "title": "Librarian-Lease",
+    "text": "Der Lease eines Librarian-Jobs beträgt 120 Sekunden.",
+    "t": "2026-09-01"
+   },
+   "existing": [
+    {
+     "id": "g29a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Librarian job lease",
+     "text": "A librarian job lease lasts 300 seconds.",
+     "t": "2026-09-01",
+     "gold": [
+      "contradicts",
+      "none"
+     ],
+     "class": "contra_none"
+    },
+    {
+     "id": "g29b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Embed worker lease",
+     "text": "An embed job lease lasts 120 seconds.",
+     "t": "2026-09-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g29c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Lease renewal",
+     "text": "Leases are renewed every 30 seconds while a job runs.",
+     "t": "2026-09-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g29d",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "Heartbeat-Intervall",
+     "text": "Der Librarian schreibt alle 10 Sekunden einen Heartbeat.",
+     "t": "2026-09-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g29e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Poll interval",
+     "text": "An idle librarian polls the queue every second.",
+     "t": "2026-09-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g30",
+   "new": {
+    "kind": "fact",
+    "lang": "tr",
+    "title": "Varsayılan rol",
+    "text": "Kütüphaneci varsayılan olarak gözlemci (observer) rolünde başlar ve yalnızca öneri yazar.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g30a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Default librarian role",
+     "text": "By default the librarian starts in the observer role and only writes proposals.",
+     "t": "2026-09-23",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g30b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Autonomous decision",
+     "text": "The autonomous role needs a separate owner decision.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g30c",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "same",
+     "title": "Asistan rolü",
+     "text": "Asistan rolünde her grup için sahip onayı gerekir.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g30d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Widening is propose-only",
+     "text": "Cross-project widening is propose-only in every role.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g30e",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "Rollenwechsel",
+     "text": "Ein Rollenwechsel wird als librarian-Ereignis mit op=set_role gespeichert.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g31",
+   "new": {
+    "kind": "lesson",
+    "lang": "en",
+    "title": "git add -A sweeps local files",
+    "text": "Never run git add -A at the repository root; it sweeps local files such as .env into the commit.",
+    "t": "2026-09-22"
+   },
+   "existing": [
+    {
+     "id": "g31a",
+     "kind": "lesson",
+     "lang": "de",
+     "project": "other",
+     "title": "Kein git add -A",
+     "text": "Nie git add -A im Repository-Root ausführen: es fegt lokale Dateien wie .env mit in den Commit.",
+     "t": "2026-07-01",
+     "gold": [
+      "duplicate",
+      "none"
+     ],
+     "class": "duplicate"
+    },
+    {
+     "id": "g31b",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Review staged files",
+     "text": "Run git diff --cached before every commit.",
+     "t": "2026-07-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g31c",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "No force push",
+     "text": "Never force-push to main.",
+     "t": "2026-07-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g31d",
+     "kind": "lesson",
+     "lang": "tr",
+     "project": "other",
+     "title": "--no-verify kullanma",
+     "text": "Commit ederken --no-verify kullanma; hook'lar gizli anahtar taraması yapar.",
+     "t": "2026-07-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g32",
+   "new": {
+    "kind": "lesson",
+    "lang": "en",
+    "title": "ORT telemetry abort",
+    "text": "Set ORT_DISABLE_TELEMETRY=1 before importing onnxruntime; its telemetry thread aborted the interpreter at exit with rc 134.",
+    "t": "2026-09-22"
+   },
+   "existing": [
+    {
+     "id": "g32a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Disable ORT telemetry",
+     "text": "Set ORT_DISABLE_TELEMETRY=1 before onnxruntime is imported.",
+     "t": "2026-06-01",
+     "gold": [
+      "refines",
+      "none"
+     ],
+     "class": "refines"
+    },
+    {
+     "id": "g32b",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "ONNX thread count",
+     "text": "Limit onnxruntime intra-op threads to the container's CPU quota.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g32c",
+     "kind": "fact",
+     "lang": "de",
+     "project": "other",
+     "title": "Exit-Code 134",
+     "text": "Exit-Code 134 bedeutet SIGABRT.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g32d",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "other",
+     "title": "Close the embedder",
+     "text": "Close the embedder session before the event loop shuts down in tests.",
+     "t": "2026-06-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    }
+   ]
+  },
+  {
+   "id": "g33",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Default token budget",
+    "text": "The default write token_budget was raised to 4000 tokens in September.",
+    "t": "2026-09-15"
+   },
+   "existing": [
+    {
+     "id": "g33a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Default write budget",
+     "text": "The default token_budget of memory.write is 2000 tokens.",
+     "t": "2026-03-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g33b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Query budget range",
+     "text": "memory.query accepts a token_budget from 256 to 32000.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g33c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Card size limit",
+     "text": "A project card may hold at most 512 tokens.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g33d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Tokenizer",
+     "text": "Budgets are metered with the o200k_base tokenizer.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g33e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Preview width",
+     "text": "Hit previews are 48 tokens wide.",
+     "t": "2026-03-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g34",
+   "new": {
+    "kind": "fact",
+    "lang": "tr",
+    "title": "Yedekleme konumu",
+    "text": "Günlük yedekler artık Hetzner Storage Box'a gönderiliyor; eski S3 kovası kapatıldı.",
+    "t": "2026-08-20"
+   },
+   "existing": [
+    {
+     "id": "g34a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Backup destination",
+     "text": "Daily backups are uploaded to an S3 bucket.",
+     "t": "2026-02-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g34b",
+     "kind": "fact",
+     "lang": "tr",
+     "project": "same",
+     "title": "Log hedefi",
+     "text": "Uygulama logları journald'ye yazılıyor.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g34c",
+     "kind": "fact",
+     "lang": "de",
+     "project": "same",
+     "title": "Backup-Verschlüsselung",
+     "text": "Backups werden vor dem Upload mit age verschlüsselt.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g34d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Backup timer",
+     "text": "The backup timer is not installed on production yet.",
+     "t": "2026-08-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g34e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Docker volume",
+     "text": "The database lives on the named volume pgdata.",
+     "t": "2026-02-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g35",
+   "new": {
+    "kind": "lesson",
+    "lang": "de",
+    "title": "Migration bei gestoppten Writern",
+    "text": "Migrationen laufen nur bei gestoppten Writern; deploy.sh stoppt api und worker vorher.",
+    "t": "2026-09-10"
+   },
+   "existing": [
+    {
+     "id": "g35a",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "Online migrations",
+     "text": "Run migrations while the api keeps serving writes; downtime is not acceptable.",
+     "t": "2026-04-01",
+     "gold": [
+      "contradicts",
+      "new"
+     ],
+     "class": "contra_new"
+    },
+    {
+     "id": "g35b",
+     "kind": "lesson",
+     "lang": "en",
+     "project": "same",
+     "title": "Concurrent index builds",
+     "text": "Build large indexes with CREATE INDEX CONCURRENTLY.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g35c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Migration command",
+     "text": "Migrations run with alembic upgrade main@head.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    },
+    {
+     "id": "g35d",
+     "kind": "lesson",
+     "lang": "de",
+     "project": "same",
+     "title": "Lock-Timeout",
+     "text": "Jede Migration setzt ein kurzes lock_timeout und schlägt lieber schnell fehl.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g35e",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Downgrade policy",
+     "text": "A downgrade never drops authoritative events.",
+     "t": "2026-04-01",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g36",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Worker memory limit (imported note)",
+    "text": "The worker container is limited to 1 GiB of memory.",
+    "t": "2026-01-05"
+   },
+   "existing": [
+    {
+     "id": "g36a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Worker memory limit",
+     "text": "Since the OOM fix in March the worker container is limited to 1536 MiB of memory.",
+     "t": "2026-03-15",
+     "gold": [
+      "contradicts",
+      "old"
+     ],
+     "class": "contra_old"
+    },
+    {
+     "id": "g36b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "API memory limit",
+     "text": "The api container is limited to 2560 MiB.",
+     "t": "2026-03-15",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g36c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Worker CPU",
+     "text": "The worker container gets 1.0 CPU.",
+     "t": "2026-03-15",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g36d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "OOM restart",
+     "text": "An OOM kill restarts the container automatically.",
+     "t": "2026-03-15",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  },
+  {
+   "id": "g37",
+   "new": {
+    "kind": "fact",
+    "lang": "en",
+    "title": "Owner device class",
+    "text": "The owner's MacBook is registered with the device class work.",
+    "t": "2026-09-23"
+   },
+   "existing": [
+    {
+     "id": "g37a",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Owner device",
+     "text": "The owner's MacBook is registered with the device class personal.",
+     "t": "2026-09-23",
+     "gold": [
+      "contradicts",
+      "none"
+     ],
+     "class": "contra_none"
+    },
+    {
+     "id": "g37b",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Gates device",
+     "text": "The g7 gates device is registered with the class personal.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g37c",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Owner device grant",
+     "text": "The owner's device holds write on the hlmemo project.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "near_miss"
+    },
+    {
+     "id": "g37d",
+     "kind": "fact",
+     "lang": "en",
+     "project": "same",
+     "title": "Class scopes",
+     "text": "A class:work item is visible only to work-class devices.",
+     "t": "2026-09-23",
+     "gold": [
+      "none",
+      "none"
+     ],
+     "class": "none"
+    }
+   ]
+  }
+ ]
+}

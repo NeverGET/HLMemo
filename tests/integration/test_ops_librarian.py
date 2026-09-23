@@ -100,3 +100,23 @@ async def test_ops_librarian_audit_approve_and_role(db_dsn, connect, world: Worl
     assert proc.returncode == 0 and "applied" in proc.stdout
     assert _ops(db_dsn, "audit", "--project", "no-such").returncode == 1
     assert json.loads(_ops(db_dsn, "expire").stdout) == {"expired": 0}
+
+
+async def test_ops_librarian_backfill_history(db_dsn, connect, world: World) -> None:  # noqa: ANN001
+    from hlmemo.core.write_service import default_deps
+
+    for i in range(3):  # history written while the librarian was disabled: no jobs
+        await write_items(connect, world.ctx_a, MAIN, [item(f"H{i}", f"history {i}")], deps=default_deps())
+    await write_items(connect, world.ctx_a, MAIN, [item("New", "reviewed at write time")])
+    async with await connect() as conn:
+        assert await count(conn, "jobs", "kind = 'librarian_write'") == 1
+    proc = _ops(db_dsn, "backfill", "--project", MAIN)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"enqueued_events": 3, "jobs": 3, "project": MAIN, "source_events": 3}
+    assert json.loads(_ops(db_dsn, "backfill", "--project", MAIN).stdout)["jobs"] == 0  # idempotent
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT priority, payload->>'trigger', payload->'capabilities'->>'trigger_device_id' FROM jobs"
+            " WHERE kind = 'librarian_write' AND payload->>'trigger' = 'backfill'"
+        )
+        assert await cur.fetchall() == [(6, "backfill", str(world.dev_a))] * 3

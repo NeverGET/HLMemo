@@ -211,12 +211,12 @@ def high_impact(j: Judgement, *, cross_project: bool) -> str | None:
 
 
 def verifier_agrees(kind: str, v: dict[str, Any], *, new_is_b: bool, direction: str = "new") -> bool:
-    """The agreement rule. ``supersede``: same subject, not both true, and the verifier's current
-    item is the one the primary said replaces the other. ``widen``: same subject and both true."""
-    same, both, current = bool(v.get("same_subject")), bool(v.get("both_true")), v.get("current")
+    """The agreement rule. ``supersede``: same subject, a conflict, and the verifier's current item
+    is the one the primary said replaces the other. ``widen``: same subject and no conflict."""
+    same, conflict, current = bool(v.get("same_subject")), bool(v.get("conflict")), v.get("current")
     if kind == "widen":
-        return same and both
-    if not same or both:
+        return same and not conflict
+    if not same or not conflict:
         return False
     subject_letter = "B" if new_is_b else "A"  # where the NEW item sits in the verifier's pair
     existing_letter = "A" if new_is_b else "B"
@@ -230,11 +230,11 @@ def apply_verification(j: Judgement, kind: str, v: dict[str, Any] | None, *, new
         agreed, conflict = False, kind == "supersede"
     else:
         agreed = verifier_agrees(kind, v, new_is_b=new_is_b, direction=j.supersedes)
-        conflict = bool(v.get("same_subject")) and not bool(v.get("both_true"))
+        conflict = bool(v.get("same_subject")) and bool(v.get("conflict"))
         j.verification = {
             "kind": kind,
             "agreed": agreed,
-            "answer": {k: v.get(k) for k in ("same_subject", "both_true", "current")},
+            "answer": {k: v.get(k) for k in ("same_subject", "conflict", "current")},
         }
     if agreed:
         return
