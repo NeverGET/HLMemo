@@ -39,7 +39,11 @@ JUNK_DIRS = frozenset(
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
-DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+#: Sol 42 #3: a heading is a dated RECORD only in these explicit forms — the date first
+#: (``## 2026-09-24``, ``## 2026-09-24 — title``) or ``SESSION <date>`` (``# SESSION 2026-05-01 — …``).
+#: A date elsewhere in a heading (``## Prices as of 2026-09-22``), in a table or in running text is
+#: not validity evidence.
+DATED_HEADING_RE = re.compile(r"^(?:session\s+)?(\d{4}-\d{2}-\d{2})(?=$|\s|[—–:|,.)-])", re.IGNORECASE)
 DECISION_ROW_RE = re.compile(r"^(D-\d{3,4}) \| (\d{4}-\d{2}-\d{2}) \| ")
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 STUB_LINE_RE = re.compile(r"^@\S+$")
@@ -92,14 +96,14 @@ class ImportRecord:
 
     @property
     def key(self) -> str:
-        if self.export is not None and self.export.get("source") is None:
-            return f"export:{self.path}"
         src = self.source()
         return f"{src['system']}:{src['path']}"
 
     def source(self) -> dict[str, Any]:
-        if self.export is not None and self.export.get("source") is not None:
-            return dict(self.export["source"])
+        if self.export is not None:  # an export record: its real provenance, else its origin (hlm:)
+            if self.export.get("source") is not None:
+                return dict(self.export["source"])
+            return {"system": "hlm", "path": str(self.export.get("origin")), "sha256": self.sha256}
         out: dict[str, Any] = {"system": self.system, "path": self.path, "sha256": self.sha256}
         if self.mtime:
             out["mtime"] = self.mtime
@@ -381,17 +385,24 @@ def decision_sections(text: str, tz: tzinfo | None = None) -> list[Section] | No
     return out
 
 
+def heading_date(title: str, tz: tzinfo | None = None) -> str | None:
+    """The evidence date of a dated-record heading (``DATED_HEADING_RE``, a real calendar date)."""
+    m = DATED_HEADING_RE.match(title.strip())
+    return evidence_instant(m.group(1), tz) if m else None
+
+
 def dated_sections(text: str, tz: tzinfo | None = None) -> tuple[list[Section] | None, str | None]:
-    """Dated headings. Returns ``(sections, file_date)``: a single dated heading that is the file's
-    first heading dates the whole file; otherwise the dated headings of the shallowest level that
-    has one split the file into preamble + one entry per dated heading."""
+    """Dated-record headings (``DATED_HEADING_RE``). Returns ``(sections, file_date)``: a single
+    dated heading that is the file's first heading dates the whole file; otherwise the dated
+    headings of the shallowest level that has one split the file into preamble + one entry per
+    dated heading."""
     hs = headings(text)
-    dated = [(off, lvl, t, DATE_RE.search(t)) for off, lvl, t in hs]
-    dated = [(off, lvl, t, m.group(1)) for off, lvl, t, m in dated if m]
+    dated = [(off, lvl, t, heading_date(t, tz)) for off, lvl, t in hs]
+    dated = [(off, lvl, t, d) for off, lvl, t, d in dated if d is not None]
     if not dated:
         return None, None
     if len(dated) == 1 and hs and dated[0][0] == hs[0][0]:
-        return None, evidence_instant(dated[0][3], tz)
+        return None, dated[0][3]
     level = min(lvl for _o, lvl, _t, _d in dated)
     marks = [(off, t, d) for off, lvl, t, d in dated if lvl == level]
     stops = [off for off, lvl, _t in hs if lvl < level]
@@ -407,7 +418,7 @@ def dated_sections(text: str, tz: tzinfo | None = None) -> tuple[list[Section] |
             _unique(slug(title, 48), seen),
             text[off:stop],
             lead=title,
-            date=evidence_instant(date, tz),
+            date=date,
             evidence="dated-heading",
             kind="episode",
         )

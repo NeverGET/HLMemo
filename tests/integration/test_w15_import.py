@@ -127,22 +127,122 @@ async def test_gi1_import_is_idempotent_and_revises_only_edits(connect, tmp_path
     assert len([i for i in items if i["kind"] != "project_card"]) == 9
 
 
-async def test_gi1_missing_sources_are_reported_not_closed(connect, tmp_path, meter) -> None:
+async def test_gi1_removed_sources_are_closed_and_reported(connect, tmp_path, meter) -> None:
+    """A file removed from the source: the dry-run lists it under `closed`; the run ends its
+    validity (never deletes); as-of reads before the close still see it; a re-run makes 0 writes."""
     root = copy_fixture(tmp_path)
     pid, _ = await make_project(connect, "fx")
     call = Caller(connect, await make_device(connect, "importer", {pid: "write"}))
     await _run(call, root, meter)
     (root / "docs" / "other" / "plain.md").unlink()
+    dry = await _run(call, root, meter, dry_run=True)
+    assert dry["closed"] == ["markdown:docs/other/plain.md"] and dry["counts"]["closed"] == 1
+    assert call.writes() == 9
     rep = await _run(call, root, meter)
-    assert rep["missing"] == ["markdown:docs/other/plain.md"] and rep["writes"]["written"] == 0
+    assert rep["writes"]["closed"] == 1 and rep["writes"]["written"] == 0 and not rep["writes"]["failed"]
+    rows_ = await rows(
+        connect,
+        "SELECT valid_to::text, superseded_at::text FROM memory_versions"
+        " WHERE source->>'path' = 'docs/other/plain.md' ORDER BY version_id",
+    )
+    assert rows_[0][1] != "infinity" and rows_[-1] == (rows_[-1][0], "infinity")
+    assert rows_[-1][0] != "infinity"  # the current row's validity ended (invalidate, never delete)
+    again = await _run(call, root, meter)
+    assert again["writes"]["written"] == again["writes"]["closed"] == 0 and again["closed"] == []
+    async with await connect() as conn:  # G6: the close replays identically
+        before = await dump_projections(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert await dump_projections(conn) == before
+
+
+async def test_heading_rename_is_one_revision_not_new_plus_orphan(connect, tmp_path, meter) -> None:
+    """Sol 42 #6: a renamed section heading re-maps onto its logical item (1 revision whose source
+    key moves); a section that is really removed is closed."""
+    doc = tmp_path / "repo" / "docs"
+    doc.mkdir(parents=True)
+    sections = {f"Part {n}": " ".join(f"p{n}w{i}" for i in range(250)) for n in range(4)}
+    text = "# Manual\n\nIntro.\n\n" + "".join(f"## {h}\n\n{b}\n\n" for h, b in sections.items())
+    (doc / "manual.md").write_text(text)
+    pid, _ = await make_project(connect, "fx")
+    call = Caller(connect, await make_device(connect, "importer", {pid: "write"}))
+
+    async def run(dry: bool = False) -> dict:
+        parsed = parse_source("markdown", [doc], base=tmp_path / "repo", tz=UTC, section_chars=2000)
+        return await import_async(
+            call, source="markdown", parsed=parsed, project="fx", dry_run=dry, meter=meter
+        )
+
+    first = await run()
+    assert first["counts"]["new"] == 5
+    lid = await scalar(
+        connect, "SELECT logical_id FROM memory_versions WHERE source->>'path' = 'docs/manual.md#part-2'"
+    )
+    (doc / "manual.md").write_text(text.replace("## Part 2", "## Chapter Two"))
+    dry = await run(dry=True)
+    assert dry["remapped"] == [
+        {"from": "markdown:docs/manual.md#part-2", "to": "markdown:docs/manual.md#chapter-two", "score": 1.0}
+    ]
+    assert (dry["counts"]["new"], dry["counts"]["changed"], dry["counts"]["closed"]) == (0, 1, 0)
+    rep = await run()
+    assert rep["writes"]["revisions"] == 1 and rep["writes"]["written"] == 1 and rep["writes"]["closed"] == 0
     assert (
         await scalar(
             connect,
-            "SELECT count(*) FROM memory_versions WHERE source->>'path' = 'docs/other/plain.md'"
-            " AND superseded_at = 'infinity' AND valid_to = 'infinity'",
+            "SELECT logical_id FROM memory_versions WHERE source->>'path' = 'docs/manual.md#chapter-two'"
+            " AND superseded_at = 'infinity'",
         )
-        == 1
+        == lid
     )
+    # a section really removed: closed (not left open as an orphan)
+    (doc / "manual.md").write_text(text.replace("## Part 2", "## Chapter Two").split("## Part 3")[0])
+    gone = await run()
+    assert gone["closed"] == ["markdown:docs/manual.md#part-3"] and gone["writes"]["closed"] == 1
+    assert (await run())["writes"]["written"] == 0
+
+
+async def test_content_cycle_a_b_a_b_a_never_reuses_a_request_id(connect, tmp_path, meter) -> None:
+    """Sol 42 #4: every step of an A->B->A->B->A edit cycle is exactly one write."""
+    root = copy_fixture(tmp_path)
+    pid, _ = await make_project(connect, "fx")
+    ctx = await make_device(connect, "importer", {pid: "write"})
+    call = Caller(connect, ctx)
+    await _run(call, root, meter)
+    plain = root / "docs" / "other" / "plain.md"
+    a, b = plain.read_text(), plain.read_text() + "\nB variant.\n"
+    for n, text in enumerate([b, a, b, a], start=1):
+        plain.write_text(text)
+        rep = await _run(call, root, meter)
+        assert rep["writes"]["written"] == 1 and rep["writes"]["revisions"] == 1, (n, rep["writes"])
+        assert not rep["writes"]["failed"]
+    assert await _writes(connect, ctx.device_id) == 9 + 4
+    assert (
+        await scalar(
+            connect,
+            "SELECT body FROM memory_versions WHERE source->>'path' = 'docs/other/plain.md'"
+            " AND superseded_at = 'infinity'",
+        )
+        == a
+    )
+
+
+async def test_imports_ask_the_librarian_for_priority_6(connect, tmp_path, meter) -> None:
+    """Roadmap W2b: imports at librarian priority 6, persisted in the write event (replay sees it)."""
+    root = copy_fixture(tmp_path)
+    pid, _ = await make_project(connect, "fx")
+    call = Caller(connect, await make_device(connect, "importer", {pid: "write"}))
+    await _run(call, root, meter)
+    await call(
+        "memory.write",
+        _req([{"kind": "fact", "title": "t", "body": "plain write"}], "00000000-0000-4000-8000-0000000000aa"),
+    )
+    prio = await rows(
+        connect,
+        "SELECT client, payload->'resolved'->'librarian_priority' FROM events WHERE kind = 'write'"
+        " ORDER BY event_id",
+    )
+    assert [p for c, p in prio if c == "hlm-import/1"] == [6] * 9
+    assert [p for c, p in prio if c != "hlm-import/1"] == [None, None]  # skeleton card + plain write
 
 
 # --------------------------------------------------------------------------- G-I2
@@ -318,11 +418,11 @@ async def test_one_current_owner_per_source_key(connect) -> None:
             "00000000-0000-4000-8000-000000000004",
         ),
     )
-    # the database backstop (EXCLUDE mv_one_source_owner) holds for any write path
+    # the database backstop (UNIQUE mv_source_owner over open current rows) holds for any write path
     import psycopg
 
     async with await connect() as conn:
-        with pytest.raises(psycopg.errors.ExclusionViolation):
+        with pytest.raises(psycopg.errors.UniqueViolation):
             await conn.execute(
                 "INSERT INTO memory_versions (logical_id, project_id, project_ids, kind, title, body,"
                 " token_count, valid_from, recorded_at, source_event_id, source, source_key)"
@@ -422,3 +522,120 @@ async def test_export_authz_scope_paging_and_cursor(connect) -> None:
     assert exc.value.code == "E_INVALID_CURSOR"
     # no access events: a bulk export never resets idleness (D-012)
     assert await scalar(connect, "SELECT count(*) FROM events WHERE kind = 'access'") == 0
+
+
+# --------------------------------------------------------------------------- export identity (Sol 42 #5)
+async def test_crafted_logical_id_never_revises_an_unrelated_item(connect, tmp_path, meter) -> None:
+    pid_a, _ = await make_project(connect, "exp-a")
+    pid_b, _ = await make_project(connect, "exp-b")
+    call = Caller(connect, await make_device(connect, "importer", {pid_a: "write", pid_b: "write"}))
+    await call(
+        "memory.write",
+        {
+            **_req(
+                [{"kind": "fact", "title": "Native A", "body": "alpha body\n"}],
+                "00000000-0000-4000-8000-0000000000b1",
+            ),
+            "project": "exp-a",
+        },
+    )
+    ack = await call(
+        "memory.write",
+        {
+            **_req(
+                [{"kind": "fact", "title": "Unrelated", "body": "keep me\n"}],
+                "00000000-0000-4000-8000-0000000000b2",
+            ),
+            "project": "exp-b",
+        },
+    )
+    victim_lid, victim_vid = ack["versions"][0]["logical_id"], ack["versions"][0]["version_id"]
+    out = tmp_path / "exp"
+    await run_export(call, "exp-a", out)
+    (f,) = [p for p in (out / "fact").glob("*.md")]
+    text = f.read_text()
+    # (1) the logical_id / version_id lines point at project b's unrelated item
+    lines = text.split("\n")
+    lines = [
+        f"logical_id: {victim_lid}"
+        if ln.startswith("logical_id: ")
+        else f"version_id: {victim_vid}"
+        if ln.startswith("version_id: ")
+        else ln
+        for ln in lines
+    ]
+    f.write_text("\n".join(lines).replace("alpha body", "overwritten!"))
+    parsed = parse_source("markdown", [out], base=out, tz=UTC)
+    rep = await import_async(
+        call, source="markdown", parsed=parsed, project="exp-b", dry_run=False, meter=meter
+    )
+    assert not rep["writes"]["failed"]
+    assert (
+        await scalar(
+            connect,
+            "SELECT body FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'",
+            (victim_lid,),
+        )
+        == "keep me\n"
+    )
+    # (2) an origin naming the victim with a stale/foreign version id is rejected, never applied
+    f.write_text(
+        "\n".join(
+            f'origin: "exp-b/{victim_lid}"'
+            if ln.startswith("origin: ")
+            else f"version_id: {victim_vid - 1}"
+            if ln.startswith("version_id: ")
+            else ln
+            for ln in lines
+        ).replace("alpha body", "overwritten!")
+    )
+    parsed = parse_source("markdown", [out], base=out, tz=UTC)
+    rep = await import_async(
+        call, source="markdown", parsed=parsed, project="exp-b", dry_run=False, meter=meter
+    )
+    assert [r["reason"] for r in rep["rejected"]] == ["stale_or_foreign_export"]
+    assert (
+        await scalar(connect, "SELECT count(*) FROM memory_versions WHERE logical_id = %s", (victim_lid,))
+        == 1
+    )
+
+
+async def test_source_null_export_reimports_idempotently(connect, tmp_path, meter) -> None:
+    pid_a, _ = await make_project(connect, "exp-a")
+    pid_b, _ = await make_project(connect, "exp-b")
+    ctx = await make_device(connect, "importer", {pid_a: "write", pid_b: "write"})
+    call = Caller(connect, ctx)
+    for n in range(3):
+        await call(
+            "memory.write",
+            {
+                **_req(
+                    [{"kind": "lesson", "title": f"L{n}", "body": f"lesson {n}\n"}],
+                    f"00000000-0000-4000-8000-00000000c00{n}",
+                ),
+                "project": "exp-a",
+            },
+        )
+    out = tmp_path / "exp"
+    await run_export(call, "exp-a", out)
+    parsed = parse_source("markdown", [out], base=out, tz=UTC)
+    first = await import_async(
+        call, source="markdown", parsed=parsed, project="exp-b", dry_run=False, meter=meter
+    )
+    assert first["writes"]["written"] == 4 and not first["writes"]["failed"]  # 3 lessons + card
+    writes = await _writes(connect, ctx.device_id)
+    for target in ("exp-b", "exp-a"):  # into the copy again, and back into the origin project
+        again = await import_async(
+            call, source="markdown", parsed=parsed, project=target, dry_run=False, meter=meter
+        )
+        assert again["writes"]["written"] == 0 and again["counts"]["unchanged"] == 4, target
+    assert await _writes(connect, ctx.device_id) == writes
+    assert (
+        await scalar(
+            connect,
+            "SELECT count(*) FROM memory_versions WHERE project_id = %s AND kind = 'lesson'"
+            " AND superseded_at = 'infinity'",
+            (pid_b,),
+        )
+        == 3
+    )

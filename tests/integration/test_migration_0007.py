@@ -19,6 +19,8 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 pytestmark = pytest.mark.integration
 ROOT = Path(__file__).resolve().parents[2]
+SHA = "e" * 64
+GOOD = '{"system":"a","path":"b","sha256":"' + SHA + '"}'
 
 
 def _alembic(dsn: str, *args: str, fault: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -74,21 +76,36 @@ def test_migration_0007_upgrade_backfill_recovery_and_downgrade(fresh_dsn: str) 
         cons = dict(
             conn.execute(
                 "SELECT conname, convalidated FROM pg_constraint WHERE conrelid = 'memory_versions'::regclass"
-                " AND conname IN ('mv_source_key_derived', 'mv_source_shape', 'mv_one_source_owner')"
+                " AND conname IN ('mv_source_key_derived', 'mv_source_shape')"
             ).fetchall()
         )
-        assert cons == {"mv_source_key_derived": True, "mv_source_shape": True, "mv_one_source_owner": True}
+        assert cons == {"mv_source_key_derived": True, "mv_source_shape": True}
         assert conn.execute(
-            "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
-            " WHERE c.relname = 'mv_source_key'"
-        ).fetchall() == [(True,)]
+            "SELECT i.indisvalid, i.indisunique FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
+            " WHERE c.relname = 'mv_source_owner'"
+        ).fetchall() == [(True, True)]
         ev = conn.execute("SELECT kind, device_id, client FROM events WHERE kind = 'write'").fetchall()
         assert ev == [("write", 1, "hlm-migrate/0007")]
         # the CHECK pins source_key to the source (a hand-written mismatch is refused)
         with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute("UPDATE memory_versions SET source = %s::jsonb, source_key = 'a:other'", (GOOD,))
+    # Sol 42 #2: a source without system/path/sha256 (or with a JSON null) is refused, never UNKNOWN,
+    # so a sourced row can never carry a NULL key that dodges the ownership index
+    sha = f'"sha256":"{SHA}"'
+    for bad in (
+        '{"system":"a",' + sha + "}",
+        '{"path":"b",' + sha + "}",
+        '{"system":"a","path":null,' + sha + "}",
+        '{"system":"a","path":"b"}',
+        '{"system":"a","path":"",' + sha + "}",
+        '"just a string"',
+    ):
+        with psycopg.connect(fresh_dsn) as conn, pytest.raises(psycopg.errors.CheckViolation):
             conn.execute(
-                'UPDATE memory_versions SET source = \'{"system":"a","path":"b","sha256":"c"}\','
-                " source_key = 'a:other'"
+                "UPDATE memory_versions SET source = %s::jsonb,"
+                " source_key = CASE WHEN %s::jsonb IS NULL THEN NULL"
+                " ELSE (%s::jsonb ->> 'system') || ':' || (%s::jsonb ->> 'path') END",
+                (bad, bad, bad, bad),
             )
     # round trip while no source exists: the backfilled card stays (plain Phase-0 data), no second card
     down = _alembic(fresh_dsn, "downgrade", "0006_librarian")
@@ -97,10 +114,78 @@ def test_migration_0007_upgrade_backfill_recovery_and_downgrade(fresh_dsn: str) 
     assert _cards(fresh_dsn) == [("hlm-global", 0), ("hlm-librarian", 0), ("legacy", 1)]
     # a version carrying a source makes the downgrade refuse (projection data only replay restores)
     with psycopg.connect(fresh_dsn) as conn:
-        conn.execute(
-            'UPDATE memory_versions SET source = \'{"system":"a","path":"b","sha256":"c"}\','
-            " source_key = 'a:b'"
-        )
+        conn.execute("UPDATE memory_versions SET source = %s::jsonb, source_key = 'a:b'", (GOOD,))
     refused = _alembic(fresh_dsn, "downgrade", "0006_librarian")
     assert refused.returncode != 0 and "downgrade refused" in refused.stderr
+    assert _version(fresh_dsn) == [("0007_import",)]
+
+
+def test_migration_0007_never_blocks_writers_for_a_second(fresh_dsn: str) -> None:
+    """Sol 42 #1: the upgrade is online. A writer committing small transactions throughout the
+    upgrade — while a long reader holds the table, so every catalog step has to wait and retry —
+    is never blocked for more than 1 s, and the upgrade still completes."""
+    import threading
+    import time
+
+    assert _alembic(fresh_dsn, "upgrade", "0006_librarian").returncode == 0
+    with psycopg.connect(fresh_dsn) as conn:
+        pid = conn.execute(
+            "INSERT INTO projects (slug, name) VALUES ('busy', 'Busy') RETURNING project_id"
+        ).fetchone()[0]
+        eid = conn.execute(
+            "INSERT INTO events (project_id, device_id, client, request_id, kind, payload, payload_sha256,"
+            " occurred_at) VALUES (%s, 1, 'pytest/0', gen_random_uuid(), 'write',"
+            " '{\"request\":{},\"resolved\":{}}', 'x', now()) RETURNING event_id",
+            (pid,),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO memory_versions (logical_id, project_id, project_ids, kind, title, body,"
+            " token_count, valid_from, recorded_at, source_event_id)"
+            " SELECT nextval('logical_id_seq'), %s, ARRAY[%s]::bigint[], 'fact', 't' || g,"
+            " repeat('b', 200), 50, now(), now(), %s FROM generate_series(1, 40000) g",
+            (pid, pid, eid),
+        )
+    stop = threading.Event()
+    latencies: list[float] = []
+    errors: list[BaseException] = []
+
+    def writer() -> None:
+        try:
+            with psycopg.connect(fresh_dsn) as conn:
+                while not stop.is_set():
+                    t0 = time.monotonic()
+                    conn.execute(
+                        "INSERT INTO memory_versions (logical_id, project_id, project_ids, kind, title, body,"
+                        " token_count, valid_from, recorded_at, source_event_id)"
+                        " VALUES (nextval('logical_id_seq'), %s, ARRAY[%s]::bigint[], 'fact', 'w', 'w', 1,"
+                        " now(), now(), %s)",
+                        (pid, pid, eid),
+                    )
+                    conn.commit()
+                    latencies.append(time.monotonic() - t0)
+                    time.sleep(0.02)
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    def long_reader() -> None:
+        with psycopg.connect(fresh_dsn) as conn:
+            conn.execute("SELECT count(*) FROM memory_versions").fetchone()
+            time.sleep(2.5)  # holds ACCESS SHARE: every ALTER must time out and retry meanwhile
+            conn.rollback()
+
+    threads = [threading.Thread(target=writer), threading.Thread(target=long_reader)]
+    for t in threads:
+        t.start()
+    time.sleep(0.3)
+    t_up = time.monotonic()
+    up = _alembic(fresh_dsn, "upgrade", "main@head")
+    up_s = time.monotonic() - t_up
+    time.sleep(0.2)
+    stop.set()
+    for t in threads:
+        t.join()
+    assert up.returncode == 0, up.stderr[-2000:]
+    assert not errors, errors
+    assert up_s > 2.0  # it really waited behind the long reader (and retried)
+    assert len(latencies) > 30 and max(latencies) < 1.0, (len(latencies), max(latencies))
     assert _version(fresh_dsn) == [("0007_import",)]

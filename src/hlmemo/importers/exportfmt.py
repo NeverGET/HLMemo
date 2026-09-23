@@ -10,10 +10,11 @@ One file per current item ``<kind>/<slug of title>.md`` plus ``CARD.md`` (the pr
     version_id: 903
     kind: "fact"
     title: "..."
+    origin: "hlmemo/17"     # items without a real provenance: <project>/<logical_id> of the original
     valid_from: "2026-09-23T00:00:00.000000Z"
     valid_to: null
     tags: ["serena","imported"]
-    source: {...}           # omitted when the item has none; likewise every optional key below
+    source: {...}           # a real provenance (then no origin); likewise every optional key below
     describes: [...]
     links: [{"rel":"relates_to","target":"fact/other.md"}]
     ...
@@ -22,9 +23,13 @@ One file per current item ``<kind>/<slug of title>.md`` plus ``CARD.md`` (the pr
 
 Values are JSON (valid YAML flow scalars), keys in a fixed order, file names derived from content
 (never from ids) and ``INDEX.md`` carries no ids or timestamps, so export → import into a fresh
-project → export is byte-identical except the three id lines (gate G-I3). ``hlm import markdown``
-recognises ``hlm_export: 1`` and maps a file back by ``logical_id`` when that item exists in the
-target project; otherwise it is a new item carrying the recorded ``source`` and valid interval.
+project → export is byte-identical except the three id lines (gate G-I3).
+
+Identity (Sol 42 #5): ``origin`` names the item an export file came from and never changes. Imported
+into another project, an origin item is stored with the source ``{system: "hlm", path: origin}`` —
+the persistent, ownership-checked mapping — and exported again with the same ``origin`` line. Only
+in the origin project does ``hlm import markdown`` map a file back onto ``logical_id`` = the origin's
+id (see ``plan.classify``). The ``logical_id``/``version_id`` lines are informational.
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ ORDER = (
     "version_id",
     "kind",
     "title",
+    "origin",
     "valid_from",
     "valid_to",
     "tags",
@@ -60,6 +66,7 @@ ORDER = (
     "status",
 )
 DEFAULTS: dict[str, Any] = {
+    "origin": None,
     "source": None,
     "describes": [],
     "links": [],
@@ -115,8 +122,23 @@ def file_names(items: list[dict[str, Any]]) -> dict[int, str]:
     return out
 
 
-def render_item(it: dict[str, Any], names: dict[int, str]) -> str:
+ORIGIN_SYSTEM = "hlm"
+
+
+def identity(it: dict[str, Any], project: str) -> tuple[str | None, dict[str, Any] | None]:
+    """``(origin, source)`` of an exported item: a real provenance is kept as ``source``; an item
+    imported from an export keeps its ``origin``; a native item's origin is itself."""
+    src = it.get("source")
+    if src is None:
+        return f"{project}/{it['logical_id']}", None
+    if src.get("system") == ORIGIN_SYSTEM:
+        return str(src.get("path")), None
+    return None, src
+
+
+def render_item(it: dict[str, Any], names: dict[int, str], project: str) -> str:
     """One export file. ``it`` is a full-view ``hlm.export`` item with its joined body."""
+    origin, source = identity(it, project)
     links: list[dict[str, Any]] = []
     for ln in it.get("links") or []:
         target = names.get(ln["dst_logical_id"])
@@ -134,10 +156,11 @@ def render_item(it: dict[str, Any], names: dict[int, str]) -> str:
         "version_id": it["version_id"],
         "kind": it["kind"],
         "title": it["title"],
+        "origin": origin,
         "valid_from": it["valid_from"],
         "valid_to": it["valid_to"],
         "tags": list(it.get("tags") or []),
-        "source": it.get("source"),
+        "source": source,
         "describes": list(it.get("describes") or []),
         "links": links,
         "pinned": bool(it.get("pinned")),
@@ -173,7 +196,8 @@ def render_index(items: list[dict[str, Any]], names: dict[int, str]) -> str:
     ]
     for name, it in rows:
         src = it.get("source") or {}
-        where = f"{src.get('system')}:{src.get('path')}" if src else ""
+        # real provenance only: an origin names ids and would differ between two projects (G-I3)
+        where = f"{src.get('system')}:{src.get('path')}" if src and src.get("system") != ORIGIN_SYSTEM else ""
         out.append(
             f"| {cell(name)} | {it['kind']} | {cell(it['title'])} | {it['valid_from']} | {cell(where)} |"
         )
@@ -201,6 +225,16 @@ def record_from_export(system: str, rel: str, meta: dict[str, Any], body: str) -
     src = export.get("source")
     if src is not None and not (isinstance(src, dict) and {"system", "path", "sha256"} <= set(src)):
         return None
+    if isinstance(src, dict) and src.get("system") == ORIGIN_SYSTEM:  # normalise: hlm source = origin
+        export["origin"], export["source"] = str(src.get("path")), None
+    origin = export.get("origin")
+    if export.get("source") is None:
+        from hlmemo.importers.plan import split_origin
+
+        if not isinstance(origin, str) or split_origin(origin) is None:
+            return None
+    elif origin is not None:
+        return None  # an item has either a real source or an origin, never both
     if not isinstance(export.get("links"), list):
         return None
     return ImportRecord(

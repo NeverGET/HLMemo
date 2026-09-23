@@ -1,6 +1,8 @@
 {
+ "closed": [],
  "counts": {
   "changed": 0,
+  "closed": 0,
   "missing": 0,
   "new": 9,
   "rejected": 1,
@@ -130,6 +132,7 @@
    "reason": "future_evidence_date"
   }
  ],
+ "remapped": [],
  "skipped": [
   {
    "path": "docs/notes/archive/plain.md",

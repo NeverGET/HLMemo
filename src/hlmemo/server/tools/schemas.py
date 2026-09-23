@@ -90,6 +90,10 @@ DEFS: dict[str, Any] = {
                 "maxItems": 16,
                 "uniqueItems": True,
             },
+            "close": {
+                "type": "boolean",
+                "description": "revision only: the fact ended at valid_to (nothing survives after it)",
+            },
         },
         "required": ["kind", "title", "body"],
         "additionalProperties": False,

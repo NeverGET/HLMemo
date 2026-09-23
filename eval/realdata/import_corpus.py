@@ -288,7 +288,9 @@ class Item:
 
 
 FM_DATE_RE = re.compile(r"^(?:valid_from|date):\s*[\"']?(\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+\-Z]+)?)", re.M)
-ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+# Same dated-record heading forms as src/hlmemo/importers/common.DATED_HEADING_RE (Sol 42 #3):
+# the date first, or `SESSION <date>`; a date elsewhere in a heading is not evidence.
+DATED_HEADING_RE = re.compile(r"^(?:session\s+)?(\d{4}-\d{2}-\d{2})(?=$|\s|[—–:|,.)-])", re.IGNORECASE)
 DECISION_ROW_RE = re.compile(r"^D-\d{3,4} \| (\d{4}-\d{2}-\d{2}) \| ", re.M)
 FUTURE_SLACK_S = 300
 
@@ -315,9 +317,10 @@ def prod_valid_from(piece: str, file_text: str) -> tuple[str | None, str]:
         if m and evidence_iso(m.group(1)):
             return evidence_iso(m.group(1)), "frontmatter"
     hs = headings(piece)
-    dated = [t for _o, _l, t in hs if ISO_DATE_RE.search(t)]
-    if hs and len(dated) == 1 and ISO_DATE_RE.search(hs[0][2]):
-        return evidence_iso(ISO_DATE_RE.search(hs[0][2]).group(1)), "dated-heading"
+    dated = [t for _o, _l, t in hs if DATED_HEADING_RE.match(t)]
+    first = DATED_HEADING_RE.match(hs[0][2]) if hs else None
+    if first and len(dated) == 1 and evidence_iso(first.group(1)):
+        return evidence_iso(first.group(1)), "dated-heading"
     rows = DECISION_ROW_RE.findall(piece)
     if len(rows) == 1:
         return evidence_iso(rows[0]), "decision-row"

@@ -127,6 +127,11 @@ class Item(_Strict):
     # W1.5 (optional; absent → the item is byte-identical to a Phase-0 item in resolved.write)
     source: SourceSpec | None = None
     describes: list[str] | None = Field(default=None, max_length=DESCRIBES_MAX)
+    # W1.5 `close`: the fact stopped being true at valid_to (default: occurred_at, i.e. server now).
+    # A correction of [valid_from, valid_to) whose superseded segments keep NO part after valid_to
+    # (invalidate, never delete). Revisions only; None (not False) when unset so resolved.write of
+    # ordinary items is unchanged.
+    close: bool | None = None
 
     _device_scope = field_validator("device_scope")(canonical_device_scope)
 
@@ -148,6 +153,11 @@ class Item(_Strict):
     def _shared_card(self) -> Item:
         if self.kind == "project_card" and self.device_scope != "all":
             raise ValueError('project_card device_scope must be "all"')
+        if self.close:
+            if self.kind == "project_card":
+                raise ValueError("a project card cannot be closed")
+            if self.logical_id is None or self.valid_from is None:
+                raise ValueError("close needs logical_id, expected_version_id and valid_from")
         return self
 
     @field_validator("project_ids", mode="before")

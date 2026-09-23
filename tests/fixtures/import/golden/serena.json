@@ -1,6 +1,8 @@
 {
+ "closed": [],
  "counts": {
   "changed": 0,
+  "closed": 0,
   "missing": 0,
   "new": 3,
   "rejected": 0,
@@ -47,6 +49,7 @@
  "missing": [],
  "project": "fx",
  "rejected": [],
+ "remapped": [],
  "skipped": [],
  "source": "serena",
  "token_estimate": {
