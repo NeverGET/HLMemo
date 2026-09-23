@@ -23,6 +23,7 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from hlmemo.auth.context import AuthContext, Role
+from hlmemo.librarian.candidates import COMPATIBLE, PLACEMENT_ONLY
 from hlmemo.librarian.events import NS_LIBRARIAN
 from hlmemo.librarian.jobs import assign_job_ids, job_spec
 from hlmemo.librarian.tasks.write_review import MAX_VERSIONS, OP
@@ -65,8 +66,11 @@ async def plan_jobs(
     event_id: int,
     project_id: int,
     versions: list[dict[str, Any]],
+    delay_s: float = 0.0,
 ) -> list[dict[str, Any]]:
-    """Job descriptors for the new versions of event ``event_id`` (``[]`` = none).
+    """Job descriptors for the new versions of event ``event_id`` (``[]`` = none). A job with a
+    relation review starts ``delay_s`` after the write (``HLM_LIBRARIAN_REVIEW_DELAY_S``): the
+    embed worker usually finishes by then, so the review is not handed back for its vectors.
 
     ``versions``: ``[{version_id, kind, client_importance, client_stability, project_ids}]`` in
     item order (the write path's new versions, not survivors)."""
@@ -102,6 +106,11 @@ async def plan_jobs(
                 "lineage": str(uuid.uuid5(NS_LIBRARIAN, "lineage:" + key)),
             },
         )
+        if delay_s > 0 and any(
+            v["kind"] in COMPATIBLE and v["kind"] not in PLACEMENT_ONLY
+            for v in versions[k : k + MAX_VERSIONS]
+        ):
+            spec["delay_s"] = float(delay_s)
         specs.append(spec)
     return await assign_job_ids(conn, specs)
 

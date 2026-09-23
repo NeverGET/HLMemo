@@ -27,7 +27,7 @@ Rel = tuple[str, str, str, str]  # (relation, supersedes, confidence, verifier-c
 
 
 def review_deps() -> Any:
-    return dataclasses.replace(default_deps(), librarian_enqueue=True)
+    return dataclasses.replace(default_deps(), librarian_enqueue=True, librarian_delay_s=0.0)
 
 
 def parse_input(body: dict[str, Any]) -> tuple[str, dict[str, Any]]:

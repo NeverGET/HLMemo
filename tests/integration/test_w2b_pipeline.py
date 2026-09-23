@@ -114,6 +114,25 @@ async def test_write_enqueues_librarian_job_in_the_same_transaction(connect, wor
     await _replay_identical(connect)
 
 
+async def test_review_starts_after_the_embed_delay(connect, world: World) -> None:  # noqa: ANN001
+    import dataclasses
+
+    from tests.integration._w2b_fixtures import review_deps
+
+    deps = dataclasses.replace(review_deps(), librarian_delay_s=3.0)
+    await write_items(connect, world.ctx_a, MAIN, [item("A", "alpha")], deps=deps)
+    await write_items(
+        connect, world.ctx_a, MAIN, [{**item("S", "session"), "kind": "session_note"}], deps=deps
+    )
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT extract(epoch FROM run_after - created_at)::float8 FROM jobs"
+            " WHERE kind = 'librarian_write' ORDER BY job_id"
+        )
+        assert [r[0] for r in await cur.fetchall()] == [3.0, 0.0]  # placement-only jobs do not wait
+    await _replay_identical(connect)
+
+
 async def test_large_batch_is_split_into_jobs(connect, world: World) -> None:  # noqa: ANN001
     await write_items(connect, world.ctx_a, MAIN, [item(f"T{i}", f"text {i}") for i in range(9)])
     async with await connect() as conn:

@@ -121,6 +121,8 @@ class WriteDeps:
     tokenizer_sha256: str
     #: W2b: enqueue ``librarian_write:<event_id>`` with every write (``HLM_LIBRARIAN_ENABLED``)
     librarian_enqueue: bool = False
+    #: W2b: first run_after of a relation review, seconds after the write (embeddings first)
+    librarian_delay_s: float = 0.0
 
     def chunker_descriptor(self) -> dict[str, Any]:
         return {
@@ -142,6 +144,7 @@ def _deps_for(model_dir: str) -> WriteDeps:
         chunker=Chunker(d, chunk_tok=CHUNK_TOK, overlap=CHUNK_OVERLAP),
         tokenizer_sha256=sha256_file(d / "onnx" / "tokenizer.json"),
         librarian_enqueue=get_settings().librarian_enabled,
+        librarian_delay_s=get_settings().librarian_review_delay_s,
     )
 
 
@@ -1170,6 +1173,7 @@ async def _librarian_jobs(
         event_id=event_id,
         project_id=batch.project.project_id,
         versions=versions,
+        delay_s=deps.librarian_delay_s,
     )
 
 
