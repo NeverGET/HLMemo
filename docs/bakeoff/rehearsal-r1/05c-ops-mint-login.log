@@ -1,0 +1,23 @@
+$ hlm init --server https://localhost:19443/mcp --project r1-seed --device-name rehearsal-mac
+wrote /private/tmp/hlm-r1/cli/hlm.toml
+next: hlm device register --wait   (then approve it: hlm --admin device approve <name> --class ...)
+$ hlm_ops.sh --state deploy/.local/127.0.0.1-2223 device mint --name rehearsal-mac --class personal --grant r1-seed:write | hlm device login --name rehearsal-mac --token-stdin
+(eval):4: no such file or directory: bash deploy/scripts/hlm_ops.sh --state /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223
+no token received
+pipestatus=
+$ hlm device whoami
+error E_AUTH: missing bearer token
+$ hlm query <marker>
+no device token found; run `hlm device register` first
+
+$ hlm_ops.sh --state deploy/.local/127.0.0.1-2223 device mint --name rehearsal-mac --class personal --grant r1-seed:write | hlm device login --name rehearsal-mac --token-stdin
+{"grants":[{"project":"r1-seed","role":"write"}],"minted":{"class":"personal","expired":false,"expires_at":null,"id":14,"last_seen_at":null,"name":"rehearsal-mac","notes":null,"registered_at":"2026-09-23T18:37:58.402560+00:00","reserved":false,"revoked_at":null,"status":"trusted","token_generation":1}}
+logged in as device id=14 name=rehearsal-mac class=personal; token stored in /private/tmp/hlm-r1/cli/cfg/credentials.toml
+pipestatus=0 0
+$ hlm device whoami
+14  rehearsal-mac            personal  trusted  last_seen=2026-09-23T18:37:58.432054+00:00
+grants: r1-seed:write
+scope: ['all', 'class:personal', 'device:14']
+rc=0
+$ hlm query r1-marker-4cb95b2e
+{"as_of":{"known_at":"2026-09-23T18:37:59.360813Z","valid_at":"2026-09-23T18:37:59.360813Z"},"budget":{"limit":3000,"tokenizer":"o200k_base","used":1723},"card":null,"device_class":"personal","evidence":"matched","hits":[{"clue":"v8.0","device_scope":"all","kind":"fact","preview":"R1 rehearsal query marker r1-marker-4cb95b2e: the cutover must keep this fact readable.","score":0.065574,"tags":["r1","marker"],"title":"r1-marker-4cb95b2e","valid_from":"2026-09-23T18:31:40.590673Z"},{"clue":"v21.0","device_scope":"all","kind":"fact","preview":"Pre-cutover extra fact 4 on 912f2d3.","score":0.016129,"tags":["r1","seed"],"title":"seed extra 4","valid_from":"2026-09-23T18:31:50.748665Z"},{"clue":"v4

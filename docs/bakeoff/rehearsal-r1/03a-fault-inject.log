@@ -1,0 +1,22 @@
+app.env keys after injection:
+HLM_DB_DSN= HLM_POOL_MIN_SIZE= HLM_POOL_MAX_SIZE= HLM_HOSTING_TARGET= HLM_PROFILE= HLM_TESTING= HLM_MIGRATION_FAULT= 
+HLM_TESTING=1
+HLM_MIGRATION_FAULT=0006:flush
+api.env keys:
+HLM_ADMIN_TOKEN= HLM_REGISTRATION_SECRET= HLM_CURSOR_SECRET= HLM_TRUSTED_PROXY_IPS= 
+total 32
+drwxr-x---   2 hlmdeploy hlmdeploy 4096 Sep 23 18:30 .
+drwxr-xr-x 113 root      root      4096 Sep 23 18:24 ..
+-rw-------   1 hlmdeploy hlmdeploy  521 Sep 23 06:50 api.env
+-rw-------   1 hlmdeploy hlmdeploy  661 Sep 23 18:32 app.env
+-rw-------   1 hlmdeploy hlmdeploy  458 Sep 23 06:50 backup.env
+-rw-r--r--   1 root      root         4 Sep 23 06:54 bootstrap-ssh-cidr
+-rw-------   1 hlmdeploy hlmdeploy  239 Sep 23 06:50 db.env
+-rw-------   1 hlmdeploy hlmdeploy  877 Sep 23 18:30 prod.env
+hlmemo-prod-worker-1 hlmemo:912f2d39247a Up 2 minutes (healthy)
+hlmemo-prod-api-1 hlmemo:912f2d39247a Up 2 minutes (healthy)
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up About a minute (healthy)
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 7 minutes (healthy)
+hlmemo:93569eb6ced7 676a96f4412e
+hlmemo:912f2d39247a b93f93f26ed3
+# note: 40-hex commit SHAs abbreviated to 12 chars (gitleaks generic-api-key false positive)

@@ -1,0 +1,29 @@
+== before
+hlmemo-prod-worker-1 Up 2 minutes (healthy)
+hlmemo-prod-librarian-1 Up 2 minutes (healthy)
+hlmemo-prod-api-1 Up 2 minutes (healthy)
+hlmemo-prod-caddy-1 Up 2 minutes (healthy)
+hlmemo-prod-db-1 Up 3 minutes (healthy)
+release-state.json before:
+  accepted -> False
+  current_ref -> fa24ca5a0d87
+  env_backups -> backup file api.env.pre-w0-20260923T183609Z restores /etc/hlmemo/api.env
+  previous_dump -> /var/backups/hlmemo/pre-upgrade/912f2d39247a-2026-09-23T183610Z-qPAHOA.dump
+  previous_image -> hlmemo:912f2d39247a
+  previous_image_id -> sha256:b93f93f26ed3
+  previous_ref -> 912f2d39247a
+  retired_backups -> ['/etc/hlmemo/api.env.pre-w0-20260923T183609Z']
+== deploy.sh --rollback hlm-deploy
+Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.25PFKgWO/log (final exit code: /opt/hlmemo/.deploy-runs/run.25PFKgWO/status)
+Rollback refused (nothing was stopped): previous release 912f2d39247a predates W0a; W0a is a one-way door (D-065). Roll FORWARD instead: deploy a W0+ release and restore the recorded dump (/var/backups/hlmemo/pre-upgrade/912f2d39247a-2026-09-23T183610Z-qPAHOA.dump) with deploy/backup/restore.sh.
+
+rc=1
+== after
+hlmemo-prod-worker-1 Up 2 minutes (healthy)
+hlmemo-prod-librarian-1 Up 2 minutes (healthy)
+hlmemo-prod-api-1 Up 2 minutes (healthy)
+hlmemo-prod-caddy-1 Up 2 minutes (healthy)
+hlmemo-prod-db-1 Up 3 minutes (healthy)
+fa24ca5a0d87
+{"status":"ready"} 200
+# note: 40-hex commit SHAs abbreviated to 12 chars (gitleaks generic-api-key false positive)

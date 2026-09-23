@@ -1,0 +1,158 @@
+remote_gates: url=https://localhost:19443 tls=internal insecure=1 ssh=/Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/ssh_config log=/Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260923T183640Z.log
+PASS health-ready           /health=200 /ready=200
+PASS unknown-path-404       status=404
+PASS tls-issuer             internal CA as requested (rehearsal): CN=Caddy Local Authority - ECC Intermediate
+PASS postgres-closed        tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+    PASS http/ready status=200 body={"status":"ready"}
+    PASS http/health status=200 body={"status":"ok"}
+    PASS http/unknown-route-404 status=404 body=Not found
+    PASS device/state reused device id=11 project=gates-probe
+    PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+    PASS mcp/tools-list status=200 tools=['memory.call_the_day', 'memory.drilldown', 'memory.query', 'memory.raw', 'memory.write']
+    RESULT PASS mode=smoke base=https://localhost:19443
+    PASS device/state reused device id=11 project=gates-probe
+    PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+    PASS mcp/write-marker status=200 version_id=24
+    VERSION_ID 24
+    RESULT PASS mode=write-marker base=https://localhost:19443
+    PASS device/state reused device id=11 project=gates-probe
+    PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+    PASS mcp/read-marker hits=1 clue=v24.0
+    RESULT PASS mode=read-marker base=https://localhost:19443
+PASS probe                  smoke + write/read marker gates-a-20260923T183640Z-6977
+    PASS routes anonymous    GET    /health                        -> 200
+    PASS routes anonymous    GET    /ready                         -> 200
+    PASS routes trusted      GET    /health                        -> 200
+    PASS routes trusted      GET    /ready                         -> 200
+    PASS routes anonymous    POST   /devices/register              -> 404
+    PASS routes anonymous    POST   /devices/approve               -> 404
+    PASS routes anonymous    POST   /devices/grant                 -> 404
+    PASS routes anonymous    DELETE /devices/grant                 -> 404
+    PASS routes anonymous    GET    /devices/list                  -> 404
+    PASS routes anonymous    POST   /admin/devices/2/approve       -> 404
+    PASS routes anonymous    POST   /admin/devices/2/revoke        -> 404
+    PASS routes anonymous    POST   /admin/projects                -> 404
+    PASS routes anonymous    GET    /admin/projects                -> 404
+    PASS routes anonymous    POST   /admin/projects/proj/grants    -> 404
+    PASS routes anonymous    DELETE /admin/projects/proj/grants    -> 404
+    PASS routes trusted      POST   /devices/register              -> 404
+    PASS routes trusted      POST   /devices/approve               -> 404
+    PASS routes trusted      POST   /devices/grant                 -> 404
+    PASS routes trusted      DELETE /devices/grant                 -> 404
+    PASS routes trusted      GET    /devices/list                  -> 404
+    PASS routes trusted      POST   /admin/devices/2/approve       -> 404
+    PASS routes trusted      POST   /admin/devices/2/revoke        -> 404
+    PASS routes trusted      POST   /admin/projects                -> 404
+    PASS routes trusted      GET    /admin/projects                -> 404
+    PASS routes trusted      POST   /admin/projects/proj/grants    -> 404
+    PASS routes trusted      DELETE /admin/projects/proj/grants    -> 404
+    PASS routes junk         POST   /devices/register              -> 404
+    PASS routes junk         POST   /devices/approve               -> 404
+    PASS routes junk         POST   /devices/grant                 -> 404
+    PASS routes junk         DELETE /devices/grant                 -> 404
+    PASS routes junk         GET    /devices/list                  -> 404
+    PASS routes junk         POST   /admin/devices/2/approve       -> 404
+    PASS routes junk         POST   /admin/devices/2/revoke        -> 404
+    PASS routes junk         POST   /admin/projects                -> 404
+    PASS routes junk         GET    /admin/projects                -> 404
+    PASS routes junk         POST   /admin/projects/proj/grants    -> 404
+    PASS routes junk         DELETE /admin/projects/proj/grants    -> 404
+    PASS routes admin-shaped POST   /devices/register              -> 404
+    PASS routes admin-shaped POST   /devices/approve               -> 404
+    PASS routes admin-shaped POST   /devices/grant                 -> 404
+    PASS routes admin-shaped DELETE /devices/grant                 -> 404
+    PASS routes admin-shaped GET    /devices/list                  -> 404
+    PASS routes admin-shaped POST   /admin/devices/2/approve       -> 404
+    PASS routes admin-shaped POST   /admin/devices/2/revoke        -> 404
+    PASS routes admin-shaped POST   /admin/projects                -> 404
+    PASS routes admin-shaped GET    /admin/projects                -> 404
+    PASS routes admin-shaped POST   /admin/projects/proj/grants    -> 404
+    PASS routes admin-shaped DELETE /admin/projects/proj/grants    -> 404
+    PASS routes anonymous    GET    /devices/whoami                -> 401
+    PASS routes junk         GET    /devices/whoami                -> 401
+    PASS routes admin-shaped GET    /devices/whoami                -> 401
+    PASS routes anonymous    POST   /mcp                           -> 401
+    PASS routes junk         POST   /mcp                           -> 401
+    PASS routes anonymous    POST   /devices/revoke                -> 401
+    PASS routes junk         POST   /devices/revoke                -> 401
+    PASS routes trusted      GET    /devices/whoami                -> 200
+    PASS routes trusted      POST   /mcp                           -> 200
+    PASS routes trusted      POST   /devices/revoke                -> 404
+    PASS routes trusted      POST   /devices/revoke                -> 404
+    PASS routes trusted      POST   /devices/revoke                -> 200
+    PASS routes revoked      GET    /devices/whoami                -> 401
+    RESULT routes PASS base=https://localhost:19443 failures=0
+PASS routes                 RESULT routes PASS base=https://localhost:19443 failures=0
+    $ hlm init --server https://localhost:19443/mcp --project gates-cli --device-name gates-cli-30966
+      wrote /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/gates-work.Dlayi5/hlm-cli/hlm.toml
+      next: hlm device register --wait   (then approve it: hlm --admin device approve <name> --class ...)
+    $ hlm device register --name gates-cli-30966-reg (expect refusal)
+      error E_NOT_FOUND: registration is closed on this server
+      hint: this server does not accept self-registration (D-061). Ask the operator to mint a device:
+        deploy/scripts/hlm_ops.sh device mint --name <name> --class personal --grant <project>:write \
+          | hlm device login --name <name> --token-stdin
+    $ hlm_ops.sh device mint --name gates-cli-30966 ... | hlm device login --token-stdin
+      logged in as device id=13 name=gates-cli-30966 class=ci; token stored in /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/gates-work.Dlayi5/hlm-cli/cfg/credentials.toml
+    $ hlm query remote gates context
+      {"as_of":{"known_at":"2026-09-23T18:36:47.031048Z","valid_at":"2026-09-23T18:36:47.031048Z"},"budget":{"limit":3000,"tokenizer":"o200k_base","used":215},"card":null,"device_class":"ci","evidence":"matched","hits":[{"clue":"v2.0","device_scope":"all","kind":"session_note","preview":"remote gates 20260923T065357Z against https://localhost:19443\n\n## Decisions\n- remote gates 20260923T065357Z ran","score":0.032787,"tags":["session"],"title":"Session b6475303-33e2-42a7-bf5e-f1b3655b4f82","valid_from":"2026-09-23T06:54:01.564282Z"}],"indexing_pending":false,"omitted":0,"project":"gates-cli"}
+    $ hlm close --notes remote gates 20260923T183640Z against https://localhost:19443 --decision remote gates 20260923T183640Z ran
+      {"budget":{"limit":2000,"tokenizer":"o200k_base","used":86},"replayed":false,"request_id":"88754290-3f32-4cc8-a4e6-4dd305acf769","session_note_clue":"v25","versions":[{"chunk_count":1,"embedding_status":"queued","index":0,"logical_id":33,"version_id":25}]}
+    $ hlm device revoke --self
+      revoked this device (id=13); grants revoked: 1; local token deleted
+PASS hlm-cli                init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-30966
+PASS wan-latency            n=20 errors=0 p50=12ms p95=49ms max=60ms (ceiling p95<=3000ms)
+    Backup completed: /var/backups/hlmemo/daily/hlmemo-2026-09-23T183649Z-WBDBmv.dump (7 daily / 4 weekly retention)
+    PASS device/state reused device id=11 project=gates-probe
+    PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+    PASS mcp/write-marker status=200 version_id=26
+    VERSION_ID 26
+    RESULT PASS mode=write-marker base=https://localhost:19443
+    PASS device/state reused device id=11 project=gates-probe
+    PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+    PASS mcp/read-marker hits=2 clue=v26.0
+    RESULT PASS mode=read-marker base=https://localhost:19443
+     Container hlmemo-prod-worker-1 Healthy 
+     Container hlmemo-prod-caddy-1 Healthy 
+    Restore completed; stack healthy. Safety dump retained: /var/backups/hlmemo/pre-restore/hlmemo-2026-09-23T183650Z.dump.mXEbnU
+    PASS device/state reused device id=11 project=gates-probe
+    PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+    PASS mcp/read-marker hits=1 clue=v24.0
+    RESULT PASS mode=read-marker base=https://localhost:19443
+    (expected absent) PASS device/state reused device id=11 project=gates-probe
+    (expected absent) PASS mcp/initialize status=200 protocolVersion=2025-06-18 server={'name': 'hlmemo', 'version': '0.0.1'}
+    (expected absent) FAIL mcp/read-marker status=200 isError=False hits=1 payload={'as_of': {'known_at': '2026-09-23T18:37:10.835635Z', 'valid_at': '2026-09-23T18:37:10.835635Z'}, 'budget': {'limit': 1024, 'tokenizer': 'o200k_base', 'used': 186}, 'card': None, 'device_class': 'ci',
+    (expected absent) RESULT FAIL mode=read-marker base=https://localhost:19443
+PASS backup-restore         backup hlmemo-2026-09-23T183649Z-WBDBmv.dump -> restore 15s; marker A survives, post-backup marker B gone
+device inventory (hlm_ops.sh device list):
+       1  admin (reserved)             server    trusted  expires=- last_seen=- grants=gates:admin,gates-cli:admin,gates-probe:admin,r1-seed:admin,reboot:admin
+       2  judge-cffefa4a               ci        revoked  expires=- last_seen=2026-09-23T06:53:58.235379+00:00 grants=-
+       3  gates-cli-20125              ci        revoked  expires=- last_seen=2026-09-23T06:54:01.142048+00:00 grants=-
+       4  judge-25e19a58               ci        trusted  expires=- last_seen=2026-09-23T06:55:03.607698+00:00 grants=reboot:write
+       5  judge-86f7d02a               ci        trusted  expires=- last_seen=2026-09-23T06:55:54.294880+00:00 grants=reboot:write
+       6  seed-trusted-mac             personal  trusted  expires=- last_seen=2026-09-23T18:35:01.981347+00:00 grants=r1-seed:write
+       7  seed-pending-laptop          personal  pending  expires=- last_seen=- grants=-
+       8  librarian                    server    trusted  expires=- last_seen=- grants=-
+       9  routes-check-56ffa3d5        ci        revoked  expires=2026-09-23T18:46:24.517606+00:00 last_seen=2026-09-23T18:36:24.550205+00:00 grants=-
+      10  deploy-routes-fa24ca5a0d87-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
+      11  gates-probe-20260923t183640z ci        revoked  expires=2026-09-23T19:06:42.628038+00:00 last_seen=2026-09-23T18:36:42.841876+00:00 grants=-
+      12  gates-routes-20260923t183640z ci        revoked  expires=2026-09-23T18:46:43.814204+00:00 last_seen=2026-09-23T18:36:43.932779+00:00 grants=-
+      13  gates-cli-30966              ci        revoked  expires=2026-09-23T19:06:46.565281+00:00 last_seen=2026-09-23T18:36:46.589456+00:00 grants=-
+    ready       ready failing=-
+    migration   0006_librarian
+    devices     {'pending': 1, 'revoked': 7, 'trusted': 4}
+    worker      ready=0 oldest_ready_age_s=None last_done_at=2026-09-23T18:36:48.188153+00:00 expired_leases=0
+    jobs        embed          done     25
+
+GATE                   RESULT DETAIL
+health-ready           PASS  /health=200 /ready=200
+unknown-path-404       PASS  status=404
+tls-issuer             PASS  internal CA as requested (rehearsal): CN=Caddy Local Authority - ECC Intermediate
+postgres-closed        PASS  tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+probe                  PASS  smoke + write/read marker gates-a-20260923T183640Z-6977
+routes                 PASS  RESULT routes PASS base=https://localhost:19443 failures=0
+hlm-cli                PASS  init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-30966
+wan-latency            PASS  n=20 errors=0 p50=12ms p95=49ms max=60ms (ceiling p95<=3000ms)
+backup-restore         PASS  backup hlmemo-2026-09-23T183649Z-WBDBmv.dump -> restore 15s; marker A survives, post-backup marker B gone
+total 33s (gates 33s); log: /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260923T183640Z.log
+RESULT PASS
+bash deploy/scripts/remote_gates.sh --url https://localhost:19443 --state $S   3.87s user 0.75s system 14% cpu 32.795 total

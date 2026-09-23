@@ -1,0 +1,22 @@
+app.env byte-identical to pre-injection copy
+0
+0 fault keys in /etc/hlmemo/app.env
+no fault keys anywhere in /etc/hlmemo
+ Container hlmemo-prod-migrate-1 Waiting 
+ Container hlmemo-prod-worker-1 Healthy 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-migrate-1 Exited 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-caddy-1 Healthy 
+api fault keys in container env: 0
+worker fault keys in container env: 0
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 5 seconds (healthy)
+hlmemo-prod-worker-1 hlmemo:912f2d39247a Up 11 seconds (healthy)
+hlmemo-prod-api-1 hlmemo:912f2d39247a Up 11 seconds (healthy)
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 17 seconds (healthy)
+app
+current-ref
+previous-dump
+previous-ref
+/ready 200
+# note: 40-hex commit SHAs abbreviated to 12 chars (gitleaks generic-api-key false positive)

@@ -1,0 +1,210 @@
+# 2026-09-23T18:36:06Z PATH=deploy/.local/127.0.0.1-2223/bin:$PATH deploy.sh --accept-compose-change=2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 hlm-deploy fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a
+Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.V614s2nw/log (final exit code: /opt/hlmemo/.deploy-runs/run.V614s2nw/status)
+From https://github.com/NeverGET/HLMemo
+ * branch            fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a -> FETCH_HEAD
+Compose model change accepted: sha256 2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 (changed=1)
+Previous HEAD position was 912f2d3 Ubuntu 26.04 support + two-command deploy (first_deploy.sh, remote_gates.sh)
+HEAD is now at fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
+ Image caddy:2.11.2-alpine Pulling 
+ Image pgvector/pgvector:0.8.6-pg17 Pulling 
+ Image pgvector/pgvector:0.8.6-pg17 Pulled 
+ Image caddy:2.11.2-alpine Pulled 
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/912f2d39247a9e445222756f8ce11fa24c70fae9-2026-09-23T183609Z-Id25zS.dump (retained until explicit prune)
+migrate_env_w0: prod.env: already migrated (no retired keys)
+migrate_env_w0: app.env: already migrated (no retired keys)
+migrate_env_w0: api.env: removed HLM_ADMIN_TOKEN,HLM_REGISTRATION_SECRET (backup api.env.pre-w0-20260923T183609Z)
+migrate_env_w0: done (1 file(s) changed)
+ Container hlmemo-prod-worker-1 Stopping 
+ Container hlmemo-prod-caddy-1 Stopping 
+ Container hlmemo-prod-caddy-1 Stopped 
+ Container hlmemo-prod-api-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopped 
+ Container hlmemo-prod-api-1 Stopped 
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/912f2d39247a9e445222756f8ce11fa24c70fae9-2026-09-23T183610Z-qPAHOA.dump (retained until explicit prune)
+Quiesced pre-upgrade dump: /var/backups/hlmemo/pre-upgrade/912f2d39247a9e445222756f8ce11fa24c70fae9-2026-09-23T183610Z-qPAHOA.dump
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-migrate-run-cb3a7c9b2d33 Creating 
+ Container hlmemo-prod-migrate-run-cb3a7c9b2d33 Created 
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 0001_phase0 -> 0003_title_lexical, Title lexical index (D-055): item titles/paths become an RRF candidate list.
+INFO  [alembic.runtime.migration] Running upgrade 0003_title_lexical -> 0004_title_norm_fold, Title folding fix (D-055, Sol review 33 #2): bring ``hlm_title_norm`` to its final definition.
+INFO  [alembic.runtime.migration] Running upgrade 0004_title_norm_fold -> 0005_w0_access, W0a access hardening (D-052, D-061): device expiry + the `device_minted` event kind.
+INFO  [alembic.runtime.migration] Running upgrade 0005_w0_access -> 0006_librarian, Librarian foundation (PHASE2-4-ROADMAP W2a, CC-1/CC-2/CC-3/CC-5; D-062 proposed).
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-librarian-1 Creating 
+ Container hlmemo-prod-worker-1 Recreate 
+ Container hlmemo-prod-librarian-1 Created 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-worker-1 Recreated 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-worker-1 Starting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-librarian-1 Starting 
+ Container hlmemo-prod-api-1 Started 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-worker-1 Started 
+ Container hlmemo-prod-librarian-1 Started 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-caddy-1 Starting 
+ Container hlmemo-prod-caddy-1 Started 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-worker-1 Waiting 
+ Container hlmemo-prod-librarian-1 Waiting 
+ Container hlmemo-prod-caddy-1 Waiting 
+ Container hlmemo-prod-worker-1 Healthy 
+ Container hlmemo-prod-librarian-1 Healthy 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-caddy-1 Healthy 
+PASS routes anonymous    GET    /health                        -> 200
+PASS routes anonymous    GET    /ready                         -> 200
+PASS routes trusted      GET    /health                        -> 200
+PASS routes trusted      GET    /ready                         -> 200
+PASS routes anonymous    POST   /devices/register              -> 404
+PASS routes anonymous    POST   /devices/approve               -> 404
+PASS routes anonymous    POST   /devices/grant                 -> 404
+PASS routes anonymous    DELETE /devices/grant                 -> 404
+PASS routes anonymous    GET    /devices/list                  -> 404
+PASS routes anonymous    POST   /admin/devices/2/approve       -> 404
+PASS routes anonymous    POST   /admin/devices/2/revoke        -> 404
+PASS routes anonymous    POST   /admin/projects                -> 404
+PASS routes anonymous    GET    /admin/projects                -> 404
+PASS routes anonymous    POST   /admin/projects/proj/grants    -> 404
+PASS routes anonymous    DELETE /admin/projects/proj/grants    -> 404
+PASS routes trusted      POST   /devices/register              -> 404
+PASS routes trusted      POST   /devices/approve               -> 404
+PASS routes trusted      POST   /devices/grant                 -> 404
+PASS routes trusted      DELETE /devices/grant                 -> 404
+PASS routes trusted      GET    /devices/list                  -> 404
+PASS routes trusted      POST   /admin/devices/2/approve       -> 404
+PASS routes trusted      POST   /admin/devices/2/revoke        -> 404
+PASS routes trusted      POST   /admin/projects                -> 404
+PASS routes trusted      GET    /admin/projects                -> 404
+PASS routes trusted      POST   /admin/projects/proj/grants    -> 404
+PASS routes trusted      DELETE /admin/projects/proj/grants    -> 404
+PASS routes junk         POST   /devices/register              -> 404
+PASS routes junk         POST   /devices/approve               -> 404
+PASS routes junk         POST   /devices/grant                 -> 404
+PASS routes junk         DELETE /devices/grant                 -> 404
+PASS routes junk         GET    /devices/list                  -> 404
+PASS routes junk         POST   /admin/devices/2/approve       -> 404
+PASS routes junk         POST   /admin/devices/2/revoke        -> 404
+PASS routes junk         POST   /admin/projects                -> 404
+PASS routes junk         GET    /admin/projects                -> 404
+PASS routes junk         POST   /admin/projects/proj/grants    -> 404
+PASS routes junk         DELETE /admin/projects/proj/grants    -> 404
+PASS routes admin-shaped POST   /devices/register              -> 404
+PASS routes admin-shaped POST   /devices/approve               -> 404
+PASS routes admin-shaped POST   /devices/grant                 -> 404
+PASS routes admin-shaped DELETE /devices/grant                 -> 404
+PASS routes admin-shaped GET    /devices/list                  -> 404
+PASS routes admin-shaped POST   /admin/devices/2/approve       -> 404
+PASS routes admin-shaped POST   /admin/devices/2/revoke        -> 404
+PASS routes admin-shaped POST   /admin/projects                -> 404
+PASS routes admin-shaped GET    /admin/projects                -> 404
+PASS routes admin-shaped POST   /admin/projects/proj/grants    -> 404
+PASS routes admin-shaped DELETE /admin/projects/proj/grants    -> 404
+PASS routes anonymous    GET    /devices/whoami                -> 401
+PASS routes junk         GET    /devices/whoami                -> 401
+PASS routes admin-shaped GET    /devices/whoami                -> 401
+PASS routes anonymous    POST   /mcp                           -> 401
+PASS routes junk         POST   /mcp                           -> 401
+PASS routes anonymous    POST   /devices/revoke                -> 401
+PASS routes junk         POST   /devices/revoke                -> 401
+PASS routes trusted      GET    /devices/whoami                -> 200
+PASS routes trusted      POST   /mcp                           -> 200
+PASS routes trusted      POST   /devices/revoke                -> 404
+PASS routes trusted      POST   /devices/revoke                -> 404
+PASS routes trusted      POST   /devices/revoke                -> 200
+PASS routes revoked      GET    /devices/whoami                -> 401
+RESULT routes PASS base=http://127.0.0.1:8765 failures=0
+{"status":"ready"}
+{"grants":[],"minted":{"class":"ci","expired":false,"expires_at":"2026-09-23T18:46:25.007002+00:00","id":10,"last_seen_at":null,"name":"deploy-routes-fa24ca5a0d87-15789","notes":null,"registered_at":"2026-09-23T18:36:25.006502+00:00","reserved":false,"revoked_at":null,"status":"trusted","token_generation":1}}
+PASS routes anonymous    GET    /health                        -> 200
+PASS routes anonymous    GET    /ready                         -> 200
+PASS routes trusted      GET    /health                        -> 200
+PASS routes trusted      GET    /ready                         -> 200
+PASS routes anonymous    POST   /devices/register              -> 404
+PASS routes anonymous    POST   /devices/approve               -> 404
+PASS routes anonymous    POST   /devices/grant                 -> 404
+PASS routes anonymous    DELETE /devices/grant                 -> 404
+PASS routes anonymous    GET    /devices/list                  -> 404
+PASS routes anonymous    POST   /admin/devices/2/approve       -> 404
+PASS routes anonymous    POST   /admin/devices/2/revoke        -> 404
+PASS routes anonymous    POST   /admin/projects                -> 404
+PASS routes anonymous    GET    /admin/projects                -> 404
+PASS routes anonymous    POST   /admin/projects/proj/grants    -> 404
+PASS routes anonymous    DELETE /admin/projects/proj/grants    -> 404
+PASS routes trusted      POST   /devices/register              -> 404
+PASS routes trusted      POST   /devices/approve               -> 404
+PASS routes trusted      POST   /devices/grant                 -> 404
+PASS routes trusted      DELETE /devices/grant                 -> 404
+PASS routes trusted      GET    /devices/list                  -> 404
+PASS routes trusted      POST   /admin/devices/2/approve       -> 404
+PASS routes trusted      POST   /admin/devices/2/revoke        -> 404
+PASS routes trusted      POST   /admin/projects                -> 404
+PASS routes trusted      GET    /admin/projects                -> 404
+PASS routes trusted      POST   /admin/projects/proj/grants    -> 404
+PASS routes trusted      DELETE /admin/projects/proj/grants    -> 404
+PASS routes junk         POST   /devices/register              -> 404
+PASS routes junk         POST   /devices/approve               -> 404
+PASS routes junk         POST   /devices/grant                 -> 404
+PASS routes junk         DELETE /devices/grant                 -> 404
+PASS routes junk         GET    /devices/list                  -> 404
+PASS routes junk         POST   /admin/devices/2/approve       -> 404
+PASS routes junk         POST   /admin/devices/2/revoke        -> 404
+PASS routes junk         POST   /admin/projects                -> 404
+PASS routes junk         GET    /admin/projects                -> 404
+PASS routes junk         POST   /admin/projects/proj/grants    -> 404
+PASS routes junk         DELETE /admin/projects/proj/grants    -> 404
+PASS routes admin-shaped POST   /devices/register              -> 404
+PASS routes admin-shaped POST   /devices/approve               -> 404
+PASS routes admin-shaped POST   /devices/grant                 -> 404
+PASS routes admin-shaped DELETE /devices/grant                 -> 404
+PASS routes admin-shaped GET    /devices/list                  -> 404
+PASS routes admin-shaped POST   /admin/devices/2/approve       -> 404
+PASS routes admin-shaped POST   /admin/devices/2/revoke        -> 404
+PASS routes admin-shaped POST   /admin/projects                -> 404
+PASS routes admin-shaped GET    /admin/projects                -> 404
+PASS routes admin-shaped POST   /admin/projects/proj/grants    -> 404
+PASS routes admin-shaped DELETE /admin/projects/proj/grants    -> 404
+PASS routes anonymous    GET    /devices/whoami                -> 401
+PASS routes junk         GET    /devices/whoami                -> 401
+PASS routes admin-shaped GET    /devices/whoami                -> 401
+PASS routes anonymous    POST   /mcp                           -> 401
+PASS routes junk         POST   /mcp                           -> 401
+PASS routes anonymous    POST   /devices/revoke                -> 401
+PASS routes junk         POST   /devices/revoke                -> 401
+PASS routes trusted      GET    /devices/whoami                -> 200
+PASS routes trusted      POST   /mcp                           -> 200
+PASS routes trusted      POST   /devices/revoke                -> 404
+PASS routes trusted      POST   /devices/revoke                -> 404
+PASS routes trusted      POST   /devices/revoke                -> 200
+PASS routes revoked      GET    /devices/whoami                -> 401
+RESULT routes PASS base=https://localhost failures=0
+Device inventory after cutover (python -m hlmemo.ops device list):
+   1  admin (reserved)             server    trusted  expires=- last_seen=- grants=gates:admin,gates-cli:admin,r1-seed:admin,reboot:admin
+   2  judge-cffefa4a               ci        revoked  expires=- last_seen=2026-09-23T06:53:58.235379+00:00 grants=-
+   3  gates-cli-20125              ci        revoked  expires=- last_seen=2026-09-23T06:54:01.142048+00:00 grants=-
+   4  judge-25e19a58               ci        trusted  expires=- last_seen=2026-09-23T06:55:03.607698+00:00 grants=reboot:write
+   5  judge-86f7d02a               ci        trusted  expires=- last_seen=2026-09-23T06:55:54.294880+00:00 grants=reboot:write
+   6  seed-trusted-mac             personal  trusted  expires=- last_seen=2026-09-23T18:35:01.981347+00:00 grants=r1-seed:write
+   7  seed-pending-laptop          personal  pending  expires=- last_seen=- grants=-
+   8  librarian                    server    trusted  expires=- last_seen=- grants=-
+   9  routes-check-56ffa3d5        ci        revoked  expires=2026-09-23T18:46:24.517606+00:00 last_seen=2026-09-23T18:36:24.550205+00:00 grants=-
+  10  deploy-routes-fa24ca5a0d87-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
+Pre-upgrade prune completed: removed 0; keeping latest 5
+Deployment ready: fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a (localhost)
+
+PATH="$PWD/$S/bin:$PATH" bash deploy/scripts/deploy.sh  hlm-deploy $FULL  0.76s user 0.32s system 5% cpu 19.729 total
+rc=0

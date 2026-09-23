@@ -1,0 +1,56 @@
+== containers (all, project)
+hlmemo-prod-caddy-1 834468128c76 Up 22 seconds (healthy)
+hlmemo-prod-worker-1 b93f93f26ed3 Up 27 seconds (healthy)
+hlmemo-prod-api-1 b93f93f26ed3 Up 27 seconds (healthy)
+hlmemo-prod-db-1 cf134a767f47 Up 34 seconds (healthy)
+== any container on the fa24ca5 image:
+0
+0
+== api revision label
+912f2d39247a9e445222756f8ce11fa24c70fae9 sha256:b93f93f26ed34611ac69aae2e1cd0b12c88b76b8df8a70da08d0f5bd8543ed4b
+== prod.env HLM_IMAGE
+HLM_IMAGE=hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9
+== markers
+912f2d39247a9e445222756f8ce11fa24c70fae9
+app
+app.env.pre-fault-inject
+current-ref
+previous-dump
+previous-ref
+912f2d3 Ubuntu 26.04 support + two-command deploy (first_deploy.sh, remote_gates.sh)
+== /etc/hlmemo (names)
+api.env
+api.env.pre-w0-20260923T183410Z
+app.env
+backup.env
+bootstrap-ssh-cidr
+db.env
+prod.env
+== api.env keys
+HLM_ADMIN_TOKEN= HLM_REGISTRATION_SECRET= HLM_CURSOR_SECRET= HLM_TRUSTED_PROXY_IPS= 
+api.env == its pre-w0 backup (byte-identical)
+== running api container env has retired secrets set?
+REGISTRATION_SECRET=set
+ADMIN_TOKEN=set
+== images
+hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a 4fd204c901d1
+hlmemo:93569eb6ced7e54e691be29c8cbe82dac325226b 676a96f4412e
+hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 b93f93f26ed3
+== data
+alembic|0001_phase0
+devices|7|admin:trusted,gates-cli-20125:revoked,judge-25e19a58:trusted,judge-86f7d02a:trusted,judge-cffefa4a:revoked,seed-pending-laptop:pending,seed-trusted-mac:trusted
+projects|4|gates,gates-cli,r1-seed,reboot
+events|51
+memory_versions|23
+embeddings|23
+grants|9
+BASELINE IDENTICAL
+== old release serving (public https://localhost:19443)
+/ready 200
+register without secret -> 401
+register wrong secret   -> 401
+old trusted whoami      -> 200
+marker r1-marker-4cb95b2e readable: True clue v8.0
+== injected vars in recovered containers:
+api: 2
+worker: 2

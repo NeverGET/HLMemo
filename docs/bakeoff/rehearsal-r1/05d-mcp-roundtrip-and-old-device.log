@@ -1,0 +1,8 @@
+new device tools/list 200 ['memory.call_the_day', 'memory.drilldown', 'memory.query', 'memory.raw', 'memory.write']
+new device write 200 isError False version 26
+new device read-back r1-post-0aff385c OK
+pre-cutover marker via new device: True
+seed hits in one query: 21
+OLD trusted device seed-trusted-mac: mcp initialize 200
+OLD device whoami 200
+OLD device reads marker: 200 True

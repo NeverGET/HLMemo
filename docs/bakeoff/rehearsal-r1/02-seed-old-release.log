@@ -1,0 +1,11 @@
+register seed-trusted-mac 201
+register seed-pending-laptop 201
+approve 6 200 trusted
+project create 201
+grant write 200
+writes ok 13 of 20
+marker readable r1-marker-4cb95b2e clue v8.0
+MARKER r1-marker-4cb95b2e trusted_id 6 pending_id 7
+7|4|44
+decision probe: (200, True, '{"code":"E_INVALID_ARG","details":{"error_count":1,"errors":[{"ctx":{"expected":"\'fact\', \'episode\', \'lesson\', \'experience\', \'project_card\', \'session_note\' or \'doc_chunk\'"},"loc":["items",0,"kind"],"msg":"Input should be \'fact\', \'episode\', \'lesson\', \'experience\', \'project_card\', \'session_note\' or \'do')
+extra writes ok 7 of 7
