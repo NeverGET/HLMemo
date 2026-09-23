@@ -159,7 +159,7 @@ def _alembic_fault(dsn: str, fault: str, *args: str) -> subprocess.CompletedProc
     return subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=ROOT,
-        env={**os.environ, "HLM_DB_DSN": dsn, "HLM_MIGRATION_FAULT": fault},
+        env={**os.environ, "HLM_DB_DSN": dsn, "HLM_MIGRATION_FAULT": fault, "HLM_TESTING": "1"},
         text=True,
         capture_output=True,
     )
