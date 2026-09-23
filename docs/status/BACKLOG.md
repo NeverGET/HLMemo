@@ -39,3 +39,4 @@ Updated 2026-09-23. Source of each item in parentheses.
 
 ## Retrieval (W-E findings, 2026-09-23)
 - Drill budget vs D-055 "drill the top 5" guidance: on corpus B, 53 of 80 top-5 drilldowns hit the 4000-token drilldown budget and were truncated. Raise the default drill budget for multi-clue calls, or split the budget fairly per clue. Small, pre-librarian; measure on corpus A + B dev.
+- W0a /ready detail gating trusts the raw socket peer (loopback = details). This is safe while Caddy reaches the API over the docker network, but a reverse proxy running inside the API's own network namespace would expose details to the public. If the topology ever changes, gate the details on a separate loopback-only listener or an ops token (verifier note, 2026-09-23).
