@@ -274,6 +274,7 @@ class _FakeQ:
         self.revision = 1
         self.calls = 0
         self.fail = False
+        self.delay = 0.05
 
     async def term_stats_key(self, conn, pid):  # noqa: ANN001, ANN201
         return "db", "created", self.revision
@@ -284,7 +285,7 @@ class _FakeQ:
         import psycopg
 
         self.calls += 1
-        await asyncio.sleep(0.05)  # a slow refresh: concurrent callers must wait for this one
+        await asyncio.sleep(self.delay)  # a slow refresh: concurrent callers must wait for this one
         if self.fail:
             raise psycopg.errors.QueryCanceled("statement timeout")
         return 200, [(f"w{pid}_{i}", 1) for i in range(10)], 20, [("t", 1)]
@@ -310,15 +311,94 @@ async def test_stats_cache_single_flight_for_concurrent_cold_queries(fake_q: _Fa
     assert all(r is results[0] for r in results) and results[0].chunks.n == 200
 
 
-async def test_stats_cache_invalidates_on_project_revision(fake_q: _FakeQ) -> None:
+class _BgConn:
+    async def close(self) -> None:
+        return None
+
+
+async def _bg_connect() -> _BgConn:
+    return _BgConn()
+
+
+async def _settle(cache) -> None:  # noqa: ANN001
+    import asyncio
+
+    await asyncio.gather(*[t for t in cache._tasks.values() if not t.done()], return_exceptions=True)
+
+
+async def test_swr_no_query_blocks_on_rebuild_when_df_cached(fake_q: _FakeQ) -> None:
+    """D-063 (1): with a cached DF, an invalidated query returns at once; the rebuild runs behind."""
+    import time
+
     from hlmemo.core.term_stats import StatsCache
 
-    cache = StatsCache()
+    cache = StatsCache(connect=_bg_connect)
+    first = await cache.get(None, 1)  # cold start: the one blocking load
+    fake_q.delay = 1.0  # a slow ts_stat from now on
+    fake_q.revision = 2  # a write invalidates
+    t0 = time.perf_counter()
+    stale = await cache.get(None, 1)
+    again = await cache.get(None, 1)
+    elapsed = time.perf_counter() - t0
+    assert stale is first and again is first and elapsed < 0.1
+    await _settle(cache)
+    assert fake_q.calls == 2
+
+
+async def test_swr_query_after_refresh_sees_new_df(fake_q: _FakeQ) -> None:
+    """D-063 (2): once the background refresh completes (well within 5 s) the new DF is served."""
+    import asyncio
+
+    from hlmemo.core.term_stats import MAX_STALENESS_S, StatsCache
+
+    cache = StatsCache(connect=_bg_connect)
     first = await cache.get(None, 1)
-    assert await cache.get(None, 1) is first and fake_q.calls == 1
-    fake_q.revision = 2  # any write/revision in the project
+    fake_q.revision = 2
+    assert await cache.get(None, 1) is first
+    await asyncio.wait_for(_settle(cache), timeout=MAX_STALENESS_S)
     second = await cache.get(None, 1)
     assert second is not first and fake_q.calls == 2
+    assert await cache.get(None, 1) is second and fake_q.calls == 2  # fresh again: no refresh
+
+
+async def test_swr_single_flight_under_concurrent_invalidations(fake_q: _FakeQ) -> None:
+    """D-063 (3): many invalidated queries (and further writes meanwhile) start ONE refresh."""
+    import asyncio
+
+    from hlmemo.core.term_stats import StatsCache
+
+    cache = StatsCache(connect=_bg_connect)
+    await cache.get(None, 1)
+    fake_q.delay = 0.3
+    fake_q.revision = 2
+    await asyncio.gather(*(cache.get(None, 1) for _ in range(32)))
+    fake_q.revision = 3  # another write while the refresh runs
+    await asyncio.gather(*(cache.get(None, 1) for _ in range(32)))
+    assert fake_q.calls == 2  # cold load + one background refresh
+    await _settle(cache)
+    await cache.get(None, 1)  # revision 3 > refreshed 2: exactly one more refresh
+    await _settle(cache)
+    assert fake_q.calls == 3
+
+
+async def test_swr_refresh_failure_keeps_old_df(fake_q: _FakeQ) -> None:
+    """D-063 (4): a refresh error or timeout leaves the old DF in place (retried later)."""
+    import asyncio
+
+    from hlmemo.core.term_stats import STALE_RETRY_S, StatsCache
+
+    cache = StatsCache(connect=_bg_connect)
+    first = await cache.get(None, 1)
+    fake_q.fail = True
+    fake_q.revision = 2
+    assert await cache.get(None, 1) is first
+    await _settle(cache)
+    assert await cache.get(None, 1) is first and fake_q.calls == 2  # not hammered right away
+    fake_q.fail = False
+    await asyncio.sleep(STALE_RETRY_S + 0.05)
+    assert await cache.get(None, 1) is first  # retry starts, still served stale
+    await _settle(cache)
+    assert (await cache.get(None, 1)) is not first and fake_q.calls == 3
 
 
 async def test_stats_cache_timeout_means_unfiltered_and_backs_off(fake_q: _FakeQ) -> None:
