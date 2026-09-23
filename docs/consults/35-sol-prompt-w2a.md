@@ -1,0 +1,13 @@
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Review workstream W2a, the librarian foundation: branch `worktree-agent-a21f9ce923d827a45`, worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a21f9ce923d827a45, commits 0f5b408 and 19be389. Diff against the branch's merge-base with main (`git -C <wt> merge-base HEAD main`).
+Spec: docs/decisions/PHASE2-4-ROADMAP.md: CC-1..CC-5 (frozen, D-060), §2 W2a with gates G-L1..G-L8 and G-LIVE-A, §4b role ladder. Owner decisions: D-058 (no dev spend cap, but a runaway guard; the librarian starts as OBSERVER; migration replaces shadow mode), D-017 (provider-agnostic), D-019.
+The implementer's listed deviations: pair_check scaffold only; only annotate links applied; proposals live in librarian events; role decisions as librarian events op=set_role; HTTP error settles $0 and a timeout settles at worst case; fallback not used after a schema failure; an extra llm_calls.mode column and 3 partial indexes on events; G-L3 made opt-in. Judge each.
+SPECIFIC SUSPICION: G-L3 (G4 p95 ≤ 500 ms while the LLM is down, with 100 writes acked) first failed at p95 543 ms because write chunking shared the event loop with the timed queries. The "fix" in 19be389 runs the writes FIRST and the timed queries AFTER. Decide whether this removes the concurrency the gate exists to test. If so, say what the real product fix is (e.g. chunking off the event loop, or a worker/threadpool) and what the gate must look like.
+STATIC REVIEW ONLY: read, git diff/show, rg. Do not run tests or docker, and do not edit.
+Focus on:
+(1) Privacy: can any user content reach the provider unredacted (prompt, retries, fallback, error paths, logs, the ledger, cassettes)? Are device-scoped items and policy=off projects excluded on every path?
+(2) Spend guard: races and crashes between reserve and settle; the peak-price reservation; can a runaway loop bypass the per-job ceiling via re-enqueue under a new job id?
+(3) Capability recheck and authority_lost: TOCTOU; lock ordering vs spec §2; can the librarian mutate anything in observer mode?
+(4) Replay determinism with schema_version 2; exactly-one event per job (uuid5 dedupe) under retries and lease takeover.
+(5) Provider-agnosticism (D-017): any model id or model quirk outside profiles/?
+(6) Anything that would break production on 2 vCPU / 7 GiB (the new service's limits, the new partial indexes on events, migration 0006 on a live DB).
+OUTPUT (English, ≤ 700 words): ## Verdict (MERGE / MERGE-WITH-FIXES / DO-NOT-MERGE); ## Findings (table: # | severity | file:line | trigger | observed vs expected | fix | confidence), max 8; ## Deviations verdict (one line each); ## Checked and sound (≤ 6 bullets).
