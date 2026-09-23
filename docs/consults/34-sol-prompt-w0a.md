@@ -1,0 +1,13 @@
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Review workstream W0a: branch `worktree-agent-a142ee2b9b4948da6`, worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a142ee2b9b4948da6, commits 86a705c, 1b2aafd and ce64e79 on top of 82200ae. Diff with `git -C <worktree> diff 82200ae HEAD`.
+Spec: docs/decisions/PHASE2-4-ROADMAP.md §1 W0a (this is also your own answer (b) and fixes #1/#2 from consult 32). Owner intent (D-052): device tokens are minted ONLY on the server via a script over SSH; unauthorized clients must not even be able to create pending state.
+A neutral verifier is re-running the tests. Your job is what the tests do NOT catch. This is a STATIC review: read files, git diff/show, rg. Do not run tests, docker or ssh, and do not edit files.
+
+Focus on:
+1. Any remaining unauthenticated state-creation or information path: route-filter normalization bypasses (encoded slashes, `//admin`, trailing dots, case, HEAD/OPTIONS, and paths Caddy forwards differently than Starlette routes them); timing or size differences in 404 vs 401 that enumerate device ids; the self-revoke oracle.
+2. Fail-closed guarantees: can production start with registration open through any env or config precedence path (env file vs compose environment vs defaults)? What does a stale env file on the live host do after cutover?
+3. The ops path: SQL/authz done as device 1 without the admin token. Is `python -m hlmemo.ops` reachable by anything other than a root/deploy SSH user (e.g. through the MCP or HTTP surface)? Token printing: do stdout or stderr ever carry the token into logs, shell history, `docker compose exec` logging or journald? Is `hlm_ops.sh` quoting correct for hostile names?
+4. Migration 0005 + the phase0→main label transition: is this safe on the live production DB (at 0001 today, jumping to 0005 through 0003/0004 concurrent index builds)? What if the migration fails halfway?
+5. The manual cutover plan (RUNBOOK "Release-specific plan: W0a access hardening") and migrate_env_w0: ordering hazards, rollback correctness (restoring secrets), lockout risk (can the operator lose all admin ability, e.g. no device and no admin token?), and what happens to the existing production devices (g7 device, gates devices).
+6. expires_at enforcement consistency: the pre-body gate vs in-transaction resolve vs cursors.
+
+OUTPUT (English, ≤ 700 words): ## Verdict (MERGE / MERGE-WITH-FIXES / DO-NOT-MERGE); ## Findings (table: # | severity | file:line | trigger | observed vs expected | fix | confidence), max 8, most severe first; ## Cutover risks (≤ 5 bullets); ## Checked and sound (≤ 6 bullets with file:line).
