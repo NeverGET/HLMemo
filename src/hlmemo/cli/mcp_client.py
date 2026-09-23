@@ -12,8 +12,11 @@ instance in-process (unit tests), no network.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import logging
 import re
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Any
 
@@ -170,6 +173,36 @@ class MemoryClient:
 
     def call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return asyncio.run(self.call_async(tool, arguments))
+
+    @contextlib.asynccontextmanager
+    async def session(self) -> AsyncIterator[Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]]:
+        """One MCP session for many calls (``hlm import``/``hlm export``); yields ``call(tool, args)``.
+
+        Tool errors raise ``ToolCallError``; transport failures are classified like ``call_async``.
+        The unlisted client tool ``hlm.export`` makes the SDK log "not listed" once per call: muted.
+        """
+        logging.getLogger("mcp.client.session").setLevel(logging.ERROR)
+        try:
+            async with self._client() as c:
+
+                async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+                    try:
+                        result = await c.call_tool(tool, arguments, read_timeout_seconds=self.timeout_s)
+                    except ToolCallError:
+                        raise
+                    except BaseException as exc:  # noqa: BLE001 - classified below
+                        if isinstance(exc, KeyboardInterrupt):
+                            raise
+                        raise _classify(exc) from exc
+                    return decode_result(result)
+
+                yield call
+        except ToolCallError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - session setup / teardown failures
+            if isinstance(exc, KeyboardInterrupt | GeneratorExit):
+                raise
+            raise _classify(exc) from exc
 
     # ------------------------------------------------------------------ tools
 

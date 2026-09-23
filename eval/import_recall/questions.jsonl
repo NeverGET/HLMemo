@@ -1,0 +1,34 @@
+{"id": "q01", "file": "docs/research/01-librarian-model-analysis.md", "lines": [22, 22], "question": "During which UTC hours does DeepSeek V4.1 Flash charge its doubled peak price?"}
+{"id": "q02", "file": "docs/research/02-vps-analysis.md", "lines": [22, 22], "question": "By how much did Hetzner raise CPX prices for new orders in June 2026?"}
+{"id": "q03", "file": "docs/research/05-embedding-models-2026-09.md", "lines": [13, 13], "question": "How long does Google retain Gemini API data for abuse monitoring, and is paid-tier data used to improve its products?"}
+{"id": "q04", "file": "docs/research/04-vps-turkey-analysis.md", "lines": [61, 61], "question": "Within how many business days must standard contractual clauses be notified to the KVKK when personal data moves abroad?"}
+{"id": "q05", "file": "docs/research/06-vps-small-tier-2026-09.md", "lines": [15, 15], "question": "How many manual Hostinger snapshots are kept and when do they expire?"}
+{"id": "q06", "file": "docs/status/BACKLOG.md", "lines": [32, 32], "question": "How long does a contract-maximum write take to embed on a single CPU?"}
+{"id": "q07", "file": "docs/consults/05-codex-go.md", "lines": [21, 21], "question": "In codex's round-5 GO/NO-GO re-check of the Phase-0 spec, what was the verdict and how many contract contradictions remained?"}
+{"id": "q08", "file": "docs/consults/06-codex-go2.md", "lines": [20, 20], "question": "Which test did codex name as the very first one to write after giving GO for Phase 0?", "alt": [{"file": "docs/decisions/DECISIONS.md", "lines": [29, 29]}]}
+{"id": "q09", "file": "docs/consults/19-codex-f15.md", "lines": [1, 1], "question": "How was re-registration with the name of a revoked device (F15) fixed?"}
+{"id": "q10", "file": "docs/consults/22-codex-final-src.md", "lines": [22, 22], "question": "What default did HLM_REQUEST_BODY_RATE_GRACE_BYTES get in the final source fixes?"}
+{"id": "q11", "file": "docs/consults/24-codex-body.md", "lines": [3, 3], "question": "How many concurrent body readers does one client get before a retryable 429?", "alt": [{"file": "docs/decisions/PHASE0-SPEC.md", "lines": [353, 353]}, {"file": "docs/decisions/PHASE0-SPEC.md", "lines": [541, 541]}]}
+{"id": "q12", "file": "docs/consults/25-codex-oom.md", "lines": [12, 12], "question": "What memory limits were set for the DB, API, worker, migration and Caddy containers in the OOM fix?"}
+{"id": "q13", "file": "docs/consults/27-codex-auth-gate.md", "lines": [9, 9], "question": "In what order does the pre-body authentication gate handle a request?", "alt": [{"file": "docs/decisions/PHASE0-SPEC.md", "lines": [349, 349]}]}
+{"id": "q14", "file": "docs/bakeoff/PROTOCOL.md", "lines": [20, 20], "question": "How is a finding scored in the bake-off review round?"}
+{"id": "q15", "file": "docs/bakeoff/SCOREBOARD.md", "lines": [12, 14], "question": "Which model strategy was kept after bake-off rounds R1 to R3, and why?"}
+{"id": "q16", "file": "docs/bakeoff/r1/RESULT.md", "lines": [13, 13], "question": "How long did each contestant take in bake-off round R1?"}
+{"id": "q17", "file": "docs/bakeoff/r2/RESULT.md", "lines": [14, 14], "question": "Which Opus defect in bake-off R2 could wipe the remote backup dumps?"}
+{"id": "q18", "file": "docs/bakeoff/r3/RESULT.md", "lines": [18, 19], "question": "Why was finding R03 about the 413 on contract-maximum writes rejected in round R3?"}
+{"id": "q19", "file": "docs/decisions/VALIDATION-GATES.md", "lines": [9, 9], "question": "What does the G4 latency gate require?", "alt": [{"file": "docs/decisions/PHASE0-SPEC.md", "lines": [645, 645]}]}
+{"id": "q20", "file": "docs/status/STATUS.md", "lines": [5, 5], "question": "On which Hostinger plan, datacenter and operating system does production run?", "alt": [{"file": "docs/decisions/DECISIONS.md", "lines": [51, 51]}]}
+{"id": "q21", "file": "docs/consults/31-opus-position-roadmap.md", "lines": [14, 14], "question": "How many ideal-days did the Phase 2-4 roadmap need, and which workstreams were the first cut candidates?"}
+{"id": "q22", "file": "docs/USAGE.md", "lines": [60, 61], "question": "What query text does hlm use for the preflight when no --task is given?"}
+{"id": "q23", "file": "docs/consults/00-claude-position.md", "lines": [15, 15], "question": "Why was Apache AGE considered unnecessary for Phase 0 and 1?"}
+{"id": "q24", "file": "docs/consults/33-sol-review-d055.md", "lines": [1, 1], "question": "What verdict did Sol give the D-055 retrieval fix round?", "alt": [{"file": "docs/decisions/DECISIONS.md", "lines": [61, 61]}]}
+{"id": "q25", "file": "docs/consults/13-codex-d035.md", "lines": [9, 9], "question": "What is the default local backup directory and which backup targets are rejected?", "alt": [{"file": "docs/consults/15-opus-review-d035.md", "lines": [15, 15]}]}
+{"id": "q26", "file": "docs/consults/01-codex-architecture-critique.md", "lines": [24, 24], "question": "In codex's Phase-0 MVP proposal, how are session close and lessons represented?"}
+{"id": "q27", "file": "docs/decisions/PHASE0-CONFLICTS.md", "lines": [7, 7], "question": "Why did the Phase-0 spec pick bigint identity keys instead of UUIDs?"}
+{"id": "q28", "file": "docs/decisions/DECISIONS.md", "lines": [51, 51], "question": "What IPv4 address and datacenter does the production Hostinger VPS have?"}
+{"id": "q29", "file": "docs/research/00-deep-research-report.md", "lines": [140, 140], "question": "Rapora göre tek yoğun kullanıcı için tahmini aylık VPS maliyeti ne kadar?"}
+{"id": "q30", "file": "docs/decisions/PHASE0-GATE-REPORT.md", "lines": [7, 8], "question": "On what hardware and Docker versions were the Phase-0 gates measured?"}
+{"id": "q31", "file": "docs/research/03-legacy-memory-inventory-public.md", "lines": [6, 6], "question": "How many serena memory files and projects did the legacy memory inventory count?"}
+{"id": "q32", "file": "docs/decisions/PHASE0-SPEC.md", "lines": [363, 363], "question": "What does a clue look like for a whole item versus a single chunk?", "alt": [{"file": "docs/consults/03-claude-phase0-spec.md", "lines": [113, 113]}]}
+{"id": "q33", "file": "docs/decisions/PHASE2-4-ROADMAP.md", "lines": [162, 162], "question": "Which extra VPS security option was recommended for W0b, and when is Tailscale reconsidered?"}
+{"id": "q34", "file": "docs/consults/32-sol-review-roadmap.md", "lines": [14, 14], "question": "Why did Sol object to using the file mtime as valid_from for imported memories?"}

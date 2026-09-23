@@ -48,6 +48,7 @@ from hlmemo.core.retrieval import (
 )
 from hlmemo.core.temporal import fmt_ts, parse_opt_ts
 from hlmemo.core.term_stats import StatsCache
+from hlmemo.db import import_queries as iq
 from hlmemo.db import read_queries as q
 from hlmemo.db.write_queries import ProjectRef
 
@@ -586,6 +587,12 @@ async def raw(
                 "recorded_at": fmt_ts(ev.recorded_at),
             },
             "payload_item": payload_item,
+            # W1.5 (G-I2, additive): the row's own provenance and its describes projection
+            "source": await iq.version_source(conn, v.version_id),
+            "code_refs": [
+                {"path": path, "commit": commit}
+                for path, commit in (await iq.code_refs_of(conn, [v.version_id]))[v.version_id]
+            ],
             "links": [],
             "chunks": [],
             "next_cursor": None,

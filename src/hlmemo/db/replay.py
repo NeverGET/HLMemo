@@ -22,11 +22,21 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from hlmemo.core import NORMALIZER_VERSION
+from hlmemo.core.import_contract import code_ref_rows
 from hlmemo.core.normalize import normalize
 from hlmemo.core.temporal import parse_opt_ts, parse_ts
+from hlmemo.db import import_queries as iq
 from hlmemo.db import write_queries as q
 
-PROJECTION_TABLES = ("librarian_questions", "jobs", "links", "embeddings", "chunks", "memory_versions")
+PROJECTION_TABLES = (
+    "librarian_questions",
+    "jobs",
+    "links",
+    "embeddings",
+    "chunks",
+    "code_refs",  # W1.5 (0007): the describes projection, rebuilt with its versions
+    "memory_versions",
+)
 
 
 @dataclass(slots=True)
@@ -131,7 +141,15 @@ async def _replay_write(
                         if "last_access_at" in sv
                         else base.last_access_at
                     ),
+                    source=base.source,
                 ),
+            )
+            await iq.insert_code_refs(
+                conn,
+                [
+                    (sv["version_id"], path, commit)
+                    for path, commit in (await iq.code_refs_of(conn, [base.version_id]))[base.version_id]
+                ],
             )
             stats.versions += 1
             await q.insert_chunks(
@@ -165,8 +183,10 @@ async def _replay_write(
                 recorded_at=T,
                 source_event_id=event_id,
                 supersedes_version_id=it.get("supersedes_version_id"),
+                source=src.get("source"),
             ),
         )
+        await iq.insert_code_refs(conn, code_ref_rows(it["version_id"], src))  # live-path derivation
         stats.versions += 1
         await q.insert_chunks(
             conn,
