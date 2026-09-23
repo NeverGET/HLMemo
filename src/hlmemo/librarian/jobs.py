@@ -82,15 +82,36 @@ async def insert_job_row(
     payload: dict[str, Any],
     priority: int,
     at: datetime,
+    job_id: int | None = None,
 ) -> bool:
-    cur = await conn.execute(
-        """
-        INSERT INTO jobs (kind, dedupe_key, source_event_id, payload, run_after, created_at, priority)
-        VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING
-        """,
-        (kind, dedupe_key, source_event_id, Jsonb(payload), at, at, priority),
-    )
+    if job_id is None:  # events recorded before job ids were (none in W2a's own paths)
+        cur = await conn.execute(
+            """
+            INSERT INTO jobs (kind, dedupe_key, source_event_id, payload, run_after, created_at, priority)
+            VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING
+            """,
+            (kind, dedupe_key, source_event_id, Jsonb(payload), at, at, priority),
+        )
+    else:
+        cur = await conn.execute(
+            """
+            INSERT INTO jobs (job_id, kind, dedupe_key, source_event_id, payload, run_after, created_at,
+                              priority)
+            OVERRIDING SYSTEM VALUE
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING
+            """,
+            (job_id, kind, dedupe_key, source_event_id, Jsonb(payload), at, at, priority),
+        )
     return cur.rowcount == 1
+
+
+async def assign_job_ids(conn: AsyncConnection, jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Allocate the job ids BEFORE the event is written, so the event records them and a replay
+    re-creates the exact rows (Sol 37 #8: the full jobs projection, ids included)."""
+    todo = [j for j in jobs if j.get("job_id") is None]
+    for j, jid in zip(todo, await q.allocate_ids(conn, "jobs", len(todo)), strict=True):
+        j["job_id"] = int(jid)
+    return jobs
 
 
 def job_spec(
@@ -115,6 +136,7 @@ async def insert_recorded_jobs(
             payload=j["payload"],
             priority=int(j.get("priority", DEFAULT_PRIORITY)),
             at=at,
+            job_id=j.get("job_id"),
         )
     return n
 
@@ -141,6 +163,7 @@ async def enqueue(
         payload.setdefault("lineage", str(uuid.uuid5(NS_LIBRARIAN, "lineage:" + s["dedupe_key"])))
         payload["capabilities"] = await compute_capabilities(conn, trigger_device_id, subject_projects)
         jobs.append({**s, "payload": payload})
+    await assign_job_ids(conn, jobs)
     keys = sorted(j["dedupe_key"] for j in jobs)
     at = await q.clock_now(conn)
     request = {"actor": CLIENT, "op": "enqueue", "trigger_device_id": trigger_device_id, "dedupe_keys": keys}
@@ -164,6 +187,7 @@ async def enqueue(
 __all__ = [
     "DEFAULT_PRIORITY",
     "LIBRARIAN_JOB_KINDS",
+    "assign_job_ids",
     "compute_capabilities",
     "enqueue",
     "insert_job_row",

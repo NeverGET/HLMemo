@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -39,9 +40,49 @@ def cassette_key(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def sanitize_response(body: dict[str, Any]) -> dict[str, Any]:
+UNSUPPORTED = "⟦CONTENT:unsupported⟧"
+TOOL_CALLS = "⟦CONTENT:tool_calls⟧"
+_TEXT_PART_TYPES = frozenset({"text", "output_text"})
+
+
+def normalize_content(msg: dict[str, Any]) -> str | None:
+    """Any assistant ``message`` shape → plain text (Sol 37 #2): a string stays; an array of
+    parts keeps only the text of text parts (any other part becomes a content-free marker);
+    tool calls are never kept (marker); anything else becomes the unsupported marker."""
+    content = msg.get("content")
+    tool = msg.get("tool_calls") or msg.get("function_call")
+    if isinstance(content, str):
+        text: str | None = content
+    elif content is None:
+        text = None
+    elif isinstance(content, list):
+        pieces = []
+        for part in content:
+            if (
+                isinstance(part, dict)
+                and part.get("type") in _TEXT_PART_TYPES
+                and isinstance(part.get("text"), str)
+            ):
+                pieces.append(part["text"])
+            elif isinstance(part, str):
+                pieces.append(part)
+            else:
+                pieces.append(UNSUPPORTED)
+        text = "".join(pieces)
+    else:
+        text = UNSUPPORTED
+    if tool:
+        text = TOOL_CALLS if text is None else f"{text}{TOOL_CALLS}"
+    return text
+
+
+def sanitize_response(body: dict[str, Any], redact: Callable[[str], str] | None = None) -> dict[str, Any]:
+    """The only response shape ever persisted: normalized (and, when given, redacted) text."""
     choice = (body.get("choices") or [{}])[0] or {}
     msg = choice.get("message") or {}
+    text = normalize_content(msg if isinstance(msg, dict) else {"content": msg})
+    if text is not None and redact is not None:
+        text = redact(text)
     usage = body.get("usage") or {}
     keep_usage = {
         k: usage[k]
@@ -55,7 +96,7 @@ def sanitize_response(body: dict[str, Any]) -> dict[str, Any]:
         "model": body.get("model"),
         "choices": [
             {
-                "message": {"role": "assistant", "content": msg.get("content")},
+                "message": {"role": "assistant", "content": text},
                 "finish_reason": choice.get("finish_reason"),
             }
         ],
@@ -125,4 +166,4 @@ class CassetteStore:
             index[key] = rec
 
 
-__all__ = ["CassetteStore", "canonical", "cassette_key", "sanitize_response"]
+__all__ = ["CassetteStore", "canonical", "cassette_key", "normalize_content", "sanitize_response"]

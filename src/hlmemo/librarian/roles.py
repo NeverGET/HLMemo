@@ -23,7 +23,7 @@ from hlmemo.db import write_queries as q
 from hlmemo.librarian.actor import set_question_status
 from hlmemo.librarian.errors import RoleNotAuthorized
 from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event
-from hlmemo.librarian.jobs import insert_recorded_jobs, job_spec
+from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
 
 ROLES = ("observer", "assistant", "autonomous")
 _RANK = {r: i for i, r in enumerate(ROLES)}
@@ -174,6 +174,7 @@ async def record_batch_decision(
                     },
                 )
             ]
+        await assign_job_ids(conn, jobs)
         change = {"question_id": r["question_id"], "status": status, "decided_by": approver.device_id}
         event_id = await insert_system_event(
             conn,

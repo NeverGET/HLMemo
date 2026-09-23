@@ -187,12 +187,14 @@ async def apply_mutations(
 async def mark_done_by_key(conn: AsyncConnection, done: dict[str, Any], at: datetime) -> None:
     """Replay: the job whose effect an event records is done, at the recorded completion time and
     attempt count (``resolved.done``), so the jobs projection rebuilds identically."""
+    run_after = done.get("run_after")
     await conn.execute(
         "UPDATE jobs SET status = 'done', done_at = %s, attempts = %s, lease_token = NULL,"
-        " lease_until = NULL, last_error = NULL WHERE dedupe_key = %s",
+        " lease_until = NULL, last_error = NULL, run_after = COALESCE(%s, run_after) WHERE dedupe_key = %s",
         (
             parse_ts(done.get("done_at") or fmt_ts(at), field="done_at"),
             int(done.get("attempts", 0)),
+            parse_ts(run_after, field="run_after") if run_after else None,
             done["dedupe_key"],
         ),
     )
@@ -221,14 +223,14 @@ async def insert_questions(
     for r in rows:
         await conn.execute(
             """
-            INSERT INTO librarian_questions (question_id, job_id, batch_id, project_id, project_ids, kind,
+            INSERT INTO librarian_questions (question_id, job_key, batch_id, project_id, project_ids, kind,
                                              subject_clues, subject_version_ids, proposal, status,
                                              created_at, source_event_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 r["question_id"],
-                int(r["job_id"]),
+                str(r["job_key"]),
                 r["batch_id"],
                 int(r["project_id"]),
                 [int(x) for x in r["project_ids"]],

@@ -53,6 +53,10 @@ class AuthorityLost(LibrarianError):
     """The apply-time capability recheck failed (CC-3)."""
 
 
+class PrivacyDenied(LibrarianError):
+    """The privacy gate denied an item of the prompt immediately before a provider attempt."""
+
+
 class RoleNotAuthorized(LibrarianError):
     """The configured role has no matching owner decision event (§4b role ladder)."""
 
@@ -66,6 +70,7 @@ __all__ = [
     "LibrarianError",
     "LlmConfigError",
     "LlmDisabled",
+    "PrivacyDenied",
     "ProviderUnavailable",
     "RoleNotAuthorized",
     "SchemaFail",

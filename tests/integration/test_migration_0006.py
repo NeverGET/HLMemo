@@ -107,3 +107,49 @@ def test_migration_0006_reserved_rows_and_round_trip(fresh_dsn: str) -> None:
     _alembic(fresh_dsn, "upgrade", "phase0@head")
     with psycopg.connect(fresh_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM devices WHERE is_system").fetchone() == (1,)
+
+
+def test_migration_0006_fails_fast_behind_an_index_reader_then_retries(fresh_dsn: str) -> None:
+    """Neutral verifier (W2a): a reader holding AccessShare on chunks_trgm_gin must not make the
+    fastupdate ALTER queue while table locks are held. The migration fails within lock_timeout
+    with NOTHING of the table part applied, and a plain re-run completes (idempotent)."""
+    import time
+
+    _alembic(fresh_dsn, "upgrade", "0004_title_norm_fold")
+    holder = psycopg.connect(fresh_dsn)
+    try:
+        holder.execute("SET enable_seqscan = off")
+        holder.execute("SELECT count(*) FROM chunks WHERE text_norm % 'svc-qx7'").fetchone()
+        held = holder.execute(
+            "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation"
+            " WHERE c.relname = 'chunks_trgm_gin' AND l.pid = pg_backend_pid()"
+        ).fetchone()
+        assert held == (1,)  # the reader's open transaction keeps AccessShare on the index
+        t0 = time.monotonic()
+        proc = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "phase0@head"],
+            cwd=ROOT,
+            env={**os.environ, "HLM_DB_DSN": fresh_dsn},
+            text=True,
+            capture_output=True,
+        )
+        elapsed = time.monotonic() - t0
+        assert proc.returncode != 0 and "lock_timeout" in proc.stderr and "Retry" in proc.stderr
+        assert elapsed < 15, elapsed  # 3 s lock_timeout + interpreter start, never an open-ended queue
+        with psycopg.connect(fresh_dsn) as conn:  # no partial state: the table DDL never ran
+            assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
+                ("0004_title_norm_fold",)
+            ]
+            row = conn.execute(
+                "SELECT to_regclass('llm_calls'), to_regclass('librarian_questions')"
+            ).fetchone()
+            assert row == (None, None)
+    finally:
+        holder.rollback()
+        holder.close()
+    t0 = time.monotonic()
+    _alembic(fresh_dsn, "upgrade", "phase0@head")  # retry
+    with psycopg.connect(fresh_dsn) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0006_librarian",)]
+        assert [opt for _, opt in conn.execute(GIN_SQL).fetchall()] == ["fastupdate=off"] * 3
+    print(f"\n0006 upgrade after the reader released: {time.monotonic() - t0:.2f} s (incl. interpreter)")

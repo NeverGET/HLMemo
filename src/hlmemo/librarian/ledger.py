@@ -60,6 +60,8 @@ class Ledger(Protocol):
 
     async def lineage_calls(self, lineage: str) -> int: ...
 
+    async def claim(self, lineage: str, cap: int) -> bool: ...
+
 
 class DbLedger:
     def __init__(self, conn: ConnCtx) -> None:
@@ -121,10 +123,28 @@ class DbLedger:
                 await conn.commit()
         return int(n)
 
+    async def claim(self, lineage: str, cap: int) -> bool:
+        async with self._conn() as conn:
+            cur = await conn.execute(
+                """
+                INSERT INTO llm_lineage_calls (lineage, calls) VALUES (%s, 1)
+                ON CONFLICT (lineage) DO UPDATE
+                   SET calls = llm_lineage_calls.calls + 1, updated_at = clock_timestamp()
+                 WHERE llm_lineage_calls.calls < %s
+                RETURNING calls
+                """,
+                (lineage, cap),
+            )
+            row = await cur.fetchone()
+            if not conn.autocommit:
+                await conn.commit()
+        return row is not None and cap > 0
+
 
 class MemoryLedger:
     def __init__(self) -> None:
         self.rows: list[LedgerRow] = []
+        self.claims: dict[str, int] = {}
 
     async def record(self, row: LedgerRow) -> None:
         self.rows.append(row)
@@ -134,6 +154,13 @@ class MemoryLedger:
 
     async def lineage_calls(self, lineage: str) -> int:
         return sum(1 for r in self.rows if r.lineage == lineage and r.outcome in NETWORK_OUTCOMES)
+
+    async def claim(self, lineage: str, cap: int) -> bool:
+        n = self.claims.get(lineage, 0)
+        if n >= cap:
+            return False
+        self.claims[lineage] = n + 1  # no await between check and set: atomic on the event loop
+        return True
 
     def as_dicts(self) -> list[dict]:
         out = []

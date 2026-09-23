@@ -30,7 +30,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -39,7 +39,13 @@ import httpx
 
 from hlmemo.core.budget import Meter
 from hlmemo.librarian.budget import BudgetGuard, Caps, ConnCtx, DbBudget, NoBudget
-from hlmemo.librarian.cassette import CassetteStore, canonical, cassette_key
+from hlmemo.librarian.cassette import (
+    CassetteStore,
+    canonical,
+    cassette_key,
+    normalize_content,
+    sanitize_response,
+)
 from hlmemo.librarian.errors import (
     BreakerOpen,
     BudgetDeferred,
@@ -62,6 +68,10 @@ _FENCE = re.compile(r"^\s*```(?:json|JSON)?\s*|\s*```\s*$", re.S)
 Validator = Callable[[dict[str, Any]], str | None]
 #: loop lineage of the call being made (per asyncio task; concurrent calls never share it)
 _LINEAGE: contextvars.ContextVar[str | None] = contextvars.ContextVar("hlm_llm_lineage", default=None)
+#: privacy/authority re-check run before every network attempt of the current call (Sol 37 #1)
+_PRECHECK: contextvars.ContextVar[Callable[[], Awaitable[None]] | None] = contextvars.ContextVar(
+    "hlm_llm_precheck", default=None
+)
 
 
 @contextlib.contextmanager
@@ -333,11 +343,14 @@ class Provider:
         validate: Validator | None = None,
         chain: list[LlmProfile] | None = None,
         lineage: str | None = None,
+        precheck: Callable[[], Awaitable[None]] | None = None,
     ) -> LlmResult:
         token = _LINEAGE.set(lineage) if lineage is not None else None
+        ptoken = _PRECHECK.set(precheck)
         try:
             return await self._complete(task, user, job_id=job_id, validate=validate, chain=chain)
         finally:
+            _PRECHECK.reset(ptoken)
             if token is not None:
                 _LINEAGE.reset(token)
 
@@ -449,15 +462,23 @@ class Provider:
             if schema_fails >= 2:
                 raise SchemaFail(f"E_SCHEMA_FAIL task={task.name}")  # never the model output
 
-    async def _check_job_cap(self, job_id: int | None) -> None:
-        """The call ceiling applies per loop LINEAGE (a re-enqueued job inherits its parent's), so
-        a job that re-enqueues itself under new ids cannot escape it; per job id otherwise."""
+    async def _claim_call(self, job_id: int | None) -> None:
+        """Atomically claim one provider attempt for the loop LINEAGE (a re-enqueued job inherits
+        its parent's; a job without one counts on its own id). The counter row is incremented only
+        while below the ceiling (one statement, row-locked), so concurrent calls on one lineage can
+        never exceed it (Sol 37 #7)."""
         lineage = _LINEAGE.get()
-        if lineage is not None:
-            if await self.ledger.lineage_calls(lineage) >= self.job_call_cap:
-                raise JobCallCapExceeded(f"E_CALL_CAP lineage reached {self.job_call_cap} calls")
-        elif job_id is not None and await self.ledger.job_calls(job_id) >= self.job_call_cap:
-            raise JobCallCapExceeded(f"E_CALL_CAP job reached {self.job_call_cap} calls")
+        if lineage is None and job_id is not None:
+            lineage = str(uuid.uuid5(uuid.NAMESPACE_URL, f"hlm-job-id:{job_id}"))
+        if lineage is not None and not await self.ledger.claim(lineage, self.job_call_cap):
+            raise JobCallCapExceeded(f"E_CALL_CAP lineage reached {self.job_call_cap} calls")
+
+    async def _run_precheck(self) -> None:
+        """The caller's privacy/authority gate, re-run before EVERY attempt (retries after backoff
+        and the fallback profile included): it raises to abort before any byte is sent."""
+        check = _PRECHECK.get()
+        if check is not None:
+            await check()
 
     async def _attempt(
         self,
@@ -469,7 +490,8 @@ class Provider:
         params: dict[str, Any],
         job_id: int | None,
     ) -> _Attempt:
-        await self._check_job_cap(job_id)
+        await self._run_precheck()
+        await self._claim_call(job_id)
         request_sha = _sha(canonical(body))
         if self.mode == "replay":
             assert self.cassettes is not None
@@ -591,18 +613,8 @@ class Provider:
         return att
 
     def _redacted_response(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Record mode: the assistant content passes the redactor before it is persisted."""
-        out = dict(data)
-        choices = []
-        for ch in data.get("choices") or []:
-            ch = dict(ch or {})
-            msg = dict(ch.get("message") or {})
-            if isinstance(msg.get("content"), str):
-                msg["content"] = self.redactor.text(msg["content"])
-            ch["message"] = msg
-            choices.append(ch)
-        out["choices"] = choices
-        return out
+        """Record mode: any content shape is normalized to text and redacted before persisting."""
+        return sanitize_response(data, redact=self.redactor.text)
 
     def _actual_cost(self, profile: LlmProfile, usage: dict[str, Any]) -> Decimal | None:
         cost = usage.get("cost")
@@ -627,7 +639,8 @@ class Provider:
         raw: bytes | None = None,
     ) -> _Attempt:
         choice = (data.get("choices") or [{}])[0] or {}
-        content = (choice.get("message") or {}).get("content")
+        msg = choice.get("message") or {}
+        content = normalize_content(msg if isinstance(msg, dict) else {"content": msg})
         usage = data.get("usage") or {}
         details = usage.get("prompt_tokens_details") or {}
         row = self._row(

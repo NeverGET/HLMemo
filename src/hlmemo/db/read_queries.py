@@ -18,11 +18,13 @@ multi-identifier queries (G4). Open ends come back as
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import psycopg
 from psycopg import AsyncConnection
 from psycopg.types.json import Jsonb
 
@@ -333,10 +335,11 @@ async def term_stats(
     """``ts_stat`` of the shared corpus (``device_scope = 'all'`` current versions) of the project:
     ``(n_chunks, [(lexeme, ndoc)], n_titles, [(title lexeme, ndoc)])``.
 
-    Bounded work: at most the newest ``sample_max`` chunks/versions are read, under
-    ``statement_timeout = timeout_ms`` inside a savepoint (the caller's setting is restored).
-    A timeout raises ``psycopg.errors.QueryCanceled`` after the savepoint rolled back, so the
-    caller's transaction stays usable."""
+    Bounded work: at most the newest ``sample_max`` chunks/versions are read inside a savepoint
+    (the caller's setting is restored) under ONE total budget of ``timeout_ms`` for all four
+    statements (D-064): each statement gets ``statement_timeout`` = the budget left. A timeout or
+    an exhausted budget raises ``psycopg.errors.QueryCanceled`` after the savepoint rolled back, so
+    the caller's transaction stays usable."""
     scope = _STATS_SCOPE % int(pid)
     limit = int(sample_max)
     chunk_sql = (
@@ -348,16 +351,25 @@ async def term_stats(
     )
     cur = await conn.execute("SELECT current_setting('statement_timeout')")
     previous = (await cur.fetchone())[0]
+    deadline = time.monotonic() + timeout_ms / 1000
+
+    async def budgeted(sql: str, params: tuple = ()) -> list[tuple]:
+        left_ms = int((deadline - time.monotonic()) * 1000)
+        if left_ms <= 0:
+            raise psycopg.errors.QueryCanceled("term statistics budget exhausted")
+        await conn.execute(f"SET LOCAL statement_timeout = {left_ms}")
+        cur = await conn.execute(sql, params)
+        return await cur.fetchall()
+
     async with conn.transaction():
-        await conn.execute(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
-        cur = await conn.execute(f"SELECT count(*) FROM ({chunk_sql}) s")
-        n_chunks = int((await cur.fetchone())[0])
-        cur = await conn.execute(f"SELECT count(*) FROM ({title_sql}) s")
-        n_titles = int((await cur.fetchone())[0])
-        cur = await conn.execute("SELECT word, ndoc FROM ts_stat(%s)", (chunk_sql,))
-        chunk_rows = [(w, int(n)) for w, n in await cur.fetchall()]
-        cur = await conn.execute("SELECT word, ndoc FROM ts_stat(%s)", (title_sql,))
-        title_rows = [(w, int(n)) for w, n in await cur.fetchall()]
+        n_chunks = int((await budgeted(f"SELECT count(*) FROM ({chunk_sql}) s"))[0][0])
+        n_titles = int((await budgeted(f"SELECT count(*) FROM ({title_sql}) s"))[0][0])
+        chunk_rows = [
+            (w, int(n)) for w, n in await budgeted("SELECT word, ndoc FROM ts_stat(%s)", (chunk_sql,))
+        ]
+        title_rows = [
+            (w, int(n)) for w, n in await budgeted("SELECT word, ndoc FROM ts_stat(%s)", (title_sql,))
+        ]
         await conn.execute("SELECT set_config('statement_timeout', %s, true)", (previous,))
     return n_chunks, chunk_rows, n_titles, title_rows
 
