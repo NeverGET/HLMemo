@@ -21,7 +21,7 @@ from hlmemo.librarian import privacy
 from hlmemo.librarian.errors import AuthorityLost, PrivacyDenied
 from hlmemo.librarian.memory import load_rules
 from hlmemo.librarian.prompts import load_task
-from hlmemo.librarian.tasks import Plan, user_message
+from hlmemo.librarian.tasks import Plan, Proposal, user_message
 
 OP = "pair_check"
 MAX_CANDIDATES = 8
@@ -142,36 +142,48 @@ class PairCheck:
                 "assessed": assessed,
             }
             pair_clues = [f"v{subj.version_id}", f"v{cand.version_id}"]
-            plan.mutations.append(
-                {
-                    **base,
-                    "rel": "contradicts",
-                    "src_logical_id": subj.logical_id,
-                    "dst_logical_id": cand.logical_id,
-                    "valid_from": fmt_ts(subj.valid_from),
-                    "project_ids": list(subj.project_ids),
-                    "dst_project_ids": list(cand.project_ids),
-                }
-            )
-            plan.auto_ok.append(same_class)
-            plan.meta.append({"reason": reason, "subject_clues": pair_clues})
-            if out.get("supersedes") in ("A", "B"):
-                newer, older = (subj, cand) if out["supersedes"] == "B" else (cand, subj)
-                plan.mutations.append(
+            touched = sorted({*subj.project_ids, *cand.project_ids})
+
+            def proposal(
+                m: dict[str, Any],
+                auto: bool = same_class,
+                assessed: dict[str, int] = assessed,
+                clues: list[str] = pair_clues,
+                touched: list[int] = touched,
+                reason: str = reason,
+            ) -> Proposal:
+                return Proposal("contradiction", [m], auto, assessed, clues, touched, {"reason": reason})
+
+            plan.proposals.append(
+                proposal(
                     {
                         **base,
-                        "rel": "supersedes",
-                        "src_logical_id": newer.logical_id,
-                        "dst_logical_id": older.logical_id,
-                        "valid_from": fmt_ts(newer.valid_from),
-                        "project_ids": list(newer.project_ids),
-                        "dst_project_ids": list(older.project_ids),
+                        "rel": "contradicts",
+                        "src_logical_id": subj.logical_id,
+                        "dst_logical_id": cand.logical_id,
+                        "valid_from": fmt_ts(subj.valid_from),
+                        "project_ids": list(subj.project_ids),
+                        "dst_project_ids": list(cand.project_ids),
                     }
                 )
-                plan.auto_ok.append(same_class)
-                plan.meta.append({"reason": reason, "subject_clues": pair_clues})
+            )
+            if out.get("supersedes") in ("A", "B"):
+                newer, older = (subj, cand) if out["supersedes"] == "B" else (cand, subj)
+                plan.proposals.append(
+                    proposal(
+                        {
+                            **base,
+                            "rel": "supersedes",
+                            "src_logical_id": newer.logical_id,
+                            "dst_logical_id": older.logical_id,
+                            "valid_from": fmt_ts(newer.valid_from),
+                            "project_ids": list(newer.project_ids),
+                            "dst_project_ids": list(older.project_ids),
+                        }
+                    )
+                )
         plan.request_extra["candidates"] = [f"v{c.version_id}" for c in kept]
-        if not plan.mutations:
+        if not plan.proposals:
             plan.outcome = "no_change"
         return plan
 

@@ -49,6 +49,16 @@ def fresh_dsn(db_dsn: str):  # noqa: ANN201
             conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
+def _main_head() -> str:
+    """The ``main@head`` revision (0006 is followed by later revisions on the chain)."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
+    (rev,) = script.get_revisions("main@head")
+    return rev.revision
+
+
 GIN_SQL = (
     "SELECT c.relname, coalesce(array_to_string(c.reloptions, ','), '') FROM pg_class c"
     " WHERE c.relname IN ('chunks_trgm_gin', 'chunks_tsv_gin', 'mv_title_tsv') ORDER BY 1"
@@ -64,7 +74,7 @@ def test_migration_0006_reserved_rows_and_round_trip(fresh_dsn: str) -> None:
             ("chunks_tsv_gin", "fastupdate=off"),
             ("mv_title_tsv", "fastupdate=off"),
         ]
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0006_librarian",)]
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [(_main_head(),)]
         dev = conn.execute(
             "SELECT device_id, class, status, is_admin, is_system, token_sha256 FROM devices"
             " WHERE name = 'librarian'"
@@ -155,7 +165,7 @@ def test_migration_0006_fails_fast_behind_an_index_reader_then_retries(fresh_dsn
     t0 = time.monotonic()
     _alembic(fresh_dsn, "upgrade", "main@head")  # retry
     with psycopg.connect(fresh_dsn) as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0006_librarian",)]
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [(_main_head(),)]
         assert [opt for _, opt in conn.execute(GIN_SQL).fetchall()] == ["fastupdate=off"] * 3
     print(f"\n0006 upgrade after the reader released: {time.monotonic() - t0:.2f} s (incl. interpreter)")
 
@@ -192,20 +202,20 @@ def test_migration_0006_upgrade_recovers_after_the_flush_failed(fresh_dsn: str) 
     version, (tables, _role_index), gin, _dev = _state(fresh_dsn)
     assert version == [("0005_w0_access",)] and tables  # the half-applied state
     _alembic(fresh_dsn, "upgrade", "main@head")  # recovery
-    assert _state(fresh_dsn) == ([("0006_librarian",)], (True, True), ["fastupdate=off"] * 3, (1,))
+    assert _state(fresh_dsn) == ([(_main_head(),)], (True, True), ["fastupdate=off"] * 3, (1,))
 
 
 def test_migration_0006_failed_downgrade_leaves_head_and_reruns(fresh_dsn: str) -> None:
     """Sol 38 #4b: a downgrade failing midway rolls back as one transaction: the database is
     exactly at 0006, re-running upgrade (no-op) or downgrade succeeds, and upgrade again works."""
-    _alembic(fresh_dsn, "upgrade", "main@head")
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")  # pinned: later revisions downgrade first
     head = _state(fresh_dsn)
     proc = _alembic_fault(fresh_dsn, "0006:downgrade", "downgrade", "0005_w0_access")
     assert proc.returncode != 0 and "injected fault at downgrade" in proc.stderr
     assert _state(fresh_dsn) == head  # nothing half-applied (fastupdate still off, index present)
-    _alembic(fresh_dsn, "upgrade", "main@head")
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")  # pinned: later revisions downgrade first
     assert _state(fresh_dsn) == head
     _alembic(fresh_dsn, "downgrade", "0005_w0_access")
     assert _state(fresh_dsn) == ([("0005_w0_access",)], (False, False), [""] * 3, (0,))
-    _alembic(fresh_dsn, "upgrade", "main@head")
+    _alembic(fresh_dsn, "upgrade", "0006_librarian")  # pinned: later revisions downgrade first
     assert _state(fresh_dsn) == head

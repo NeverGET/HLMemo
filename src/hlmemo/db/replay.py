@@ -26,7 +26,16 @@ from hlmemo.core.normalize import normalize
 from hlmemo.core.temporal import parse_opt_ts, parse_ts
 from hlmemo.db import write_queries as q
 
-PROJECTION_TABLES = ("librarian_questions", "jobs", "links", "embeddings", "chunks", "memory_versions")
+PROJECTION_TABLES = (
+    "librarian_questions",
+    "librarian_batches",
+    "version_signals",
+    "jobs",
+    "links",
+    "embeddings",
+    "chunks",
+    "memory_versions",
+)
 
 
 @dataclass(slots=True)
@@ -226,6 +235,10 @@ async def _replay_write(
             created_at=T,
         )
         stats.jobs += 1
+    if res.get("librarian_jobs"):  # W2b: librarian_write:<event_id>, recorded with ids
+        from hlmemo.librarian.jobs import insert_recorded_jobs
+
+        stats.jobs += await insert_recorded_jobs(conn, list(res["librarian_jobs"]), event_id, T)
 
 
 #: CC-2 kinds whose ``payload.resolved`` records applied mutations / enqueued jobs (schema_version 2,
@@ -245,6 +258,7 @@ async def _replay_system(
     its status, attempts, run_after and last_error). Never calls a provider: the LLM output lives only in
         the audit ``request``."""
     from hlmemo.librarian.actor import (
+        apply_batch_changes,
         apply_mutations,
         insert_questions,
         mark_done_by_key,
@@ -260,6 +274,7 @@ async def _replay_system(
     mutations = list(res.get("mutations") or [])
     stats.links += sum(1 for m in mutations if m.get("op") == "link_insert")
     await apply_mutations(conn, mutations, event_id, T)
+    await apply_batch_changes(conn, list(res.get("batches") or []), event_id, T)
     await insert_questions(conn, list(res.get("questions") or []), event_id, T)
     await set_question_status(conn, list(res.get("question_status") or []), T)
     jobs = list(res.get("jobs") or [])

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "relate_verify/v1",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 40},
+          "same_subject": {"type": "boolean"},
+          "both_true": {"type": "boolean"},
+          "current": {"enum": ["A", "B", "both", "unclear"]}
+        },
+        "required": ["id", "same_subject", "both_true", "current"]
+      }
+    }
+  },
+  "required": ["results"]
+}
