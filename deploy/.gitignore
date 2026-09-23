@@ -11,3 +11,5 @@ backup/data/
 crash.log
 
 *.env
+
+.local/

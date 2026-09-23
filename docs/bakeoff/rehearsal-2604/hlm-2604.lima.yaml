@@ -1,0 +1,30 @@
+base: template:ubuntu-26.04
+cpus: 2
+memory: 8GiB
+disk: 60GiB
+vmType: vz
+arch: aarch64
+plain: true
+ssh:
+  localPort: 2223
+  # TCP like a VPS: lima 2.x otherwise uses 26.04's systemd-ssh-generator vsock socket
+  # (SSH_CONNECTION=UNKNOWN, which bootstrap's port-22 check rightly refuses).
+  overVsock: false
+portForwards:
+- guestPort: 80
+  hostPort: 19080
+  static: true
+- guestPort: 443
+  hostPort: 19443
+  static: true
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    # Provider mimic: root login with the purchased deploy key only (like Hostinger's key injection).
+    set -eux
+    install -d -m 0700 /root/.ssh
+    printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBckDlAx8n2fkmrNZv4r3A1Y+L+jtH6rPPP3XeMRhL+S hlmemo-deploy@Cemals-MB-Pro-3' > /root/.ssh/authorized_keys
+    chmod 0600 /root/.ssh/authorized_keys
+    printf '%s\n' 'PermitRootLogin prohibit-password' 'PasswordAuthentication no' > /etc/ssh/sshd_config.d/10-provider.conf
+    systemctl reload ssh || systemctl restart ssh

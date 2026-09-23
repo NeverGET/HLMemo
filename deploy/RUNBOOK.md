@@ -6,13 +6,41 @@ are operator instructions, not evidence that a VPS has been provisioned. Never u
 Compose project `hlmemo` for these scripts. Requirements: Docker Engine + Compose **2.24+**, Bash,
 Python 3, curl, `flock` (Ubuntu util-linux; macOS `brew install flock`); Terraform **1.6+** only for optional Hetzner provisioning; AWS CLI only for optional uploads.
 
-## Provision any Ubuntu 24.04 VPS
+## Two-command deploy (operator workstation)
+
+`deploy/scripts/first_deploy.sh` performs the whole manual path below (host-key pinning,
+preflight, bootstrap prepare + `--finalize-ssh`, locally generated secrets uploaded to
+`/etc/hlmemo`, `deploy.sh` of the pushed `HEAD`) and is idempotent; `remote_gates.sh` then proves
+the deployment from outside. Secrets and logs stay in the gitignored `deploy/.local/<host>/`
+(0700/0600); values are never printed.
+
+```sh
+bash deploy/scripts/first_deploy.sh --host SERVER_IP --domain FQDN --tls acme \
+  [--host-fingerprint SHA256:...] [--admin-cidr YOUR_IP/32] [--dry-run]
+bash deploy/scripts/remote_gates.sh --url https://FQDN \
+  --admin-token-file deploy/.local/SERVER_IP/admin.token
+```
+
+The A record must already point at the host (ACME HTTP-01/TLS-ALPN on 80/443). Gates: `/health`
++ `/ready`, unknown path 404, certificate issuer, 5432 closed from outside, neutral probe with a
+marker round trip, the real `hlm` CLI in an isolated config directory, WAN `memory.query`
+latency, and a backup/restore drill over SSH (`--no-drill` on a deployment holding real data).
+`--g7` additionally registers the operator's claude/codex/agy CLIs (backs up their configs first).
+Rehearsal-only affordances (`--ssh-port`, `--public-port`, `--domain localhost --tls internal`,
+`--repo git://127.0.0.1/...`) are refused for non-loopback hosts.
+
+## Provision any Ubuntu 24.04 or 26.04 VPS
 
 The launch target (D-042) is **2 vCPU / 8 GB RAM**, with local e5-small in both API and worker
-(e.g. Hostinger KVM 2 or OVH VPS-2). Use any provider's fresh Ubuntu 24.04 image. This script
+(e.g. Hostinger KVM 2 or OVH VPS-2). Use any provider's fresh Ubuntu 24.04 (noble) or 26.04
+(resolute) image; the Docker apt suite follows the host codename. This script
 creates no cloud resources; obtain the host separately and verify its SSH host-key fingerprint
 through the provider console. Keep that console and the original SSH session available until
 another deploy-user login succeeds. The script supports SSH port 22 and requires root/sudo.
+On 26.04, `sudo` is sudo-rs and coreutils are uutils: use only `sudo --preserve-env=LIST`
+(sudo-rs ignores `-E`). OpenSSH is socket-activated on both releases (`ssh.socket` owns port 22);
+bootstrap reloads `ssh.service` only when running and verifies port 22 is still served. The
+fail2ban jail also matches `sshd-session` (OpenSSH >= 9.8 logs authentication failures there).
 
 ```sh
 # Operator workstation: public key only; --dry-run makes no changes.
