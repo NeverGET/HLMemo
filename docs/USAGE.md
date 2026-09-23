@@ -223,8 +223,18 @@ hlm import markdown export/ --project hlmemo                  # re-import maps f
 - Long files (> `--section-chars`, default 8000) become one item per heading section; identical copies are
   imported once, `@import` stubs are skipped, files matching a secret pattern are never read into a payload.
 - `describes`: repository files mentioned in the text (`src/x.py`) that exist under `--repo` → `code_refs`.
-- The report lists new/changed/unchanged/skipped/rejected, duplicate groups, `missing` (imported earlier, no
-  longer produced — reported, never closed) and an o200k token estimate.
+- Items imported earlier that the run no longer produces: re-mapped when a new record has (nearly) the same
+  body — a renamed heading or a moved file stays the same item, one revision (`remapped`) — else **closed**
+  (validity ends now; history stays; `closed`). `--keep-missing` reports them without closing; items of files
+  skipped for a read reason (unreadable, binary, too large, secret) are always kept (`missing`).
+- Evidence dates: frontmatter `valid_from`/`date`, a `D-NNN | YYYY-MM-DD |` row, or a heading that STARTS
+  with the date (`## 2026-09-24 — …`) or is `SESSION <date>`; dates in tables or prose are ignored.
+- `hlm export` files carry `origin: "<project>/<logical_id>"` (or the item's real `source`). Imported into
+  another project, the origin becomes the item's source (`hlm:<origin>`), so re-imports are idempotent and a
+  file can never overwrite an unrelated item; in its own project a file maps back only if its `version_id`
+  is still the head.
+- The report lists new/changed/unchanged/closed/skipped/rejected, remapped, duplicate groups, missing
+  (kept) and an o200k token estimate.
 
 ## Troubleshooting
 
