@@ -18,6 +18,7 @@ from hlmemo.core.temporal import ONE_US, parse_ts
 from hlmemo.core.write_service import call_the_day, default_deps, write
 from hlmemo.db import write_queries as q
 from hlmemo.db.replay import rebuild_projections
+from tests.integration._librarian_fixtures import add_new_kind_events
 from tests.integration._write_fixtures import (
     MAIN,
     OTHER,
@@ -534,7 +535,19 @@ async def test_unauthorized_write_no_disclosure(connect, world, deps) -> None:
 
 
 # --------------------------------------------------------------------------- replay
-async def test_rebuild_projections_from_events_identical(connect, world, deps) -> None:
+NEW_EVENT_KINDS = {
+    "librarian",
+    "question",
+    "answer",
+    "import",
+    "ingest",
+    "consolidation",
+    "pack_import",
+    "device_minted",
+}
+
+
+async def test_rebuild_projections_from_events_identical(connect, world, deps, db_dsn, monkeypatch) -> None:  # noqa: ANN001
     async with await connect() as conn:
         r1 = await write(
             conn,
@@ -619,13 +632,22 @@ async def test_rebuild_projections_from_events_identical(connect, world, deps) -
         )
         await conn.commit()
 
+        # CC-2: every librarian-era event kind (librarian, question, answer, import, ingest,
+        # consolidation, pack_import, device_minted) is replayed identically (HLM_LLM_MODE=off).
+        added = await add_new_kind_events(connect, db_dsn, world, deps)
+        cur = await conn.execute("SELECT DISTINCT kind FROM events")
+        kinds = {r[0] for r in await cur.fetchall()}
+        assert NEW_EVENT_KINDS <= kinds, NEW_EVENT_KINDS - kinds
+        await conn.commit()
+
         before = await dump_projections(conn)
         assert len(before["memory_versions"]) >= 8 and before["links"] and before["jobs"]
+        monkeypatch.setenv("HLM_LLM_MODE", "off")
         stats = await rebuild_projections(conn)
         await conn.commit()
         after = await dump_projections(conn)
         assert after == before
-        assert stats.events == 4 and stats.versions == len(before["memory_versions"])
+        assert stats.events == 4 + added and stats.versions == len(before["memory_versions"])
 
         # sequences were reset: a fresh write gets ids beyond the rebuilt maxima and succeeds
         r5 = await write(conn, world.ctx_a, write_req(MAIN, [item("Neu", "nach dem Rebuild")]), deps=deps)

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "contradiction/v1",
+  "type": "object",
+  "properties": {
+    "contradicts": {"type": "boolean"},
+    "supersedes": {"enum": ["A", "B", "none"]},
+    "reason": {"type": "string", "maxLength": 600}
+  },
+  "required": ["contradicts", "supersedes", "reason"]
+}

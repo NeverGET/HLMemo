@@ -51,6 +51,16 @@ smoke:
 test-o2:
 	HLM_O2_RESTART=1 $(UV) run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_worker_restart.py
 
+# CC-5 release-blocking live gate (G-LIVE-A): every LLM task fixture against the real provider for
+# PROFILE and again for FALLBACK, REPS reps, aborted as FAIL above MAX_USD (a runaway guard).
+PROFILE ?= openrouter
+FALLBACK ?= openrouter-luna
+REPS ?= 3
+MAX_USD ?= 5
+.PHONY: gate-live
+gate-live:
+	$(UV) run --frozen python eval/live/run.py --profile $(PROFILE) --fallback $(FALLBACK) --reps $(REPS) --max-usd $(MAX_USD)
+
 # G8: gitleaks over the history + secret paths untracked (host only, no DB)
 test-g8:
 	$(UV) run --frozen pytest -q -p no:cacheprovider tests/integration/test_g8_secrets.py

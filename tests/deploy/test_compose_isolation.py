@@ -68,7 +68,12 @@ class ComposeIsolationTests(unittest.TestCase):
 
     def test_eight_gb_host_fits_measured_api_peak_and_spool(self):
         services = self.render()["services"]
-        total = sum(int(s["mem_limit"]) for s in services.values())
+        # §6 (PHASE2-4-ROADMAP): the one-shot `migrate` runs only with the writers stopped
+        # (deploy.sh), so it is not part of the concurrent sum; the librarian (W2a, 512m) is.
+        total = sum(int(s["mem_limit"]) for name, s in services.items() if name != "migrate")
+        self.assertEqual(int(services["librarian"]["mem_limit"]), 512 * 1024**2)
+        self.assertLessEqual(float(services["librarian"]["cpus"]), 0.5)
+        self.assertFalse(services["librarian"].get("ports"))
         self.assertLessEqual(total, 7 * 1024**3)
         self.assertLess(total, 8_000_000_000)  # Fits even a decimal 8 GB host.
         self.assertEqual(int(services["db"]["mem_limit"]), 2 * 1024**3)
