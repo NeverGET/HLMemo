@@ -16,8 +16,10 @@ import getpass
 import hashlib
 import os
 import platform
+import re
 import socket
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -171,13 +173,86 @@ def _machine_id() -> str:
     return socket.gethostname()
 
 
+INSTALL_ID_FILE = "install_id"
+_INSTALL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _read_install_id(path: Path) -> str | None:
+    try:
+        value = path.read_text().strip()
+    except OSError:
+        return None
+    return value if _INSTALL_ID_RE.match(value) else None
+
+
+def _publish_install_id(path: Path, value: str) -> bool:
+    """Create ``path`` with ``value`` atomically and never overwrite: the content is written to a
+    private temp file first and published with ``link()`` (fails with EEXIST if another process
+    won; readers never see a partial file). Where hard links are unsupported, ``O_CREAT|O_EXCL``
+    is used. Returns False when the file already exists."""
+    tmp = path.with_name(f".{INSTALL_ID_FILE}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(value + "\n")
+        try:
+            os.link(tmp, path)
+            return True
+        except FileExistsError:
+            return False
+        except OSError:  # no hard links on this filesystem: exclusive create instead
+            try:
+                fd2 = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return False
+            with os.fdopen(fd2, "w") as fh:
+                fh.write(value + "\n")
+            return True
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def install_id() -> str:
+    """Random per-config-dir id (``<config_dir>/install_id``, 0600), created on first use (D-055).
+
+    Two `hlm` installations of the same OS user (different ``HLM_CONFIG_DIR``) are different
+    devices and must not collide on ``devices.fingerprint``; the same config dir keeps its id, so
+    re-registering from it presents the same fingerprint. Creation is race-free: concurrent first
+    uses publish with no-overwrite semantics and the losers re-read the winner's id. A malformed
+    file is replaced. If the directory is not writable a per-process id is used (registration
+    still works — the server stores it — only the stability across runs is lost).
+    """
+    path = config_dir() / INSTALL_ID_FILE
+    value = _read_install_id(path)
+    if value is not None:
+        return value
+    candidate = uuid.uuid4().hex
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for _ in range(3):
+            if _publish_install_id(path, candidate):
+                return candidate
+            value = _read_install_id(path)
+            if value is not None:
+                return value  # another process won the race
+            path.unlink(missing_ok=True)  # malformed leftover: replace it
+    except OSError:
+        pass
+    return candidate
+
+
 def device_fingerprint() -> str:
-    """sha256(machine id + username) — macOS IOPlatformUUID, Linux /etc/machine-id, else hostname."""
+    """``sha256(machine id : username : install id)`` — machine id = macOS IOPlatformUUID, Linux
+    /etc/machine-id, else hostname; install id = ``install_id()`` of the config dir (D-055: before
+    it, a second config dir of the same OS user collided on ``devices_fingerprint_key``).
+
+    The fingerprint is only sent by ``hlm device register``; already registered devices keep
+    authenticating with their stored token, so the change needs no migration."""
     try:
         user = getpass.getuser()
     except Exception:  # noqa: BLE001 - no passwd entry (containers)
         user = os.environ.get("USER", "unknown")
-    return hashlib.sha256(f"{_machine_id()}:{user}".encode()).hexdigest()
+    return hashlib.sha256(f"{_machine_id()}:{user}:{install_id()}".encode()).hexdigest()
 
 
 def default_device_name() -> str:

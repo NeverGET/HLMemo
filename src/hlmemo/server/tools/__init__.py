@@ -25,8 +25,9 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "memory.query",
         "Hybrid (lexical + trigram + vector, RRF) search over the project's memory at a bi-temporal "
-        "point. Returns the project card, ranked hits with clues and previews, and "
-        "evidence:'matched'|'none' within token_budget. Read-only.",
+        "point. Returns the project card, ranked hits with clues and query-centred preview excerpts, "
+        "and evidence:'matched'|'none' within token_budget. Drill the top 5 clues with "
+        "memory.drilldown before relying on a preview. Read-only.",
         schemas.QUERY_INPUT,
         handlers.memory_query,
     ),

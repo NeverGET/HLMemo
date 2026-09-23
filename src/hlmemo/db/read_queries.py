@@ -259,6 +259,109 @@ async def trigram_candidates(
     return [Candidate(*r) for r in await cur.fetchall()]
 
 
+# D-055 title list. ``TITLE_TSV`` must stay byte-identical to the ``mv_title_tsv`` expression index
+# of migration ``0003_title_lexical`` so the planner uses it.
+TITLE_TSV = "to_tsvector('simple'::regconfig, hlm_title_norm(mv.title))"
+
+
+async def title_candidates(
+    conn: AsyncConnection, f: QueryFilters, terms: list[str], limit: int
+) -> list[Candidate]:
+    """D-055: item titles (the importer's relative paths, ``path § heading``) as one RRF list.
+
+    Each term becomes the AND of its title lexemes (``read_service.py`` → ``read:* & service:* &
+    py:*``); terms are OR-ed; ``ORDER BY ts_rank_cd DESC, version_id ASC``. Title evidence is
+    item-level: the candidate carries the version's first chunk, and fusion credits every fused
+    chunk of that version (``core/retrieval.py::rrf_fuse``).
+    """
+    if not terms:
+        return []
+    cur = await conn.execute(
+        f"""
+        WITH t AS (
+            SELECT ord, term FROM unnest(%(terms)s::text[]) WITH ORDINALITY AS u(term, ord)
+        ), parts AS (
+            SELECT t.ord, string_agg(format('%%L:*', lex), ' & ') AS conj
+            FROM t, unnest(tsvector_to_array(to_tsvector('simple'::regconfig, hlm_title_norm(t.term)))) AS lex
+            GROUP BY t.ord
+        ), q AS (
+            SELECT string_agg('(' || conj || ')', ' | ')::tsquery AS tsq FROM parts
+        ), m AS MATERIALIZED (
+            SELECT mv.version_id, mv.logical_id, mv.device_scope, ts_rank_cd({TITLE_TSV}, q.tsq, 32) AS r
+            FROM q, memory_versions mv
+            WHERE q.tsq IS NOT NULL AND {TITLE_TSV} @@ q.tsq AND {f.hit_where()}
+        )
+        SELECT c.chunk_id, m.version_id, m.logical_id, m.device_scope, m.r
+        FROM m
+        JOIN LATERAL (
+            SELECT c.chunk_id FROM chunks c WHERE c.version_id = m.version_id ORDER BY c.ordinal LIMIT 1
+        ) c ON true
+        ORDER BY m.r DESC, m.version_id ASC
+        LIMIT %(limit)s
+        """,
+        {**f.params(), "terms": terms, "limit": limit},
+        prepare=False,
+    )
+    return [Candidate(*r) for r in await cur.fetchall()]
+
+
+# --------------------------------------------------------------------------- term statistics (D-055)
+_STATS_SCOPE = (
+    "%s = ANY(mv.project_ids) AND mv.device_scope = 'all' AND mv.superseded_at = 'infinity'"
+    " AND mv.status <> 'tombstone' AND mv.kind <> 'project_card'"
+)
+
+
+async def term_stats_key(conn: AsyncConnection, pid: int) -> tuple[str, str | None, int]:
+    """``(database, project created_at, project corpus revision)`` — the cheap cache key/validator.
+
+    The revision is the newest ``version_id`` whose ``project_ids`` contain the project. Version
+    rows are append-only (a revision, correction, archive or tombstone always inserts a row), so
+    any change to the project's corpus moves it; other projects' writes do not."""
+    cur = await conn.execute(
+        "SELECT current_database(), (SELECT created_at::text FROM projects WHERE project_id = %(pid)s),"
+        " (SELECT coalesce(max(version_id), 0) FROM memory_versions WHERE %(pid)s = ANY(project_ids))",
+        {"pid": pid},
+    )
+    db, created, rev = await cur.fetchone()
+    return db, created, int(rev)
+
+
+async def term_stats(
+    conn: AsyncConnection, pid: int, *, sample_max: int, timeout_ms: int
+) -> tuple[int, list[tuple[str, int]], int, list[tuple[str, int]]]:
+    """``ts_stat`` of the shared corpus (``device_scope = 'all'`` current versions) of the project:
+    ``(n_chunks, [(lexeme, ndoc)], n_titles, [(title lexeme, ndoc)])``.
+
+    Bounded work: at most the newest ``sample_max`` chunks/versions are read, under
+    ``statement_timeout = timeout_ms`` inside a savepoint (the caller's setting is restored).
+    A timeout raises ``psycopg.errors.QueryCanceled`` after the savepoint rolled back, so the
+    caller's transaction stays usable."""
+    scope = _STATS_SCOPE % int(pid)
+    limit = int(sample_max)
+    chunk_sql = (
+        "SELECT c.tsv FROM chunks c JOIN memory_versions mv ON mv.version_id = c.version_id"
+        f" WHERE {scope} ORDER BY c.chunk_id DESC LIMIT {limit}"
+    )
+    title_sql = (
+        f"SELECT {TITLE_TSV} FROM memory_versions mv WHERE {scope} ORDER BY mv.version_id DESC LIMIT {limit}"
+    )
+    cur = await conn.execute("SELECT current_setting('statement_timeout')")
+    previous = (await cur.fetchone())[0]
+    async with conn.transaction():
+        await conn.execute(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
+        cur = await conn.execute(f"SELECT count(*) FROM ({chunk_sql}) s")
+        n_chunks = int((await cur.fetchone())[0])
+        cur = await conn.execute(f"SELECT count(*) FROM ({title_sql}) s")
+        n_titles = int((await cur.fetchone())[0])
+        cur = await conn.execute("SELECT word, ndoc FROM ts_stat(%s)", (chunk_sql,))
+        chunk_rows = [(w, int(n)) for w, n in await cur.fetchall()]
+        cur = await conn.execute("SELECT word, ndoc FROM ts_stat(%s)", (title_sql,))
+        title_rows = [(w, int(n)) for w, n in await cur.fetchall()]
+        await conn.execute("SELECT set_config('statement_timeout', %s, true)", (previous,))
+    return n_chunks, chunk_rows, n_titles, title_rows
+
+
 def vector_literal(vec: Any) -> str:
     return "[" + ",".join(repr(float(x)) for x in vec) + "]"
 
@@ -314,9 +417,10 @@ async def indexing_pending(conn: AsyncConnection, pid: int) -> bool:
 
 
 async def hit_rows(
-    conn: AsyncConnection, chunk_ids: list[int], *, max_chars: int = 2000
+    conn: AsyncConnection, chunk_ids: list[int], *, max_chars: int = 16000
 ) -> dict[int, HitRow]:
-    """Rows behind the hits; ``text`` is cut at ``max_chars`` (previews need ≤ ``PREVIEW_EXT`` tokens)."""
+    """Rows behind the hits; ``text`` is cut at ``max_chars`` — above any ``CHUNK_TOK`` chunk, since
+    the query-centred preview (D-055) may come from anywhere in the chunk."""
     if not chunk_ids:
         return {}
     cur = await conn.execute(
@@ -603,6 +707,7 @@ async def record_access(
 __all__ = [
     "AUTHZ_MV",
     "TEMPORAL_MV",
+    "TITLE_TSV",
     "Candidate",
     "ChunkSpan",
     "DrillLink",
@@ -626,6 +731,9 @@ __all__ = [
     "resolve_project",
     "set_trigram_threshold",
     "source_event",
+    "term_stats",
+    "term_stats_key",
+    "title_candidates",
     "trigram_candidates",
     "vector_candidates",
     "vector_literal",
