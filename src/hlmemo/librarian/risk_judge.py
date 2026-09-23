@@ -12,7 +12,10 @@ Same guards as the librarian worker:
   allows enter the prompt; ``device:*`` items, projects with ``policy.librarian=off`` and items
   co-owned by an ungranted project never leave the host. The gate uses its own short connections:
   the request transaction is never used for it, and no transaction is held by the judge across
-  the call (the read-only request transaction of the API stays open, bounded by the 4 s cap).
+  the call. Deviation from D-062's "no transaction across an LLM call" (which governs the worker's
+  apply path): the API middleware's read-only request transaction (device row FOR SHARE) stays
+  open while the judge runs. It is bounded by the cap (kept below the server's idle-in-transaction
+  timeout) and by ``MAX_IN_FLIGHT``; a revocation of that device waits at most that long.
 * **Redaction** of the prompt (provider) and of every ``why`` returned (CC-5 free text).
 * **Spend guard**: the provider's atomic hour/day/month reservation (``llm_budget``) and the
   ``llm_calls`` ledger, exactly as for librarian jobs (no per-job lineage: a risk_check is no job).
@@ -69,6 +72,7 @@ JUDGE_TIMEOUT_S = 4.0
 #: per-request HTTP timeout inside the cap, so a stalled attempt settles its reservation and writes
 #: its ledger row (instead of being cancelled mid-flight and swept later as worst case)
 HTTP_TIMEOUT_S = 3.5
+IDLE_MARGIN_S = 0.75
 MAX_CANDIDATES = 10
 LESSON_TEXT_CHARS = 1200
 WHY_MAX = 300
@@ -196,7 +200,10 @@ class RiskJudge:
         cassette_dir: Path | None = None,
     ) -> None:
         self.settings = settings
-        self.timeout_s = timeout_s
+        # the API request transaction idles while the judge runs: stay clear of the server's
+        # idle_in_transaction_session_timeout (5 s by default), whatever the configured cap
+        idle_s = float(getattr(settings, "db_idle_in_transaction_timeout_ms", 5000)) / 1000
+        self.timeout_s = max(0.1, min(timeout_s, idle_s - IDLE_MARGIN_S))
         self.in_flight = 0
         self.clock = clock or Clock()
         self.breaker = Breaker(

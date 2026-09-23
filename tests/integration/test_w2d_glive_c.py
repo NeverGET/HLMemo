@@ -158,8 +158,9 @@ async def test_glive_c(connect, db_dsn) -> None:  # noqa: ANN001
         }
     report["spent_usd"] = str(budget.spent)
     report["max_usd"] = str(MAX_USD)
-    out_dir = ROOT / "eval" / "live" / f"{dt.date.today().isoformat()}-risk"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    default_out = ROOT / "eval" / "live" / f"{dt.date.today().isoformat()}-risk"
+    out_dir = Path(os.environ.get("HLM_GLIVE_C_OUT") or default_out)  # experiments: elsewhere
+    out_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 - end of a live run
     (out_dir / "results.json").write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     lines = [
         f"# G-LIVE-C (memory.risk_check) {dt.date.today().isoformat()}",

@@ -12,8 +12,8 @@ D-014 it never says "no risk": the absence of a warning only means no stored les
    ``TOP_K`` are the candidates.
 2. **Deterministic verdict**: each candidate gets ``det_score`` = its RRF over the lists in which it
    qualifies (the vector leg only counts below ``VEC_MAX_DIST``); warn iff ``det_score ≥ TAU``.
-   The constants are calibrated on the cal split of ``tests/fixtures/risk/g_r1.json``
-   (``tests/integration/risk_calibrate.py``; values and procedure in the fixture README).
+   The constants are calibrated on the cal split of ``tests/fixtures/risk`` (procedure and values
+   in its README; ``tests/integration/test_w2d_risk_calibration.py``).
 3. **LLM judge** (``mode=auto``, librarian enabled): ``librarian.risk_judge`` gets the
    candidates under the privacy gate, a 4 s cap and the spend guard. Judged warnings are the
    judge's matches, each citing a candidate clue (D-067 guard). Candidates the privacy gate
@@ -64,7 +64,7 @@ LIST_LIMIT = 50  # per RRF list over the lesson universe
 MAX_WARNINGS = 3
 WHY_MAX = rj.WHY_MAX
 
-# ---- calibrated constants (cal split of tests/fixtures/risk/g_r1.json; see its README) ----------
+# ---- calibrated constants (cal split of tests/fixtures/risk; see its README) --------------------
 #: the vector leg counts toward ``det_score`` only for cosine distance (1 - cos, e5-small) at most:
 VEC_MAX_DIST = 0.16
 #: deterministic warn threshold on ``det_score`` (RRF, K_RRF=60: one rank-1 list = 0.0164):
@@ -248,6 +248,7 @@ async def risk_check(
 
     judged = False
     guard_dropped = 0
+    all_withheld = False
     if request.mode == "deterministic":
         status = rj.NOT_REQUESTED
     elif judge is None:
@@ -259,6 +260,7 @@ async def risk_check(
         }
         res = await judge.judge(request.task, [rj.JudgeItem(c.version_id, c.project) for c in cands], caps)
         status = res.status
+        all_withheld = bool(cands) and res.status == rj.NO_CANDIDATES and len(res.denied) == len(cands)
         if res.judged:
             judged = True
             guard_dropped = res.dropped
@@ -268,7 +270,9 @@ async def risk_check(
             withheld = [c for c in cands if c.version_id in res.denied]
             warnings += deterministic_warnings(withheld, "withheld by the privacy policy", tau=TAU_STRICT)
             warnings = warnings[:MAX_WARNINGS]
-    if not judged:
+    if all_withheld:  # nothing could be sent: the privacy-withheld rule applies to every candidate
+        warnings = deterministic_warnings(cands, "withheld by the privacy policy", tau=TAU_STRICT)
+    elif not judged:
         warnings = deterministic_warnings(cands, status.replace("_", " "))
 
     envelope: dict[str, Any] = {

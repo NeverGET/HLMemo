@@ -13,6 +13,7 @@ device, write on rk-main, read on rk-shell and hlm-global, nothing on rk-secret)
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -48,12 +49,24 @@ def load_env_file() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
+def _pinned(name: str) -> Any:
+    """A fixture file whose sha256 matches ``SHA256SUMS`` (an edit is a gate change: re-record the
+    cassettes, re-run G-LIVE-C and update the pin in the same commit)."""
+    raw = (FIXTURE_DIR / name).read_bytes()
+    pins = dict(
+        reversed(line.split()) for line in (FIXTURE_DIR / "SHA256SUMS").read_text().splitlines() if line
+    )
+    digest = hashlib.sha256(raw).hexdigest()
+    assert pins.get(name) == digest, f"{name}: sha256 {digest} != pinned {pins.get(name)}"
+    return json.loads(raw)
+
+
 def load_library() -> dict[str, Any]:
-    return json.loads((FIXTURE_DIR / "library.json").read_text(encoding="utf-8"))
+    return _pinned("library.json")
 
 
 def load_cases() -> list[dict[str, Any]]:
-    return json.loads((FIXTURE_DIR / "cases.json").read_text(encoding="utf-8"))["cases"]
+    return _pinned("cases.json")["cases"]
 
 
 @dataclass(slots=True)
