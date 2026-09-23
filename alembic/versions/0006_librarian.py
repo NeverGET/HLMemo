@@ -219,8 +219,13 @@ def _set_fastupdate(enabled: bool) -> None:
 
 
 def _fault(step: str) -> None:
-    """Crash injection for the recovery tests ONLY (``HLM_MIGRATION_FAULT=0006:<step>``): proves a
+    """Crash injection for the recovery tests ONLY (``HLM_TESTING=1`` AND
+    ``HLM_MIGRATION_FAULT=0006:<step>``): proves a
     failure at that point leaves a state that re-running upgrade/downgrade completes."""
+    # Never in production: the hook needs BOTH variables, and HLM_TESTING=1 is set only by the
+    # test fixtures (never in app.env or the image), so a stray HLM_MIGRATION_FAULT is ignored.
+    if os.environ.get("HLM_TESTING") != "1":
+        return
     if os.environ.get("HLM_MIGRATION_FAULT") == f"0006:{step}":
         raise RuntimeError(f"0006_librarian: injected fault at {step}")
 
