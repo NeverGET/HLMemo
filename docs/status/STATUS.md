@@ -24,6 +24,7 @@ Owner framing: the librarian's gradual supervised learning (observe → apply) h
 - 01:07 run started. D-069: wave 1 launched in parallel (own worktrees/DBs): A = W1.5 import/export + skeleton card + ops status (0007_import); B = W2b+W2c + D-067 guards + ops librarian (0008_librarian_tasks, relink at merge); C = W2d risk_check/register_lesson + preflight; D = W2f hlm bench + bench-v2 gold adjudication + leaderboard.
 - 02:06 W2f MERGED (f239fcc, D-070) after Sol 40 fixes; main unit 424 passed.
 - 02:5x W2d done (Sol 41 → fixing; D-071 risk fallback = retrieval-only). W1.5 done (G-I4 0.794 open, D-072) → Sol 42 reviewing. B (W2b/W2c) still running.
+- W1.5 MERGED (0c0c013, D-073), main unit 447 passed, head 0007_import.
 - Next: Sol review + neutral verify per branch (max 2 fix rounds) → wave 2 W2e → integrate (0008→0007 relink) → full gates + G-L3 on the VM with the librarian ON → R2 rehearsal on the VM → R2 prod (llm.env, observer) → HLMemo test import → e2e (corpus B dev) → docs/status/E2E-PROD-REPORT.md.
 
 ## GOAL (D-051/D-058) — active
