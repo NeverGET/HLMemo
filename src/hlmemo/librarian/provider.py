@@ -427,7 +427,20 @@ class Provider:
         transient = 0
         schema_fails = 0
         while True:
-            att = await self._attempt(profile, task, body, key, messages, params, job_id)
+            # the schema retry is a distinct cassette entry (attempt 2); attempt 1 keeps the legacy key
+            att_key = (
+                key
+                if schema_fails == 0
+                else cassette_key(
+                    profile.model_id,
+                    task.prompt_version,
+                    task.schema_version,
+                    messages,
+                    params,
+                    attempt=schema_fails + 1,
+                )
+            )
+            att = await self._attempt(profile, task, body, att_key, messages, params, job_id, legacy_key=key)
             if att.kind == "transient":
                 transient += 1
                 if transient >= MAX_TRANSIENT_ATTEMPTS:
@@ -489,12 +502,15 @@ class Provider:
         messages: list[dict[str, str]],
         params: dict[str, Any],
         job_id: int | None,
+        legacy_key: str | None = None,
     ) -> _Attempt:
         request_sha = _sha(canonical(body))
         if self.mode == "replay":  # stands in for the HTTP attempt: same gate and ceiling
             await self._run_precheck()
             await self._claim_call(job_id)
             assert self.cassettes is not None
+            if legacy_key is not None and key != legacy_key and not self.cassettes.has(key):
+                key = legacy_key  # a cassette recorded before retries were keyed: legacy behaviour
             data = self.cassettes.get(key)  # CassetteMiss propagates: strict replay
             return self._response(profile, task, job_id, data, request_sha, Decimal(0), 0, replay=True)
 

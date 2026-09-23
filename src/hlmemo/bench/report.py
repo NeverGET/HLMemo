@@ -203,6 +203,8 @@ def render_md(summary: dict[str, Any], meta: dict[str, Any]) -> str:
         f"prompt {_versions(meta.get('prompt_versions'))} · schema {_versions(meta.get('schema_versions'))}"
         f" · redaction {meta.get('redaction_version')} · max-usd {meta.get('max_usd')}",
         "",
+        f"budget: {meta.get('budget', '-')} · config {meta.get('config_hash', '-')}",
+        "",
         "## Overview",
         "",
         "| macro mean | correct | error rate | JSON fail first/final | infra | cap | p50 ms | p95 ms"
@@ -226,7 +228,8 @@ def render_md(summary: dict[str, Any], meta: dict[str, Any]) -> str:
         lines.append(
             f"| {label[t]} {t if suite == 'v1' else ''}".rstrip()
             + f" | {s['n']} | {_p(s['mean'])} | {s['correct']} | {_p(s['error_rate'])} | {_p(s['min_rep'])}"
-            f" | {_p(s['rep_sd'])} | {s['json_fail_first']}/{s['json_fail_final']} | {_ms(s['latency_p50_ms'])}"
+            f" | {_p(s['rep_sd'])} | {s['json_fail_first']}/{s['json_fail_final']}"
+            f" | {_ms(s['latency_p50_ms'])}"
             f" | {_ms(s['latency_p95_ms'])} | {_usd(s['usd_per_task'], 8)} | {_usd(s['usd_per_correct'], 8)}"
             f" | {tiers} |"
         )
@@ -254,7 +257,8 @@ def render_md(summary: dict[str, Any], meta: dict[str, Any]) -> str:
         f"Projection: {_usd(proj['usd_per_call'], 8)} USD/call x {proj['calls_per_day']} calls/day x"
         f" {DAYS_PER_MONTH} = {_usd(proj['usd_per_month'], 2)} USD/month.",
         "",
-        "correct = score >= 0.8; error rate = 1 - correct/n; JSON first = the first answer failed parse/schema"
+        "correct = score >= 0.8; error rate = 1 - correct/n;"
+        " JSON first = the first answer failed parse/schema"
         " (the provider retries once), final = the retry failed too (scored 0); infra/cap calls are excluded."
         " Definitions: src/hlmemo/bench/report.py.",
     ]
@@ -313,7 +317,8 @@ def render_compare_md(cmp: dict[str, Any], name_a: str, name_b: str) -> str:
     lines = [
         f"# hlm bench --compare: A = `{name_a}` vs B = `{name_b}`",
         "",
-        "Paired on (task, case, rep); correct = score >= 0.8; exact two-sided McNemar on the discordant pairs.",
+        "Paired on (task, case, rep); correct = score >= 0.8;"
+        " exact two-sided McNemar on the discordant pairs.",
         "",
         "| task | pairs | A correct | B correct | A only | B only | McNemar p |",
         "|---|---|---|---|---|---|---|",
@@ -345,17 +350,33 @@ def load_rows(spec: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     suite = "v2" if any(c.get("suite") == "v2" for c in calls) else "v1"
     args = doc.get("args") or {}
     prompt = doc.get("system_prompt") or ""
-    same_prompt = suite == "v2" and hashlib.sha256(prompt.encode("utf-8")).hexdigest() == v2.PROMPT_SHA256
+    prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    same_prompt = suite == "v2" and prompt_sha == v2.PROMPT_SHA256
+    config = {
+        "harness": "bench/run.py (legacy raw API)",
+        "model_id": mid,
+        "reasoning_arg": args.get("reasoning"),
+        "temperature": 0,
+        "seed": 42,
+        "response_format": "json_object",
+        "prompt_sha256": prompt_sha,
+    }
+    raw = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return rows, {
         "model_id": mid,
         "model": model,
         "suite": suite,
         "source": Path(path).name,
-        "harness": "bench/run.py (legacy raw API)",
+        "harness": config["harness"],
         "reasoning": {"bench_run_reasoning": args.get("reasoning")} if args.get("reasoning") else None,
         "reps": args.get("runs"),
-        "prompt_versions": v2.PROMPT_VERSION if same_prompt else "bench-v1 single prompt",
+        "aborted": bool(doc.get("partial")),
+        "limit": args.get("limit") or 0,
+        "tasks_subset": args.get("tasks") or None,
+        "prompt_versions": v2.PROMPT_VERSION if same_prompt else f"bench-v1 single prompt {prompt_sha[:12]}",
         "schema_versions": v2.SCHEMA_VERSION if suite == "v2" else "bench-v1",
+        "config": config,
+        "config_hash": hashlib.sha256(raw).hexdigest()[:12],
     }
 
 
