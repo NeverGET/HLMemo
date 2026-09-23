@@ -1,0 +1,20 @@
+== limactl stop/start hlm-2604 2026-09-23T18:39:27Z
+time="2026-09-23T21:39:29+03:00" level=info msg="The instance hlm-2604 has shut down"
+time="2026-09-23T21:39:38+03:00" level=info msg="READY. Run `ssh -F `/Users/cemalkurt/.lima/hlm-2604/ssh.config` lima-hlm-2604` to open the shell."
+boot took 9s
+/ready 200 at 2026-09-23T18:39:43Z (VM start issued 18:39:29Z)
+NOTE: guest SSH host key changed across limactl stop/start (lima regenerates keys at boot); verified via lima's own channel and re-pinned.
+scan=SHA256:rMItzKj+VYZ6GVWBRJFXD5Tfzt9k7oC0o15WgjEYv7A guestfile=SHA256:rMItzKj+VYZ6GVWBRJFXD5Tfzt9k7oC0o15WgjEYv7A
+re-pinned
+boot: 2026-09-23 18:39:31
+hlmemo-prod-worker-1 hlmemo:fa24ca5a0d87 Up 7 minutes (healthy)
+hlmemo-prod-librarian-1 hlmemo:fa24ca5a0d87 Up 7 minutes (healthy)
+hlmemo-prod-api-1 hlmemo:fa24ca5a0d87 Up 7 minutes (healthy)
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 7 minutes (healthy)
+hlmemo-prod-migrate-1 hlmemo:912f2d39247a Exited (0) 11 minutes ago
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 7 minutes (healthy)
+librarian-health-ok
+{"status":"ready"} 200
+bash: /private/tmp/hlm-r1/read_marker.sh: No such file or directory
+post-reboot marker readable (rehearsal-mac): True v8.0
+# note: 40-hex commit SHAs abbreviated to 12 chars (gitleaks generic-api-key false positive)

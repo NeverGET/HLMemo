@@ -1,0 +1,14 @@
+   1  admin (reserved)             server    trusted  expires=- last_seen=- grants=gates:admin,gates-cli:admin,gates-probe:admin,r1-seed:admin,reboot:admin
+   2  judge-cffefa4a               ci        revoked  expires=- last_seen=2026-09-23T06:53:58.235379+00:00 grants=-
+   3  gates-cli-20125              ci        revoked  expires=- last_seen=2026-09-23T06:54:01.142048+00:00 grants=-
+   4  judge-25e19a58               ci        trusted  expires=- last_seen=2026-09-23T06:55:03.607698+00:00 grants=reboot:write
+   5  judge-86f7d02a               ci        trusted  expires=- last_seen=2026-09-23T06:55:54.294880+00:00 grants=reboot:write
+   6  seed-trusted-mac             personal  trusted  expires=- last_seen=2026-09-23T18:38:15.669460+00:00 grants=r1-seed:write
+   7  seed-pending-laptop          personal  pending  expires=- last_seen=- grants=-
+   8  librarian                    server    trusted  expires=- last_seen=- grants=-
+   9  routes-check-56ffa3d5        ci        revoked  expires=2026-09-23T18:46:24.517606+00:00 last_seen=2026-09-23T18:36:24.550205+00:00 grants=-
+  10  deploy-routes-fa24ca5a0d87-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
+  11  gates-probe-20260923t183640z ci        revoked  expires=2026-09-23T19:06:42.628038+00:00 last_seen=2026-09-23T18:36:42.841876+00:00 grants=-
+  12  gates-routes-20260923t183640z ci        revoked  expires=2026-09-23T18:46:43.814204+00:00 last_seen=2026-09-23T18:36:43.932779+00:00 grants=-
+  13  gates-cli-30966              ci        revoked  expires=2026-09-23T19:06:46.565281+00:00 last_seen=2026-09-23T18:36:46.589456+00:00 grants=-
+  14  rehearsal-mac                personal  trusted  expires=- last_seen=2026-09-23T18:37:58.432054+00:00 grants=r1-seed:write

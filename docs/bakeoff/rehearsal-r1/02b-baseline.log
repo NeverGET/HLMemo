@@ -1,0 +1,7 @@
+alembic|0001_phase0
+devices|7|admin:trusted,gates-cli-20125:revoked,judge-25e19a58:trusted,judge-86f7d02a:trusted,judge-cffefa4a:revoked,seed-pending-laptop:pending,seed-trusted-mac:trusted
+projects|4|gates,gates-cli,r1-seed,reboot
+events|51
+memory_versions|23
+embeddings|23
+grants|9

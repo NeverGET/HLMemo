@@ -1,0 +1,10 @@
+R1 production-cutover rehearsal on lima hlm-2604 (Ubuntu 26.04, 2 vCPU / 8 GiB), 2026-09-23.
+Target: 912f2d3 (like prod) -> fa24ca5 (R1). Local state dir: deploy/.local/127.0.0.1-2223 (reconstructed:
+the earlier dir was gone; ssh_config/known_hosts/bin as first_deploy.sh writes them, env files copied
+from the VM, host key pinned after comparing ssh-keyscan with the guest's key file via lima's channel).
+Step 1: VM was on rehearsal commit 93569eb (DB 0001_phase0). Deletion was not permitted, so the VM
+checkout origin was switched to https://github.com/NeverGET/HLMemo.git and 912f2d3 deployed with
+912f2d3's own deploy.sh (01). Fault injection: HLM_TESTING=1 + HLM_MIGRATION_FAULT=0006:flush appended
+to /etc/hlmemo/app.env (migrate's only env_file; byte-exact backup restored afterwards) (03a-03d).
+Downtime (04b) measured from a host poller on https://localhost:19443/ready every ~0.25 s.
+Files: 01..08 follow the step numbers of the brief. No tokens or secret values are in these logs.

@@ -1,0 +1,460 @@
+# 2026-09-23T18:33:06Z deploy.sh --accept-compose-change=2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 hlm-deploy fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a
+# fault: HLM_TESTING=1 HLM_MIGRATION_FAULT=0006:flush appended to /etc/hlmemo/app.env (migrate's env_file)
+Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.nQaURrpX/log (final exit code: /opt/hlmemo/.deploy-runs/run.nQaURrpX/status)
+From https://github.com/NeverGET/HLMemo
+ * branch            fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a -> FETCH_HEAD
+Compose model change accepted: sha256 2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 (changed=1)
+Previous HEAD position was 912f2d3 Ubuntu 26.04 support + two-command deploy (first_deploy.sh, remote_gates.sh)
+HEAD is now at fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
+ Image pgvector/pgvector:0.8.6-pg17 Pulling 
+ Image caddy:2.11.2-alpine Pulling 
+ Image caddy:2.11.2-alpine Pulled 
+ Image pgvector/pgvector:0.8.6-pg17 Pulled 
+ Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Building 
+ Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Building 
+ Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.94kB done
+#1 DONE 0.0s
+
+#2 [worker internal] load build definition from Dockerfile
+#2 transferring dockerfile: 4.06kB done
+#2 DONE 0.0s
+
+#3 [worker] resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#3 DONE 0.6s
+
+#4 [migrate] docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#4 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 0.0s done
+#4 CACHED
+
+#5 [api internal] load build definition from Dockerfile
+#5 transferring dockerfile: 4.06kB done
+#5 DONE 0.0s
+
+#6 [worker internal] load build definition from Dockerfile
+#6 transferring dockerfile: 4.06kB done
+#6 DONE 0.0s
+
+#7 [migrate internal] load build definition from Dockerfile
+#7 transferring dockerfile: 4.06kB done
+#7 DONE 0.0s
+
+#8 [migrate internal] load metadata for docker.io/library/python:3.12.14-slim-bookworm
+#8 DONE 0.6s
+
+#9 [migrate internal] load metadata for ghcr.io/astral-sh/uv:0.11
+#9 DONE 1.0s
+
+#10 [worker internal] load .dockerignore
+#10 transferring context: 350B done
+#10 DONE 0.0s
+
+#11 [migrate internal] load .dockerignore
+#11 transferring context: 350B done
+#11 DONE 0.0s
+
+#12 [api internal] load .dockerignore
+#12 transferring context: 350B done
+#12 DONE 0.0s
+
+#13 [migrate] FROM ghcr.io/astral-sh/uv:0.11@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7
+#13 resolve ghcr.io/astral-sh/uv:0.11@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7 0.0s done
+#13 DONE 0.0s
+
+#14 [migrate internal] load build context
+#14 transferring context: 744.17kB done
+#14 DONE 0.0s
+
+#15 [worker internal] load build context
+#15 transferring context: 744.17kB 0.0s done
+#15 DONE 0.0s
+
+#16 [api internal] load build context
+#16 transferring context: 744.17kB done
+#16 DONE 0.0s
+
+#17 [migrate builder 1/8] FROM docker.io/library/python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
+#17 resolve docker.io/library/python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e 0.0s done
+#17 DONE 0.0s
+
+#18 [api builder 2/8] COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+#18 CACHED
+
+#19 [api builder 3/8] WORKDIR /app
+#19 CACHED
+
+#20 [api builder 4/8] COPY pyproject.toml uv.lock .python-version README.md ./
+#20 DONE 0.1s
+
+#21 [api builder 5/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-install-project
+#21 0.194 Using CPython 3.12.14 interpreter at: /usr/local/bin/python3.12
+#21 0.194 Creating virtual environment at: .venv
+#21 1.563 Installed 77 packages in 1.23s
+#21 3.858 Bytecode compiled 3246 files in 2.29s
+#21 3.858  + alembic==1.20.0
+#21 3.858  + annotated-doc==0.0.5
+#21 3.858  + annotated-types==0.8.0
+#21 3.858  + anyio==4.15.1
+#21 3.858  + attrs==26.1.0
+#21 3.858  + certifi==2026.7.22
+#21 3.858  + cffi==2.1.1
+#21 3.858  + charset-normalizer==3.5.1
+#21 3.858  + click==8.5.0
+#21 3.859  + cryptography==50.0.1
+#21 3.859  + filelock==4.0.1
+#21 3.859  + flatbuffers==25.12.19
+#21 3.859  + fsspec==2026.9.0
+#21 3.859  + greenlet==3.5.6
+#21 3.859  + h11==0.16.0
+#21 3.859  + hf-xet==1.6.0
+#21 3.859  + httpcore==1.0.9
+#21 3.859  + httpcore2==2.13.0
+#21 3.859  + httptools==0.8.0
+#21 3.859  + httpx==0.28.1
+#21 3.859  + httpx2==2.13.0
+#21 3.859  + huggingface-hub==1.32.0
+#21 3.859  + idna==3.20
+#21 3.859  + jaraco-classes==3.4.0
+#21 3.859  + jaraco-context==6.1.2
+#21 3.859  + jaraco-functools==4.6.0
+#21 3.859  + jeepney==0.9.0
+#21 3.859  + jsonschema==4.26.0
+#21 3.859  + jsonschema-specifications==2025.9.1
+#21 3.859  + keyring==25.7.0
+#21 3.859  + mako==1.4.1
+#21 3.859  + markdown-it-py==4.2.0
+#21 3.859  + markupsafe==3.0.3
+#21 3.859  + mcp==2.2.0
+#21 3.859  + mcp-types==2.2.0
+#21 3.859  + mdurl==0.1.2
+#21 3.860  + more-itertools==11.1.0
+#21 3.860  + numpy==2.5.3
+#21 3.860  + onnxruntime==1.30.0
+#21 3.860  + opentelemetry-api==1.44.0
+#21 3.860  + packaging==26.3
+#21 3.860  + pgvector==0.5.0
+#21 3.860  + protobuf==7.36.2
+#21 3.863  + psycopg==3.3.6
+#21 3.863  + psycopg-binary==3.3.6
+#21 3.863  + psycopg-pool==3.3.2
+#21 3.863  + pycparser==3.0
+#21 3.863  + pydantic==2.13.5
+#21 3.863  + pydantic-core==2.46.5
+#21 3.863  + pydantic-settings==2.15.0
+#21 3.863  + pygments==2.21.0
+#21 3.863  + pyjwt==2.14.0
+#21 3.863  + python-dotenv==1.2.3
+#21 3.863  + python-multipart==0.0.32
+#21 3.863  + pyyaml==6.0.3
+#21 3.863  + referencing==0.37.0
+#21 3.863  + regex==2026.9.10
+#21 3.863  + requests==2.34.2
+#21 3.863  + rich==15.0.0
+#21 3.863  + rpds-py==2026.6.3
+#21 3.863  + secretstorage==3.5.0
+#21 3.863  + shellingham==1.5.4
+#21 3.863  + sqlalchemy==2.0.54
+#21 3.863  + sse-starlette==3.4.11
+#21 3.863  + starlette==0.52.1
+#21 3.863  + tiktoken==0.14.0
+#21 3.863  + tokenizers==0.23.2
+#21 3.863  + tqdm==4.70.1
+#21 3.863  + truststore==0.10.4
+#21 3.863  + typer==0.27.2
+#21 3.863  + typing-extensions==4.16.0
+#21 3.863  + typing-inspection==0.4.4
+#21 3.863  + urllib3==2.8.0
+#21 3.863  + uvicorn==0.53.0
+#21 3.863  + uvloop==0.22.1
+#21 3.863  + watchfiles==1.3.0
+#21 3.863  + websockets==17.1
+#21 DONE 4.2s
+
+#22 [api builder 6/8] COPY src ./src
+#22 DONE 0.1s
+
+#23 [migrate builder 7/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
+#23 0.081    Building hlmemo @ file:///app
+#23 0.680       Built hlmemo @ file:///app
+#23 0.685 Prepared 1 package in 605ms
+#23 0.690 Installed 1 package in 4ms
+#23 0.820 Bytecode compiled 3323 files in 130ms
+#23 0.820  + hlmemo==0.0.1 (from file:///app)
+#23 DONE 0.9s
+
+#24 [worker builder 8/8] RUN /app/.venv/bin/python -c "from hlmemo.core.budget import Meter; Meter().count_text('ready')"
+#24 DONE 6.0s
+
+#25 [migrate models 1/2] COPY models.lock ./
+#25 DONE 0.0s
+
+#26 [migrate builder 6/8] COPY src ./src
+#26 CACHED
+
+#27 [migrate builder 7/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
+#27 CACHED
+
+#28 [migrate runtime 2/9] RUN groupadd --system --gid 10001 hlm && useradd --system --uid 10001 --gid hlm --home /app --shell /usr/sbin/nologin hlm
+#28 CACHED
+
+#29 [migrate runtime 3/9] WORKDIR /app
+#29 CACHED
+
+#30 [migrate builder 8/8] RUN /app/.venv/bin/python -c "from hlmemo.core.budget import Meter; Meter().count_text('ready')"
+#30 CACHED
+
+#31 [migrate builder 4/8] COPY pyproject.toml uv.lock .python-version README.md ./
+#31 CACHED
+
+#32 [migrate builder 5/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-install-project
+#32 CACHED
+
+#33 [migrate runtime 4/9] COPY --from=builder --chown=hlm:hlm /app/.venv /app/.venv
+#33 CANCELED
+
+#34 [worker models 2/2] RUN --mount=type=cache,target=/root/.cache/huggingface <<'SH' (set -eu...)
+#34 ...
+
+#28 [api runtime 2/9] RUN groupadd --system --gid 10001 hlm && useradd --system --uid 10001 --gid hlm --home /app --shell /usr/sbin/nologin hlm
+#28 CACHED
+
+#29 [api runtime 3/9] WORKDIR /app
+#29 CACHED
+
+#28 [worker runtime 2/9] RUN groupadd --system --gid 10001 hlm && useradd --system --uid 10001 --gid hlm --home /app --shell /usr/sbin/nologin hlm
+#28 CACHED
+
+#29 [migrate runtime 3/9] WORKDIR /app
+#29 CACHED
+
+#35 [migrate runtime 4/9] COPY --from=builder --chown=hlm:hlm /app/.venv /app/.venv
+#35 DONE 0.6s
+
+#36 [worker runtime 4/9] COPY --from=builder --chown=hlm:hlm /app/.venv /app/.venv
+#36 CACHED
+
+#37 [worker builder 4/8] COPY pyproject.toml uv.lock .python-version README.md ./
+#37 CACHED
+
+#38 [worker builder 5/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-install-project
+#38 CACHED
+
+#39 [worker builder 7/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
+#39 CACHED
+
+#40 [worker builder 6/8] COPY src ./src
+#40 CACHED
+
+#41 [worker builder 8/8] RUN /app/.venv/bin/python -c "from hlmemo.core.budget import Meter; Meter().count_text('ready')"
+#41 CACHED
+
+#42 [worker runtime 5/9] COPY --from=builder --chown=hlm:hlm /app/tiktoken-cache /app/tiktoken-cache
+#42 DONE 0.1s
+
+#34 [worker models 2/2] RUN --mount=type=cache,target=/root/.cache/huggingface <<'SH' (set -eu...)
+#34 1.711 Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+#34 2.063 Fetching 4 files:  25%|██▌       | 1/4 [00:00<00:01,  2.85it/s]Fetching 4 files:  75%|███████▌  | 3/4 [00:02<00:01,  1.05s/it]Fetching 4 files: 100%|██████████| 4/4 [00:23<00:00,  7.78s/it]Fetching 4 files: 100%|██████████| 4/4 [00:23<00:00,  5.86s/it]
+#34 25.41 baked /app/models/multilingual-e5-small: hashes match models.lock
+#34 DONE 25.7s
+
+#43 [migrate runtime 6/9] COPY --from=models --chown=hlm:hlm /app/models /app/models
+#43 ...
+
+#44 [api runtime 5/9] COPY --from=builder --chown=hlm:hlm /app/tiktoken-cache /app/tiktoken-cache
+#44 CACHED
+
+#43 [worker runtime 6/9] COPY --from=models --chown=hlm:hlm /app/models /app/models
+#43 DONE 0.3s
+
+#45 [worker runtime 7/9] COPY --chown=hlm:hlm alembic.ini models.lock hlm.example.toml ./
+#45 DONE 0.0s
+
+#46 [migrate runtime 8/9] COPY --chown=hlm:hlm alembic ./alembic
+#46 DONE 0.0s
+
+#47 [api runtime 9/9] COPY --chown=hlm:hlm profiles ./profiles
+#47 DONE 0.0s
+
+#48 [worker] exporting to image
+#48 exporting layers
+#48 ...
+
+#49 [api] exporting to image
+#49 ...
+
+#50 [migrate] exporting to image
+#50 exporting layers 11.7s done
+#50 exporting manifest sha256:6c354f7986ba917a2f032e320a1d2134ff1f26d906954068095540cc8e222514 0.0s done
+#50 exporting config sha256:7e8b930d812d674dddc65052009b439505b732a026cfe38df3f80f73e9777f71 0.0s done
+#50 exporting attestation manifest sha256:7421b2c4b9aec5b4d6169e4d6a484d0139cdf53c8c4b9e69a3d8fbfc03bc272c done
+#50 exporting manifest list sha256:c47c5d0ed36384020559321eb0ce65c236bbd735e1d533d14fef8c2cacc34164 0.0s done
+#50 naming to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a done
+#50 unpacking to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a
+#50 ...
+
+#49 [api] exporting to image
+#49 exporting layers 11.7s done
+#49 exporting manifest sha256:bcf6fbadd42d3bc98a99ddd48e13a455a7d404f97405938ccc538bfa7511bf34 0.0s done
+#49 exporting config sha256:a4b1efd11320f408035659d823e00b5978e52b78418fd7cc21983653888e50c2 0.0s done
+#49 exporting attestation manifest sha256:1ef02952d8fb5788b6fbce02348cccb0f84e279e295457a3eebd0c1f9a591c43 0.0s done
+#49 exporting manifest list sha256:4fd204c901d170a254a081f51ed4930f13bdf4243828ef082807d2cd33aac549 0.0s done
+#49 naming to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a done
+#49 unpacking to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a 7.5s done
+#49 DONE 19.3s
+
+#48 [worker] exporting to image
+#48 exporting layers 11.7s done
+#48 exporting manifest sha256:9d99a42b081474d4693ae93011354830756a61e1328eb84bf731cad2c3e2729b 0.0s done
+#48 exporting config sha256:14c693ef977cc706abb22c13fa97ed086305627f4e6e5e541c29618ec7a4a0ff 0.0s done
+#48 exporting attestation manifest sha256:c4a6ff63bec250d24caadc87191b2545da8c64a6b47defc6f41167229718bba7 0.0s done
+#48 exporting manifest list sha256:890c174a69dfbda0c10608d283ec9df11ff58a2d8a557b24028f58c9450410a7 0.0s done
+#48 naming to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a done
+#48 ...
+
+#50 [migrate] exporting to image
+#50 unpacking to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a 7.9s done
+#50 DONE 19.7s
+
+#48 [worker] exporting to image
+#48 unpacking to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a 7.9s done
+#48 DONE 19.7s
+
+#51 [api] resolving provenance for metadata file
+#51 DONE 0.0s
+
+#52 [migrate] resolving provenance for metadata file
+#52 DONE 0.0s
+
+#53 [worker] resolving provenance for metadata file
+#53 DONE 0.0s
+ Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Built 
+ Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Built 
+ Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Built 
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/912f2d39247a9e445222756f8ce11fa24c70fae9-2026-09-23T183409Z-8xuCi7.dump (retained until explicit prune)
+migrate_env_w0: prod.env: already migrated (no retired keys)
+migrate_env_w0: app.env: already migrated (no retired keys)
+migrate_env_w0: api.env: removed HLM_ADMIN_TOKEN,HLM_REGISTRATION_SECRET (backup api.env.pre-w0-20260923T183410Z)
+migrate_env_w0: done (1 file(s) changed)
+ Container hlmemo-prod-worker-1 Stopping 
+ Container hlmemo-prod-caddy-1 Stopping 
+ Container hlmemo-prod-caddy-1 Stopped 
+ Container hlmemo-prod-api-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopped 
+ Container hlmemo-prod-api-1 Stopped 
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/912f2d39247a9e445222756f8ce11fa24c70fae9-2026-09-23T183411Z-G8pGgv.dump (retained until explicit prune)
+Quiesced pre-upgrade dump: /var/backups/hlmemo/pre-upgrade/912f2d39247a9e445222756f8ce11fa24c70fae9-2026-09-23T183411Z-G8pGgv.dump
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-migrate-run-32797e5ae363 Creating 
+ Container hlmemo-prod-migrate-run-32797e5ae363 Created 
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 0001_phase0 -> 0003_title_lexical, Title lexical index (D-055): item titles/paths become an RRF candidate list.
+INFO  [alembic.runtime.migration] Running upgrade 0003_title_lexical -> 0004_title_norm_fold, Title folding fix (D-055, Sol review 33 #2): bring ``hlm_title_norm`` to its final definition.
+INFO  [alembic.runtime.migration] Running upgrade 0004_title_norm_fold -> 0005_w0_access, W0a access hardening (D-052, D-061): device expiry + the `device_minted` event kind.
+INFO  [alembic.runtime.migration] Running upgrade 0005_w0_access -> 0006_librarian, Librarian foundation (PHASE2-4-ROADMAP W2a, CC-1/CC-2/CC-3/CC-5; D-062 proposed).
+Traceback (most recent call last):
+  File "/app/.venv/bin/alembic", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/alembic/config.py", line 1039, in main
+    CommandLine(prog=prog).main(argv=argv)
+  File "/app/.venv/lib/python3.12/site-packages/alembic/config.py", line 1029, in main
+    self.run_cmd(cfg, options)
+  File "/app/.venv/lib/python3.12/site-packages/alembic/config.py", line 963, in run_cmd
+    fn(
+  File "/app/.venv/lib/python3.12/site-packages/alembic/command.py", line 487, in upgrade
+    script.run_env()
+  File "/app/.venv/lib/python3.12/site-packages/alembic/script/base.py", line 550, in run_env
+    util.load_python_file(self.dir, "env.py")
+  File "/app/.venv/lib/python3.12/site-packages/alembic/util/pyfiles.py", line 114, in load_python_file
+    module = load_module_py(module_id, path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/alembic/util/pyfiles.py", line 132, in load_module_py
+    spec.loader.exec_module(module)  # type: ignore
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/app/alembic/env.py", line 55, in <module>
+    run_migrations_online()
+  File "/app/alembic/env.py", line 48, in run_migrations_online
+    context.run_migrations()
+  File "<string>", line 8, in run_migrations
+  File "/app/.venv/lib/python3.12/site-packages/alembic/runtime/environment.py", line 970, in run_migrations
+    self.get_context().run_migrations(**kw)
+  File "/app/.venv/lib/python3.12/site-packages/alembic/runtime/migration.py", line 616, in run_migrations
+    step.migration_fn(**kw)
+  File "/app/alembic/versions/0006_librarian.py", line 256, in upgrade
+    _flush_pending_lists()  # commits the DDL first; no DDL transaction open during the flush
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/alembic/versions/0006_librarian.py", line 236, in _flush_pending_lists
+    _fault("flush")  # the table DDL is already committed here
+    ^^^^^^^^^^^^^^^
+  File "/app/alembic/versions/0006_librarian.py", line 230, in _fault
+    raise RuntimeError(f"0006_librarian: injected fault at {step}")
+RuntimeError: 0006_librarian: injected fault at flush
+
+migrate_env_w0: restored api.env from its backup
+Deployment failed; recovering the previous stack.
+ Container hlmemo-prod-caddy-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopping 
+ Container hlmemo-prod-caddy-1 Stopped 
+ Container hlmemo-prod-api-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopped 
+ Container hlmemo-prod-api-1 Stopped 
+No stopped containers
+ Container hlmemo-prod-db-1 Recreate 
+ Container hlmemo-prod-db-1 Recreated 
+ Container hlmemo-prod-db-1 Starting 
+ Container hlmemo-prod-db-1 Started 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+Warning: you are leaving 53 commits behind, not connected to
+any of your branches:
+
+  fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
+  93d4d0e Merge W2a librarian foundation (integrated on W0a: 0006→0005 relink, main@head, librarian lifecycle in deploy; librarian disabled in R1) — D-062..D-064
+  7e16e4b D-066: librarian tiers — gpt-6-luna default, deepseek fallback, gemini excluded; two-tier luna/luna-pro + non-OpenAI pro fallback noted for Phase 5
+  f7c112e Merge W2a librarian into main (W0a): 0006 after 0005, main@head = 0006_librarian, librarian in the deploy lifecycle (D-062..D-065)
+ ... and 49 more.
+
+If you want to keep them by creating a new branch, this may be a good time
+to do so with:
+
+ git branch <new-branch-name> fa24ca5
+
+HEAD is now at 912f2d3 Ubuntu 26.04 support + two-command deploy (first_deploy.sh, remote_gates.sh)
+Rollback image verified: sha256:b93f93f26ed34611ac69aae2e1cd0b12c88b76b8df8a70da08d0f5bd8543ed4b (hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9)
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-worker-1 Recreate 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-caddy-1 Recreate 
+ Container hlmemo-prod-worker-1 Recreated 
+ Container hlmemo-prod-caddy-1 Recreated 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-worker-1 Starting 
+ Container hlmemo-prod-api-1 Started 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-worker-1 Started 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-caddy-1 Starting 
+ Container hlmemo-prod-caddy-1 Started 
+ Container hlmemo-prod-worker-1 Waiting 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-caddy-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-worker-1 Healthy 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-caddy-1 Healthy 
+Previous stack restored: 912f2d39247a9e445222756f8ce11fa24c70fae9
+
+PATH="$PWD/$S/bin:$PATH" bash deploy/scripts/deploy.sh  hlm-deploy $FULL  3.31s user 1.56s system 5% cpu 1:25.70 total
+rc=1

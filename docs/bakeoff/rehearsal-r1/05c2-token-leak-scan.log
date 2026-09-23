@@ -1,0 +1,11 @@
+local: scanned 363 files (shell history, rehearsal-r1 logs, state logs, task outputs): token hits=0
+docker logs /hlmemo-prod-worker-1: 0
+docker logs /hlmemo-prod-librarian-1: 0
+docker logs /hlmemo-prod-api-1: 0
+docker logs /hlmemo-prod-caddy-1: 0
+docker logs /hlmemo-prod-migrate-1: 0
+docker logs /hlmemo-prod-db-1: 0
+deploy run logs: 0
+journal: 0
+hlmdeploy bash_history: 0
+

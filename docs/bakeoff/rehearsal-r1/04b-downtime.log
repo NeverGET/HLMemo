@@ -1,0 +1,2 @@
+samples=66 interval~0.25s+curl; codes: {'200': 37, '000': 29}
+outage: last200=1790188569.40 first-non200=1790188569.69 next200=1790188578.23 -> 8.5s (upper bound 8.8s)

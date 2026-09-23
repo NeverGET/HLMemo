@@ -1,0 +1,214 @@
+# VM checkout origin set-url git://127.0.0.1/HLMemo.git -> https://github.com/NeverGET/HLMemo.git (was on rehearsal commit 93569eb, DB at 0001_phase0)
+Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.nxXf7SdG/log (final exit code: /opt/hlmemo/.deploy-runs/run.nxXf7SdG/status)
+From https://github.com/NeverGET/HLMemo
+ * branch            912f2d39247a9e445222756f8ce11fa24c70fae9 -> FETCH_HEAD
+Previous HEAD position was 93569eb rehearsal: uncommitted deploy/ tooling (26.04 support)
+HEAD is now at 912f2d3 Ubuntu 26.04 support + two-command deploy (first_deploy.sh, remote_gates.sh)
+ Image caddy:2.11.2-alpine Pulling 
+ Image pgvector/pgvector:0.8.6-pg17 Pulling 
+ Image caddy:2.11.2-alpine Pulled 
+ Image pgvector/pgvector:0.8.6-pg17 Pulled 
+ Image hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 Building 
+ Image hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 Building 
+ Image hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.94kB done
+#1 DONE 0.0s
+
+#2 [migrate internal] load build definition from Dockerfile
+#2 transferring dockerfile: 4.06kB done
+#2 DONE 0.0s
+
+#3 [worker] resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#3 DONE 1.0s
+
+#4 [worker] docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#4 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 0.0s done
+#4 CACHED
+
+#5 [migrate internal] load build definition from Dockerfile
+#5 transferring dockerfile: 4.06kB done
+#5 DONE 0.0s
+
+#6 [worker internal] load build definition from Dockerfile
+#6 transferring dockerfile: 4.06kB done
+#6 DONE 0.0s
+
+#7 [api internal] load build definition from Dockerfile
+#7 transferring dockerfile: 4.06kB done
+#7 DONE 0.0s
+
+#8 [migrate internal] load metadata for docker.io/library/python:3.12.14-slim-bookworm
+#8 DONE 0.9s
+
+#9 [api internal] load metadata for ghcr.io/astral-sh/uv:0.11
+#9 DONE 0.9s
+
+#10 [migrate internal] load .dockerignore
+#10 transferring context: 350B done
+#10 DONE 0.0s
+
+#11 [worker internal] load .dockerignore
+#11 transferring context: 350B done
+#11 DONE 0.0s
+
+#12 [api internal] load .dockerignore
+#12 transferring context: 350B 0.0s done
+#12 DONE 0.1s
+
+#13 [api runtime 1/9] FROM docker.io/library/python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
+#13 resolve docker.io/library/python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e 0.0s done
+#13 DONE 0.0s
+
+#14 [worker internal] load build context
+#14 transferring context: 3.39kB 0.0s done
+#14 DONE 0.0s
+
+#15 [worker] FROM ghcr.io/astral-sh/uv:0.11@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7
+#15 resolve ghcr.io/astral-sh/uv:0.11@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7 0.0s done
+#15 DONE 0.0s
+
+#16 [migrate internal] load build context
+#16 transferring context: 3.39kB 0.0s done
+#16 DONE 0.0s
+
+#17 [api internal] load build context
+#17 transferring context: 3.39kB 0.0s done
+#17 DONE 0.0s
+
+#18 [api builder 7/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
+#18 CACHED
+
+#19 [api models 2/2] RUN --mount=type=cache,target=/root/.cache/huggingface <<'SH' (set -eu...)
+#19 CACHED
+
+#20 [api builder 4/8] COPY pyproject.toml uv.lock .python-version README.md ./
+#20 CACHED
+
+#21 [api runtime 2/9] RUN groupadd --system --gid 10001 hlm && useradd --system --uid 10001 --gid hlm --home /app --shell /usr/sbin/nologin hlm
+#21 CACHED
+
+#22 [api builder 5/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-install-project
+#22 CACHED
+
+#23 [api builder 2/8] COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+#23 CACHED
+
+#24 [api runtime 6/9] COPY --from=models --chown=hlm:hlm /app/models /app/models
+#24 CACHED
+
+#25 [api builder 3/8] WORKDIR /app
+#25 CACHED
+
+#26 [api models 1/2] COPY models.lock ./
+#26 CACHED
+
+#27 [api runtime 3/9] WORKDIR /app
+#27 CACHED
+
+#28 [api runtime 7/9] COPY --chown=hlm:hlm alembic.ini models.lock hlm.example.toml ./
+#28 CACHED
+
+#29 [api builder 6/8] COPY src ./src
+#29 CACHED
+
+#30 [api runtime 8/9] COPY --chown=hlm:hlm alembic ./alembic
+#30 CACHED
+
+#31 [api builder 8/8] RUN /app/.venv/bin/python -c "from hlmemo.core.budget import Meter; Meter().count_text('ready')"
+#31 CACHED
+
+#32 [api runtime 5/9] COPY --from=builder --chown=hlm:hlm /app/tiktoken-cache /app/tiktoken-cache
+#32 CACHED
+
+#33 [api runtime 4/9] COPY --from=builder --chown=hlm:hlm /app/.venv /app/.venv
+#33 CACHED
+
+#34 [migrate runtime 9/9] COPY --chown=hlm:hlm profiles ./profiles
+#34 CACHED
+
+#35 [worker] exporting to image
+#35 exporting layers done
+#35 exporting manifest sha256:b95fc2d98f2e19a74fb995f95c83a8e660e3c862b3d9338ce8598bed2510cd5a 0.0s done
+#35 exporting config sha256:72c72f7cd5eb1a4eb85371adcf3d0c2a95204cbd6bba2e3f4bd16c29c45ac37a 0.0s done
+#35 exporting attestation manifest sha256:f6880b1b99366de20fb5af0379f098509eaa997e7209eca329e0b189a916542a 0.0s done
+#35 exporting manifest list sha256:3cae0dedf9d8839bac87676cff82e2b04932a33a6f98c35e7814ec054b651aac done
+#35 naming to docker.io/library/hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 done
+#35 unpacking to docker.io/library/hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 done
+#35 DONE 0.1s
+
+#36 [migrate] exporting to image
+#36 exporting layers done
+#36 exporting manifest sha256:483c26da3608aaa62e9f320434dd0758420fbd175bf2229d9ba11fd08f469e46 0.0s done
+#36 exporting config sha256:ea23726e71b3bcb6f943dd103741f96aa43917d2e1d1f7622aa571d50ae4e0c8 0.0s done
+#36 exporting attestation manifest sha256:9e0d87ce078b6c75b572bb9b2d8e041c209e660f4b8b7c9bd603a0ef474254db 0.0s done
+#36 exporting manifest list sha256:edf7872ba2f517d8d9b173dd90702637e9d2c64e34d51db699d62b07e5a5d34a done
+#36 naming to docker.io/library/hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 done
+#36 unpacking to docker.io/library/hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 done
+#36 DONE 0.1s
+
+#37 [api] exporting to image
+#37 exporting layers done
+#37 exporting manifest sha256:886edb02c3122b9b3d07526daba1c75a4a5a6fb661aac7aa8e4d50f52ee15479 0.0s done
+#37 exporting config sha256:9925c45c994e97f51e96594aae980fea594858d173414d2b851345f51b40b6d9 0.0s done
+#37 exporting attestation manifest sha256:d824992d797d4591eddc60e19a34bd9777e741abba0cb7a60db480b9d276e17a 0.0s done
+#37 exporting manifest list sha256:b93f93f26ed34611ac69aae2e1cd0b12c88b76b8df8a70da08d0f5bd8543ed4b 0.0s done
+#37 naming to docker.io/library/hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 done
+#37 unpacking to docker.io/library/hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 done
+#37 DONE 0.1s
+
+#38 [migrate] resolving provenance for metadata file
+#38 DONE 0.0s
+
+#39 [api] resolving provenance for metadata file
+#39 DONE 0.0s
+
+#40 [worker] resolving provenance for metadata file
+#40 DONE 0.0s
+ Image hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 Built 
+ Image hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 Built 
+ Image hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 Built 
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/93569eb6ced7e54e691be29c8cbe82dac325226b-2026-09-23T183036Z-n0f6Nd.dump (retained until explicit prune)
+ Container hlmemo-prod-caddy-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopping 
+ Container hlmemo-prod-caddy-1 Stopped 
+ Container hlmemo-prod-api-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopped 
+ Container hlmemo-prod-api-1 Stopped 
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-migrate-run-46818a2af6fe Creating 
+ Container hlmemo-prod-migrate-run-46818a2af6fe Created 
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-worker-1 Recreate 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-worker-1 Recreated 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-worker-1 Starting 
+ Container hlmemo-prod-api-1 Started 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-worker-1 Started 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-caddy-1 Starting 
+ Container hlmemo-prod-caddy-1 Started 
+ Container hlmemo-prod-caddy-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-worker-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-worker-1 Healthy 
+ Container hlmemo-prod-caddy-1 Healthy 
+{"status":"ready","checks":{"embed_config":{"ok":true,"pinned":"intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3","configured":"intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3"},"trusted_proxy_ips":{"ok":true},"db":{"ok":true},"migration":{"ok":true,"expected":"0001_phase0","applied":["0001_phase0"]},"models":{"dir":"/app/models/multilingual-e5-small","ok":true,"lock":"/app/models.lock","tokenizer":true,"inference":true,"meter":true}}}
+Pre-upgrade prune completed: removed 0; keeping latest 5
+Deployment ready: 912f2d39247a9e445222756f8ce11fa24c70fae9 (localhost)
+
+PATH="$PWD/$S/bin:$PATH" bash /private/tmp/hlm-r1/deploy-912f2d3.sh hlm-deplo  0.98s user 0.48s system 6% cpu 21.996 total

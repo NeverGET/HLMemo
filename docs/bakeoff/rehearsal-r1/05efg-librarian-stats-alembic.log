@@ -1,0 +1,35 @@
+== (e) librarian
+hlmemo-prod-librarian-1 hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Up About a minute (healthy)
+HLM_LIBRARIAN_ENABLED=false
+provider-env-vars=0
+llm.env: ls: cannot access '/etc/hlmemo/llm.env': No such file or directory
+librarian health rc=0
+2026-09-23 18:38:13,892 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_24h=0 spend_today_usd=0.0 spend_hour_usd=0.0 reserved_usd=0.0 role=observer enabled=False breaker_state=disabled jobs_done=0 last_done_job=None
+2026-09-23 18:38:23,925 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_24h=0 spend_today_usd=0.0 spend_hour_usd=0.0 reserved_usd=0.0 role=observer enabled=False breaker_state=disabled jobs_done=0 last_done_job=None
+2026-09-23 18:38:33,959 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_24h=0 spend_today_usd=0.0 spend_hour_usd=0.0 reserved_usd=0.0 role=observer enabled=False breaker_state=disabled jobs_done=0 last_done_job=None
+2026-09-23 18:38:43,981 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_24h=0 spend_today_usd=0.0 spend_hour_usd=0.0 reserved_usd=0.0 role=observer enabled=False breaker_state=disabled jobs_done=0 last_done_job=None
+librarian log lines matching openrouter|provider|http(s)://: 4
+== (f) docker stats --no-stream
+hlmemo-prod-worker-1 836.1MiB / 1.5GiB 54.43%
+hlmemo-prod-librarian-1 42.59MiB / 512MiB 8.32%
+hlmemo-prod-api-1 1.186GiB / 2.5GiB 47.45%
+hlmemo-prod-caddy-1 14.21MiB / 256MiB 5.55%
+hlmemo-prod-db-1 63.63MiB / 2GiB 3.11%
+db mem_limit=2048 MiB
+api mem_limit=2560 MiB
+worker mem_limit=1536 MiB
+librarian mem_limit=512 MiB
+caddy mem_limit=256 MiB
+               total        used        free      shared  buff/cache   available
+Mem:            7913        2974        1432          48        3760        4939
+Swap:              0           0           0
+== (g) alembic + GIN
+alembic_version|0006_librarian
+chunks_project_gin|gin|DEFAULT(fastupdate=on)
+chunks_trgm_gin|gin|fastupdate=off
+chunks_tsv_gin|gin|fastupdate=off
+links_project_gin|gin|DEFAULT(fastupdate=on)
+mv_project_ids_gin|gin|DEFAULT(fastupdate=on)
+mv_title_tsv|gin|fastupdate=off
+librarian tables|librarian_questions
+jobs by kind/status|embed:done=26

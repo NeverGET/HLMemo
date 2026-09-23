@@ -1,0 +1,31 @@
+== /etc/hlmemo before (names)
+api.env
+api.env.pre-w0-20260923T183410Z
+api.env.pre-w0-20260923T183609Z
+app.env
+backup.env
+bootstrap-ssh-cidr
+db.env
+prod.env
+== deploy.sh --accept-release hlm-deploy
+Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.ESb7X3Tk/log (final exit code: /opt/hlmemo/.deploy-runs/run.ESb7X3Tk/status)
+deleted env backup /etc/hlmemo/api.env.pre-w0-20260923T183609Z
+Release fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a accepted; recorded env backups deleted.
+
+rc=0
+== /etc/hlmemo after (names)
+api.env
+api.env.pre-w0-20260923T183410Z
+app.env
+backup.env
+bootstrap-ssh-cidr
+db.env
+prod.env
+files still holding retired keys (names only):
+/etc/hlmemo/api.env.pre-w0-20260923T183410Z
+{'accepted': True, 'current_ref': 'fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a', 'previous_ref': '912f2d39247a9e445222756f8ce11fa24c70fae9', 'env_backups': {}, 'retired_backups': []}
+hlmemo-prod-worker-1 Up 2 minutes (healthy)
+hlmemo-prod-librarian-1 Up 2 minutes (healthy)
+hlmemo-prod-api-1 Up 2 minutes (healthy)
+hlmemo-prod-caddy-1 Up 2 minutes (healthy)
+hlmemo-prod-db-1 Up 3 minutes (healthy)

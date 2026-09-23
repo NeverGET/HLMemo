@@ -1,0 +1,14 @@
+POST /devices/register CL=10485760 no body -> HTTP/1.1 404 Not Found in 0 ms
+GET    /admin                             -> 404
+GET    /admin/                            -> 404
+GET    /admin/projects                    -> 404
+POST   /admin/projects                    -> 404
+GET    /admin/devices                     -> 404
+POST   /admin/devices/1/approve           -> 404
+POST   /admin/devices/2/revoke            -> 404
+POST   /admin/projects/r1-seed/grants     -> 404
+DELETE /admin/projects/r1-seed/grants     -> 404
+GET    /admin/status                      -> 404
+PUT    /admin/x/y/z                       -> 404
+GET    /devices/whoami (anonymous)       -> 401
+GET    /ready (public)                   -> 200 body={"status":"ready"} keys=['status']
