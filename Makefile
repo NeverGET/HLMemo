@@ -61,6 +61,14 @@ MAX_USD ?= 5
 gate-live:
 	$(UV) run --frozen python eval/live/run.py --profile $(PROFILE) --fallback $(FALLBACK) --reps $(REPS) --max-usd $(MAX_USD)
 
+# Release gate (D-063): G3 recall, G4 latency and G-L3 (queries timed DURING 100 writes through the
+# real api process, librarian process stalled/503) on a DISPOSABLE clone of the loaded G3 world.
+# Release-blocking at R2 and before Phase 5 bulk imports. G-L3 writes into the clone: drop it after.
+.PHONY: gate-release
+gate-release:
+	@test -n "$(HLM_TEST_DSN)" || { echo 'Set HLM_TEST_DSN to a disposable clone of hlm_retr (never hlm/hlm_test)' >&2; exit 1; }
+	HLM_GL3=1 $(UV) run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_g3_recall.py tests/integration/test_g4_latency.py tests/integration/test_gl3_llm_down.py
+
 # G8: gitleaks over the history + secret paths untracked (host only, no DB)
 test-g8:
 	$(UV) run --frozen pytest -q -p no:cacheprovider tests/integration/test_g8_secrets.py

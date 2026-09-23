@@ -13,15 +13,9 @@ every job must complete — 0 lost, 0 duplicate ``librarian`` events.
 
 Gate: query p95 ≤ 500 ms over the queries timed DURING the writes; 100/100 writes acked.
 
-Status 2026-09-23 (M3 Pro, dev db): FAILS — p95 ≈ 6.7 s before and after moving write-path
-chunking/tokenization off the event loop (the loop was not the bottleneck: the same slowdown
-appears when the writes come from a separate process). Measured causes are in the core read path:
-the trigram candidate query scans the GIN pending list of the burst (6.5 s statements; with
-``fastupdate=off`` on the chunk GIN indexes p95 falls to 589 ms) and every write invalidates the
-D-055 DF vocabulary, so the next query pays a ~210 ms ts_stat refresh (with both changes, as an
-uncommitted experiment, p95 = 470 ms → PASS). Both need a core decision (Sol 33 #1 requires the
-next query to see a write's DF).
-Opt-in (like O2): ``HLM_GL3=1 HLM_TEST_DSN=<clone of hlm_retr> pytest …test_gl3_llm_down.py``.
+Two body types: ``identifier`` bodies repeat the fixture's query identifiers (every new chunk is
+a trigram candidate of identifier queries: the worst case) and ``neutral`` bodies are mixed prose.
+Release-blocking (D-063): ``make gate-release HLM_TEST_DSN=<disposable clone of hlm_retr>``.
 """
 
 # ruff: noqa: F811 - pytest fixtures are imported into the module and requested by parameter name
@@ -118,6 +112,15 @@ _WORDS = (
 ).split()
 
 
+def _identifier_body(i: int) -> str:
+    """≈ 6 kB repeating the G3 fixture's identifier vocabulary (worst case for the trigram list)."""
+    return "\n".join(
+        f"Load note {i}.{k}: svc-qx7 reads APP_DB_DSN, retries E4193 with backoff; Karte {k} güncellendi,"
+        f" der Dienst läuft auf Port {8000 + k}."
+        for k in range(60)
+    )
+
+
 def _body(i: int) -> str:
     """≈ 6 kB of mixed-language prose with unique note ids. It deliberately avoids the G3 fixture's
     query identifiers (svc-*, APP_*, E4xxx): repeating those 6,000 times would make every new
@@ -166,8 +169,14 @@ async def _wait_ready(base: str, proc: subprocess.Popen, limit_s: float = 180.0)
     raise AssertionError("api never became ready")
 
 
-async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWorld, tmp_path) -> None:  # noqa: ANN001
+@pytest.mark.parametrize("body_kind", ["identifier", "neutral"])
+async def test_gl3_llm_down_core_unaffected(
+    db_dsn, connect, retr_world: RetrWorld, tmp_path, body_kind
+) -> None:  # noqa: ANN001
     world = retr_world
+    make_body = _identifier_body if body_kind == "identifier" else _body
+    run = f"gl3{body_kind[0]}"
+    _Stub.mode, _Stub.requests = "stall", 0
     async with await connect() as conn:
         await seed_reserved(conn)
         for did, tok in ((world.loader_id, LOADER_TOKEN), (world.reader_id, READER_TOKEN)):
@@ -267,7 +276,7 @@ async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWor
                                 "project": MAIN,
                                 "request_id": str(uuid.uuid4()),
                                 "client": "pytest/gl3",
-                                "items": [{"kind": "fact", "title": f"G-L3 note {i}", "body": _body(i)}],
+                                "items": [{"kind": "fact", "title": f"G-L3 note {i}", "body": make_body(i)}],
                             },
                         )
                         write_ms.append((time.perf_counter() - t0) * 1000)
@@ -278,7 +287,7 @@ async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWor
                             trigger_device_id=world.loader_id,
                             subject_vid=ack["versions"][0]["version_id"],
                             candidate_vids=[candidates[i % len(candidates)]],
-                            key=f"gl3:{i}",
+                            key=f"{run}:{i}",
                         )
                         await conn.commit()
                 done.set()
@@ -298,7 +307,8 @@ async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWor
             async with await connect() as conn:
                 cur = await conn.execute(
                     "SELECT count(*) FILTER (WHERE status = 'done'), count(*) FROM jobs"
-                    " WHERE dedupe_key LIKE 'librarian_write:gl3:%'"
+                    " WHERE dedupe_key LIKE 'librarian_write:' || %(run)s || ':%%'",
+                    {"run": run},
                 )
                 n_done, total = await cur.fetchone()
                 await conn.commit()
@@ -318,7 +328,8 @@ async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWor
 
     p95 = _p95(lat)
     print(
-        f"\nG-L3 (real api + librarian processes): {len(lat)} queries during {N_WRITES} writes:"
+        f"\nG-L3 [{body_kind} bodies] (real api + librarian processes):"
+        f" {len(lat)} queries during {N_WRITES} writes:"
         f" p50 {statistics.median(lat):.1f} ms p95 {p95:.1f} ms max {max(lat):.1f} ms;"
         f" write p50 {statistics.median(write_ms):.1f} ms p95 {_p95(write_ms):.1f} ms;"
         f" stub requests {_Stub.requests}; reference without writes: {len(quiet)} queries"
@@ -327,12 +338,15 @@ async def test_gl3_llm_down_core_unaffected(db_dsn, connect, retr_world: RetrWor
     assert p95 <= P95_LIMIT_MS
     async with await connect() as conn:
         cur = await conn.execute(
-            "SELECT status, count(*) FROM jobs WHERE dedupe_key LIKE 'librarian_write:gl3:%' GROUP BY 1"
+            "SELECT status, count(*) FROM jobs"
+            " WHERE dedupe_key LIKE 'librarian_write:' || %(run)s || ':%%' GROUP BY 1",
+            {"run": run},
         )
         assert dict(await cur.fetchall()) == {"done": N_WRITES}  # 0 lost
         cur = await conn.execute(
             "SELECT count(*), count(DISTINCT payload->'resolved'->'done'->>'dedupe_key') FROM events"
             " WHERE kind = 'librarian'"
-            " AND payload->'resolved'->'done'->>'dedupe_key' LIKE 'librarian_write:gl3:%'"
+            " AND payload->'resolved'->'done'->>'dedupe_key' LIKE 'librarian_write:' || %(run)s || ':%%'",
+            {"run": run},
         )
         assert await cur.fetchone() == (N_WRITES, N_WRITES)  # 0 duplicate librarian events

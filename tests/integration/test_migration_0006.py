@@ -48,9 +48,21 @@ def fresh_dsn(db_dsn: str):  # noqa: ANN201
             conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
+GIN_SQL = (
+    "SELECT c.relname, coalesce(array_to_string(c.reloptions, ','), '') FROM pg_class c"
+    " WHERE c.relname IN ('chunks_trgm_gin', 'chunks_tsv_gin', 'mv_title_tsv') ORDER BY 1"
+)
+
+
 def test_migration_0006_reserved_rows_and_round_trip(fresh_dsn: str) -> None:
     _alembic(fresh_dsn, "upgrade", "phase0@head")
     with psycopg.connect(fresh_dsn) as conn:
+        # D-063: no GIN pending list on the chunk/title indexes
+        assert conn.execute(GIN_SQL).fetchall() == [
+            ("chunks_trgm_gin", "fastupdate=off"),
+            ("chunks_tsv_gin", "fastupdate=off"),
+            ("mv_title_tsv", "fastupdate=off"),
+        ]
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0006_librarian",)]
         dev = conn.execute(
             "SELECT device_id, class, status, is_admin, is_system, token_sha256 FROM devices"
@@ -91,6 +103,7 @@ def test_migration_0006_reserved_rows_and_round_trip(fresh_dsn: str) -> None:
     with psycopg.connect(fresh_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM devices WHERE name = 'librarian'").fetchone() == (0,)
         assert conn.execute("SELECT to_regclass('llm_calls')").fetchone() == (None,)
+        assert [opt for _, opt in conn.execute(GIN_SQL).fetchall()] == ["", "", ""]  # symmetric
     _alembic(fresh_dsn, "upgrade", "phase0@head")
     with psycopg.connect(fresh_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM devices WHERE is_system").fetchone() == (1,)

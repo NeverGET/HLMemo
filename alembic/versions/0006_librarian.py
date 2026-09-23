@@ -167,8 +167,27 @@ WHERE c.relname = 'events_librarian_role' AND NOT i.indisvalid
 """
 
 
+# D-063: the chunk GIN indexes (trigram + lexical) and the title GIN index stop using the pending
+# list: a write burst otherwise leaves unmerged entries that every candidate query scans linearly
+# (measured 6.5 s statements, query p95 6.7 s during 100 writes). ALTER INDEX changes only the
+# reloption (no rewrite); gin_clean_pending_list then merges what is already pending. Writes pay
+# the index maintenance inline instead (measured in the W2a report).
+GIN_NO_FASTUPDATE = ("chunks_trgm_gin", "chunks_tsv_gin", "mv_title_tsv")
+
+
+def _gin_fastupdate(enabled: bool) -> None:
+    bind = op.get_bind()
+    for name in GIN_NO_FASTUPDATE:
+        if enabled:
+            bind.exec_driver_sql(f"ALTER INDEX {name} RESET (fastupdate)")
+        else:
+            bind.exec_driver_sql(f"ALTER INDEX {name} SET (fastupdate = off)")
+            bind.exec_driver_sql(f"SELECT gin_clean_pending_list('{name}'::regclass)")
+
+
 def upgrade() -> None:
     op.get_bind().exec_driver_sql(UPGRADE)
+    _gin_fastupdate(enabled=False)  # D-063
     with op.get_context().autocommit_block():
         bind = op.get_bind()
         if bind.exec_driver_sql(LEFTOVER).fetchall():  # an interrupted concurrent build
@@ -181,4 +200,5 @@ def downgrade() -> None:
     # authoritative events. Reserved rows are removed only while nothing references them.
     with op.get_context().autocommit_block():
         op.get_bind().exec_driver_sql("DROP INDEX CONCURRENTLY IF EXISTS events_librarian_role")
+    _gin_fastupdate(enabled=True)  # D-063, symmetric
     op.get_bind().exec_driver_sql(DOWNGRADE)
