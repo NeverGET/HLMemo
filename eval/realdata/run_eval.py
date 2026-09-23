@@ -23,6 +23,23 @@ differs (e.g. an extra root imported under a label).
 
 Keys are matched case-insensitively after NFKC + casefold and whitespace collapsing.
 
+--schema corpus-b reads the span-based schema instead (fields evidence_spans, answer_keys, gold_facts,
+temporal_status, negative, notes with stale_value= / neg_grep=) and adapts each row:
+  * evidence_spans `path:Lstart-Lend@rev` -> gold source `path`; `LABEL:file:Lstart-Lend` -> `LABEL/file`
+    (the importer's --extra-root title); `git:YYYY-MM-DD` -> `git log YYYY-MM-DD` (the git-day title);
+  * notes `stale_value=V` -> stale key V (temporal rows); `negative: true` / no spans -> negative row;
+  * span keys: an answer key belongs to a span when it occurs verbatim in the span text, read from
+    --span-root (an export of the pinned commit), --span-extra LABEL=DIR and the git log of
+    --span-git-dir at --span-git-rev.
+Evidence Recall@5 (approximation of "a returned or drilled chunk overlaps >= 50% of the gold span"): a span
+counts as hit when a unit from its own source -- one of the top-5 hit previews, or a drilldown item of a
+top-5 clue -- contains one of the span's own keys (for a span holding only the superseded value: that
+value; a span with neither counts on the source match alone). Only the top --drill-top clues are drilled,
+so with --drill-top < 5 the number is a lower bound. `evidence_r5` = mean per-question fraction of spans
+hit; `evidence_any5` = at least one span hit.
+Stale claim (temporal rows): the stale value is ranked above the current key, or present while the current
+key is absent; reported over all hits (l1), the top-3 hits (l1_top3) and the drilldown items (l2).
+
 Outputs in --out-dir: results.jsonl (one record per question), summary.json, summary.md.
 Credentials: $HLM_DEVICE_TOKEN or <config-dir>/credentials.toml (never printed). Standard library only;
 reuses the MCP client of import_corpus.py next to this file.
@@ -134,7 +151,90 @@ def temporal_view(units: list[str], latest: list[str], stale: list[str]) -> dict
         "latest_rank": lr,
         "stale_rank": sr,
         "latest_present": lr is not None,
+        "stale_present": sr is not None,
         "stale_first": sr is not None and (lr is None or sr < lr),
+    }
+
+
+# --------------------------------------------------------------------------- corpus-b adapter
+
+_SPAN_LINES = re.compile(r"^(?P<src>.+?):L(?P<a>\d+)-L(?P<b>\d+)(?:@(?P<rev>[\w.-]+))?$")
+
+
+class SpanTexts:
+    """Reads the text of a corpus-b evidence span from a pinned export, extra roots and a git log."""
+
+    def __init__(self, a: argparse.Namespace) -> None:
+        self.root = a.span_root
+        self.extra = dict(x.split("=", 1) for x in a.span_extra)
+        self.git_days: dict[str, str] | None = None
+        self.git_dir, self.git_rev = a.span_git_dir, a.span_git_rev
+
+    def _git_day(self, day: str) -> str | None:
+        if self.git_days is None:
+            from import_corpus import ITEM_BODY_MAX, git_day_items
+
+            self.git_days = {}
+            if self.git_dir:
+                for it in git_day_items(self.git_dir, ITEM_BODY_MAX, self.git_rev):
+                    d = it.path.split(":", 1)[1]
+                    self.git_days[d] = self.git_days.get(d, "") + it.body
+        return self.git_days.get(day)
+
+    def source_and_text(self, span: str) -> tuple[str, str | None]:
+        if span.startswith("git:"):
+            day = span[4:]
+            return f"git log {day}", self._git_day(day)
+        m = _SPAN_LINES.match(span)
+        src, lo, hi = (m["src"], int(m["a"]), int(m["b"])) if m else (span, 1, 10**9)
+        base: Path | None = self.root
+        if ":" in src:  # LABEL:file -> importer extra-root title LABEL/file
+            label, _, name = src.partition(":")
+            src = f"{label}/{name}"
+            base = Path(self.extra[label]).expanduser() if label in self.extra else None
+            path = base / name if base else None
+        else:
+            path = base / src if base else None
+        if path is None or not path.is_file():
+            return src, None
+        lines = path.read_text(encoding="utf-8").splitlines()
+        return src, "\n".join(lines[lo - 1 : hi])
+
+
+def adapt_corpus_b(q: dict[str, Any], spans: SpanTexts) -> dict[str, Any]:
+    keys = list(q.get("answer_keys") or [])
+    out = dict(q)
+    m = re.search(r"stale_value=(.+?)\s*$", q.get("notes") or "")
+    stale = [m.group(1)] if m else []
+    if stale:
+        out["stale_answer"], out["stale_keys"] = stale[0], stale
+    out["span_info"] = []
+    for sp in q.get("evidence_spans") or []:
+        src, text = spans.source_and_text(sp)
+        # a span that holds only the superseded value is identified by that value
+        own = (keys_in(norm(text), keys) or keys_in(norm(text), stale)) if text else []
+        out["span_info"].append({"span": sp, "source": src, "keys": own, "text_found": text is not None})
+    out["gold_sources"] = sorted({s["source"] for s in out["span_info"]})
+    if q.get("negative"):
+        out["gold_sources"] = []
+    return out
+
+
+def evidence_view(
+    span_info: list[dict[str, Any]], hit_units: list[tuple[str, str]], drill_units: list[tuple[str, str]]
+) -> dict[str, Any]:
+    units = [(source_of_title(t), norm(x)) for t, x in hit_units + drill_units]
+    hit = []
+    for s in span_info:
+        ok = any(src == s["source"] and (not s["keys"] or keys_in(text, s["keys"])) for src, text in units)
+        hit.append(ok)
+    n = len(span_info)
+    return {
+        "spans_hit": sum(hit),
+        "spans": n,
+        "recall": round(sum(hit) / n, 3) if n else None,
+        "any": any(hit),
+        "keyless_spans": sum(1 for s in span_info if not s["keys"]),
     }
 
 
@@ -174,7 +274,7 @@ def evaluate_budget(
         "l1": bool(l1_keys),
     }
     clues = [h["clue"] for h in hits[: a.drill_top]]
-    drill_text, d_used, d_ms, d_trunc, items_units = "", 0, 0.0, False, []
+    drill_text, d_used, d_ms, d_trunc, items_units, drill_items = "", 0, 0.0, False, [], []
     if clues:
         t0 = time.perf_counter()
         try:
@@ -188,6 +288,7 @@ def evaluate_budget(
             d_used = d["budget"]["used"]
             d_trunc = d.get("next_cursor") is not None
             items_units = [it.get("text", "") for it in d.get("items", [])]
+            drill_items = d.get("items", [])
             drill_text = "\n".join(items_units)
         except ToolError as exc:
             errors.append({"ctx": f"{q['id']} drilldown", "code": exc.code, "message": exc.message[:200]})
@@ -211,8 +312,20 @@ def evaluate_budget(
         out["temporal"] = {
             "stale_keys_n": len(stale),
             "l1": temporal_view(hit_units, keys, stale),
+            "l1_top3": temporal_view(hit_units[:3], keys, stale),
             "l2": temporal_view(items_units, keys, stale),
         }
+    if q.get("span_info") and gold:
+        top5 = {h["clue"] for h in hits[:5]}
+        out["evidence5"] = evidence_view(
+            q["span_info"],
+            [(h.get("title", ""), h.get("preview", "")) for h in hits[:5]],
+            [
+                (it.get("title", ""), it.get("text", ""))
+                for it in drill_items
+                if it.get("clue") in top5 or not it.get("clue")
+            ],
+        )
     return out
 
 
@@ -225,6 +338,10 @@ def evaluate(mcp: Mcp, a: argparse.Namespace, q: dict[str, Any], aliases, errors
         "positive": bool(gold),
         "gold": sorted(gold),
         "n_keys": len(q.get("answer_keys") or []),
+        "spans": [
+            {k: s[k] for k in ("span", "source", "text_found")} | {"n_keys": len(s["keys"])}
+            for s in q.get("span_info", [])
+        ],
         "runs": [evaluate_budget(mcp, a, q, gold, b, errors) for b in a.budgets],
     }
     if a.deep_budget:
@@ -300,6 +417,15 @@ def group_metrics(recs: list[dict[str, Any]], bi: int) -> dict[str, Any]:
     m["l2_drill_key"] = rate(sum(x["l2_drill"] for x in runs), n)
     m["l2_key"] = rate(sum(x["l2"] for x in runs), n)
     m["l2_all_keys"] = rate(sum(bool(x["l2_all_keys"]) for x in runs), n)
+    ev = [x["evidence5"] for x in runs if "evidence5" in x]
+    if ev:
+        m["evidence_r5"] = round(statistics.mean(e["recall"] for e in ev), 3)
+        m["evidence_any5"] = rate(sum(e["any"] for e in ev), len(ev))
+    tmp = [x["temporal"] for x in runs if "temporal" in x]
+    if tmp:
+        m["stale_claim_l1_top3"] = rate(sum(t["l1_top3"]["stale_first"] for t in tmp), len(tmp))
+    m["tokens_query_mean"] = round(statistics.mean(x["tokens_used"] for x in runs), 1)
+    m["tokens_total_mean"] = round(statistics.mean(x["tokens_used"] + x["drill_tokens"] for x in runs), 1)
     deep = [r.get("deep", {}).get("best_rank") for r in pos]
     if any(d is not None for d in deep):
         m["deep_found"] = rate(sum(d is not None for d in deep), n)
@@ -336,8 +462,9 @@ def summarize(recs: list[dict[str, Any]], budgets: list[int]) -> dict[str, Any]:
                 "n": len(temporal),
                 **{
                     f"{lv}_{k}": rate(sum(t[lv][k] for t in temporal), len(temporal))
-                    for lv in ("l1", "l2")
-                    for k in ("latest_present", "stale_first")
+                    for lv in ("l1", "l1_top3", "l2")
+                    if all(lv in t for t in temporal)
+                    for k in ("latest_present", "stale_present", "stale_first")
                 },
             }
         neg = [r["runs"][bi]["top1_score"] or 0.0 for r in recs if not r["positive"]]
@@ -369,7 +496,7 @@ def md_table(rows: dict[str, dict[str, Any]], cols: list[str]) -> list[str]:
 
 def render_md(summary: dict[str, Any], meta: dict[str, Any]) -> str:
     cols = ["n_pos", "hit@1", "hit@3", "hit@5", "hit@10", "mrr", "l1_key", "l2_key", "l2_drill_key"]
-    cols += ["deep_hit@20"]
+    cols += ["deep_hit@20", "evidence_r5", "evidence_any5", "stale_claim_l1_top3", "tokens_total_mean"]
     lines = [f"# Real-data retrieval eval — project `{meta['project']}`", ""]
     lines.append(f"Questions: {summary['n_questions']}. Drilldown: top-{meta['drill_top']} clues at ")
     lines[-1] += f"budget {meta['drill_budget']}. Run at {meta['started']}."
@@ -409,6 +536,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--overlay", type=Path, default=None, help="JSON {id: {extra fields}} merged in")
     ap.add_argument("--only", default=None, help="comma-separated question ids")
     ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--schema", choices=["corpus-a", "corpus-b"], default="corpus-a")
+    ap.add_argument("--span-root", type=Path, help="corpus-b: export of the pinned commit (span text)")
+    ap.add_argument(
+        "--span-extra", action="append", default=[], help="corpus-b: LABEL=DIR for LABEL:file spans"
+    )
+    ap.add_argument("--span-git-dir", type=Path, help="corpus-b: git repo for git:YYYY-MM-DD spans")
+    ap.add_argument("--span-git-rev", help="corpus-b: git log up to this commit")
     a = ap.parse_args(argv)
     a.budgets = [int(x) for x in a.budgets.split(",") if x.strip()]
     return a
@@ -421,6 +555,9 @@ def main(argv: list[str] | None = None) -> int:
         extra = json.loads(a.overlay.read_text())
         for q in questions:
             q.update(extra.get(q["id"], {}))
+    if a.schema == "corpus-b":
+        spans = SpanTexts(a)
+        questions = [adapt_corpus_b(q, spans) for q in questions]
     if a.only:
         wanted = set(a.only.split(","))
         questions = [q for q in questions if q["id"] in wanted]
@@ -452,6 +589,7 @@ def main(argv: list[str] | None = None) -> int:
         "drill_top": a.drill_top,
         "drill_budget": a.drill_budget,
         "deep_budget": a.deep_budget,
+        "schema": a.schema,
         "started": started,
         "errors": errors,
     }

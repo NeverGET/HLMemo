@@ -15,6 +15,7 @@ Mapping (deterministic):
   * tags         = [source type, top-level dir]
   * valid_from   = last commit author date of the file (`git log -1 --format=%aI`); mtime for untracked,
                    ignored or locally modified files and for extra roots; git days: that day 00:00
+                   (--git-dir/--git-rev: --root is an export of that commit; dates and git days stop there)
   * files longer than --max-item-chars are split at markdown headings (whole sections where possible)
 
 Idempotency: request_id = uuid5(project + sorted (key, content sha256)) of the batch, so re-sending the
@@ -336,17 +337,27 @@ def mtime_iso(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(timespec="seconds")
 
 
-def file_dates(root: Path, files: list[str]) -> tuple[dict[str, str], dict[str, str]]:
-    """{rel: iso date}, {rel: 'commit' | 'mtime(modified)' | 'mtime(untracked)'}"""
+def file_dates(
+    root: Path, files: list[str], repo: Path | None = None, rev: str | None = None
+) -> tuple[dict[str, str], dict[str, str]]:
+    """{rel: iso date}, {rel: 'commit' | 'mtime(modified)' | 'mtime(untracked)'}
+
+    With `rev`, --root is taken to be an exact export of `repo` at `rev` (e.g. `git archive`): tracked =
+    files in that tree, nothing counts as modified, and dates are the last commit up to `rev`.
+    """
     dates, origin = {}, {}
     tracked: set[str] = set()
     modified: set[str] = set()
-    if is_git_repo(root):
-        tracked = set(git(root, "ls-files", "-z").split("\0"))
-        modified = set(git(root, "diff", "--name-only", "-z", "HEAD").split("\0"))
+    repo = repo or root
+    if is_git_repo(repo):
+        if rev:
+            tracked = set(git(repo, "ls-tree", "-r", "--name-only", "-z", rev).split("\0"))
+        else:
+            tracked = set(git(repo, "ls-files", "-z").split("\0"))
+            modified = set(git(repo, "diff", "--name-only", "-z", "HEAD").split("\0"))
     for rel in files:
         if rel in tracked and rel not in modified:
-            d = git(root, "log", "-1", "--format=%aI", "--", rel).strip()
+            d = git(repo, "log", "-1", "--format=%aI", *([rev] if rev else []), "--", rel).strip()
             if d:
                 dates[rel], origin[rel] = d, "commit"
                 continue
@@ -355,8 +366,8 @@ def file_dates(root: Path, files: list[str]) -> tuple[dict[str, str], dict[str, 
     return dates, origin
 
 
-def git_day_items(root: Path, limit: int) -> list[Item]:
-    log = git(root, "log", "--reverse", "--format=%H%x1f%aI%x1f%s%x1f%b%x1e")
+def git_day_items(root: Path, limit: int, rev: str | None = None) -> list[Item]:
+    log = git(root, "log", "--reverse", "--format=%H%x1f%aI%x1f%s%x1f%b%x1e", *([rev] if rev else []))
     days: dict[str, list[tuple[str, str, str, str]]] = {}
     for rec in log.split("\x1e"):
         rec = rec.strip("\n")
@@ -694,6 +705,15 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=True,
         help="import the git history as one item per calendar day",
     )
+    ap.add_argument(
+        "--git-dir",
+        type=Path,
+        help="git repository for file dates and --git-log when --root is not a checkout (e.g. an export)",
+    )
+    ap.add_argument(
+        "--git-rev",
+        help="take file dates and the git log as of this commit (--root must be an export of it)",
+    )
     ap.add_argument("--max-item-chars", type=int, default=ITEM_BODY_MAX)
     ap.add_argument("--max-file-bytes", type=int, default=2_000_000)
     ap.add_argument("--batch-items", type=int, default=BATCH_ITEMS_MAX)
@@ -721,11 +741,17 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     a = parse_args(argv)
     root = a.root.resolve()
-    report: dict[str, Any] = {"root_name": root.name, "project": a.project, "errors": []}
+    report: dict[str, Any] = {
+        "root_name": root.name,
+        "project": a.project,
+        "git_rev": a.git_rev,
+        "errors": [],
+    }
 
     # 1. select + read + map
     sel = select_files(root, a.include or DEFAULT_INCLUDE, DEFAULT_EXCLUDE + a.exclude, a.max_file_bytes)
-    dates, origin = file_dates(root, sel.files)
+    git_root = (a.git_dir or root).resolve()
+    dates, origin = file_dates(root, sel.files, git_root, a.git_rev)
     items: list[Item] = []
     for rel in sel.files:
         text, why = read_text(root / rel)
@@ -747,8 +773,8 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             items.extend(file_items(rel, text, label, label, mtime_iso(p), a.max_item_chars))
             origin[rel] = "mtime(untracked)"
-    if a.git_log and is_git_repo(root):
-        for it in git_day_items(root, a.max_item_chars):
+    if a.git_log and is_git_repo(git_root):
+        for it in git_day_items(git_root, a.max_item_chars, a.git_rev):
             why = secret_hit(it.body)
             if why:
                 sel.exclude(f"secret-pattern:{why}", it.path)
