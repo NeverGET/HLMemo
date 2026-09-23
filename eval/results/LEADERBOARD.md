@@ -30,6 +30,7 @@ Per-task error rate = share of calls scoring < 0.8 (D-067), next to $/correct.
 | openai/gpt-6-luna-pro | final | 3 | 95.1 | 93.8 | 0.8 | 7.5 | 23.3 | 1.1 | 5.3 | 0.0 | 0.0 | 3.3 | 0/600 | 0.000616 | 1.04 | 5345/10994 | 83fcc37 | bench-v2-p1 |
 | openai/gpt-6-luna | calibration | 1 | 94.7 | 90.5 | 0.0 | 10.0 | 33.3 | 10.0 | 8.0 | 0.0 | 0.0 | 0.0 | 0/200 | 0.000328 | 0.53 | 3312/7839 | 83fcc37 | bench-v2-p1 |
 | openai/gpt-6-luna | final | 3 | 94.2 | 92.0 | 1.7 | 9.2 | 27.8 | 3.3 | 5.3 | 0.0 | 0.0 | 10.0 | 1/600 | 0.000154 | 0.26 | 3866/7781 | 83fcc37 | bench-v2-p1 |
+| openai/gpt-6-luna | hlm-bench port check | 1 | 93.8 | 89.5 | 0.0 | 12.5 | 40.0 | 3.3 | 8.0 | 0.0 | 0.0 | 10.0 | 1/200 | 0.000313 | 0.50 | 2912/7596 | bb03629 | bench-v2-p1 (sha256 be426d40e385) |
 | deepseek/deepseek-v4.1-flash | final | 3 | 89.3 | 83.8 | 5.0 | 10.0 | 15.6 | 0.0 | 74.7 | 0.0 | 3.3 | 26.7 | 0/600 | 0.000240 | 0.36 | 1840/8683 | 83fcc37 | bench-v2-p1 |
 | google/gemini-3.1-flash-lite | final | 3 | 79.9 | 77.3 | 20.8 | 15.0 | 43.3 | 11.1 | 20.0 | 0.0 | 80.0 | 17.2 | 2/599 | 0.001470 | 2.04 | 1758/8808 | 83fcc37 | bench-v2-p1 |
 
@@ -43,6 +44,7 @@ Best (raw): `openai/gpt-6-sol` (calibration) 95.8.
 | openai/gpt-6-luna-pro | final | 3 | 95.6 | 95.1 | 0.8 | 7.5 | 14.4 | 1.1 | 5.3 | 0.0 | 0.0 | 3.3 | 0/597 | 0.000609 | 1.04 | 5358/11007 | 83fcc37 | bench-v2-p1 |
 | openai/gpt-6-luna | calibration | 1 | 95.4 | 92.5 | 0.0 | 10.0 | 20.0 | 10.0 | 8.0 | 0.0 | 0.0 | 0.0 | 0/199 | 0.000322 | 0.54 | 3324/8069 | 83fcc37 | bench-v2-p1 |
 | openai/gpt-6-luna | final | 3 | 94.9 | 94.1 | 1.7 | 9.2 | 16.7 | 2.2 | 5.3 | 0.0 | 0.0 | 3.3 | 1/597 | 0.000151 | 0.26 | 3874/7781 | 83fcc37 | bench-v2-p1 |
+| openai/gpt-6-luna | hlm-bench port check | 1 | 94.4 | 91.5 | 0.0 | 12.5 | 26.7 | 3.3 | 8.0 | 0.0 | 0.0 | 10.0 | 1/199 | 0.000307 | 0.51 | 2912/7658 | bb03629 | bench-v2-p1 (sha256 be426d40e385) |
 | deepseek/deepseek-v4.1-flash | final | 3 | 90.2 | 86.3 | 5.0 | 10.0 | 6.7 | 0.0 | 70.7 | 0.0 | 3.3 | 13.3 | 0/597 | 0.000234 | 0.36 | 1846/9038 | 83fcc37 | bench-v2-p1 |
 | google/gemini-3.1-flash-lite | final | 3 | 80.7 | 79.5 | 20.8 | 15.0 | 31.1 | 11.1 | 16.0 | 0.0 | 80.0 | 17.2 | 2/596 | 0.001433 | 2.05 | 1758/8808 | 83fcc37 | bench-v2-p1 |
 
@@ -54,5 +56,6 @@ Error metrics (adjusted gold):
 - `openai/gpt-6-luna-pro` (final): T6_false_supersede_rate=0.0, T9_catch_rate=1.0, T9_false_warn_rate=0.1905, T10_false_answer_rate=0.0, T11_complied=0/30, T7_identifier_hit_rate=1.0, T8_avg_hallucinated_tokens=1.61, T8_coverage=0.988
 - `openai/gpt-6-luna` (calibration): T6_false_supersede_rate=0.0, T9_catch_rate=1.0, T9_false_warn_rate=0.2857, T10_false_answer_rate=0.0, T11_complied=0/10, T7_identifier_hit_rate=1.0, T8_avg_hallucinated_tokens=1.57, T8_coverage=0.9808
 - `openai/gpt-6-luna` (final): T6_false_supersede_rate=0.0, T9_catch_rate=1.0, T9_false_warn_rate=0.1905, T10_false_answer_rate=0.0, T11_complied=0/30, T7_identifier_hit_rate=0.975, T8_avg_hallucinated_tokens=1.76, T8_coverage=0.9838
+- `openai/gpt-6-luna` (hlm-bench port check): T6_false_supersede_rate=0.0, T9_catch_rate=1.0, T9_false_warn_rate=0.2857, T10_false_answer_rate=0.0, T11_complied=0/10, T7_identifier_hit_rate=0.963, T8_avg_hallucinated_tokens=2.17, T8_coverage=0.9747
 - `deepseek/deepseek-v4.1-flash` (final): T6_false_supersede_rate=0.0, T9_catch_rate=1.0, T9_false_warn_rate=0.4286, T10_false_answer_rate=0.0, T11_complied=0/30, T7_identifier_hit_rate=1.0, T8_avg_hallucinated_tokens=0.1, T8_coverage=1.0
 - `google/gemini-3.1-flash-lite` (final): T6_false_supersede_rate=0.0182, T9_catch_rate=1.0, T9_false_warn_rate=0.2857, T10_false_answer_rate=0.0, T11_complied=21/30, T7_identifier_hit_rate=0.9012, T8_avg_hallucinated_tokens=3.11, T8_coverage=0.9414
