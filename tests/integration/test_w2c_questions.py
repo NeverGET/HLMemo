@@ -1,0 +1,352 @@
+"""W2c gates: questions + ``memory.answer`` (PHASE2-4-ROADMAP W2c, CC-3).
+
+G-Q1 lifecycle + replay: accept / reject / custom (re-plan) / expiry, idempotent answers, every
+answer stored as a ``librarian-rule`` fact, the ``librarian`` block of ``memory.query``.
+G-Q2 authorization matrix: write on only one of two subject projects → ``E_FORBIDDEN_PROJECT``;
+an unreadable subject → ``E_NOT_FOUND``; accepting never widens grants.
+G-Q3: a stale subject → ``superseded`` and no mutation.
+"""
+
+# ruff: noqa: F811 - pytest fixtures are imported into the module and requested by parameter name
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+
+from hlmemo.auth.context import AuthContext, Role
+from hlmemo.core.errors import ToolError
+from hlmemo.core.read_service import query
+from hlmemo.db.replay import rebuild_projections
+from hlmemo.librarian.questions import answer, expire_due
+from tests.integration._librarian_fixtures import (
+    ScriptedLLM,
+    lib_settings,
+    make_provider,
+    make_worker,
+    seed_reserved,
+)
+from tests.integration._read_fixtures import embedder, read_deps  # noqa: F401 - fixtures by import
+from tests.integration._w2b_fixtures import Oracle, dump_w2b, embed, write_items
+from tests.integration._write_fixtures import MAIN, OTHER, World, count, item, seed_world
+
+pytestmark = pytest.mark.integration
+
+D_OLD = datetime(2026, 1, 1, tzinfo=UTC).isoformat()
+D_NEW = datetime(2026, 6, 1, tzinfo=UTC).isoformat()
+OLD = ("Deploy host", "Production runs on the Hetzner CX33 host in Falkenstein.")
+NEW = ("Deploy host moved", "Production moved to the Hostinger KVM 2 host; the Hetzner host is gone.")
+CONTRA = {(NEW[0], OLD[0]): ("contradicts", "new", "high")}
+
+
+@pytest.fixture
+async def world(connect) -> World:  # noqa: ANN001
+    async with await connect() as conn:
+        w = await seed_world(conn)
+        await seed_reserved(conn)
+        return w
+
+
+async def _device(connect, world: World, name: str, grants: dict[int, str]) -> AuthContext:  # noqa: ANN001
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "INSERT INTO devices (name, class, fingerprint, token_sha256, status, approved_at,"
+            " approved_by_device_id) VALUES (%s, 'personal', %s, %s, 'trusted', now(), 1)"
+            " RETURNING device_id",
+            (name, f"fp-{name}", f"h-{name}"),
+        )
+        (did,) = await cur.fetchone()
+        for pid, role in grants.items():
+            await conn.execute(
+                "INSERT INTO device_project_grants (device_id, project_id, role, granted_by_device_id)"
+                " VALUES (%s, %s, %s, 1)",
+                (did, pid, role),
+            )
+        await conn.commit()
+    return AuthContext(
+        device_id=did,
+        device_class="personal",
+        is_admin=False,
+        token_generation=1,
+        grants={pid: Role(role) for pid, role in grants.items()},
+        client="pytest/0",
+    )
+
+
+async def _propose(db_dsn, connect, world: World, embedder, *, other_old: bool = False, oracle=None):  # noqa: ANN001, ANN202
+    """OLD then NEW (MAIN; OLD in OTHER when ``other_old``), embedded, reviewed as observer."""
+    old_project = OTHER if other_old else MAIN
+    kind = "fact"
+    (old,) = await write_items(
+        connect, world.ctx_a, old_project, [{**item(*OLD, valid_from=D_OLD), "kind": kind}]
+    )
+    (new,) = await write_items(connect, world.ctx_a, MAIN, [{**item(*NEW, valid_from=D_NEW), "kind": kind}])
+    await embed(connect, embedder)
+    llm = ScriptedLLM(default=oracle or Oracle(relations=CONTRA))
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    await make_worker(lib_settings(db_dsn, librarian_role="observer"), provider, connect).drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT question_id::text, kind FROM librarian_questions WHERE status = 'open'"
+            " ORDER BY created_at"
+        )
+        rows = await cur.fetchall()
+    return old, new, rows
+
+
+def _args(qid: str, decision: str, **kw: Any) -> dict[str, Any]:
+    return {"project": MAIN, "request_id": str(uuid.uuid4()), "question_id": qid, "decision": decision, **kw}
+
+
+async def _answer(connect, ctx: AuthContext, args: dict[str, Any]) -> dict[str, Any]:  # noqa: ANN001
+    async with await connect() as conn:
+        res = await answer(conn, ctx, args, raw=args)
+        await conn.commit()
+    return res
+
+
+async def _err(connect, ctx: AuthContext, args: dict[str, Any]) -> ToolError:  # noqa: ANN001
+    async with await connect() as conn:
+        with pytest.raises(ToolError) as ei:
+            await answer(conn, ctx, args, raw=args)
+        await conn.rollback()
+    return ei.value
+
+
+async def _replay_identical(connect) -> None:  # noqa: ANN001
+    async with await connect() as conn:
+        before = await dump_w2b(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        after = await dump_w2b(conn)
+        for table in before:
+            assert sorted(set(before[table]) ^ set(after[table])) == [], table
+        assert after == before
+
+
+# --------------------------------------------------------------------------- G-Q1
+async def test_gq1_accept_applies_and_replays(db_dsn, connect, world: World, embedder, read_deps) -> None:  # noqa: ANN001
+    old, new, [(qid, kind)] = await _propose(db_dsn, connect, world, embedder)
+    assert kind == "contradiction"
+    async with await connect() as conn:  # the query shows the pending question (query/2)
+        res = await query(
+            conn,
+            world.ctx_a,
+            {"project": MAIN, "query": "production host", "token_budget": 2000},
+            deps=read_deps,
+        )
+        await conn.commit()
+    block = res["librarian"]
+    assert block["pending_questions"] == 1 and block["notices"][0]["question_id"] == qid
+    n, o = f"v{new.version_id}", f"v{old.version_id}"
+    assert block["notices"][0]["text"] == f"contradiction: {n} vs {o}; proposed: {n} supersedes {o}"
+    args = _args(qid, "accept", note="Yes, we moved in September.")
+    ack = await _answer(connect, world.ctx_a, args)
+    assert ack["status"] == "applied" and ack["applied"]["links"] == 2 and len(ack["applied"]["closed"]) == 1
+    assert ack["rule"] is not None and ack["replayed"] is False and ack["budget"]["used"] <= 2000
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status, answer->>'decision', decided_by FROM librarian_questions")
+        assert await cur.fetchall() == [("applied", "accept", world.dev_a)]
+        cur = await conn.execute("SELECT rel FROM links ORDER BY link_id")
+        assert [r[0] for r in await cur.fetchall()] == ["contradicts", "supersedes"]
+        cur = await conn.execute(
+            "SELECT body FROM memory_versions mv JOIN projects p ON p.project_id = mv.project_id"
+            " WHERE p.slug = 'hlm-librarian' AND 'librarian-rule' = ANY(mv.tags)"
+        )
+        (rule,) = await cur.fetchone()
+        assert rule.startswith("Owner accepted a contradiction proposal (contradicts, supersedes new)")
+        assert (
+            "Note: Yes, we moved in September." in rule
+            and f"Refs: v{new.version_id}, v{old.version_id}" in rule
+        )
+        res = await query(
+            conn,
+            world.ctx_a,
+            {"project": MAIN, "query": "production host", "token_budget": 2000},
+            deps=read_deps,
+        )
+        await conn.commit()
+    assert "librarian" not in res  # nothing pending any more
+    again = await _answer(connect, world.ctx_a, args)  # idempotent: the stored ack
+    assert again == {**ack, "replayed": True, "budget": again["budget"]}
+    assert (await _err(connect, world.ctx_a, {**args, "decision": "reject"})).code == "E_REQUEST_ID_CONFLICT"
+    err = await _err(connect, world.ctx_a, _args(qid, "reject"))
+    assert err.code == "E_VERSION_CONFLICT" and err.details["status"] == "applied"
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_gq1_reject_and_custom_replan(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    extra = ("Deploy region", "Production traffic is served from the Vilnius region only.")
+    await write_items(connect, world.ctx_a, MAIN, [item(*extra, valid_from=D_OLD)])
+    oracle = Oracle(relations={**CONTRA, (NEW[0], extra[0]): ("refines", "none", "med")})
+    old, new, rows = await _propose(db_dsn, connect, world, embedder, oracle=oracle)
+    by_kind = {k: q for q, k in rows}
+    assert set(by_kind) == {"contradiction", "link"}
+    ack = await _answer(connect, world.ctx_a, _args(by_kind["link"], "reject"))
+    assert ack["status"] == "rejected" and ack["applied"] == {"links": 0, "closed": [], "widened": []}
+    ack = await _answer(
+        connect, world.ctx_a, _args(by_kind["contradiction"], "custom", note="Both hosts exist.")
+    )
+    assert ack["status"] == "answered"
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT dedupe_key, priority, payload->>'replan_of' FROM jobs"
+            " WHERE dedupe_key LIKE 'librarian_replan:%'"
+        )
+        assert await cur.fetchall() == [
+            (f"librarian_replan:{by_kind['contradiction']}", 4, by_kind["contradiction"])
+        ]
+        assert await count(conn, "links") == 0
+    # the re-plan job runs the review again; its working memory holds the owner's rule
+    llm = ScriptedLLM(default=Oracle())
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()
+    await provider.aclose()
+    replan = [r for r in llm.requests if "Both hosts exist." in r["messages"][1]["content"]]
+    assert replan, "the answer rule is in the re-plan's working memory"
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_gq1_expiry_is_recorded_and_replayed(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        # an event-made question whose 30 days have passed (the recorded expires_at is moved back
+        # in BOTH the projection and its source event, so replay rebuilds the same row)
+        await conn.execute(
+            "UPDATE librarian_questions SET expires_at = now() - interval '1 second' WHERE question_id = %s",
+            (qid,),
+        )
+        await conn.execute(
+            """
+            UPDATE events SET payload = jsonb_set(payload, '{resolved,questions,0,expires_at}',
+                   to_jsonb(to_char((now() - interval '1 second') AT TIME ZONE 'UTC',
+                                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+             WHERE kind = 'librarian' AND payload->'resolved'->'questions'->0->>'question_id' = %s
+            """,
+            (qid,),
+        )
+        await conn.commit()
+    err = await _err(connect, world.ctx_a, _args(qid, "accept"))  # past 30 days: not answerable
+    assert err.code == "E_VERSION_CONFLICT" and err.details["status"] == "expired"
+    async with await connect() as conn:
+        async with conn.transaction():
+            assert await expire_due(conn) == 1
+        await conn.commit()
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("expired",)]
+        cur = await conn.execute(
+            "SELECT count(*) FROM events WHERE kind = 'librarian' AND payload->'request'->>'op' = 'expire'"
+        )
+        assert await cur.fetchone() == (1,)
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+# --------------------------------------------------------------------------- G-Q2
+async def test_gq2_authorization_matrix(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """A cross-project question (subject in MAIN, candidate in OTHER)."""
+    old, new, [(qid, kind)] = await _propose(db_dsn, connect, world, embedder, other_old=True)
+    assert kind == "contradiction"
+    write_main_read_other = await _device(
+        connect, world, "dev-c", {world.main_id: "write", world.other_id: "read"}
+    )
+    write_main_only = await _device(connect, world, "dev-d", {world.main_id: "write"})
+    read_main = await _device(connect, world, "dev-e", {world.main_id: "read", world.other_id: "write"})
+    # write on only one of the two subject projects -> E_FORBIDDEN_PROJECT
+    assert (await _err(connect, write_main_read_other, _args(qid, "accept"))).code == "E_FORBIDDEN_PROJECT"
+    # an unreadable subject (OTHER, no grant) -> E_NOT_FOUND (indistinguishable from unknown)
+    assert (await _err(connect, write_main_only, _args(qid, "accept"))).code == "E_NOT_FOUND"
+    assert (await _err(connect, write_main_only, _args(str(uuid.uuid4()), "accept"))).code == "E_NOT_FOUND"
+    # no write on the question's project -> E_FORBIDDEN_PROJECT; dev-b has no MAIN grant at all
+    assert (await _err(connect, read_main, _args(qid, "accept"))).code == "E_FORBIDDEN_PROJECT"
+    assert (await _err(connect, world.ctx_b, _args(qid, "accept"))).code == "E_FORBIDDEN_PROJECT"
+    async with await connect() as conn:
+        assert await count(conn, "links") == 0 and await count(conn, "events", "kind = 'answer'") == 0
+        cur = await conn.execute("SELECT count(*) FROM device_project_grants")
+        (grants_before,) = await cur.fetchone()
+    ack = await _answer(connect, world.ctx_a, _args(qid, "accept"))  # write on both: applies
+    assert ack["status"] == "applied"
+    async with await connect() as conn:  # accepting never widens grants
+        cur = await conn.execute("SELECT count(*) FROM device_project_grants")
+        assert await cur.fetchone() == (grants_before,)
+        cur = await conn.execute("SELECT DISTINCT unnest(project_ids) FROM links ORDER BY 1")
+        assert [r[0] for r in await cur.fetchall()] == [world.main_id]
+
+
+async def test_gq2_widen_scope_accept_needs_write_on_both(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    lesson_o = ("Heredoc over ssh", "Never pipe a heredoc into ssh with bash -s: stdin is swallowed.")
+    lesson_m = ("ssh stdin heredoc", "bash -s over ssh with a heredoc swallows stdin; do not do it.")
+    (o,) = await write_items(
+        connect, world.ctx_a, OTHER, [{**item(*lesson_o, valid_from=D_OLD), "kind": "lesson"}]
+    )
+    await write_items(connect, world.ctx_a, MAIN, [{**item(*lesson_m), "kind": "lesson"}])
+    await embed(connect, embedder)
+    llm = ScriptedLLM(default=Oracle(relations={(lesson_m[0], lesson_o[0]): ("refines", "none", "high")}))
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT question_id::text FROM librarian_questions WHERE kind = 'widen_scope'"
+        )
+        (qid,) = await cur.fetchone()
+    only_main = await _device(connect, world, "dev-f", {world.main_id: "write", world.other_id: "read"})
+    assert (await _err(connect, only_main, _args(qid, "accept"))).code == "E_FORBIDDEN_PROJECT"
+    ack = await _answer(connect, world.ctx_a, _args(qid, "accept"))
+    assert ack["status"] == "applied" and len(ack["applied"]["widened"]) == 1
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT project_id, project_ids, body FROM memory_versions WHERE logical_id = %s"
+            " AND superseded_at = 'infinity'",
+            (o.logical_id,),
+        )
+        ((home, pids, body),) = await cur.fetchall()
+        assert home == world.other_id and sorted(pids) == sorted([world.other_id, world.main_id])
+        assert body == lesson_o[1]  # the content is unchanged; only its visibility widened
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+# --------------------------------------------------------------------------- G-Q3
+async def test_gq3_stale_subject_is_superseded_without_mutation(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    old, new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:  # the candidate is revised after the proposal
+        from hlmemo.core.write_service import default_deps, write
+
+        await write(
+            conn,
+            world.ctx_a,
+            {
+                "project": MAIN,
+                "request_id": str(uuid.uuid4()),
+                "client": "pytest/0",
+                "items": [
+                    item(
+                        OLD[0],
+                        OLD[1] + " (verified)",
+                        logical_id=old.logical_id,
+                        expected_version_id=old.version_id,
+                    )
+                ],
+            },
+            deps=default_deps(),
+        )
+        await conn.commit()
+        user_rows = "project_id IN (%s, %s)"
+        before = await count(conn, "memory_versions", user_rows, (world.main_id, world.other_id))
+    ack = await _answer(connect, world.ctx_a, _args(qid, "accept"))
+    assert ack["status"] == "superseded" and ack["applied"] == {"links": 0, "closed": [], "widened": []}
+    async with await connect() as conn:
+        assert await count(conn, "links") == 0
+        assert await count(conn, "memory_versions", user_rows, (world.main_id, world.other_id)) == before
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("superseded",)]
+    await embed(connect, embedder)
+    await _replay_identical(connect)
