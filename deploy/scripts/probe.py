@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""HTTPS-only production probes. Compose JSON arrives on stdin; never print its secrets."""
+"""HTTPS-only production probes. Compose JSON arrives on stdin; never print its secrets.
+
+W0a (D-061): no admin token and no registration. The probe device is minted server-side with
+`python -m hlmemo.ops` inside this Compose project's api container (`docker exec`, stdin closed),
+used over public HTTPS, and revoked with `hlmemo.ops device revoke` afterwards. Tokens travel
+only through pipes, never argv, and are never printed.
+"""
 
 import argparse
 import json
 import os
 import ssl
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -43,9 +50,7 @@ class Probe:
         if internal and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
             self.context.check_hostname = False
             self.context.verify_mode = ssl.CERT_NONE
-        self.admin = self.settings.get("HLM_ADMIN_TOKEN")
-        if not self.admin:
-            raise ValueError("HLM_ADMIN_TOKEN must be set in the production env file")
+        self.project_name = config.get("name")
         self.protocol = "2025-03-26"
         self.sequence = 0
         self.session = None
@@ -109,36 +114,56 @@ class Probe:
         if {tool["name"] for tool in tools} != expected:
             raise ValueError("tools/list does not expose exactly the five expected memory tools")
 
+    def ops(self, *args):
+        """`python -m hlmemo.ops ARGS` in this project's api container -> (stdout, stderr metadata)."""
+        ids = subprocess.check_output(
+            [
+                "docker",
+                "ps",
+                "-q",
+                "--filter",
+                f"label=com.docker.compose.project={self.project_name}",
+                "--filter",
+                "label=com.docker.compose.service=api",
+            ],
+            text=True,
+            stdin=subprocess.DEVNULL,
+        ).split()
+        if len(ids) != 1:
+            raise ValueError("expected exactly one running api container for hlmemo.ops")
+        done = subprocess.run(
+            ["docker", "exec", ids[0], "python", "-m", "hlmemo.ops", *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if done.returncode != 0:
+            raise ValueError(f"hlmemo.ops {args[0]} {args[1] if len(args) > 1 else ''} failed")
+        return done.stdout, done.stderr
+
     def bootstrap(self):
         name = "deploy-" + uuid.uuid4().hex[:16]
         project = "deploy-smoke"
-        project_status = "created"
-        try:
-            self.request("/admin/projects", {"slug": project, "name": "Deployment verification"}, self.admin)
-        except urllib.error.HTTPError as exc:
-            exc.close()
-            # The current API maps unique violations to 400. Confirm the slug
-            # exists instead of swallowing an unrelated validation/auth failure.
-            if exc.code not in {400, 409}:
-                raise
-            projects = self.request("/admin/projects", token=self.admin)["projects"]
-            if not any(item["slug"] == project for item in projects):
-                raise
-            project_status = "reused"
-        registered = self.request(
-            "/devices/register",
-            {"name": name, "class": "ci", "fingerprint": str(uuid.uuid4()), "client": "deploy-probe/1"},
-            extra={"X-HLM-Registration-Secret": self.settings.get("HLM_REGISTRATION_SECRET", "")},
+        out, _ = self.ops("project", "create", project, "--name", "Deployment verification", "--exists-ok")
+        project_status = "created" if json.loads(out)["created"] else "reused"
+        out, meta = self.ops(
+            "device",
+            "mint",
+            "--name",
+            name,
+            "--class",
+            "ci",
+            "--grant",
+            f"{project}:write",
+            "--expires",
+            "30m",
         )
-        device_id = registered["device"]["id"]
-        token = registered["token"]
+        token = out.strip()
+        minted = next(json.loads(line) for line in meta.splitlines() if line.startswith('{"'))
+        device_id = minted["minted"]["id"]
         state = {"project": project, "project_status": project_status, "token": token, "device_id": device_id}
         try:
-            self.request(
-                "/devices/approve",
-                {"id": device_id, "class": "ci", "grants": [{"project": project, "role": "write"}]},
-                self.admin,
-            )
             self.initialize(token)
         except BaseException:
             self.revoke(state)
@@ -152,7 +177,7 @@ class Probe:
         return json.loads(result["content"][0]["text"])
 
     def revoke(self, state):
-        self.request("/devices/revoke", {"id": state["device_id"]}, self.admin)
+        self.ops("device", "revoke", str(state["device_id"]))
 
 
 def main():

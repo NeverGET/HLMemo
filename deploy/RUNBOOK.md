@@ -17,14 +17,17 @@ the deployment from outside. Secrets and logs stay in the gitignored `deploy/.lo
 ```sh
 bash deploy/scripts/first_deploy.sh --host SERVER_IP --domain FQDN --tls acme \
   [--host-fingerprint SHA256:...] [--admin-cidr YOUR_IP/32] [--dry-run]
-bash deploy/scripts/remote_gates.sh --url https://FQDN \
-  --admin-token-file deploy/.local/SERVER_IP/admin.token
+bash deploy/scripts/remote_gates.sh --url https://FQDN   # no admin token (D-061)
 ```
 
 The A record must already point at the host (ACME HTTP-01/TLS-ALPN on 80/443). Gates: `/health`
 + `/ready`, unknown path 404, certificate issuer, 5432 closed from outside, neutral probe with a
-marker round trip, the real `hlm` CLI in an isolated config directory, WAN `memory.query`
-latency, and a backup/restore drill over SSH (`--no-drill` on a deployment holding real data).
+marker round trip (probe device minted over SSH), RG-routes (the W0a public route table with
+anonymous, trusted, junk and admin-token-shaped bearers), the real `hlm` CLI in an isolated config
+directory (registration refused, `hlm_ops.sh` mint piped into `hlm device login --token-stdin`,
+`hlm device revoke --self`), WAN `memory.query` latency, and a backup/restore drill over SSH
+(`--no-drill` on a deployment holding real data). Gate devices are minted with short expiries and
+revoked at the end; no admin token exists or is read.
 `--g7` additionally registers the operator's claude/codex/agy CLIs (backs up their configs first).
 Rehearsal-only affordances (`--ssh-port`, `--public-port`, `--domain localhost --tls internal`,
 `--repo git://127.0.0.1/...`) are refused for non-loopback hosts.
@@ -88,12 +91,15 @@ Keep these private files together with mode 0600; each has exactly one example i
 |---|---|---|
 | `prod.env` | `.env.prod.example` | Compose interpolation (domain, images, local ports) |
 | `app.env` | `app.env.example` | API, worker and migration: database DSN/provider settings |
-| `api.env` | `api.env.example` | API only: admin token, registration and cursor secrets |
+| `api.env` | `api.env.example` | API only: cursor secret, trusted proxy CIDR (no admin token, D-061) |
 | `db.env` | `db.env.example` | DB only: PostgreSQL variables |
 | `backup.env` | `backup.env.example` | Host backup/upload only: S3 credentials and retention |
 
-Replace the four `CHANGE_ME_*` values with independent `openssl rand -hex 32` outputs;
-use the **same database password** in `db.env` and `app.env`'s DSN. Set a real domain and
+Replace the `CHANGE_ME_*` values (database password, cursor secret) with independent
+`openssl rand -hex 32` outputs; use the **same database password** in `db.env` and `app.env`'s DSN.
+`HLM_DEPLOYMENT=production`, `HLM_REGISTRATION_MODE=closed` and `HLM_ADMIN_HTTP=disabled` are
+pinned in `compose.prod.yaml` itself (D-061); the API refuses to start (`/ready` 503
+"unsafe config") if they are ever loosened in production. Set a real domain and
 `HLM_TLS_MODE=acme` in `prod.env`. Keep secrets out of `prod.env` and keep backup credentials out
 of every service file. Env files use Compose dotenv syntax, never shell `source`.
 Docker administrators can inspect container environments; Docker membership is privileged.
@@ -369,9 +375,14 @@ selects another repository URL; private repositories need read credentials insta
 the server. Do not embed credentials into the URL. Defaults: `/opt/hlmemo/app`, `/etc/hlmemo/prod.env`;
 override with `HLM_REMOTE_DIR` / `HLM_REMOTE_ENV`. The script fetches the requested ref, resolves an
 immutable commit, builds including model assets, takes a snapshot-consistent pre-upgrade dump while
-the DB and writers are live, then stops writers and runs `alembic upgrade phase0@head`, starts with
-`up -d --wait`, verifies API readiness and local Caddy routing, then checks public HTTPS readiness
-with certificate validation. The runner itself is extracted on the server with `git show` from
+the DB and writers are live, runs the idempotent `migrate_env_w0` step (removes the retired
+`HLM_ADMIN_TOKEN` / `HLM_REGISTRATION_SECRET` from `prod.env`, `app.env` and `api.env` after a
+0600 `<file>.pre-w0-<stamp>` backup; only key names are logged; a failed deployment restores the
+backups), then stops writers and runs `alembic upgrade main@head`, starts with
+`up -d --wait`, verifies API readiness, local Caddy routing and the W0a route table on the API's
+loopback listener (`check_edge.py --routes --mint-ops`; failure restores the previous stack), then
+checks public HTTPS readiness with certificate validation and the public route table through Caddy
+(failure leaves the internally healthy stack running, like the readiness probe). The runner itself is extracted on the server with `git show` from
 that same fetched commit. A ref without `deploy/scripts/remote-deploy.sh`, or without the exact supported
 `HLM_RUNNER_PROTOCOL=3` marker, is rejected before checkout, build, backup or restore. Older and
 unknown protocols are refused; the bootstrap retains its deployment lock across runner handoff. A first uncached model build can take several minutes.
@@ -418,87 +429,51 @@ Keep run directories private (0700). Secret-bearing rollback Compose files are r
 on script exit; an SSH disconnect cannot interrupt this cleanup. A host power loss or SIGKILL
 cannot execute shell traps: inspect/remove stale `.rollback-compose.*` files during host recovery.
 
-At every API startup, `HLM_ADMIN_TOKEN` binds reserved device 1; there is no separate SQL bootstrap.
-Use the **same** token on your workstation, loaded from a secret manager into `HLM_ADMIN_TOKEN`.
-Load `HLM_REGISTRATION_SECRET` similarly for registration. Never use admin token for everyday clients.
+### Adding a device (operator + owner over SSH)
+
+Production has no public registration and no admin HTTP routes (D-052, D-061): `POST
+/devices/register`, `/devices/approve`, `/devices/grant`, `/devices/list` and every `/admin/*`
+route answer 404 before a body byte is read, and device 1 is never bound. Every admin action is
+`python -m hlmemo.ops` inside the api container, reached over SSH with
+`deploy/scripts/hlm_ops.sh` (SSH config and host from `deploy/.local/<host>/`, arguments quoted
+with `printf %q`, `ssh -n`). The token of a minted device travels only on stdout, straight into
+`hlm device login --token-stdin`, which checks `/health` reports it `trusted` and stores it in the
+keychain (else a 0600 credentials file). It never appears in argv, shell history or logs.
 
 ```sh
 uv sync --frozen
 export HLM_SERVER_URL=https://memory.example.org/mcp  # replace domain
+OPS="bash deploy/scripts/hlm_ops.sh --state deploy/.local/SERVER_IP"
+$OPS project create my-project --name 'My project' --exists-ok
 uv run hlm init --server "$HLM_SERVER_URL" --project my-project --device-name my-mac
-uv run hlm --admin project create my-project --name 'My project'
-uv run hlm device register --name my-mac --class personal
-uv run hlm --admin device approve my-mac --class personal --grant my-project:write
+$OPS device mint --name my-mac --class personal --grant my-project:write \
+  | uv run hlm device login --name my-mac --token-stdin
 uv run hlm device whoami
 uv run hlm mcp add claude
 uv run hlm mcp add codex
 uv run hlm mcp add agy
 uv run hlm query 'project context'
 uv run hlm claude
-uv run hlm codex --task 'inspect the project'
-uv run hlm agy --headless --task 'summarise decisions'
-unset HLM_ADMIN_TOKEN HLM_REGISTRATION_SECRET
 ```
 
-`--wait` can be used on registration if approval happens in another terminal. The device token is
-stored in the OS keychain, falling back to a 0600 credentials file; never put it in `hlm.toml`.
+The owner can also paste a token: `uv run hlm device login --name my-mac` prompts without echo
+(`getpass`). For a CI runner: `--class ci --grant slug:write --expires 30m`. Other operator
+commands: `device list [--json]`, `device grant REF SLUG ROLE`, `device ungrant REF SLUG`,
+`device rotate REF [--expires D | --no-expiry]` (prints the new token; pipe it into
+`hlm device login` and re-run `hlm mcp add`), `device revoke REF` (the lost-laptop case, run from
+any machine with the SSH key), `project list`, `status [--json]` (jobs ledger, worker progress,
+devices by status, migration). A device revokes itself with `uv run hlm device revoke --self`
+(the only public revoke: another device's id answers 404). `devices.expires_at` is enforced like a
+revocation at the pre-body gate and in the request transaction; renewal is `device rotate --expires`.
+`hlm device register` against production prints this procedure as a hint.
 Codex's MCP entry stores the env-var name, so launch with `hlm codex` to inject `HLM_DEVICE_TOKEN`.
 Claude and agy adapters store the bearer in their user configurations; protect those files.
 See [the exact supported CLI commands](../docs/USAGE.md). `hlm doctor` also checks local DB/model
 settings and may report those local checks absent on a remote-only workstation; `/ready` is the
-server's authoritative DB/model readiness check. Use per-project grants and revoke lost devices.
-Rotating admin token needs editing `api.env` and recreating API; device tokens are rotated by
-revoke/register/approve and re-running `hlm mcp add`.
+server's authoritative DB/model readiness check.
 
-## Backups and restore
-
-On the server:
-
-```sh
-cd /opt/hlmemo/app
-export HLM_ENV_FILE=/etc/hlmemo/prod.env
-bash deploy/backup/backup.sh
-sudo install -m 0644 deploy/backup/hlmemo-backup.service deploy/backup/hlmemo-backup.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now hlmemo-backup.timer
-sudo systemctl start hlmemo-backup.service
-systemctl list-timers hlmemo-backup.timer
-journalctl -u hlmemo-backup.service --since today
-```
-
-The timer runs daily; backup uses `pg_dump --format=custom`, validates its table of contents and
-atomically publishes it. Daily names include a random suffix, so same-second runs have different
-filenames and remote object keys. Local retention keeps the latest snapshot on each of 7 distinct UTC days
-and the latest snapshot in each of 4 distinct ISO weeks. Missed days cannot be reconstructed.
-For S3-compatible upload install the AWS CLI, set `S3_BUCKET`, `S3_PREFIX`, `S3_ENDPOINT_URL` and
-AWS credential/region fields only in `backup.env`. Use least-privilege bucket access and server-side
-encryption/versioning. Upload failure exits nonzero while retaining the local dump; monitor the
-service. Deploy-time uploads warn without failing deployment; the local pre-upgrade dump survives.
-Configure bucket lifecycle independently: local retention does not delete remote objects.
-
-```sh
-# Restore ONLY trusted dumps, during an announced maintenance window:
-bash deploy/backup/restore.sh /var/backups/hlmemo/daily/SELECTED.dump --yes
-curl --fail https://YOUR_DOMAIN/ready
-bash deploy/scripts/smoke_mcp.sh
-```
-
-Restore validates the dump before stopping Caddy/API/worker, saves and validates a safety dump,
-recreates the configured database and restores in one transaction, then runs the selected checkout's
-migration before starting API/worker/Caddy. Older dumps are therefore upgraded to that code's schema.
-Migration must succeed before writers restart. All writers stay stopped on
-failure; use the reported safety dump to recover. Safety dumps are not auto-pruned: remove them
-only after confirming recovery. Do not restore a dump with untrusted SQL. Backup and restore share
-an fd-based `flock` lock (`.operation.flock`), released automatically on process exit or reboot.
-A leftover lock file is harmless; never unlink it during an operation. Legacy `.operation.lock`
-directories are ignored. Preserve a copy off-host; server loss destroys local volumes and dumps.
-Caddy certificate/account volumes and the private env files are separate from database backups;
-back them up encrypted (or reissue certificates with attention to CA rate limits).
-
-The destructive `drill_backup_restore.sh` additionally requires a `bake-*` project, local Unix Docker
-socket, loopback HTTPS and `HLM_ALLOW_DESTRUCTIVE_DRILL=1`. It writes a unique payload through MCP,
-backs up, drops/recreates the database, proves zero public tables, restores and reads the identical
-payload through MCP with the restored device bearer. It is intended for disposable local stacks.
+Local development (`compose.yaml`) keeps the Phase-0 flow (`HLM_REGISTRATION_MODE=open`,
+`HLM_ADMIN_HTTP=enabled`, `HLM_ADMIN_TOKEN` from `.hlm-dev.env`): see docs/USAGE.md.
 
 ## Upgrade and rollback
 
@@ -517,6 +492,36 @@ and configuration together, build a new immutable image, migrate and validate in
 before publishing its image/ref. On failure restore the previous checkout/model and dump together.
 Treat PostgreSQL major-version or volume-layout changes as a separate migration. This manual
 procedure needs a release-specific plan; `deploy.sh` does not automate it.
+
+#### Release-specific plan: W0a access hardening (D-061)
+
+W0a changes `compose.prod.yaml` (access environment, `alembic upgrade main@head`), so
+`deploy.sh` refuses it by design. On the server, in a maintenance window (`R` = the W0a commit,
+`P` = `cat /opt/hlmemo/current-ref`):
+
+```sh
+cd /opt/hlmemo/app && export HLM_ENV_FILE=/etc/hlmemo/prod.env
+dump=$(bash deploy/backup/backup.sh --pre-upgrade "$(cat /opt/hlmemo/current-ref)")   # keep it
+docker image inspect "hlmemo:$(cat /opt/hlmemo/current-ref)" >/dev/null              # rollback image
+(umask 077; bash deploy/scripts/stack.sh config > /opt/hlmemo/.rollback-model-P.yaml)
+for f in /etc/hlmemo/{prod,app,api}.env; do cp -p "$f" "$f.pre-w0-manual"; done
+bash deploy/scripts/stack.sh stop caddy api worker
+git fetch origin R && git checkout --detach R
+for f in /etc/hlmemo/{prod,app,api}.env; do sed -i -E '/^[[:space:]]*(export[[:space:]]+)?HLM_(ADMIN_TOKEN|REGISTRATION_SECRET)[[:space:]]*=/d' "$f"; done
+export HLM_IMAGE=hlmemo:R HLM_IMAGE_REVISION=R
+bash deploy/scripts/stack.sh build api worker migrate
+bash deploy/scripts/stack.sh run --rm --no-deps migrate                    # main@head (0005)
+bash deploy/scripts/stack.sh up -d --no-deps --wait --wait-timeout 300 db api worker caddy
+bash deploy/scripts/stack.sh exec -T api python - --routes --base http://127.0.0.1:8765 --mint-ops < deploy/scripts/check_edge.py
+python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "hlmemo:R"
+printf '%s\n' R > /opt/hlmemo/current-ref
+```
+
+Then, from the workstation: `bash deploy/scripts/remote_gates.sh --url https://FQDN --no-drill`
+(RG-routes must pass) and mint the owner's device ("Adding a device"). Rollback: stop writers,
+restore the `*.pre-w0-manual` env files, `git checkout --detach P`, `release_env.py` back to
+`hlmemo:P`, `restore.sh "$dump" --yes`, start. Delete the `*.pre-w0-*` backups (they hold the
+retired secrets) once the release is accepted.
 
 ### Application releases
 

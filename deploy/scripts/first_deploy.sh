@@ -101,9 +101,11 @@ state=${HLM_LOCAL_STATE_DIR:-$REPO_ROOT/deploy/.local}/$state_name
 secrets=$state/secrets
 
 # ---------------------------------------------------------------- local secrets
-# RUNBOOK procedure: four independent `openssl rand -hex 32` values, the DB password shared by
-# db.env and app.env's DSN. Existing files are never regenerated (a new DB password would
-# lock out the existing volume). Values only ever pass through bash variables and printf.
+# RUNBOOK procedure: two independent `openssl rand -hex 32` values (DB password shared by db.env
+# and app.env's DSN; cursor secret). W0a (D-061): no admin token and no registration secret any
+# more; devices are minted over SSH (deploy/scripts/hlm_ops.sh). Existing files are never
+# regenerated (a new DB password would lock out the existing volume). Values only ever pass
+# through bash variables and printf.
 template() { # template NAME -> content of deploy/NAME at the deployed SHA (or working tree)
   if [[ -n ${sha:-} ]] && git -C "$REPO_ROOT" cat-file -e "$sha:deploy/$1" 2>/dev/null; then
     git -C "$REPO_ROOT" show "$sha:deploy/$1"
@@ -131,36 +133,44 @@ generate_secrets() {
   umask 077
   mkdir -p "$secrets"
   chmod 0700 "$state" "$secrets"
-  local db admin registration cursor content
+  local db cursor content legacy
   if [[ ! -f $secrets/db.env || ! -f $secrets/app.env || ! -f $secrets/api.env ]]; then
     if [[ -e $secrets/db.env || -e $secrets/app.env || -e $secrets/api.env ]]; then
       die "partial secret set in $secrets; restore the missing file or move the directory aside"
     fi
-    db=$(openssl rand -hex 32); admin=$(openssl rand -hex 32)
-    registration=$(openssl rand -hex 32); cursor=$(openssl rand -hex 32)
+    db=$(openssl rand -hex 32); cursor=$(openssl rand -hex 32)
     content=$(template db.env.example); write_private "$secrets/db.env" "${content//CHANGE_ME_DATABASE/$db}"
     content=$(template app.env.example); write_private "$secrets/app.env" "${content//CHANGE_ME_DATABASE/$db}"
     content=$(template api.env.example)
-    content=${content//CHANGE_ME_ADMIN/$admin}
-    content=${content//CHANGE_ME_REGISTRATION/$registration}
     write_private "$secrets/api.env" "${content//CHANGE_ME_CURSOR/$cursor}"
-    write_private "$state/admin.token" "$admin"
-    write_private "$state/registration.secret" "$registration"
-    unset db admin registration cursor
+    unset db cursor
     echo "generated new secrets in $secrets (values not shown)"
   else
     echo "reusing existing secrets in $secrets"
+    # W0a (D-061): drop the retired keys from a pre-W0 local copy, like remote-deploy.sh's
+    # migrate_env_w0 does on the host; keep the old token files aside, never delete them.
+    content=$(<"$secrets/api.env")
+    legacy=$(grep -Ev '^[[:space:]]*(export[[:space:]]+)?HLM_(ADMIN_TOKEN|REGISTRATION_SECRET)[[:space:]]*=' <<< "$content" || true)
+    if [[ $legacy != "$content" ]]; then
+      write_private "$secrets/api.env" "$legacy"
+      echo "removed retired HLM_ADMIN_TOKEN/HLM_REGISTRATION_SECRET from $secrets/api.env (D-061)"
+    fi
+    for legacy in admin.token registration.secret; do
+      if [[ -f $state/$legacy ]]; then
+        mv -f "$state/$legacy" "$state/$legacy.retired-w0"
+        echo "retired $state/$legacy -> $legacy.retired-w0 (no longer used; delete after the W0a cutover)"
+      fi
+    done
   fi
   grep -q CHANGE_ME "$secrets"/{db,app,api}.env && die "unreplaced CHANGE_ME placeholder in $secrets"
   [[ -f $secrets/backup.env ]] || write_private "$secrets/backup.env" "$(template backup.env.example)"
-  [[ -f $state/admin.token && -f $state/registration.secret ]] || die "missing $state/admin.token or registration.secret"
   content=$(template .env.prod.example)
   [[ ! -f $secrets/prod.env ]] || content=$(<"$secrets/prod.env")
   content=$(set_key "$content" HLM_DOMAIN "$domain")
   content=$(set_key "$content" HLM_TLS_MODE "$tls")
   [[ -z $acme_email ]] || content=$(set_key "$content" HLM_ACME_EMAIL "$acme_email")
   write_private "$secrets/prod.env" "$content"
-  chmod 0600 "$secrets"/*.env "$state/admin.token" "$state/registration.secret"
+  chmod 0600 "$secrets"/*.env
 }
 
 # ---------------------------------------------------------------- git: deploy only pushed code
@@ -198,14 +208,14 @@ DRY RUN (no SSH, nothing written)
   host=$host ssh_port=$ssh_port deploy_user=$deploy_user tls=$tls
   domain=$domain url=$url
   release=$sha repository=$repo
-  state=$state (0700; secrets/ + admin.token + registration.secret, mode 0600)
+  state=$state (0700; secrets/, mode 0600; no admin token: devices are minted over SSH)
 PLAN:
   1. pin the SSH host key in $state/known_hosts (${host_fp:-trust-on-first-use, fingerprint printed})
   2. preflight: Ubuntu 24.04 (noble) or 26.04 (resolute), >= 7 GiB RAM, >= 2 vCPU (abort otherwise)
   3. bootstrap.sh@$sha as root (prepare), then --finalize-ssh as $deploy_user; re-runs use sudo
   4. generate secrets locally (RUNBOOK procedure), upload to /etc/hlmemo ($deploy_user, 0600)
   5. deploy.sh $deploy_user@host $sha $repo
-  6. print URL, admin token path and next steps
+  6. print URL and next steps (mint your first device with deploy/scripts/hlm_ops.sh)
 EOF
   ((pushed)) || echo "BLOCKER: HEAD $sha is not on origin/main; push it first (a real run refuses)."
   [[ -f $ssh_key && -f $ssh_key.pub ]] || echo "BLOCKER: missing $ssh_key or $ssh_key.pub"
@@ -358,8 +368,10 @@ elif [ %q = prod.env ]; then
     [ "$(grep "^$k=" "$t")" = "$(grep "^$k=" "$f")" ] || { echo "$f has a different $k; edit it deliberately (see RUNBOOK)" >&2; exit 3; }
   done; echo "kept $f (domain/TLS match; HLM_IMAGE is managed by deploy.sh)"
 elif cmp -s "$t" "$f"; then echo "unchanged $f"
+elif [ %q = api.env ] && [ "$(grep -Ev "^[[:space:]]*(export[[:space:]]+)?HLM_(ADMIN_TOKEN|REGISTRATION_SECRET)[[:space:]]*=" "$t")" = "$(grep -Ev "^[[:space:]]*(export[[:space:]]+)?HLM_(ADMIN_TOKEN|REGISTRATION_SECRET)[[:space:]]*=" "$f")" ]; then
+  echo "kept $f (differs only in retired W0 keys; deploy.sh migrate_env_w0 removes them)"
 else echo "$f differs from the local copy; refusing to replace a live secret (rotate deliberately)" >&2; exit 3; fi
-chmod 0600 "$f"' "$name" "$name"
+chmod 0600 "$f"' "$name" "$name" "$name"
   rssh hlm-deploy "$cmd" < "$secrets/$name"
 }
 for name in db.env app.env api.env backup.env prod.env; do install_remote "$name"; done
@@ -408,15 +420,17 @@ insecure=''
 cat <<EOF
 URL:              $url   (MCP endpoint: $url/mcp)
 Release:          $sha
-Admin token:      $state/admin.token (0600; value not shown)
-Registration:     $state/registration.secret
+Devices:          minted over SSH only (D-061); no admin token, no public registration
 Server secrets:   /etc/hlmemo/*.env on the host; local copy $secrets/ (keep a backup in your secret manager)
 SSH:              ssh -F $state/ssh_config hlm-deploy   (root login is disabled)
 Log:              $log
 Total:            ${SECONDS}s
 Next steps:
-  1. bash deploy/scripts/remote_gates.sh --url $url$insecure --admin-token-file $state/admin.token
+  1. bash deploy/scripts/remote_gates.sh --url $url$insecure
   2. Enable the daily backup timer and off-host copies (RUNBOOK "Backups and restore").
-  3. Connect this Mac: hlm init --server $url/mcp ...; hlm device register; hlm --admin device approve ...
+  3. Connect this Mac (RUNBOOK "Adding a device"):
+     bash deploy/scripts/hlm_ops.sh --state $state project create my-project --exists-ok
+     bash deploy/scripts/hlm_ops.sh --state $state device mint --name my-mac --class personal --grant my-project:write \\
+       | hlm device login --name my-mac --token-stdin --server $url/mcp
 EOF
 [[ -z $acme_email ]] || echo "NOTE: HLM_ACME_EMAIL is recorded in prod.env but the current Caddyfile does not consume it yet (Caddy registers ACME without an email)."

@@ -64,6 +64,9 @@ def compose_file(image: str, token: str, models: Path, *, profile: bool = False)
                 "environment": {
                     **environment,
                     "HLM_ADMIN_TOKEN": token,
+                    # W0a (D-061): dev admin HTTP contract (defaults are closed/disabled).
+                    "HLM_ADMIN_HTTP": "enabled",
+                    "HLM_REGISTRATION_MODE": "open",
                     "HLM_API_HOST": "0.0.0.0",
                     "HLM_API_PORT": "8765",
                     "HLM_REQUEST_SPOOL_DIR": "/var/spool/hlmemo",

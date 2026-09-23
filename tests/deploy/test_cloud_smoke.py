@@ -1,10 +1,10 @@
 """Deployment-only regressions; no application imports or live services required."""
 
 import importlib.util
+import json
 import subprocess
 import tempfile
 import unittest
-import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -15,34 +15,37 @@ spec.loader.exec_module(probe)
 
 
 class FakeProbe(probe.Probe):
+    """Records hlmemo.ops calls instead of running docker exec (W0a: no admin HTTP, D-061)."""
+
     def __init__(self):
-        self.admin = "test"
         self.settings = {}
+        self.project_name = "bake-test"
         self.projects = set()
         self.devices = {}
+        self.calls = []
         self.fail_initialize = False
-        self.fail_approve = False
-        self.reject_project = False
+        self.fail_mint = False
+
+    def ops(self, *args):
+        self.calls.append(args)
+        if args[:2] == ("project", "create"):
+            created = args[2] not in self.projects
+            self.projects.add(args[2])
+            return json.dumps({"created": created, "project": {"slug": args[2]}}) + "\n", ""
+        if args[:2] == ("device", "mint"):
+            if self.fail_mint:
+                raise ValueError("hlmemo.ops device mint failed")
+            device_id = len(self.devices) + 2
+            self.devices[device_id] = "trusted"
+            meta = json.dumps({"minted": {"id": device_id, "name": args[3]}, "grants": []})
+            return "hlm_" + "t" * 43 + "\n", meta + "\n"
+        if args[:2] == ("device", "revoke"):
+            self.devices[int(args[2])] = "revoked"
+            return "{}\n", ""
+        raise AssertionError(args)
 
     def request(self, path, body=None, token=None, extra=None):
-        if path == "/admin/projects":
-            if body is None:
-                return {"projects": [{"slug": slug} for slug in self.projects]}
-            if body["slug"] in self.projects or self.reject_project:
-                raise urllib.error.HTTPError(path, 400, "invalid argument", {}, None)
-            self.projects.add(body["slug"])
-        elif path == "/devices/register":
-            device_id = len(self.devices) + 1
-            self.devices[device_id] = "pending"
-            return {"device": {"id": device_id}, "token": "test"}
-        elif path == "/devices/approve":
-            if self.fail_approve:
-                raise ValueError("approval failed")
-            self.devices[body["id"]] = "approved"
-        elif path == "/devices/revoke":
-            self.devices[body["id"]] = "revoked"
-        else:
-            raise AssertionError(path)
+        raise AssertionError(f"no admin/registration HTTP route may be called: {path}")
 
     def initialize(self, token):
         if self.fail_initialize:
@@ -50,29 +53,34 @@ class FakeProbe(probe.Probe):
 
 
 class SmokeLifecycleTests(unittest.TestCase):
-    def test_compose_dollar_escaping_is_removed_from_http_credentials_once(self):
+    def test_probe_reads_no_credentials_from_compose(self):
         config = {
+            "name": "bake-test",
             "services": {
-                "api": {"environment": {"HLM_ADMIN_TOKEN": "x$$VAR", "HLM_REGISTRATION_SECRET": "y$$$$VAR"}},
+                "api": {"environment": {"HLM_CURSOR_SECRET": "x$$VAR"}},
                 "caddy": {"environment": {"HLM_DOMAIN": "localhost", "HLM_TLS_MODE": "internal"}},
-            }
+            },
         }
         with mock.patch.dict(probe.os.environ, {}, clear=True):
             client = probe.Probe(config)
-        response = mock.MagicMock()
-        response.__enter__.return_value = response
-        response.headers = {}
-        response.read.return_value = b"{}"
-        with mock.patch.object(probe.urllib.request, "urlopen", return_value=response) as opened:
-            client.request("/admin/projects", token=client.admin)
-            self.assertEqual(opened.call_args.args[0].get_header("Authorization"), "Bearer x$VAR")
-            client.request(
-                "/devices/register",
-                {},
-                extra={"X-HLM-Registration-Secret": client.settings["HLM_REGISTRATION_SECRET"]},
-            )
-            self.assertEqual(opened.call_args.args[0].get_header("X-hlm-registration-secret"), "y$$VAR")
-        self.assertEqual(config["services"]["api"]["environment"]["HLM_ADMIN_TOKEN"], "x$$VAR")
+        self.assertFalse(hasattr(client, "admin"))
+        self.assertEqual(client.project_name, "bake-test")
+
+    def test_ops_runs_in_the_projects_api_container_with_closed_stdin(self):
+        client = probe.Probe(
+            {"name": "bake-test", "services": {"api": {"environment": {}}, "caddy": {"environment": {}}}}
+        )
+        done = mock.Mock(returncode=0, stdout="hlm_token\n", stderr="{}\n")
+        with (
+            mock.patch.object(probe.subprocess, "check_output", return_value="abc123\n") as ps,
+            mock.patch.object(probe.subprocess, "run", return_value=done) as run,
+        ):
+            out, meta = client.ops("device", "mint", "--name", "x", "--class", "ci")
+        self.assertIn("label=com.docker.compose.project=bake-test", ps.call_args.args[0])
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:6], ["docker", "exec", "abc123", "python", "-m", "hlmemo.ops"])
+        self.assertIs(run.call_args.kwargs["stdin"], probe.subprocess.DEVNULL)
+        self.assertEqual(out, "hlm_token\n")
 
     def test_second_smoke_reuses_project_and_revokes_devices(self):
         client = FakeProbe()
@@ -84,20 +92,20 @@ class SmokeLifecycleTests(unittest.TestCase):
         self.assertEqual(second["project_status"], "reused")
         self.assertEqual(client.projects, {"deploy-smoke"})
         self.assertEqual(set(client.devices.values()), {"revoked"})
+        mints = [c for c in client.calls if c[:2] == ("device", "mint")]
+        self.assertTrue(all("--expires" in c and "deploy-smoke:write" in c for c in mints))
 
-    def test_failed_approval_or_initialize_revokes_registered_device(self):
-        for failure in ("fail_approve", "fail_initialize"):
-            with self.subTest(failure=failure):
-                client = FakeProbe()
-                setattr(client, failure, True)
-                with self.assertRaises(ValueError):
-                    client.bootstrap()
-                self.assertEqual(client.devices, {1: "revoked"})
-
-    def test_other_project_validation_failure_is_not_ignored(self):
+    def test_failed_initialize_revokes_minted_device(self):
         client = FakeProbe()
-        client.reject_project = True
-        with self.assertRaises(urllib.error.HTTPError):
+        client.fail_initialize = True
+        with self.assertRaises(ValueError):
+            client.bootstrap()
+        self.assertEqual(client.devices, {2: "revoked"})
+
+    def test_failed_mint_leaves_no_device(self):
+        client = FakeProbe()
+        client.fail_mint = True
+        with self.assertRaises(ValueError):
             client.bootstrap()
         self.assertFalse(client.devices)
 
