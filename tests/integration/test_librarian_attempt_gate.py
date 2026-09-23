@@ -203,3 +203,163 @@ async def test_retried_job_replays_to_the_full_jobs_projection(db_dsn, connect, 
         await rebuild_projections(conn)
         await conn.commit()
         assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
+
+
+# --------------------------------------------------------------------------- Sol 38 / D-062
+async def test_precheck_waits_for_an_in_progress_revocation_and_sends_nothing(
+    db_dsn, connect, world, deps
+) -> None:  # noqa: ANN001
+    """D-062: the precheck takes the apply-recheck locks (FOR SHARE); a revocation in progress
+    blocks it, and once the revocation commits (before the precheck reads) no request is sent."""
+    await _pair(connect, world, deps, "gate-lock")
+    revoker = await psycopg.AsyncConnection.connect(db_dsn)
+    await aq.select_device_for_update(revoker, world.dev_a)
+    await aq.set_device_revoked(revoker, world.dev_a)
+    await aq.revoke_all_grants(revoker, world.dev_a)  # not committed yet
+    llm = ScriptedLLM(default=CONTRADICTS_B)
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    drain = asyncio.create_task(make_worker(lib_settings(db_dsn), provider, connect).drain())
+    await asyncio.sleep(0.5)
+    assert not drain.done() and llm.calls == 0  # the gate is waiting on the revoker's lock
+    await revoker.commit()
+    await revoker.close()
+    await asyncio.wait_for(drain, 30)
+    await provider.aclose()
+    assert llm.calls == 0
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT count(*) FROM links")
+        assert (await cur.fetchone())[0] == 0
+
+
+async def test_revocation_while_the_request_is_in_flight_is_never_applied(
+    db_dsn, connect, world, deps
+) -> None:  # noqa: ANN001
+    """D-062: an attempt in flight when the revocation commits completes, but its result is never
+    applied: the apply-time recheck records authority_lost (no link, no question)."""
+    await _pair(connect, world, deps, "gate-inflight")
+
+    async def revoke(_body: dict) -> None:
+        await _revoke(db_dsn, world.dev_a)
+
+    llm = ScriptedLLM(default=CONTRADICTS_B, on_request=revoke)
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    assert await make_worker(lib_settings(db_dsn), provider, connect).drain() == 1
+    await provider.aclose()
+    assert llm.calls == 1  # the in-flight request completed
+    async with await connect() as conn:
+        assert await outcomes(conn) == ["authority_lost"]
+        cur = await conn.execute(
+            "SELECT (SELECT count(*) FROM links), (SELECT count(*) FROM librarian_questions)"
+        )
+        assert await cur.fetchone() == (0, 0)
+
+
+async def test_rule_overlapping_an_item_body_is_refused(db_dsn, connect, world, deps) -> None:  # noqa: ANN001
+    from hlmemo.core.errors import ToolError
+    from hlmemo.librarian.memory import write_rule
+
+    body = (
+        "The deploy pipeline must always run database migrations before switching traffic to the new release."
+    )
+    async with await connect() as conn:
+        res = await write(conn, world.ctx_a, write_req(MAIN, [item("Deploy order", body)]), deps=deps)
+        vid = res.versions[0].version_id
+        await conn.commit()
+        # 8 shared words (case and punctuation differ) with a source-project item: refused
+        with pytest.raises(ToolError, match="8-word run"):
+            await write_rule(
+                conn,
+                title="r",
+                text="Rule: the Deploy pipeline must ALWAYS run database, migrations first.",
+                clue_refs=[],
+                dedupe="ov1",
+                deps=deps,
+                source_project_ids=[world.main_id],
+            )
+        await conn.rollback()
+        # the source project is also derived from the clue references
+        with pytest.raises(ToolError, match=f"v{vid}"):
+            await write_rule(
+                conn,
+                title="r",
+                text="Mind: migrations before switching traffic to the new release, always.",
+                clue_refs=[f"v{vid}"],
+                dedupe="ov2",
+                deps=deps,
+            )
+        await conn.rollback()
+        # 7 shared words only: a genuine rule is accepted
+        ok = await write_rule(
+            conn,
+            title="r",
+            text="Prefer: deploy pipeline must always run database migrations. Check it.",
+            clue_refs=[f"v{vid}"],
+            dedupe="ov3",
+            deps=deps,
+        )
+        await conn.commit()
+        assert ok > vid
+
+
+async def test_budget_denials_never_consume_the_lineage_ceiling(db_dsn) -> None:  # noqa: ANN001
+    """Sol 38 #5: a slot is claimed only when an HTTP attempt really starts."""
+    from hlmemo.librarian.budget import NoBudget
+    from hlmemo.librarian.errors import BudgetDeferred
+
+    class DenyFirst(NoBudget):
+        def __init__(self, n: int) -> None:
+            self.left = n
+
+        async def reserve(self, call_id, worst_usd, job_id):  # noqa: ANN001, ANN201
+            self.left -= 1
+            return self.left < 0
+
+    llm = ScriptedLLM(default=CONTRADICTS_B)
+    ctx = conn_ctx(db_dsn)
+    p = Provider(
+        stub_chain(fallback=False),
+        budget=DenyFirst(25),
+        ledger=DbLedger(ctx),
+        transport=llm.transport,
+        clock=FakeClock(),
+        redactor=Redactor(),
+        job_call_cap=20,
+    )
+    task = load_task("contradiction")
+    user = 'JOB: contradiction\nINPUT: {"A": {"text": "a"}, "B": {"text": "b"}}'
+    lineage = "22222222-3333-4444-8555-666666666666"
+    for _ in range(25):
+        with pytest.raises(BudgetDeferred):
+            await p.complete(task, user, lineage=lineage)
+    await p.complete(task, user, lineage=lineage)
+    await p.aclose()
+    assert llm.calls == 1
+    async with await psycopg.AsyncConnection.connect(db_dsn) as conn:
+        cur = await conn.execute("SELECT calls FROM llm_lineage_calls WHERE lineage = %s", (lineage,))
+        assert await cur.fetchone() == (1,)
+
+
+async def test_deferred_job_replays_its_run_after(db_dsn, connect, world, deps) -> None:  # noqa: ANN001
+    """Sol 38 #6: a job handed back (budget refusal) and not yet completed rebuilds with the
+    recorded status, attempts, run_after and last_error."""
+    await _pair(connect, world, deps, "deferred")
+    llm = ScriptedLLM(default=CONTRADICTS_B)
+    zero = Decimal(0)
+    provider = make_provider(db_dsn, llm, caps=Caps(zero, zero, zero))
+    assert await make_worker(lib_settings(db_dsn), provider, connect).drain() == 1
+    await provider.aclose()
+    assert llm.calls == 0
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT status, last_error, run_after > created_at + interval '30 seconds' FROM jobs"
+            " WHERE dedupe_key = 'librarian_write:deferred'"
+        )
+        assert await cur.fetchone() == ("queued", "E_BUDGET_DEFERRED", True)
+        cur = await conn.execute(
+            "SELECT count(*) FROM events WHERE kind = 'librarian' AND payload->'request'->>'op' = 'defer'"
+        )
+        assert (await cur.fetchone())[0] == 1
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before

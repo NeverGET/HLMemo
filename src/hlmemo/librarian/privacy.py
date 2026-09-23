@@ -12,6 +12,16 @@ prompt will contain. An item is sent only if ALL hold:
   the project is in the job's enqueue-time ``question`` capability set.
 
 Nothing here is configurable. Enqueue-time capabilities are an upper bound, never authority.
+
+Race semantics (D-062, decided): ``check`` takes the same locks, in the same order, as the
+apply-time recheck (``actor.recheck``, spec §2): the shared device-access advisory lock, the device
+row ``FOR SHARE`` and the device's grant rows ``FOR SHARE``. A revocation or grant removal that
+COMMITS before an attempt's precheck therefore prevents that attempt (the precheck waits for an
+in-progress revoke and then sees it). The precheck transaction commits and the request is sent
+immediately; no DB transaction is ever held open across an LLM call. An attempt already in flight
+(or in the precheck-to-send window) when a revocation commits may complete, but its result is
+NEVER applied: the apply transaction re-resolves the device under the same FOR SHARE locks and
+turns the job into ``authority_lost``.
 """
 
 from __future__ import annotations
@@ -21,6 +31,8 @@ from datetime import datetime
 from typing import Any
 
 from psycopg import AsyncConnection
+
+from hlmemo.auth.resolve import lock_device_access
 
 DEVICE_NOT_TRUSTED = "device_not_trusted"
 POLICY_OFF = "policy_off"
@@ -76,12 +88,14 @@ async def load_items(conn: AsyncConnection, version_ids: list[int]) -> dict[int,
 async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list[Item]) -> Verdict:
     """The gate for ``items`` (call it in a fresh transaction right before the provider call)."""
     device_id = int(capabilities.get("trigger_device_id") or 0)
+    # D-062 lock order = actor.recheck: advisory device-access lock, device row, grant rows.
+    await lock_device_access(conn, device_id)
     # expires_at arrives with 0005 (W0a); read it through to_jsonb so both schemas work.
     cur = await conn.execute(
         """
         SELECT d.status, d.class, d.is_admin,
                COALESCE((to_jsonb(d)->>'expires_at')::timestamptz > now(), true)
-          FROM devices d WHERE d.device_id = %s
+          FROM devices d WHERE d.device_id = %s FOR SHARE
         """,
         (device_id,),
     )
@@ -90,7 +104,7 @@ async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list
         return Verdict(False, {it.version_id: DEVICE_NOT_TRUSTED for it in items})
     _status, device_class, is_admin, _ = row
     cur = await conn.execute(
-        "SELECT project_id FROM device_project_grants WHERE device_id = %s AND revoked_at IS NULL",
+        "SELECT project_id FROM device_project_grants WHERE device_id = %s AND revoked_at IS NULL FOR SHARE",
         (device_id,),
     )
     granted = {int(r[0]) for r in await cur.fetchall()}
@@ -129,7 +143,8 @@ async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list
 async def gate(
     conn_factory: Any, capabilities: dict[str, Any], version_ids: list[int]
 ) -> tuple[Verdict, dict[int, Item]]:
-    """Fresh short transaction: reload the items and evaluate the gate."""
+    """Fresh short transaction: reload the items and evaluate the gate under the D-062 locks;
+    it commits before returning, so the caller sends the request with no transaction open."""
     async with await conn_factory() as conn:
         items = await load_items(conn, version_ids)
         missing = [v for v in version_ids if v not in items]

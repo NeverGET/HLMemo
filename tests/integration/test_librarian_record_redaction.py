@@ -136,3 +136,41 @@ async def test_record_mode_normalizes_array_and_tool_call_content(
         and "⟦CONTENT:unsupported⟧" in content
         and content.endswith("⟦CONTENT:tool_calls⟧")
     )
+
+
+def test_cassette_writer_redacts_raw_input_itself(tmp_path) -> None:  # noqa: ANN001
+    """Sol 38 #2: ``CassetteStore.put`` trusts no caller: raw secrets in messages (any content
+    shape), params and the response never reach disk."""
+    store = CassetteStore(tmp_path, record_name="raw")
+    store.put(
+        "k" * 64,
+        task="contradiction",
+        model_id="stub/model",
+        prompt_version="p1",
+        schema_version="s1",
+        messages=[
+            {"role": "system", "content": f"system {SECRET}"},
+            {"role": "user", "content": [{"type": "text", "text": f"user {SECRET}"}, {"type": "image_url"}]},
+        ],
+        params={"temperature": 0, "metadata": {"note": SECRET}},
+        response={
+            "choices": [
+                {
+                    "message": {
+                        "content": [{"type": "text", "text": f"answer {SECRET}"}],
+                        "tool_calls": [SECRET],
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            "provider_raw": SECRET,
+        },
+    )
+    recorded = (tmp_path / "raw.jsonl").read_text()
+    assert SECRET not in recorded
+    rec = json.loads(recorded)
+    assert rec["messages"][1]["content"].startswith("user ⟦REDACTED:")
+    assert rec["messages"][1]["content"].endswith("⟦CONTENT:unsupported⟧")
+    assert rec["response"]["choices"][0]["message"]["content"].endswith("⟦CONTENT:tool_calls⟧")
+    assert "provider_raw" not in rec["response"]

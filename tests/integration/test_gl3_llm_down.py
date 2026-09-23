@@ -97,7 +97,10 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except OSError:  # the librarian timed out and hung up on a stalled request
+            pass
         hit[1] = time.monotonic()
 
     def log_message(self, *args: object) -> None:
@@ -217,6 +220,9 @@ async def test_gl3_llm_down_core_unaffected(
         "HLM_PRICE_IN_PER_M": "1",
         "HLM_PRICE_OUT_PER_M": "1",
         "HLM_LLM_BREAKER_OPEN_S": "1",
+        # a stalled request times out quickly, so the librarian keeps probing: during the timed
+        # window it meets BOTH failure modes (stalls, then 503s) — asserted below (Sol 38 #3)
+        "HLM_LLM_TIMEOUT_S": "1.5",
         "HLM_LLM_BREAKER_MAX_OPEN_S": "2",
         "HLM_LIBRARIAN_POLL_S": "0.2",
         "HLM_LIBRARIAN_HEARTBEAT_FILE": str(tmp_path / "hb.json"),
@@ -348,7 +354,9 @@ async def test_gl3_llm_down_core_unaffected(
         f" degraded provider requests overlapping the timed window:"
         f" stall {overlap.count('stall')} 503 {overlap.count('503')} ({hi - lo:.1f} s window)"
     )
-    assert overlap, f"no stalled/503 provider request overlapped the timed queries: {_Stub.hits[:6]}"
+    assert "stall" in overlap and "503" in overlap, (
+        f"the librarian must meet BOTH a stalled request and a 503 while queries are timed: {overlap}"
+    )
     assert p95 <= P95_LIMIT_MS
     async with await connect() as conn:
         cur = await conn.execute(
