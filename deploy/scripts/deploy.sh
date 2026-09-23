@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Usage: deploy.sh [--accept-compose-change=SHA256] hlmdeploy@SERVER GIT_REF [REPOSITORY_URL]
+# GIT_REF: pass a full SHA ("$(git rev-parse REF)"); a short hex SHA is expanded locally first.
 # Secrets stay on the server; every child receives EOF, never script input.
 # --accept-compose-change: explicit operator acknowledgement of a release whose
 # deploy/compose.prod.yaml differs from the running one. The value must be the sha256 of the
@@ -37,6 +38,18 @@ timeout=${HLM_DEPLOY_TIMEOUT_SECONDS:-1800}
 poll=${HLM_DEPLOY_POLL_SECONDS:-1}
 [[ $host =~ ^[a-zA-Z0-9][a-zA-Z0-9@._:-]*$ ]] || { echo 'Invalid SSH host (use raw IPv6 without brackets)' >&2; exit 64; }
 [[ $ref =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]*$ ]] || { echo 'Invalid git ref' >&2; exit 64; }
+# The server fetches the ref by name; `git fetch origin <short sha>` cannot resolve an abbreviated
+# SHA (R1 rehearsal). Expand it locally, from this checkout, to the full commit SHA first.
+if [[ $mode == deploy && $ref =~ ^[0-9a-f]{7,39}$ ]]; then
+  repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+  full=$(git -C "$repo_root" rev-parse --verify --quiet "$ref^{commit}" </dev/null) || full=
+  [[ $full =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]] || {
+    echo "Short SHA $ref does not resolve to a commit in $repo_root (git fetch?); pass the full SHA: \$(git rev-parse $ref)" >&2
+    exit 64
+  }
+  printf 'Resolved short SHA %s to %s\n' "$ref" "$full" >&2
+  ref=$full
+fi
 [[ $remote_dir =~ ^/[a-zA-Z0-9_./-]+$ && $remote_env =~ ^/[a-zA-Z0-9_./-]+$ ]] || {
   echo 'Remote paths must be absolute and contain no shell metacharacters' >&2; exit 64;
 }

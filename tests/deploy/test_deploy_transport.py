@@ -255,5 +255,48 @@ class DeployTransportTest(unittest.TestCase):
         self.assertLess(elapsed, 8)
 
 
+class ShortShaResolutionTest(unittest.TestCase):
+    """R1 finding: a short SHA cannot be fetched by the server; deploy.sh expands it locally."""
+
+    def run_deploy(self, ref):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "bin").mkdir()
+        ssh = root / "bin/ssh"
+        # First call (mktemp) returns a run dir; the launch call is recorded, then fails.
+        ssh.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [[ ${@: -1} == *deploy-bootstrap* ]]; then printf %s "${@: -1}" > "$LAUNCH"; exit 3; fi\n'
+            "echo /tmp/hlm-short-sha/run\n"
+        )
+        ssh.chmod(0o700)
+        env = dict(os.environ, PATH=f"{root / 'bin'}:{os.environ['PATH']}", LAUNCH=str(root / "launch"))
+        result = subprocess.run(
+            ["bash", str(ROOT / "deploy/scripts/deploy.sh"), "hlmdeploy@example", ref],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        launch = (root / "launch").read_text() if (root / "launch").exists() else ""
+        return result, launch
+
+    def test_short_sha_is_resolved_to_full_sha_before_sending(self):
+        full = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True, capture_output=True, check=True
+        ).stdout.strip()
+        result, launch = self.run_deploy(full[:12])
+        self.assertEqual(3, result.returncode, result.stderr)
+        self.assertIn(f"Resolved short SHA {full[:12]} to {full}", result.stderr)
+        self.assertIn(full, launch)
+
+    def test_unresolvable_short_sha_is_refused_before_ssh(self):
+        result, launch = self.run_deploy("0000000deadbeef")
+        self.assertEqual(64, result.returncode)
+        self.assertIn("pass the full SHA", result.stderr)
+        self.assertEqual("", launch)
+
+
 if __name__ == "__main__":
     unittest.main()
