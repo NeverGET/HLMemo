@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
+import httpx
 import typer
 
 from hlmemo import __version__
@@ -300,8 +301,48 @@ def init(
     if instructions:
         for p in template_instruction_files(Path.cwd()):
             typer.echo(f"templated {p}")
-    typer.echo(
-        "next: hlm device register --wait   (then approve it: hlm --admin device approve <name> --class ...)"
+    typer.echo(init_next_steps(registration_probe(server), name))
+
+
+INIT_OPS_STEP = (
+    "next (production, registration closed): ask the operator to mint a token for this device:\n"
+    "  deploy/scripts/hlm_ops.sh --state <dir> device mint --name {name} --class personal "
+    "--grant <project>:write \\\n"
+    "    | hlm device login --name {name} --token-stdin"
+)
+INIT_REGISTER_STEP = (
+    "next (local dev, registration open): hlm device register --wait\n"
+    "  then approve it from a trusted device: hlm --admin device approve {name} --class ..."
+)
+
+
+def registration_probe(server: str, transport: httpx.BaseTransport | None = None) -> str | None:
+    """Cheap, side-effect-free: `GET /devices/register` answers 404 when registration is closed
+    (W0a route filter, any method) and 401/405 when it is open. None when unknown/unreachable."""
+    try:
+        with HlmHttp(server, None, timeout_s=2.0, transport=transport) as http:
+            http.request("GET", "/devices/register")
+    except HlmHttpError as exc:
+        if exc.status == 404:
+            return "closed"
+        if exc.status in (401, 403, 405):
+            return "open"
+        return None
+    except Exception:  # noqa: BLE001 - a probe never breaks init
+        return None
+    return None
+
+
+def init_next_steps(mode: str | None, name: str) -> str:
+    if mode == "closed":
+        return INIT_OPS_STEP.format(name=name)
+    if mode == "open":
+        return INIT_REGISTER_STEP.format(name=name)
+    return (
+        "server registration mode unknown (not reachable yet); pick the matching step:\n"
+        + INIT_OPS_STEP.format(name=name)
+        + "\n"
+        + INIT_REGISTER_STEP.format(name=name)
     )
 
 

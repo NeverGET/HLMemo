@@ -221,7 +221,43 @@ def test_device_register_stores_token_and_approve_uses_admin(
     assert res.exit_code == EX_USAGE and "E_NOT_FOUND" in res.output
 
 
-def test_init_writes_toml_and_instruction_files() -> None:
+def test_init_next_step_follows_server_registration_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R1 finding: in production (registration closed, 404) init points at hlm_ops.sh mint +
+    `hlm device login --token-stdin`; open (local dev) keeps register; unknown prints both."""
+
+    def transport(status: int) -> httpx.MockTransport:
+        def handle(request: httpx.Request) -> httpx.Response:
+            assert request.method == "GET" and request.url.path == "/devices/register"
+            return httpx.Response(status, json={"error": {"code": "E_X", "message": "x"}})
+
+        return httpx.MockTransport(handle)
+
+    assert hlm_mod.registration_probe("https://m.example/mcp", transport(404)) == "closed"
+    assert hlm_mod.registration_probe("https://m.example/mcp", transport(401)) == "open"
+    assert hlm_mod.registration_probe("https://m.example/mcp", transport(405)) == "open"
+    assert hlm_mod.registration_probe("https://m.example/mcp", transport(502)) is None
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    assert hlm_mod.registration_probe("http://127.0.0.1:1/mcp", httpx.MockTransport(unreachable)) is None
+
+    for mode, want, absent in (
+        ("closed", ("hlm_ops.sh --state", "--token-stdin", "--name mbp"), "register --wait"),
+        ("open", ("hlm device register --wait", "device approve mbp"), "hlm_ops.sh"),
+        (None, ("hlm_ops.sh --state", "--token-stdin", "hlm device register --wait"), None),
+    ):
+        monkeypatch.setattr(hlm_mod, "registration_probe", lambda server, transport=None, m=mode: m)
+        res = runner().invoke(app, ["init", "--device-name", "mbp", "--force"])
+        assert res.exit_code == 0, res.output
+        for text in want:
+            assert text in res.output, (mode, res.output)
+        if absent:
+            assert absent not in res.output, (mode, res.output)
+
+
+def test_init_writes_toml_and_instruction_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hlm_mod, "registration_probe", lambda server, transport=None: None)
     (Path.cwd() / "CLAUDE.md").write_text("# existing\n")
     res = runner().invoke(app, ["init", "--project", "hlmemo", "--device-name", "mbp", "--instructions"])
     assert res.exit_code == 0, res.output

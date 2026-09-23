@@ -182,7 +182,7 @@ server and `--admin` on the client; in production it is disabled (D-061).
 
 | command | notes |
 |---|---|
-| `hlm init [--server URL] [--project SLUG] [--device-name N] [--user] [--force] [--instructions]` | writes `./hlm.toml` (or `~/.config/hlm/hlm.toml` with `--user`); `--instructions` appends an idempotent HLMemo section to `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` |
+| `hlm init [--server URL] [--project SLUG] [--device-name N] [--user] [--force] [--instructions]` | writes `./hlm.toml` (or `~/.config/hlm/hlm.toml` with `--user`); `--instructions` appends an idempotent HLMemo section to `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`; the printed next step follows the server (`GET /devices/register` 404 = production: `hlm_ops.sh` mint + `hlm device login --token-stdin`; open = `hlm device register --wait`; unreachable = both) |
 | `hlm doctor [--models]` | server `/health`, device status, admin binding (probes `/health` with `HLM_ADMIN_TOKEN` when set), DB (`HLM_DB_DSN`), model hashes vs `models.lock` (`--models`), CLI versions vs `tests/smoke/VERSIONS`; exit 69 if the server is unreachable |
 | `hlm device register [--name N] [--class C] [--wait] [--registration-secret S]` | `POST /devices/register`; stores the token; `--wait` polls `/health` until `trusted` |
 | `hlm device login [--name N] [--token-stdin]` | stores an operator-minted token after `/health` reports it `trusted`; stdin or hidden prompt, never argv (D-061) |
