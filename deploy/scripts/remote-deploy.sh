@@ -50,8 +50,13 @@ previous=
 if [[ $new_checkout == 0 ]]; then
   [[ -z $(git </dev/null status --porcelain --untracked-files=no) ]] || { echo 'Refusing to replace tracked local changes' >&2; exit 1; }
 fi
-if [[ -f $parent_dir/current-ref ]]; then
-  previous=$(cat "$parent_dir/current-ref")
+# release-state.json (atomic, Sol 36 M1) wins over the derived legacy marker files.
+state_current=
+if [[ -f $parent_dir/release-state.json ]]; then
+  state_current=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("current_ref") or "")' "$parent_dir/release-state.json" </dev/null)
+fi
+if [[ -n $state_current || -f $parent_dir/current-ref ]]; then
+  previous=${state_current:-$(cat "$parent_dir/current-ref")}
   [[ $previous =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]] || { echo 'Invalid last successful deployment ref' >&2; exit 1; }
   [[ $(git </dev/null rev-parse --verify "$previous^{commit}") == "$previous" ]] || { echo 'Last successful deployment commit is unavailable' >&2; exit 1; }
 elif [[ $new_checkout == 0 && ! -e $parent_dir/.deploy-managed ]]; then
@@ -81,6 +86,57 @@ checkout_release() {
 writers_stopped=0
 migration_started=0
 pre_upgrade_dump=
+# W0a (D-061): "<env file>|<backup>" pairs written by migrate_env_w0 in THIS run.
+env_w0_restore=()
+# Remove the retired HLM_ADMIN_TOKEN / HLM_REGISTRATION_SECRET from the host env files (device 1
+# becomes disabled, spec §2 (ii)). Idempotent: an already-migrated file is left untouched and gets
+# no new backup. Each changed file is first copied to <file>.pre-w0-<UTC stamp> (0600). Only key
+# names are logged, never values. Runs before cutover; a failed deployment restores the backups
+# because the previous release's code would otherwise start with open registration.
+migrate_env_w0() {
+  local file backup stamp result
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  for file in "$HLM_ENV_FILE" "${HLM_APP_ENV_FILE:-}" "${HLM_API_ENV_FILE:-}"; do
+    [[ -n $file && -f $file ]] || continue
+    backup=$file.pre-w0-$stamp
+    result=0
+    python3 - "$file" "$backup" <<'PYENV' || result=$?
+import os, re, shutil, sys
+path, backup = sys.argv[1:]
+retired = ("HLM_ADMIN_TOKEN", "HLM_REGISTRATION_SECRET")
+pattern = re.compile(r"^\s*(?:export\s+)?(" + "|".join(retired) + r")\s*=")
+with open(path) as stream:
+    lines = stream.readlines()
+removed = sorted({m.group(1) for m in map(pattern.match, lines) if m})
+name = os.path.basename(path)
+if not removed:
+    print(f"migrate_env_w0: {name}: already migrated (no retired keys)")
+    sys.exit(0)
+shutil.copy2(path, backup)
+os.chmod(backup, 0o600)
+tmp = path + ".w0-tmp"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as stream:
+    stream.writelines(line for line in lines if not pattern.match(line))
+shutil.copymode(path, tmp)
+os.replace(tmp, path)
+print(f"migrate_env_w0: {name}: removed {','.join(removed)} (backup {os.path.basename(backup)})")
+sys.exit(10)
+PYENV
+    case $result in
+      0) ;;
+      10) env_w0_restore+=("$file|$backup") ;;
+      *) echo "migrate_env_w0: failed on $(basename "$file")" >&2; return 1 ;;
+    esac
+  done
+  printf 'migrate_env_w0: done (%s file(s) changed)\n' "${#env_w0_restore[@]}"
+}
+restore_env_w0() {
+  local pair
+  for pair in "${env_w0_restore[@]}"; do
+    cp -p -- "${pair#*|}" "${pair%%|*}" </dev/null && printf 'migrate_env_w0: restored %s from its backup\n' "$(basename "${pair%%|*}")" >&2
+  done
+}
 rollback() {
   docker compose -p "$COMPOSE_PROJECT" -f "$rollback_config" "$@"
 }
@@ -91,6 +147,7 @@ deployment_failed() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
   set +e
+  restore_env_w0
   if [[ $writers_stopped == 1 && -n $previous && -s $rollback_config ]]; then
     echo 'Deployment failed; recovering the previous stack.' >&2
     recovery_ok=1
@@ -115,6 +172,18 @@ deployment_failed() {
       fi
     fi
     checkout_release "$previous" >&2 || recovery_ok=0
+    # Never let this shell's new-release image selection leak into recovery: select the
+    # previous release explicitly and prove the rendered rollback model runs its pinned image.
+    export HLM_IMAGE=${previous_image:-} HLM_IMAGE_REVISION=$previous
+    if [[ $recovery_ok == 1 ]]; then
+      rendered_image=$(rollback config --format json </dev/null | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; print(s["api"]["image"] if s["api"]["image"] == s["worker"]["image"] else "MISMATCH")') || rendered_image=
+      if [[ -n ${previous_id:-} && $rendered_image == "$previous_id" ]]; then
+        printf 'Rollback image verified: %s (%s)\n' "$rendered_image" "$HLM_IMAGE" >&2
+      else
+        printf 'Rollback model selects %s, expected previous image %s; not starting it.\n' "${rendered_image:-<unrendered>}" "${previous_id:-<unknown>}" >&2
+        recovery_ok=0
+      fi
+    fi
     if [[ $recovery_ok == 1 ]] && rollback up -d --no-deps --wait --wait-timeout 300 db api worker caddy </dev/null >&2; then
       echo "Previous stack restored: $previous" >&2
     else
@@ -131,9 +200,24 @@ deployment_failed() {
 trap deployment_failed ERR
 trap 'deployment_failed 130' INT
 trap 'deployment_failed 143' TERM
+# A Compose model change needs the operator's explicit acknowledgement naming the exact new
+# model (deploy.sh --accept-compose-change=<sha256>). Everything is validated here, before
+# build, backup or writer shutdown; recovery then runs the PREVIOUS model (rendered below).
+compose_changed=0
+compose_hash=$(git show "$revision:deploy/compose.prod.yaml" </dev/null | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')
 if [[ -n $previous ]] && ! git diff --quiet "$previous" "$revision" -- deploy/compose.prod.yaml </dev/null; then
-  echo 'Compose model changed between releases; refusing automatic deployment before build/stop. Follow RUNBOOK staged Compose upgrade procedure.' >&2
-  false
+  compose_changed=1
+  if [[ -z ${HLM_ACCEPT_COMPOSE_SHA256:-} ]]; then
+    echo "Compose model changed between releases; refusing automatic deployment before build/stop. Re-run deploy.sh --accept-compose-change=$compose_hash after reviewing the change (RUNBOOK \"Compose model changes\")." >&2
+    false
+  fi
+fi
+if [[ -n ${HLM_ACCEPT_COMPOSE_SHA256:-} ]]; then
+  [[ $HLM_ACCEPT_COMPOSE_SHA256 == "$compose_hash" ]] || {
+    echo "Accepted compose sha256 $HLM_ACCEPT_COMPOSE_SHA256 does not match $revision's compose.prod.yaml ($compose_hash); refusing before build/stop." >&2
+    false
+  }
+  echo "Compose model change accepted: sha256 $compose_hash (changed=$compose_changed)"
 fi
 checkout_release "$revision"
 test -f deploy/compose.prod.yaml || { echo 'Requested ref has no production compose file' >&2; false; }
@@ -146,7 +230,16 @@ dc config -q </dev/null
 rollback_config=$(mktemp "$parent_dir/.rollback-compose.XXXXXX")
 chmod 600 "$rollback_config"
 if [[ -n $previous ]]; then
-  dc config --format json </dev/null > "$rollback_config"
+  if [[ $compose_changed == 1 ]]; then
+    # Recovery must run the previous release's own Compose model, rendered with the current
+    # (not yet migrated) env files, next to this checkout so relative paths resolve alike.
+    previous_model=$(mktemp "$PWD/deploy/.compose-previous.XXXXXX")
+    git show "$previous:deploy/compose.prod.yaml" </dev/null > "$previous_model"
+    docker compose -p "$COMPOSE_PROJECT" -f "$previous_model" --env-file "$HLM_ENV_FILE" config --format json </dev/null > "$rollback_config"
+    rm -f -- "$previous_model"
+  else
+    dc config --format json </dev/null > "$rollback_config"
+  fi
   python3 - "$rollback_config" <<'PYCONFIG'
 import json, subprocess, sys
 path = sys.argv[1]
@@ -223,9 +316,23 @@ if [[ -n $pre_upgrade_dump ]]; then
   exec 8>"$(dirname "$(dirname "$pre_upgrade_dump")")/.operation.flock"
   flock -n 8 </dev/null || { echo 'Another backup/restore started; aborting before stop' >&2; false; }
 fi
+# W0a (D-061): the new release refuses to start with the retired secrets' routes open; the old
+# release keeps running on its already-loaded environment until the stop below.
+migrate_env_w0
 # Mark first so even a partially failed stop restarts the previous stack.
 writers_stopped=1
 dc stop caddy api worker </dev/null
+# Final, quiesced snapshot (Sol 34 #3): no write can commit between it and the migration, so a
+# recovery restores everything the old release acknowledged. It becomes the rollback dump; the
+# live snapshot above proved backups work before any downtime. We already hold the operation lock.
+if [[ -n $pre_upgrade_dump ]]; then
+  live_dump=$pre_upgrade_dump
+  pre_upgrade_dump=$(HLM_OPERATION_LOCK_HELD=1 bash deploy/backup/backup.sh --pre-upgrade "${previous:-$revision}" </dev/null)
+  [[ -f $pre_upgrade_dump ]] || { echo 'Final pre-upgrade dump missing' >&2; false; }
+  # The quiesced dump supersedes the live one (a strict superset of acknowledged writes).
+  rm -f -- "$live_dump" </dev/null
+  printf 'Quiesced pre-upgrade dump: %s\n' "$pre_upgrade_dump"
+fi
 dc up -d --wait --wait-timeout 180 db </dev/null
 verify_release_image
 migration_started=1
@@ -236,6 +343,10 @@ dc up -d --no-deps --wait --wait-timeout 300 db api worker caddy </dev/null
 # failures before this boundary may restore the snapshot automatically.
 dc exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()" </dev/null
 dc exec -T caddy wget -q -O /dev/null http://127.0.0.1:8081/ready </dev/null
+# W0a route table on the API's own loopback listener (the route filter applies to any listener).
+# The checker mints a 10-minute ci device with hlmemo.ops inside the container and revokes it
+# through the public self-revoke route. A failure here restores the previous stack.
+dc exec -T api python - --routes --base http://127.0.0.1:8765 --mint-ops < deploy/scripts/check_edge.py
 # Publishing the image is part of cutover: if it fails, restore the baseline
 # rather than leaving a healthy new checkout with an old image selection.
 python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "$HLM_IMAGE" </dev/null
@@ -244,20 +355,37 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 # Once internally healthy, preserve accepted writes even on marker/disk or public
 # network errors. Publish rollback markers only for this successful cutover.
+# One atomic document (tmp + fsync + rename) holds the whole rollback tuple: previous ref, its
+# quiesced dump, its image + verified ID and this run's env-file backups (retired secrets). The
+# legacy current-ref/previous-ref/previous-dump files are derived from it for compatibility.
+state_args=(--current "$revision")
 if [[ -n $previous ]]; then
-  printf '%s\n' "$previous" > "$parent_dir/previous-ref.tmp"
-  printf '%s\n' "$pre_upgrade_dump" > "$parent_dir/previous-dump.tmp"
-  mv "$parent_dir/previous-ref.tmp" "$parent_dir/previous-ref" </dev/null
-  mv "$parent_dir/previous-dump.tmp" "$parent_dir/previous-dump" </dev/null
+  state_args+=(--previous "$previous" --previous-dump "$pre_upgrade_dump" --previous-image "$previous_image" --previous-image-id "$previous_id")
+  for pair in "${env_w0_restore[@]}"; do
+    state_args+=(--env-backup "${pair%%|*}=${pair#*|}")
+  done
 fi
-printf '%s\n' "$revision" > "$parent_dir/current-ref.tmp"
-mv "$parent_dir/current-ref.tmp" "$parent_dir/current-ref" </dev/null
+python3 deploy/scripts/release_state.py publish "$parent_dir" "${state_args[@]}" </dev/null
 if ! curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 \
   --connect-timeout 10 --max-time 20 "https://$domain/ready" </dev/null; then
   echo 'External HTTPS readiness failed; internally healthy new stack left running (no database rollback). Check DNS A/AAAA, firewall, ACME and Caddy logs; retry the public /ready probe.' >&2
   exit 1
 fi
 printf '\n'
+# W0a public route table through Caddy (RG-routes). Like the readiness probe above, a failure
+# leaves the internally healthy stack running and fails the deployment without a DB rollback.
+routes_token=$(dc exec -T api python -m hlmemo.ops device mint --name "deploy-routes-${revision:0:12}-$RANDOM" \
+  --class ci --expires 10m </dev/null)
+if ! HLM_ROUTES_TOKEN=$routes_token python3 deploy/scripts/check_edge.py --routes --base "https://$domain" </dev/null; then
+  unset routes_token
+  echo 'Public route verification failed (see RESULT routes above); new stack left running. Check the Caddyfile @rest matcher and HLM_REGISTRATION_MODE/HLM_ADMIN_HTTP.' >&2
+  exit 1
+fi
+unset routes_token
+# Cutover review (Sol 34): every device that still holds a token, with status, expiry and grants
+# (never tokens). RUNBOOK: rotate g7-*, revoke stale gates-*/deploy-* with hlm_ops.sh.
+echo 'Device inventory after cutover (python -m hlmemo.ops device list):'
+dc exec -T api python -m hlmemo.ops device list </dev/null || echo 'WARNING: device inventory unavailable; run hlm_ops.sh device list' >&2
 # Release the operation lock before the pruning helper acquires it again.
 exec 8>&-
 if ! bash deploy/backup/backup.sh --prune-pre-upgrade </dev/null; then

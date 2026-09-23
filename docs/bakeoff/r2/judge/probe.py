@@ -379,7 +379,9 @@ def main() -> int:
     p = Probe(args)
     if args.mode == "smoke":
         p.basic_http()
-        if p.bootstrap():
+        # W0a (D-061): with no admin token the caller pre-seeds --state with an operator-minted
+        # device (hlm_ops.sh device mint); ensure_device() reuses it, else falls back to bootstrap.
+        if p.ensure_device():
             if p.mcp_initialize():
                 p.mcp_tools_list()
     else:

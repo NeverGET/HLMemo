@@ -1,7 +1,7 @@
 """`hlm` — HLMemo wrapper CLI (PHASE0-SPEC §5).
 
 hlm init | doctor
-hlm device register|approve|revoke|grant|ungrant|list|whoami
+hlm device register|login|approve|revoke|grant|ungrant|list|whoami
 hlm project create|list
 hlm mcp add claude|codex|agy
 hlm query "<q>" [--budget N]
@@ -11,6 +11,7 @@ hlm claude|codex|agy [--task ...] [--budget N] [--no-preflight] [--headless] [--
 
 from __future__ import annotations
 
+import getpass
 import os
 import shutil
 import subprocess
@@ -25,6 +26,7 @@ from typing import Annotated, Any
 import typer
 
 from hlmemo import __version__
+from hlmemo.auth.tokens import looks_like_token
 from hlmemo.cli import credentials, mcp_register
 from hlmemo.cli.client_config import (
     EX_NOPERM,
@@ -44,6 +46,12 @@ from hlmemo.cli.http_client import HlmHttp, HlmHttpError
 from hlmemo.cli.launch import CLIS, build_argv, exec_cli
 from hlmemo.cli.mcp_client import MemoryClient, ToolCallError
 from hlmemo.cli.preflight import UNAVAILABLE_PROMPT, compact, run_preflight
+
+OPS_HINT = (
+    "hint: this server does not accept self-registration (D-061). Ask the operator to mint a device:\n"
+    "  deploy/scripts/hlm_ops.sh device mint --name <name> --class personal --grant <project>:write \\\n"
+    "    | hlm device login --name <name> --token-stdin"
+)
 
 DEVICE_CLASSES = ("personal", "work", "server", "ci", "other")
 ROLES = ("read", "write", "admin")
@@ -460,9 +468,16 @@ def device_register(
         raise CliError(f"--class must be one of {DEVICE_CLASSES}", EX_USAGE)
     dev_name = name or cfg.device_name or default_device_name()
     with HlmHttp(cfg.server_url, None, timeout_s=10.0, registration_secret=registration_secret) as http:
-        res = http.register(
-            name=dev_name, device_class=device_class, fingerprint=device_fingerprint(), os=os_string()
-        )
+        try:
+            res = http.register(
+                name=dev_name, device_class=device_class, fingerprint=device_fingerprint(), os=os_string()
+            )
+        except HlmHttpError as exc:
+            if exc.status == 404:
+                _err("error E_NOT_FOUND: registration is closed on this server")
+                _err(OPS_HINT)
+                raise typer.Exit(EX_NOPERM) from None
+            raise
     token = res["token"]
     where = credentials.store_token(cfg.server_url, dev_name, token)
     d = res.get("device", {})
@@ -492,6 +507,51 @@ def device_register(
                 time.sleep(2.0)
 
 
+def _read_token(token_stdin: bool) -> str:
+    """The token from stdin (first non-empty line) or a hidden prompt; never from argv."""
+    if token_stdin:
+        token = next((line.strip() for line in sys.stdin if line.strip()), "")
+    else:
+        token = getpass.getpass("Device token (input hidden): ").strip()
+    if not token:
+        raise CliError("no token received", EX_USAGE)
+    if not looks_like_token(token):
+        raise CliError("that does not look like an hlm device token (hlm_ + 43 characters)", EX_USAGE)
+    return token
+
+
+@device_app.command("login")
+@_guard
+def device_login(
+    ctx: typer.Context,
+    name: Annotated[str | None, typer.Option("--name", help="Device name to store the token under")] = None,
+    token_stdin: Annotated[
+        bool, typer.Option("--token-stdin", help="Read the token from stdin (e.g. piped from hlm_ops.sh)")
+    ] = False,
+) -> None:
+    """Store an operator-minted token (D-061): /health must report it `trusted`; it is then saved in
+    the keychain (else a 0600 credentials file). The token is never taken from argv."""
+    c = _ctx(ctx)
+    cfg = c.config()
+    token = _read_token(token_stdin)
+    with HlmHttp(cfg.server_url, token, timeout_s=10.0) as http:
+        dev = http.health().get("device") or {}
+    if dev.get("status") != "trusted":
+        state = dev.get("status") or "unknown to this server"
+        raise CliError(f"token rejected: device is {state} (expired, revoked or wrong server?)", EX_NOPERM)
+    dev_name = name or cfg.device_name or str(dev.get("name") or default_device_name())
+    if dev.get("name") and dev["name"] != dev_name:
+        _err(f"note: the server knows this device as {dev['name']!r}; storing it under {dev_name!r}")
+    where = credentials.store_token(cfg.server_url, dev_name, token)
+    del token
+    _out(
+        {"device": dev, "stored": where},
+        as_json=c.as_json,
+        human=f"logged in as device id={dev.get('id')} name={dev.get('name')} class={dev.get('class')}; "
+        f"token stored in {where}",
+    )
+
+
 @device_app.command("approve")
 @_guard
 def device_approve(
@@ -515,12 +575,46 @@ def device_approve(
 
 @device_app.command("revoke")
 @_guard
-def device_revoke(ctx: typer.Context, ref: Annotated[str, typer.Argument(help="device name or id")]) -> None:
-    """Revoke a device (device 1 or the device itself)."""
+def device_revoke(
+    ctx: typer.Context,
+    ref: Annotated[str | None, typer.Argument(help="device name or id (admin HTTP only)")] = None,
+    self_: Annotated[
+        bool, typer.Option("--self", help="Revoke THIS device via the public self-revoke route")
+    ] = False,
+) -> None:
+    """Revoke this device (--self), or another one (admin HTTP; in production use hlm_ops.sh)."""
     c = _ctx(ctx)
+    if self_ == (ref is not None):
+        raise CliError("give exactly one of --self or a device name/id", EX_USAGE)
+    if self_:
+        cfg = c.config()
+        token = c.bearer()
+        if not token:
+            raise CliError("no device token found for this device", EX_NOPERM)
+        with c.http(token=token) as http:
+            dev = http.health().get("device") or {}
+            if dev.get("status") != "trusted":
+                raise CliError(f"this device is not trusted ({dev.get('status') or 'unknown'})", EX_NOPERM)
+            res = http.self_revoke(int(dev["id"]))
+        credentials.delete_token(cfg.server_url, c.device_name())
+        _out(
+            res,
+            as_json=c.as_json,
+            human=f"revoked this device (id={dev['id']}); grants revoked: {res.get('revoked_grants', 0)}; "
+            "local token deleted",
+        )
+        return
+    assert ref is not None
     with c.http() as http:
-        dev_id = http.resolve_device_id(ref)
-        res = http.revoke(dev_id)
+        try:
+            dev_id = http.resolve_device_id(ref)
+            res = http.revoke(dev_id)
+        except HlmHttpError as exc:
+            if exc.status == 404:
+                _err("error E_NOT_FOUND: admin routes are closed on this server (D-061)")
+                _err(f"hint: deploy/scripts/hlm_ops.sh device revoke {ref}   (or: hlm device revoke --self)")
+                raise typer.Exit(EX_USAGE) from None
+            raise
     _out(
         res,
         as_json=c.as_json,

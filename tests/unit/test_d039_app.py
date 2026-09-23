@@ -20,7 +20,7 @@ def _clean_tables():
 
 def fake_dependencies(monkeypatch, *, connect=None):
     async def fetchall():
-        return [(server.phase0_head(),)]
+        return [(server.migration_head(),)]
 
     async def execute(_sql):
         return SimpleNamespace(fetchall=fetchall)
@@ -123,7 +123,7 @@ async def test_cancelled_readiness_callers_cannot_release_connection_slot(monkey
     calls = active = peak = 0
 
     async def fetchall():
-        return [(server.phase0_head(),)]
+        return [(server.migration_head(),)]
 
     async def execute(_sql):
         await release.wait()

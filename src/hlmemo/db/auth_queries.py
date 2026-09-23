@@ -22,7 +22,8 @@ from psycopg.rows import dict_row
 
 DEVICE_COLUMNS = """
     device_id, user_id, name, class, fingerprint, os, status, is_admin, token_generation, notes,
-    registered_at, approved_at, approved_by_device_id, revoked_at, last_seen_at
+    registered_at, approved_at, approved_by_device_id, revoked_at, last_seen_at, expires_at,
+    (expires_at IS NOT NULL AND expires_at <= now()) AS expired
 """
 
 ADMIN_PLACEHOLDER_HASH = "reserved:admin"
@@ -162,6 +163,70 @@ async def set_device_revoked(conn: AsyncConnection, device_id: int) -> dict[str,
         row = await cur.fetchone()
         assert row is not None
         return row
+
+
+async def insert_minted_device(
+    conn: AsyncConnection,
+    *,
+    name: str,
+    device_class: str,
+    token_hash: str,
+    fingerprint: str,
+    notes: str | None,
+    expires_at: datetime | None,
+    approved_by: int = 1,
+    user_id: str = "owner",
+) -> dict[str, Any]:
+    """W0a server-side minting (D-052/D-061): a device born `trusted`, approved by device 1."""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            f"""
+            INSERT INTO devices (user_id, name, class, fingerprint, status, token_sha256, notes,
+                                 approved_at, approved_by_device_id, expires_at)
+            VALUES (%s, %s, %s, %s, 'trusted', %s, %s, now(), %s, %s)
+            RETURNING {DEVICE_COLUMNS}
+            """,
+            (user_id, name, device_class, fingerprint, token_hash, notes, approved_by, expires_at),
+        )
+        row = await cur.fetchone()
+        assert row is not None
+        return row
+
+
+async def rotate_device_token(
+    conn: AsyncConnection, device_id: int, *, token_hash: str, expires_at: datetime | None, keep_expiry: bool
+) -> dict[str, Any]:
+    """New bearer for an existing device: generation + 1 (old cursors/sessions die), last_seen reset."""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            f"""
+            UPDATE devices
+               SET token_sha256 = %s, token_generation = token_generation + 1, last_seen_at = NULL,
+                   expires_at = CASE WHEN %s THEN expires_at ELSE %s END
+             WHERE device_id = %s
+            RETURNING {DEVICE_COLUMNS}
+            """,
+            (token_hash, keep_expiry, expires_at, device_id),
+        )
+        row = await cur.fetchone()
+        assert row is not None
+        return row
+
+
+async def select_device_by_name(
+    conn: AsyncConnection, name: str, *, user_id: str = "owner"
+) -> dict[str, Any] | None:
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            f"SELECT {DEVICE_COLUMNS} FROM devices WHERE user_id = %s AND name = %s", (user_id, name)
+        )
+        return await cur.fetchone()
+
+
+async def list_all_devices(conn: AsyncConnection) -> list[dict[str, Any]]:
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(f"SELECT {DEVICE_COLUMNS} FROM devices ORDER BY device_id")
+        return await cur.fetchall()
 
 
 async def bind_admin_token(conn: AsyncConnection, token_hash: str | None) -> int:

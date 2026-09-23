@@ -31,6 +31,14 @@ This covers the persistent MCP GET channel; tool POST acknowledgements use finit
 
 `GET /health` (liveness) and `GET /ready` (readiness) need no bearer; with one they are gated
 like every other route except that `/health` also resolves pending/revoked devices (§2 poll).
+
+Route filter (W0a, D-061). Before any other work — before the body budget, the bearer check,
+a database lookup or a single `receive()` — closed routes answer 404 `E_NOT_FOUND`:
+`POST /devices/register` when `registration_mode=closed`, and every admin route (`/admin/*`,
+`/devices/approve`, `/devices/grant`, `/devices/list`) when `admin_http=disabled`. The filter
+applies to any listener (Caddy's `@rest` matcher is only defense in depth). An expired device
+(`devices.expires_at <= now()`) is treated exactly like a revoked one by the pre-body gate and by
+the in-transaction resolve.
 """
 
 from __future__ import annotations
@@ -63,6 +71,27 @@ HEALTH = ("GET", "/health")
 READY = ("GET", "/ready")
 REGISTER = ("POST", "/devices/register")
 NO_BEARER_OK = (HEALTH, READY)
+# W0a route filter (D-061): paths closed when admin_http=disabled, regardless of method.
+ADMIN_HTTP_PATHS = frozenset({"/devices/approve", "/devices/grant", "/devices/list"})
+NOT_FOUND = HlmError("E_NOT_FOUND", "not found")
+
+
+def normalized_path(path: str) -> str:
+    """Collapse repeated slashes and drop a trailing one, so `//admin/x/` cannot dodge the filter."""
+    parts = [p for p in path.split("/") if p]
+    return "/" + "/".join(parts)
+
+
+def route_closed(path: str, settings: Any) -> bool:
+    """True if this path must answer 404 before any body byte is read (W0a, D-061)."""
+    norm = normalized_path(path)
+    if norm == "/devices/register" and getattr(settings, "registration_mode", "closed") == "closed":
+        return True
+    if getattr(settings, "admin_http", "disabled") != "enabled":
+        return norm in ADMIN_HTTP_PATHS or norm == "/admin" or norm.startswith("/admin/")
+    return False
+
+
 COMMIT_FAILED = HlmError(
     "E_UNAVAILABLE", "request commit could not be confirmed; retry with the same request_id", {}
 )
@@ -220,6 +249,10 @@ class AuthMiddleware:
             return
 
         settings = getattr(scope["app"].state, "settings", None) or get_settings()
+        if route_closed(scope["path"], settings):
+            # Never awaits receive(): no body byte, no budget, no DB, no device row, no event.
+            await error_response(NOT_FOUND)(scope, receive, send)
+            return
         if self.body_budget is None:
             self.body_budget = BodyBudget(
                 settings.request_body_global_budget_bytes, settings.request_body_client_budget_bytes
@@ -263,6 +296,7 @@ class AuthMiddleware:
         admin_token = settings.admin_token
         is_admin_token = (
             bearer is not None
+            and settings.admin_enabled
             and admin_token is not None
             and constant_time_equal(bearer, admin_token.get_secret_value())
         )
@@ -461,7 +495,8 @@ class AuthMiddleware:
                         # need exclusive auth for self-revoke to avoid lock upgrade
                         # deadlocks; cross-device callers must never queue that lock.
                         identity = await conn.execute(
-                            "SELECT device_id FROM devices WHERE token_sha256 = %s AND status = 'trusted'",
+                            "SELECT device_id FROM devices WHERE token_sha256 = %s AND status = 'trusted'"
+                            " AND (expires_at IS NULL OR expires_at > now())",
                             (hash_token(bearer),),
                         )
                         caller = await identity.fetchone()
@@ -543,7 +578,9 @@ class AuthMiddleware:
             async with pool.connection(timeout=min(settings.pool_timeout_s, 0.25)) as conn:
                 await conn.execute("SET LOCAL statement_timeout = '250ms'")
                 cur = await conn.execute(
-                    "SELECT device_id, status, token_generation FROM devices WHERE token_sha256 = %s",
+                    "SELECT device_id, status, token_generation,"
+                    " (expires_at IS NOT NULL AND expires_at <= now()) AS expired"
+                    " FROM devices WHERE token_sha256 = %s",
                     (hash_token(bearer),),
                 )
                 return await cur.fetchone()
@@ -551,8 +588,9 @@ class AuthMiddleware:
         # A disconnect must not interrupt pool return and leak its admission slot.
         task = asyncio.create_task(lookup())
         row = await _finish_shielded(task)
-        if row is None or row[1] == "revoked":
-            raise HlmError("E_AUTH", "unknown or revoked token")
+        if row is None or row[1] == "revoked" or row[3]:
+            # Expired == revoked (W0a, D-061).
+            raise HlmError("E_AUTH", "unknown, revoked or expired token")
         if row[1] == "pending":
             raise HlmError("E_DEVICE_PENDING", "device awaiting approval", {"device_id": int(row[0])})
         if row[1] != "trusted":

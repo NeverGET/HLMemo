@@ -31,6 +31,12 @@ x-app: &app
     PYTHONUNBUFFERED: "1"
     # Disable the native telemetry uploader before ONNX Runtime initializes.
     ORT_DISABLE_TELEMETRY: "1"
+    # W0a (D-052, D-061): shipped with the release, never taken from env files. With `production`
+    # the API refuses to start (/ready 503 "unsafe config") unless both stay closed/disabled.
+    # Devices are minted over SSH: deploy/scripts/hlm_ops.sh device mint ... (RUNBOOK).
+    HLM_DEPLOYMENT: production
+    HLM_REGISTRATION_MODE: closed
+    HLM_ADMIN_HTTP: disabled
   restart: unless-stopped
   logging: *logging
   security_opt: ["no-new-privileges:true"]
@@ -67,7 +73,7 @@ services:
 
   migrate:
     <<: *app
-    command: ["alembic", "upgrade", "phase0@head"]
+    command: ["alembic", "upgrade", "main@head"]
     restart: "no" # Successful completion IS the one-shot migration's health signal.
     mem_limit: 768m
     cpus: 1.0

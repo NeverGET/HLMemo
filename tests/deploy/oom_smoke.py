@@ -176,6 +176,11 @@ def run(args: argparse.Namespace) -> None:
         f"HLM_TEST_DSN={TEST_DSN}",
         "--env",
         f"HLM_ADMIN_TOKEN={token}",
+        # W0a (D-061): this drill uses the dev admin HTTP contract (defaults are closed/disabled).
+        "--env",
+        "HLM_ADMIN_HTTP=enabled",
+        "--env",
+        "HLM_REGISTRATION_MODE=open",
         "--env",
         "HLM_API_HOST=0.0.0.0",
         "--env",
