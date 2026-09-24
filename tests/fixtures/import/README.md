@@ -18,8 +18,15 @@ clock values, so they are stable across checkouts.
   - `docs/notes/empty.md`: whitespace only → skipped.
   - `docs/notes/stub.md`: `@plain.md` → a resolved stub, skipped.
   - `CLAUDE.md`, `AGENTS.md`, `sub/CLAUDE.md` (stub `@../AGENTS.md`), `.mcp.json`: context files.
-- `automemory/` — a Claude auto-memory dir (`MEMORY.md` index, a `type: feedback` lesson, a
-  `type: project` fact with `date:` frontmatter).
-- `serena/memories/` — a serena memories directory (numeric and topical names, a dated H1). It is
-  not under `.serena/` because the repository ignores that path; `hlm import serena` accepts the
-  memories directory itself or a project root containing `.serena/memories`.
+- `automemory/` — a Claude auto-memory dir (`MEMORY.md` index, a top-level `type: feedback` lesson,
+  a `type: project` fact with `date:` frontmatter) plus files in the CURRENT Claude Code shape, with
+  `type` nested under `metadata:` (e2e 2026-09-24 finding #1; the layout copies real files, the
+  text is synthetic): `feedback_deploy_footguns.md` (a lead line, three rules, a `**Why:**`
+  paragraph, a second list with its own intro; one rule labelled `**Mistake:**`/`**Fix:**`) → one
+  lesson per rule; `feedback_review_style.md` (one rule with `**Why:**`/`**How to apply:**`) → one
+  lesson, text unchanged; `user_profile.md` (`user`) and `reference_dashboards.md` (`reference`)
+  → facts.
+- `serena/memories/` — a serena memories directory (numeric and topical names, a dated H1; its
+  two-bullet `lessons_learned.md` becomes two lessons). It is not under `.serena/` because the
+  repository ignores that path; `hlm import serena` accepts the memories directory itself or a
+  project root containing `.serena/memories`.

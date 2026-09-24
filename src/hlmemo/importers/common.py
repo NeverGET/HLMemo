@@ -179,27 +179,48 @@ def stub_targets(text: str) -> list[str] | None:
     return [ln[1:] for ln in lines]
 
 
+def _frontmatter_scalar(raw: str) -> Any:
+    try:
+        return json.loads(raw) if raw else ""
+    except ValueError:
+        if raw.startswith("[") and raw.endswith("]"):  # YAML flow list of bare words
+            return [w.strip().strip("'\"") for w in raw[1:-1].split(",") if w.strip()]
+        return raw.strip("'\"") if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"" else raw
+
+
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """A restricted YAML subset: ``key: value`` lines; JSON values are decoded (the export format
-    writes JSON flow values), other values are unquoted strings. Returns ``({}, text)`` if absent."""
+    writes JSON flow values), other values are unquoted strings. One level of block mapping is
+    read too: a ``key:`` without a value followed by indented ``sub: value`` lines becomes a dict
+    (Claude Code auto-memory nests ``type`` under ``metadata:``; e2e 2026-09-24 finding #1); deeper
+    lines are ignored. Returns ``({}, text)`` if absent."""
     m = FRONTMATTER_RE.match(text)
     if not m:
         return {}, text
     meta: dict[str, Any] = {}
+    block: str | None = None  # the top-level key whose indented lines are being read
+    indent: int | None = None  # the indentation of that block's first line
     for line in m.group(1).splitlines():
-        if not line.strip() or line.lstrip().startswith("#") or ":" not in line or line[:1].isspace():
+        if not line.strip() or line.lstrip().startswith("#") or ":" not in line:
             continue
-        key, _, raw = line.partition(":")
+        nested = line[:1].isspace()
+        if nested:
+            width = len(line) - len(line.lstrip())
+            if block is None or (indent is not None and width != indent):
+                continue
+            indent = width
+        key, _, raw = line.strip().partition(":")
         key, raw = key.strip(), raw.strip()
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key):
             continue
-        try:
-            meta[key] = json.loads(raw) if raw else ""
-        except ValueError:
-            if raw.startswith("[") and raw.endswith("]"):  # YAML flow list of bare words
-                meta[key] = [w.strip().strip("'\"") for w in raw[1:-1].split(",") if w.strip()]
-                continue
-            meta[key] = raw.strip("'\"") if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"" else raw
+        if nested:
+            assert block is not None
+            if not isinstance(meta.get(block), dict):
+                meta[block] = {}
+            meta[block][key] = _frontmatter_scalar(raw)
+            continue
+        meta[key] = _frontmatter_scalar(raw)
+        block, indent = (key, None) if not raw else (None, None)
     return meta, text[m.end() :]
 
 
