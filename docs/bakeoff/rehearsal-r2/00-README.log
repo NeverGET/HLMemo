@@ -1,0 +1,14 @@
+R2 production-cutover rehearsal on lima hlm-2604 (Ubuntu 26.04, 2 vCPU / 8 GiB, nproc=2, 7913 MiB visible), 2026-09-24 01:29-03:07Z.
+Target: ee6ce9c (R1, what production runs) -> 3535bcc9bf66 (local main HEAD at the start; 1e57e08 + a STATUS.md line; identical
+code/compose). The ref was not on origin: gitleaks git (origin/main..ref, 15 commits, no leaks), then pushed ONLY as the temporary
+branch r2-rehearsal (main not pushed). State dir deploy/.local/127.0.0.1-2223, URL https://localhost:19443 (Caddy internal CA,
+verified with the CA fetched over SSH). The VM was actually on fa24ca5 (the R1 rehearsal target), so ee6ce9c was deployed first (02).
+Host key re-pinned after limactl start and after limactl stop/start, each time comparing ssh-keyscan with the guest's key file read
+through lima's own channel (01, 11). llm.env: install_llm_env.sh with the real key from ./.env over ssh stdin (never printed/logged),
+HLM_LLM_BUDGET_DAY_USD=2 set on the host afterwards (the script has no cap flag). Removed at the end (--remove + recreate api/librarian),
+then a positive-controlled grep proved no file on the VM holds the key (13); the VM is STOPPED.
+Files follow the brief's steps: 01-03 step 1, 04 step 2, 05 step 3 (05b downtime from a host poller every ~0.25 s), 06 4a,
+07/09c 4b, 08 4c (G-L3), 09 4d (import burst), 10 4e (kill switch), 11 4f (reboot), 12 final status + memory table, 13 cleanup.
+scripts/: the load, sampler and SQL helpers used (tokens are read from an isolated 0600 hlm config, never argv or logs).
+No tokens, keys or secret values are in these logs.
+# note: image tags hlmemo:<40-hex SHA> abbreviated to 12 chars (gitleaks generic-api-key false positive)

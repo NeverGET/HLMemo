@@ -1,0 +1,64 @@
+# 2026-09-24T02:54:37Z observer safety after G-L3 (200 writes) + the import burst (207 items): DB snapshot
+              at               |       alembic        
+-------------------------------+----------------------
+ 2026-09-24 02:54:38.052319+00 | 0008_librarian_tasks
+
+ links_total | links_superseded | links_valid_closed 
+-------------+------------------+--------------------
+           0 |                0 |                  0
+
+ versions_total | versions_superseded | versions_valid_closed 
+----------------+---------------------+-----------------------
+            651 |                   0 |                     0
+
+       kind        | count 
+-------------------+-------
+ call_the_day      |     3
+ device_approved   |     5
+ device_minted     |    16
+ device_registered |     6
+ device_revoked    |    14
+ grant_added       |    22
+ grant_revoked     |     6
+ librarian         |   550
+ project_created   |     8
+ write             |   492
+
+    job_kind     | status | priority | count 
+-----------------+--------+----------+-------
+ embed           | done   |        5 |   651
+ librarian_write | done   |        2 |     1
+ librarian_write | done   |        3 |   261
+ librarian_write | done   |        6 |   207
+
+ version_signals 
+-----------------
+             588
+
+ status |     kind      | count 
+--------+---------------+-------
+ open   | contradiction |    36
+ open   | link          |   793
+
+ batches | batches_applied 
+---------+-----------------
+      35 |               0
+
+ llm_calls | cost_usd 
+-----------+----------
+      1109 |   0.6271
+
+## librarian events: role x outcome x mutation ops (all)
+   role   | outcome_or_op  | mutation_ops  | count 
+----------+----------------+---------------+-------
+ observer | annotated      | signal_upsert |   268
+ observer | authority_lost | -             |     1
+ observer | proposed       | signal_upsert |   200
+          | deferred       | -             |    81
+(4 rows)
+
+ questions_applied | questions_total 
+-------------------+-----------------
+                 0 |             829
+(1 row)
+

@@ -1,0 +1,27 @@
+== limactl start hlm-2604 2026-09-24T01:29:22Z
+hlm-2604    Running    127.0.0.1:2223    vz        aarch64    2       8GiB      60GiB    ~/.lima/hlm-2604
+-- current pinned known_hosts check:
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+rc=0
+scan=SHA256:eRx+Z7s5wrm9c2VMNQbZ0eJzdHAHXEJbQKDOP4cpjCg guestfile(lima channel)=SHA256:eRx+Z7s5wrm9c2VMNQbZ0eJzdHAHXEJbQKDOP4cpjCg
+re-pinned
+ssh-ok as hlmdeploy
+fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a
+{
+  "accepted": true,
+  "current_ref": "fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a",
+  "env_backups": {},
+  "previous_dump": "/var/backups/hlmemo/pre-upgrade/912f2d39247a9e445222756f8ce11fa24c70fae9-2026-09-23T183610Z-qPAHOA.dump",
+  "previous_image": "hlmemo:912f2d39247a",
+  "previous_image_id": "sha256:b93f93f26ed34611ac69aae2e1cd0b12c88b76b8df8a70da08d0f5bd8543ed4b",
+  "previous_ref": "912f2d39247a9e445222756f8ce11fa24c70fae9",
+  "retired_backups": []
+}
+
+hlmemo-prod-worker-1 hlmemo:fa24ca5a0d87 Up 14 seconds (healthy)
+hlmemo-prod-librarian-1 hlmemo:fa24ca5a0d87 Up 14 seconds (healthy)
+hlmemo-prod-api-1 hlmemo:fa24ca5a0d87 Up 14 seconds (healthy)
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 14 seconds (healthy)
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 14 seconds (healthy)
