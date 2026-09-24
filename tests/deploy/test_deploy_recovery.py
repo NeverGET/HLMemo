@@ -99,6 +99,21 @@ elif "exec" in args and "hlmemo.ops" in args:
         print(os.environ.get("ROUTES_TOKEN", "hlm_" + "r" * 43))
     elif "list" in args:
         print("   2  g7-mac   personal trusted  expires=- grants=gates-g7:write")
+elif "exec" in args and "collect" in args:
+    # R2: deploy/scripts/check_librarian.py collect, fed on stdin like check_edge.py. Default: the
+    # idle report of a host without llm.env; LIBRARIAN_REPORT_<SERVICE> overrides it (JSON).
+    assert "def collect" in sys.stdin.read(), "librarian check not fed on stdin"
+    service = args[args.index("--service") + 1]
+    override = os.environ.get("LIBRARIAN_REPORT_" + service.upper())
+    report = {"service": service, "enabled": False, "role": "observer", "llm_mode": "live",
+              "profile": "openrouter", "fallback": None,
+              "profiles": [{"name": "openrouter", "base_url": "https://llm.invalid/v1", "key_set": False}]}
+    if service == "librarian":
+        report["heartbeat"] = {"enabled": False, "role": "observer", "breaker_state": "disabled",
+                               "age_s": 2.0}
+    else:
+        report["risk_judge"] = []
+    print(override if override is not None else json.dumps(report))
 elif "exec" in args and "--routes" in args:
     assert "def check_routes" in sys.stdin.read(), "route checker not fed on stdin"
     if fail == "routes-internal": sys.exit(14)
