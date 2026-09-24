@@ -804,8 +804,11 @@ class LibrarianWorker:
         list[dict[str, Any]], list[dict[str, Any]], int, list[datetime], datetime, list[dict[str, Any]]
     ]:
         """``apply_batch``: each approved question under its own proposing job's capabilities.
-        After the item-lock wait the TTL is checked again against a FRESH clock (Sol 48), which
-        becomes the job's ``T``.
+        After the item-lock wait the TTL is checked again against a FRESH clock (Sol 48), then the
+        cross-project policy of every question (its project rows ``FOR SHARE``), then the TTL once
+        more against a FRESH clock after that last policy lock (review 61: a question that expired
+        while the policy read waited is ``expired``, nothing of it applied); that clock becomes the
+        job's ``T``.
 
         D-076 approve-all staleness chains: the questions are applied in DEPENDENCY order —
         link-only proposals first (they never change a head), then by their earliest close cut,
@@ -856,8 +859,26 @@ class LibrarianWorker:
 
         todo.sort(key=order)
         await q.lock_logical_ids(conn, [lid for _a, actions in todo for lid in _logical_ids(actions)])
-        T = max(T, await q.clock_now(conn))  # the last lock wait is over: the TTL against NOW
+        T = max(T, await q.clock_now(conn))  # the item-lock wait is over: the TTL against NOW
+        policed: list[tuple[_Approved, list[dict[str, Any]]]] = []
         for a, actions in todo:
+            if a.expires_at is not None and a.expires_at <= T:
+                changes.append({"question_id": a.question_id, "status": "expired"})
+            elif await actor.policy_blocked(conn, actions, a.projects):  # the policy NOW (Sol 54 #2)
+                changes.append(
+                    {
+                        "question_id": a.question_id,
+                        "status": "authority_lost",
+                        "reason": actor.POLICY_EXCLUDED,
+                    }
+                )
+            else:
+                policed.append((a, actions))
+        # review 61: the policy rows are read FOR SHARE above, and that wait can outlast a TTL. The
+        # LAST policy lock is held now: the TTL once more against a FRESH clock, before any
+        # staleness verdict, rebase or event id (lock order: items → policy → TTL → staleness)
+        T = max(T, await q.clock_now(conn))
+        for a, actions in policed:
             qid, proposal = a.question_id, a.proposal
             if a.expires_at is not None and a.expires_at <= T:
                 changes.append({"question_id": qid, "status": "expired"})
@@ -865,11 +886,6 @@ class LibrarianWorker:
             assessed: dict[str, int] = {}
             for x in actions:
                 assessed.update(x.get("assessed") or {})
-            if await actor.policy_blocked(conn, actions, a.projects):  # the policy NOW (Sol 54 #2)
-                changes.append(
-                    {"question_id": qid, "status": "authority_lost", "reason": actor.POLICY_EXCLUDED}
-                )
-                continue
             # an EXTERNAL revision since the proposal (G-Q3); a subject closed earlier in THIS batch
             # is rebased below (D-076 staleness chains), not superseded
             if await actor.is_stale(conn, {"assessed": assessed}):

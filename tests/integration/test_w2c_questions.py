@@ -1368,3 +1368,124 @@ async def test_sol46_apply_batch_takes_the_device_lock_before_item_locks(
         assert await cur.fetchall() == [("applied",)]
     await embed(connect, embedder)
     await _replay_identical(connect)
+
+
+# --------------------------------------------------------------------------- review 61: TTL vs lock waits
+async def _lock_waits(connect, n: int) -> None:  # noqa: ANN001
+    """Wait until ``n`` backends of THIS database wait on a heavyweight lock (row or advisory)."""
+    import asyncio
+
+    for _ in range(200):
+        async with await connect() as conn:
+            cur = await conn.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+                " AND wait_event_type = 'Lock'"
+            )
+            (k,) = await cur.fetchone()
+            await conn.rollback()
+        if k >= n:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"expected {n} lock waits")
+
+
+async def _expire_in(connect, qid: str, seconds: int) -> None:  # noqa: ANN001
+    async with await connect() as conn:
+        await conn.execute(
+            "UPDATE librarian_questions SET expires_at = clock_timestamp() + make_interval(secs => %s)"
+            " WHERE question_id = %s",
+            (seconds, qid),
+        )
+        await conn.commit()
+
+
+async def _hold(blocker, lock: str, world: World, logical_id: int) -> None:  # noqa: ANN001
+    """``policy``: a cross-project policy change in flight (``ops project policy set`` updates the
+    project row; its row lock conflicts with the apply's ``FOR SHARE``); ``item``: a write in
+    flight on the subject (the write path's per-item lock)."""
+    if lock == "policy":
+        await blocker.execute("UPDATE projects SET policy = policy WHERE project_id = %s", (world.other_id,))
+    else:
+        await blocker.execute("SELECT pg_advisory_xact_lock(%s::bigint)", (logical_id,))
+
+
+async def _nothing_applied(connect) -> None:  # noqa: ANN001
+    async with await connect() as conn:
+        assert await count(conn, "links") == 0
+        assert await count(conn, "memory_versions", "superseded_at <> 'infinity'") == 0  # no close
+
+
+async def test_review61_apply_batch_rechecks_the_ttl_after_the_policy_lock_wait(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Review 61 (HIGH): an approved cross-project question passes the TTL after the item locks,
+    then its policy read (the project rows ``FOR SHARE``) waits for a policy change in flight and
+    expires during that wait. The fresh-clock recheck after the LAST policy lock makes it
+    ``expired``: no link, no close, and the job's event records no mutation."""
+    import asyncio
+
+    from hlmemo.librarian.roles import record_batch_decision
+
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder, other_old=True)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.commit()
+    await _promote(connect, world)  # both projects assistant: the apply is not role-deferred
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    async with await connect() as blocker:
+        await _hold(blocker, "policy", world, old.logical_id)
+        await _expire_in(connect, qid, 2)
+        applying = asyncio.create_task(worker.drain())
+        await _lock_waits(connect, 1)  # device, question and item locks taken: the policy read waits
+        await asyncio.sleep(2.5)  # the question expires during the wait
+        await blocker.rollback()
+        assert await asyncio.wait_for(applying, 30) == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("expired",)]
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->>'outcome', payload->'resolved'->'mutations',"
+            " payload->'resolved'->'question_status' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+        )
+        assert await cur.fetchall() == [("no_change", [], [{"question_id": qid, "status": "expired"}])]
+    await _nothing_applied(connect)
+
+
+@pytest.mark.parametrize("lock", ["item", "policy"])
+async def test_review61_answer_rechecks_the_ttl_after_the_item_and_policy_lock_waits(
+    db_dsn, connect, world: World, embedder, lock: str
+) -> None:  # noqa: ANN001
+    """Review 61 (HIGH), the direct ``memory.answer`` apply: the TTL passed at the top, then the
+    answer waits for a subject's item lock or for the policy rows' ``FOR SHARE``, and the question
+    expires during the wait: ``E_VERSION_CONFLICT {expired}``, nothing applied, no answer event."""
+    import asyncio
+
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder, other_old=True)
+    await _promote(connect, world)
+
+    async def answering() -> ToolError | dict[str, Any]:
+        try:
+            return await _answer(connect, world.ctx_a, _args(qid, "accept"), role="assistant")
+        except ToolError as exc:
+            return exc
+
+    async with await connect() as blocker:
+        await _hold(blocker, lock, world, old.logical_id)
+        await _expire_in(connect, qid, 2)
+        task = asyncio.create_task(answering())
+        await _lock_waits(connect, 1)
+        await asyncio.sleep(2.5)  # the question expires during the wait
+        await blocker.rollback()
+        res = await asyncio.wait_for(task, 30)
+    assert isinstance(res, ToolError), res
+    assert res.code == "E_VERSION_CONFLICT" and res.details["status"] == "expired"
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("open",)]  # the expiry sweep records it, not a refused answer
+        assert await count(conn, "events", "kind = 'answer'") == 0
+    await _nothing_applied(connect)
