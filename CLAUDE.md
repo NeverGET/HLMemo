@@ -5,9 +5,9 @@ exposed as ONE remote MCP server (streamable HTTP). Token-budgeted, clue-based p
 async "librarian" LLM for placement/contradiction/consolidation.
 
 ## Working agreement (owner: Cemal)
-- **Coworker model:** codex CLI with `gpt-6-sol` (reasoning high/xhigh; D-050 replaced gpt-6-astra to save weekly quota) is an active co-architect and reviewer.
+- **Coworker model:** codex CLI with `gpt-5.6-sol` (reasoning high/xhigh; D-084 replaced gpt-6-sol after a blind bake-off; D-050 had replaced gpt-6-astra) is an active co-architect and reviewer.
   Consult it on every non-trivial design/implementation decision; record the exchange in `docs/consults/`.
-  Invocation pattern: `codex exec --skip-git-repo-check -s read-only -m gpt-6-sol -c model_reasoning_effort="xhigh" -o <out.md> - < <prompt.md>`
+  Invocation pattern: `codex exec --skip-git-repo-check -s read-only -m gpt-5.6-sol -c model_reasoning_effort="xhigh" -o <out.md> - < <prompt.md>`
 - **Local-first validation:** everything runs in docker compose locally and passes the deterministic gate
   (`docs/decisions/` → validation gates) BEFORE any VPS deploy.
 - **Decisions live in `docs/decisions/DECISIONS.md`** (append-only ADR log). Chat is transient; files are real.
