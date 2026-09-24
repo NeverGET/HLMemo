@@ -7,7 +7,7 @@ hlm mcp add claude|codex|agy
 hlm query "<q>" [--budget N]
 hlm import markdown|automemory|serena|context <paths> --project P [--dry-run] [--json] | hlm export --out DIR
 hlm close --notes ... [--decision ...] [--lesson "title::body"] [--card FILE]
-hlm claude|codex|agy [--task ...] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]
+hlm claude|codex|agy [--task ...] [--ask] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]
 hlm bench [--profile|--model] [--suite v1|v2] [--runs N] [--max-usd X] [--compare A B] | rescore | leaderboard
 """
 
@@ -49,7 +49,14 @@ from hlmemo.cli.client_config import (
 from hlmemo.cli.http_client import HlmHttp, HlmHttpError
 from hlmemo.cli.launch import CLIS, build_argv, exec_cli
 from hlmemo.cli.mcp_client import MemoryClient, ToolCallError
-from hlmemo.cli.preflight import RISK_TIMEOUT_S, UNAVAILABLE_PROMPT, compact, run_preflight
+from hlmemo.cli.preflight import (
+    RISK_TIMEOUT_S,
+    SYNTH_TIMEOUT_S,
+    UNAVAILABLE_PROMPT,
+    compact,
+    run_preflight,
+    wants_synthesis,
+)
 
 OPS_HINT = (
     "hint: this server does not accept self-registration (D-061). Ask the operator to mint a device:\n"
@@ -962,6 +969,7 @@ def launch(
     headless: bool,
     cli_args: list[str],
     root: Path | None = None,
+    ask: bool = False,
 ) -> None:
     root = root or Path.cwd()
     cfg = c.config(budget=budget) if budget is not None else c.config()
@@ -985,7 +993,12 @@ def launch(
                 None,
             )
         else:
-            client = MemoryClient(cfg.mcp, token, timeout_s=cfg.timeout_s)
+            # W2e: --ask (or, with HLM_PREFLIGHT_SYNTHESIZE=auto, a task ending in "?") asks the
+            # query for a cited synthesis, which the server caps at 6 s: that query gets the longer
+            # client timeout (the parallel risk_check keeps its own bounded waits)
+            synthesize = wants_synthesis(task, ask)
+            q_timeout = max(cfg.timeout_s, SYNTH_TIMEOUT_S) if synthesize else cfg.timeout_s
+            client = MemoryClient(cfg.mcp, token, timeout_s=q_timeout)
             # W2d: with --task, memory.risk_check runs in parallel (own, longer timeout; failure = note)
             risk_client = MemoryClient(cfg.mcp, token, timeout_s=max(cfg.timeout_s, RISK_TIMEOUT_S))
             outcome = run_preflight(
@@ -996,6 +1009,7 @@ def launch(
                 task=task,
                 root=root,
                 risk_client=risk_client,
+                synthesize=synthesize,
             )
             ok, prompt, outcome_code, outcome_reason = (
                 outcome.ok,
@@ -1049,6 +1063,12 @@ def _make_launcher(cli: str):  # noqa: ANN202
         headless: Annotated[
             bool, typer.Option("--headless", help="one-shot: claude -p / codex exec / agy --print")
         ] = False,
+        ask: Annotated[
+            bool,
+            typer.Option(
+                "--ask", help="treat the task as a question: ask memory.query for a cited synthesis"
+            ),
+        ] = False,
     ) -> None:
         launch(
             _ctx(ctx),
@@ -1058,6 +1078,7 @@ def _make_launcher(cli: str):  # noqa: ANN202
             no_preflight=no_preflight,
             headless=headless,
             cli_args=_split_cli_args(list(ctx.args)),
+            ask=ask,
         )
 
     _launch_cmd.__name__ = f"launch_{cli}"

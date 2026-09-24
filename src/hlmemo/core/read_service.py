@@ -182,6 +182,23 @@ async def query(
 ) -> dict[str, Any]:
     request = parse_request(QueryRequest, req)
     deps = deps or default_read_deps()
+    packed, librarian = await query_parts(conn, ctx, request, deps=deps)
+    if librarian is not None:
+        add_librarian_block(deps.meter, packed, librarian, int(packed["budget"]["limit"]))
+    return packed
+
+
+async def query_parts(
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    req: QueryRequest | dict[str, Any],
+    *,
+    deps: ReadDeps,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """``memory.query`` without its optional ``librarian`` block: ``(packed result, block | None)``.
+    ``query`` packs the block after the hits; the W2e synthesis (``synthesis_service``) packs it
+    after the hits AND the synthesis, so one exact ``budget.used`` covers everything (G2)."""
+    request = parse_request(QueryRequest, req)
     budget = _budget(request.token_budget)
     async with conn.transaction():
         project = await _read_project(conn, ctx, request.project)
@@ -266,15 +283,14 @@ async def query(
         )
     except BudgetError as exc:
         raise ToolError(exc.code, str(exc), **exc.details) from exc
-    if librarian is not None:
-        _add_librarian_block(deps.meter, packed, librarian, budget)
-    return packed
+    return packed, librarian
 
 
-def _add_librarian_block(meter: Meter, envelope: dict[str, Any], block: dict[str, Any], budget: int) -> None:
-    """query/2: the optional ``librarian`` block is packed AFTER the hits (roadmap W2b; Sol 44):
-    into what the hits left, at most ``LIBRARIAN_SHARE`` of the budget, dropping notices from the
-    end, then the whole block; ``budget.used`` stays the exact measure."""
+def add_librarian_block(meter: Meter, envelope: dict[str, Any], block: dict[str, Any], budget: int) -> None:
+    """query/2: the optional ``librarian`` block is packed AFTER the hits (roadmap W2b; Sol 44)
+    and, with ``synthesize``, after the synthesis too (W2e): into what they left, at most
+    ``LIBRARIAN_SHARE`` of the budget, dropping notices from the end, then the whole block;
+    ``budget.used`` stays the exact measure of the whole result."""
     notices = list(block["notices"])
     while True:
         candidate = {**block, "notices": notices}
@@ -727,4 +743,12 @@ async def raw(
     return envelope
 
 
-__all__ = ["ReadDeps", "default_read_deps", "drilldown", "query", "raw"]
+__all__ = [
+    "ReadDeps",
+    "add_librarian_block",
+    "default_read_deps",
+    "drilldown",
+    "query",
+    "query_parts",
+    "raw",
+]

@@ -1,0 +1,307 @@
+{
+ "fast_path_accuracy": 0.435,
+ "fixture": "tests/fixtures/synthesis",
+ "max_usd": "1.5",
+ "negatives": 10,
+ "profiles": {
+  "openrouter": {
+   "calls": 211,
+   "cost_usd": "0.0974105593",
+   "delta_mean": 0.221,
+   "delta_min": 0.194,
+   "latency_ms_p50": 1395.0,
+   "latency_ms_p95": 2758.0,
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "negatives_answered_max": 1,
+   "outcomes": {
+    "ok": 198,
+    "schema_fail": 7,
+    "schema_retry_ok": 3,
+    "timeout": 3
+   },
+   "pass": true,
+   "reps": [
+    {
+     "delta": 0.194,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q003",
+      "q089",
+      "q090",
+      "q091",
+      "q123",
+      "q157"
+     ],
+     "negatives_abstained": 6,
+     "negatives_answered": 1,
+     "negatives_weak": 8,
+     "rep": 0,
+     "statuses": {
+      "answered": 47,
+      "insufficient_evidence": 11,
+      "unavailable:schema_fail": 1,
+      "unavailable:timeout": 3
+     },
+     "synthesis_accuracy": 0.629,
+     "system_accuracy": 0.71,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q045",
+      "q050",
+      "q059",
+      "q060",
+      "q081",
+      "q083",
+      "q088",
+      "q106",
+      "q115",
+      "q119",
+      "q141",
+      "q164",
+      "q168",
+      "q181",
+      "q182"
+     ]
+    },
+    {
+     "delta": 0.242,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q022",
+      "q089",
+      "q090",
+      "q201"
+     ],
+     "negatives_abstained": 7,
+     "negatives_answered": 1,
+     "negatives_weak": 8,
+     "rep": 1,
+     "statuses": {
+      "answered": 50,
+      "insufficient_evidence": 12
+     },
+     "synthesis_accuracy": 0.677,
+     "system_accuracy": 0.726,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q045",
+      "q050",
+      "q059",
+      "q060",
+      "q081",
+      "q083",
+      "q088",
+      "q106",
+      "q115",
+      "q119",
+      "q141",
+      "q156",
+      "q164",
+      "q168",
+      "q181",
+      "q182"
+     ]
+    },
+    {
+     "delta": 0.226,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q022",
+      "q089",
+      "q090",
+      "q123",
+      "q201"
+     ],
+     "negatives_abstained": 6,
+     "negatives_answered": 1,
+     "negatives_weak": 8,
+     "rep": 2,
+     "statuses": {
+      "answered": 47,
+      "insufficient_evidence": 12,
+      "unavailable:schema_fail": 1,
+      "unavailable:timeout": 2
+     },
+     "synthesis_accuracy": 0.661,
+     "system_accuracy": 0.726,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q045",
+      "q050",
+      "q059",
+      "q060",
+      "q081",
+      "q083",
+      "q088",
+      "q106",
+      "q115",
+      "q119",
+      "q141",
+      "q156",
+      "q164",
+      "q168",
+      "q181",
+      "q182"
+     ]
+    }
+   ],
+   "synthesis_accuracy_mean": 0.656,
+   "synthesis_accuracy_min": 0.629,
+   "system_accuracy_min": 0.71
+  },
+  "openrouter-gpt6-luna": {
+   "calls": 210,
+   "cost_usd": "0.017627060",
+   "delta_mean": 0.172,
+   "delta_min": 0.161,
+   "latency_ms_p50": 1169.5,
+   "latency_ms_p95": 2399.8,
+   "model_id": "openai/gpt-6-luna",
+   "negatives_answered_max": 1,
+   "outcomes": {
+    "ok": 210
+   },
+   "pass": true,
+   "reps": [
+    {
+     "delta": 0.177,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q022",
+      "q071",
+      "q089",
+      "q090",
+      "q157",
+      "q167"
+     ],
+     "negatives_abstained": 8,
+     "negatives_answered": 0,
+     "negatives_weak": 8,
+     "rep": 0,
+     "statuses": {
+      "answered": 46,
+      "insufficient_evidence": 16
+     },
+     "synthesis_accuracy": 0.613,
+     "system_accuracy": 0.694,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q045",
+      "q050",
+      "q059",
+      "q060",
+      "q083",
+      "q088",
+      "q106",
+      "q115",
+      "q119",
+      "q141",
+      "q164",
+      "q168",
+      "q181",
+      "q182"
+     ]
+    },
+    {
+     "delta": 0.161,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q022",
+      "q071",
+      "q089",
+      "q090",
+      "q157",
+      "q167",
+      "q188"
+     ],
+     "negatives_abstained": 8,
+     "negatives_answered": 0,
+     "negatives_weak": 8,
+     "rep": 1,
+     "statuses": {
+      "answered": 45,
+      "insufficient_evidence": 17
+     },
+     "synthesis_accuracy": 0.597,
+     "system_accuracy": 0.694,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q045",
+      "q050",
+      "q059",
+      "q060",
+      "q081",
+      "q083",
+      "q088",
+      "q106",
+      "q115",
+      "q119",
+      "q141",
+      "q164",
+      "q168",
+      "q181"
+     ]
+    },
+    {
+     "delta": 0.177,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q022",
+      "q071",
+      "q089",
+      "q090",
+      "q157",
+      "q167"
+     ],
+     "negatives_abstained": 7,
+     "negatives_answered": 1,
+     "negatives_weak": 8,
+     "rep": 2,
+     "statuses": {
+      "answered": 46,
+      "insufficient_evidence": 16
+     },
+     "synthesis_accuracy": 0.613,
+     "system_accuracy": 0.694,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q045",
+      "q050",
+      "q059",
+      "q060",
+      "q083",
+      "q088",
+      "q106",
+      "q115",
+      "q119",
+      "q141",
+      "q164",
+      "q168",
+      "q181",
+      "q182"
+     ]
+    }
+   ],
+   "synthesis_accuracy_mean": 0.608,
+   "synthesis_accuracy_min": 0.597,
+   "system_accuracy_min": 0.694
+  }
+ },
+ "reps": 3,
+ "spent_usd": "0.11503749",
+ "split": "test",
+ "subset": 62,
+ "tau_s": 0.0434
+}
