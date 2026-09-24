@@ -21,29 +21,22 @@ arguments replays the stored ack; the same ``request_id`` with other arguments (
 register_lesson arguments; ``payload.resolved.write.items`` holds the derived lesson item, which is
 what replay and ``memory.raw`` read.
 
-Cross-project check hook (W2b wiring point)
--------------------------------------------
-The roadmap asks for the librarian's cross-project check of a new lesson at priority 2. The W2b
-enqueue does not exist on this branch, so this module exposes ONE isolated hook, awaited inside
-the write transaction right after a NEW (non-replayed) lesson was written::
-
-    CROSS_PROJECT_CHECK_HOOK: async (conn, ctx, LessonRegistered) -> bool   # True = enqueued
-
-Wire it at merge (one line, wherever W2b's enqueue lives)::
-
-    lesson_service.CROSS_PROJECT_CHECK_HOOK = enqueue_lesson_check   # LessonRegistered.priority == 2
-
-If W2b's generic trigger already enqueues ``librarian_write:<event_id>`` for every write event
-(priority 3), the hook only has to lower that job's priority number to 2 (same dedupe key). The
-result's ``cross_project_check`` is ``"queued"`` when the hook returned True, ``"skipped"`` when it
-returned False, ``"not_wired"`` while no hook is set and ``"replayed"`` on an idempotent replay.
+Cross-project check at priority 2 (write context; W2b integration point)
+------------------------------------------------------------------------
+The lesson is written with the server-side write context ``librarian_priority=2``
+(``write_service.write(..., librarian_priority=2)`` → ``_Batch.librarian_priority``; never a client
+argument). It is persisted in the SAME event as ``payload.resolved.librarian_priority = 2`` (the key
+is absent on ordinary writes), so it is atomic with the lesson and survives replay. W2b's enqueue
+of ``librarian_write:<event_id>`` (in ``write_service._execute``, same transaction) must use
+``batch.librarian_priority`` when it is set, else its own default (3), and record the job it inserts
+in ``resolved.jobs`` like the embed jobs; any later re-enqueue reads
+``payload.resolved.librarian_priority``. On this branch no librarian enqueue exists yet: the field
+is recorded only.
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -53,7 +46,6 @@ from hlmemo.auth.context import AuthContext
 from hlmemo.core import write_service
 from hlmemo.core.budget import DEFAULT_WRITE_BUDGET
 from hlmemo.core.clues import encode_clue
-from hlmemo.core.errors import ToolError
 from hlmemo.core.write_models import (
     DEVICE_SCOPE_RE,
     SLUG_RE,
@@ -62,12 +54,11 @@ from hlmemo.core.write_models import (
     parse_request,
 )
 from hlmemo.core.write_service import WriteDeps
-from hlmemo.db import write_queries as wq
 
 TOOL = "memory.register_lesson"
 TITLE_MAX = 120
 PART_MAX = 16000
-PRIORITY = 2
+PRIORITY = 2  # librarian_priority of the cross-project check (roadmap W2d)
 CLIENT_FALLBACK = "unknown/0"
 
 
@@ -93,20 +84,6 @@ class LessonRequest(_Strict):
         if v is not None and not v.strip():
             raise ValueError("must not be blank")
         return v
-
-
-@dataclass(frozen=True, slots=True)
-class LessonRegistered:
-    event_id: int
-    project_id: int
-    logical_id: int
-    version_id: int
-    priority: int = PRIORITY
-
-
-LessonHook = Callable[[AsyncConnection, AuthContext, LessonRegistered], Awaitable[bool]]
-#: W2b wiring point (see the module docstring). None until the orchestrator wires it at merge.
-CROSS_PROJECT_CHECK_HOOK: LessonHook | None = None
 
 
 def lesson_title(mistake: str) -> str:
@@ -153,25 +130,12 @@ async def register_lesson(
         "items": [lesson_item(request)],
         "token_budget": DEFAULT_WRITE_BUDGET,
     }
-    async with conn.transaction():
-        # raw = the verbatim register_lesson arguments: they are the idempotency key and the
-        # event's payload.request (write_service authorizes, locks and dedupes exactly as for writes)
-        ack = await write_service.write(conn, ctx, write_args, deps=deps, raw=dict(args))
-        v = ack.versions[0]
-        hook = CROSS_PROJECT_CHECK_HOOK
-        if ack.replayed:
-            check = "replayed"
-        elif hook is None:
-            check = "not_wired"
-        else:
-            ref = (await wq.resolve_projects(conn, [request.project]))[request.project]
-            ev = await wq.find_event(conn, ref.project_id, ctx.device_id, request.request_id)
-            if ev is None:  # cannot happen inside the write transaction; belt and braces
-                raise ToolError("E_UNAVAILABLE", "lesson event not found after write")
-            queued = await hook(
-                conn, ctx, LessonRegistered(ev.event_id, ref.project_id, v.logical_id, v.version_id)
-            )
-            check = "queued" if queued else "skipped"
+    # raw = the verbatim register_lesson arguments: they are the idempotency key and the event's
+    # payload.request (write_service authorizes, locks and dedupes exactly as for memory.write)
+    ack = await write_service.write(
+        conn, ctx, write_args, deps=deps, raw=dict(args), librarian_priority=PRIORITY
+    )
+    v = ack.versions[0]
     result: dict[str, Any] = {
         "request_id": ack.request_id,
         "replayed": ack.replayed,
@@ -179,18 +143,14 @@ async def register_lesson(
         "logical_id": v.logical_id,
         "version_id": v.version_id,
         "embedding_status": v.embedding_status,
-        "cross_project_check": check,
     }
     deps.meter.settle(result, DEFAULT_WRITE_BUDGET)
     return result
 
 
 __all__ = [
-    "CROSS_PROJECT_CHECK_HOOK",
     "PRIORITY",
     "TOOL",
-    "LessonHook",
-    "LessonRegistered",
     "LessonRequest",
     "lesson_body",
     "lesson_item",

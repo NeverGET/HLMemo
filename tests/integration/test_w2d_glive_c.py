@@ -50,7 +50,9 @@ pytestmark = [
 ]
 
 ROOT = Path(__file__).resolve().parents[2]
-PROFILES = os.environ.get("HLM_GLIVE_C_PROFILES", "openrouter-gpt6-luna,openrouter").split(",")
+# the qualified judge profiles; re-qualifying another one = pass it here explicitly (it is measured
+# alone, whatever its disabled_tasks) and remove its disabled_tasks entry in the same change
+PROFILES = os.environ.get("HLM_GLIVE_C_PROFILES", "openrouter-gpt6-luna").split(",")
 REPS = int(os.environ.get("HLM_GLIVE_C_REPS", "3"))
 MAX_USD = Decimal(os.environ.get("HLM_GLIVE_C_MAX_USD", "3"))
 CATCH_MIN, FALSE_WARN_MAX = 0.85, 0.10
@@ -94,6 +96,7 @@ async def test_glive_c(connect, db_dsn) -> None:  # noqa: ANN001
                 for case in cases:
                     judge.breaker.success()  # the gate measures the model, not a tripped breaker
                     async with await connect() as conn:
+                        await conn.commit()  # idle: the judge never runs inside a tx (D-062)
                         out = await rs.risk_check(
                             conn,
                             world.ctx_reader,

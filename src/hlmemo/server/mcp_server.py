@@ -193,19 +193,26 @@ async def on_call_tool(
     try:
         async with request_binding(ctx) as (conn, auth):
             device_id = auth.device_id
-            # Savepoint inside the request transaction: a failing tool leaves the connection
-            # usable and the middleware still commits the (read-only) outer transaction.
-            async with conn.transaction():
-                if params.name in {"memory.query", "memory.drilldown", "memory.raw"}:
-                    # Never enter the standalone service's lazy model path from HTTP.
-                    deps = ctx.request.app.state.read_deps
-                    if deps is None:
-                        raise RuntimeError("read dependencies are not initialized")
-                    result = await cast(ReadHandler, spec.handler)(conn, auth, dict(arguments), deps=deps)
-                elif spec.app_bound:  # W2d: handlers that need the app (shared deps, risk judge)
-                    result = await cast(Any, spec.handler)(conn, auth, dict(arguments), app=ctx.request.app)
-                else:
-                    result = await spec.handler(conn, auth, dict(arguments))
+            if spec.app_bound:
+                # W2d: the handler opens its own savepoints and may detach the request
+                # transaction (commit + return the connection, D-062) before a DB-free phase;
+                # ``detach`` is None outside the middleware's request transaction.
+                state = ctx.request.scope.get("state") or {}
+                detach = state.get("detach") if state.get("conn") is conn else None
+                handler = cast(Any, spec.handler)
+                result = await handler(conn, auth, dict(arguments), app=ctx.request.app, detach=detach)
+            else:
+                # Savepoint inside the request transaction: a failing tool leaves the connection
+                # usable and the middleware still commits the (read-only) outer transaction.
+                async with conn.transaction():
+                    if params.name in {"memory.query", "memory.drilldown", "memory.raw"}:
+                        # Never enter the standalone service's lazy model path from HTTP.
+                        deps = ctx.request.app.state.read_deps
+                        if deps is None:
+                            raise RuntimeError("read dependencies are not initialized")
+                        result = await cast(ReadHandler, spec.handler)(conn, auth, dict(arguments), deps=deps)
+                    else:
+                        result = await spec.handler(conn, auth, dict(arguments))
     except (ToolError, HlmError, BudgetError, InvalidClue) as err:
         outcome = getattr(err, "code", type(err).__name__)
         return error_result(err)
