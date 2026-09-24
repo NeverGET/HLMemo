@@ -13,6 +13,8 @@ Updated 2026-09-23. Source of each item in parentheses.
 - `::ffff:a.b.c.d` mapped addresses collapse to one /64 bucket (consults/26, Low).
 - XFF junk entry makes the limiter fall back to the proxy IP (consults/20, Low).
 - No uvicorn-level protection beyond limit_concurrency 512 against pure slowloris (consults/23, Low-Med).
+- **codex review sandbox reads the whole disk** (D-092 side finding): in codex 0.155.1 `-s read-only` lets the reviewer model read repo `.env` and `deploy/.local/` (and ~/.ssh). Run codex reviews/consults from a clean export (git archive of the reviewed commit, no secrets) or with a restrictive permission profile that allows only the export + system paths.
+
 ## Correctness / ops
 - Marker write failure after cutover leaves current-ref behind → later deploys refuse (consults/20, D5 Low).
 - Card survivor-link load still grows with links overlapping the interval (N5 residual, consults/20).
