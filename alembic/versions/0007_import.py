@@ -32,6 +32,11 @@ an ordinary ``write`` event by device 1 (``core/skeleton_card.py`` → ``core/wr
 short transaction per project after the DDL; idempotent. Needs the e5 tokenizer and the o200k
 tiktoken cache (the image has both) only when a project lacks a card.
 
+Duplicates (Sol 43 #2): open current rows that already share a (project, source_key) are detected
+BEFORE the concurrent build; the upgrade then stops with the groups listed and the reconciliation
+command (``python -m hlmemo.ops sources duplicates|close-duplicates --yes``). After any failed
+build the INVALID leftover index is dropped, so a re-run starts clean.
+
 The downgrade is one guarded transaction and refuses while any version carries a source or a code
 reference (dropping the columns would silently lose projection data only a replay could restore).
 """
@@ -106,6 +111,22 @@ END $$""",
     ("index code_refs_path", "CREATE INDEX IF NOT EXISTS code_refs_path ON code_refs (path)"),
 )
 
+#: Sol 43 #2: open current rows that already share a key (written between the column steps and the
+#: index build, or by hand) would make the CONCURRENTLY build fail with 23505 on every re-run.
+DUPLICATES = f"""
+SELECT project_id, source_key, count(*) FROM memory_versions
+ WHERE {OWNER_PREDICATE}
+ GROUP BY project_id, source_key HAVING count(*) > 1
+ ORDER BY project_id, source_key
+"""
+DUPLICATE_HINT = (
+    "0007_import: {n} (project_id, source_key) group(s) hold more than one open current item, so the "
+    "UNIQUE index {index} cannot be built: {groups}. Nothing is lost; reconcile and re-run `alembic "
+    "upgrade`: `python -m hlmemo.ops sources duplicates` lists the groups, `python -m hlmemo.ops sources "
+    "close-duplicates --yes` closes every item but the newest of each group (validity ends, nothing is "
+    "deleted)."
+)
+
 LEFTOVER = f"""
 SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
 WHERE c.relname = '{OWNER_INDEX}' AND NOT i.indisvalid
@@ -141,13 +162,21 @@ def _fault(step: str) -> None:
         raise RuntimeError(f"0007_import: injected fault at {step}")
 
 
+def _testing_flag(step: str) -> bool:
+    """Test-only switches (same double guard as ``_fault``)."""
+    return os.environ.get("HLM_TESTING") == "1" and os.environ.get("HLM_MIGRATION_FAULT") == f"0007:{step}"
+
+
 def _lock_timeout(exc: BaseException) -> bool:
     orig = getattr(exc, "orig", exc)
     return getattr(orig, "sqlstate", None) == "55P03"  # lock_not_available
 
 
-def _retry(bind, what: str, sql: str, *, timeout: str = LOCK_TIMEOUT, before=None) -> None:  # noqa: ANN001
-    """One autocommit statement under ``lock_timeout``, retried while the lock is not available."""
+def _retry(  # noqa: ANN001
+    bind, what: str, sql: str, *, timeout: str = LOCK_TIMEOUT, before=None, cleanup=None
+) -> None:
+    """One autocommit statement under ``lock_timeout``, retried while the lock is not available.
+    ``cleanup`` runs after every failure (e.g. drop the INVALID index a failed build leaves)."""
     for n in range(1, ATTEMPTS + 1):
         try:
             if before is not None:
@@ -156,6 +185,9 @@ def _retry(bind, what: str, sql: str, *, timeout: str = LOCK_TIMEOUT, before=Non
             bind.exec_driver_sql(sql)
             return
         except Exception as exc:
+            bind.exec_driver_sql("RESET lock_timeout")
+            if cleanup is not None:
+                cleanup()
             if not _lock_timeout(exc) or n == ATTEMPTS:
                 if _lock_timeout(exc):
                     raise RuntimeError(RETRY_HINT.format(n=n, t=timeout, what=what)) from exc
@@ -163,6 +195,14 @@ def _retry(bind, what: str, sql: str, *, timeout: str = LOCK_TIMEOUT, before=Non
             time.sleep(RETRY_SLEEP_S)
         finally:
             bind.exec_driver_sql("RESET lock_timeout")
+
+
+def _check_duplicates(bind) -> None:  # noqa: ANN001
+    rows = bind.exec_driver_sql(DUPLICATES).fetchall()
+    if rows:
+        groups = ", ".join(f"({pid}, {key!r}) x{n}" for pid, key, n in rows[:20])
+        more = f" and {len(rows) - 20} more" if len(rows) > 20 else ""
+        raise RuntimeError(DUPLICATE_HINT.format(n=len(rows), index=OWNER_INDEX, groups=groups + more))
 
 
 def _dsn() -> str:
@@ -190,6 +230,8 @@ def upgrade() -> None:
                 bind.exec_driver_sql(f"DROP INDEX CONCURRENTLY IF EXISTS {OWNER_INDEX}")
 
         _fault("index")
+        if not _testing_flag("skip-duplicate-check"):
+            _check_duplicates(bind)  # a clear reconciliation message instead of a 23505 loop
         _retry(
             bind,
             f"index {OWNER_INDEX}",
@@ -197,6 +239,7 @@ def upgrade() -> None:
             f" ON memory_versions (project_id, source_key) WHERE {OWNER_PREDICATE}",
             timeout=LONG_LOCK_TIMEOUT,
             before=drop_invalid_leftover,
+            cleanup=drop_invalid_leftover,  # after ANY failure: a re-run starts clean
         )
         _fault("backfill")
         from hlmemo.core.skeleton_card import backfill_skeleton_cards

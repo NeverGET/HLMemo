@@ -578,12 +578,13 @@ async def test_crafted_logical_id_never_revises_an_unrelated_item(connect, tmp_p
         )
         == "keep me\n"
     )
-    # (2) an origin naming the victim with a stale/foreign version id is rejected, never applied
+    # (2) Sol 43 #1: a FORGED origin naming the victim, WITH its current version_id, still never
+    # selects it (the victim's own source is not that origin): a new sourced item instead
     f.write_text(
         "\n".join(
             f'origin: "exp-b/{victim_lid}"'
             if ln.startswith("origin: ")
-            else f"version_id: {victim_vid - 1}"
+            else f"version_id: {victim_vid}"
             if ln.startswith("version_id: ")
             else ln
             for ln in lines
@@ -593,11 +594,19 @@ async def test_crafted_logical_id_never_revises_an_unrelated_item(connect, tmp_p
     rep = await import_async(
         call, source="markdown", parsed=parsed, project="exp-b", dry_run=False, meter=meter
     )
-    assert [r["reason"] for r in rep["rejected"]] == ["stale_or_foreign_export"]
-    assert (
-        await scalar(connect, "SELECT count(*) FROM memory_versions WHERE logical_id = %s", (victim_lid,))
-        == 1
+    assert not rep["writes"]["failed"] and rep["rejected"] == []
+    assert await rows(
+        connect,
+        "SELECT body, superseded_at::text, valid_to::text FROM memory_versions WHERE logical_id = %s",
+        (victim_lid,),
+    ) == [("keep me\n", "infinity", "infinity")]
+    forged = await rows(
+        connect,
+        "SELECT logical_id, body FROM memory_versions WHERE project_id = %s AND source->>'system' = 'hlm'"
+        " AND source->>'path' = %s AND superseded_at = 'infinity'",
+        (pid_b, f"exp-b/{victim_lid}"),
     )
+    assert len(forged) == 1 and forged[0][0] != victim_lid and forged[0][1] == "overwritten!\n"
 
 
 async def test_source_null_export_reimports_idempotently(connect, tmp_path, meter) -> None:
@@ -639,3 +648,123 @@ async def test_source_null_export_reimports_idempotently(connect, tmp_path, mete
         )
         == 3
     )
+
+
+# --------------------------------------------------------------------------- Sol 43 #3, #5
+async def test_close_ends_outgoing_links_replay_identical(connect) -> None:
+    """``close`` also ends the item's outgoing edges bi-temporally: the part after the item's
+    valid_to is superseded, the part before survives; replay rebuilds it identically."""
+    pid, _ = await make_project(connect, "fx")
+    call = Caller(connect, await make_device(connect, "importer", {pid: "write"}))
+    t = await call(
+        "memory.write",
+        _req(
+            [_item("t.md", "target\n", valid_from="2026-01-01T00:00:00Z")],
+            "00000000-0000-4000-8000-0000000000d0",
+        ),
+    )
+    target = t["versions"][0]["logical_id"]
+    ack = await call(
+        "memory.write",
+        _req(
+            [
+                _item(
+                    "s.md",
+                    "source\n",
+                    valid_from="2026-01-01T00:00:00Z",
+                    links=[
+                        {"rel": "relates_to", "target": target},
+                        {"rel": "derived_from", "target": target},
+                    ],
+                )
+            ],
+            "00000000-0000-4000-8000-0000000000d1",
+        ),
+    )
+    lid, vid = ack["versions"][0]["logical_id"], ack["versions"][0]["version_id"]
+    await call(
+        "memory.write",
+        _req(
+            [
+                _item(
+                    "s.md",
+                    "source\n",
+                    logical_id=lid,
+                    expected_version_id=vid,
+                    valid_from="2026-01-01T00:00:00Z",
+                    close=True,
+                )
+            ],
+            "00000000-0000-4000-8000-0000000000d2",
+        ),
+    )
+    item_vt = await scalar(
+        connect,
+        "SELECT valid_to::text FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'",
+        (lid,),
+    )
+    assert item_vt not in (None, "infinity")
+    links = await rows(
+        connect,
+        "SELECT rel, valid_from::text, valid_to::text, superseded_at::text FROM links"
+        " WHERE src_logical_id = %s",
+        (lid,),
+    )
+    current = sorted((rel, vf, vt) for rel, vf, vt, sup in links if sup == "infinity")
+    assert len(links) == 4  # two superseded originals + two cut survivors
+    assert [c[0] for c in current] == ["derived_from", "relates_to"]
+    assert all(vt == item_vt for _rel, _vf, vt in current)  # no outgoing edge outlives the item
+    assert (
+        await scalar(
+            connect,
+            "SELECT count(*) FROM links WHERE src_logical_id = %s AND superseded_at = 'infinity'"
+            " AND valid_to = 'infinity'",
+            (lid,),
+        )
+        == 0
+    )
+    async with await connect() as conn:
+        before = await dump_projections(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert await dump_projections(conn) == before
+
+
+async def test_mass_close_needs_confirmation_even_in_a_small_scope(connect, tmp_path, meter) -> None:
+    """Removing 2 of 3 files is guarded (kept open, reported) until ``--confirm-close``."""
+    docs = tmp_path / "repo" / "docs"
+    docs.mkdir(parents=True)
+    for n in range(3):
+        (docs / f"n{n}.md").write_text(f"# Note {n}\n\n" + " ".join(f"n{n}w{i}" for i in range(30)) + "\n")
+    pid, _ = await make_project(connect, "fx")
+    ctx = await make_device(connect, "importer", {pid: "write"})
+    call = Caller(connect, ctx)
+
+    async def run(*, confirm: bool = False) -> dict:
+        parsed = parse_source("markdown", [docs], base=tmp_path / "repo", tz=UTC)
+        return await import_async(
+            call,
+            source="markdown",
+            parsed=parsed,
+            project="fx",
+            dry_run=False,
+            meter=meter,
+            confirm_close=confirm,
+        )
+
+    assert (await run())["writes"]["written"] == 3
+    (docs / "n1.md").unlink()
+    (docs / "n2.md").unlink()
+    writes = await _writes(connect, ctx.device_id)
+    guarded = await run()
+    assert guarded["closed"] == [] and await _writes(connect, ctx.device_id) == writes
+    assert sorted(m["key"] for m in guarded["missing"]) == ["markdown:docs/n1.md", "markdown:docs/n2.md"]
+    assert {m["reason"].split(":")[0] for m in guarded["missing"]} == {"mass-close-guard"}
+    open_items = (
+        "SELECT count(*) FROM memory_versions WHERE project_id = %s AND source IS NOT NULL"
+        " AND superseded_at = 'infinity' AND valid_to = 'infinity'"
+    )
+    assert await scalar(connect, open_items, (pid,)) == 3
+    confirmed = await run(confirm=True)
+    assert sorted(confirmed["closed"]) == ["markdown:docs/n1.md", "markdown:docs/n2.md"]
+    assert await scalar(connect, open_items, (pid,)) == 1
