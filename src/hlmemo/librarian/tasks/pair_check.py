@@ -19,7 +19,7 @@ from typing import Any
 from hlmemo.core.temporal import fmt_ts
 from hlmemo.librarian import privacy
 from hlmemo.librarian.errors import AuthorityLost, PrivacyDenied
-from hlmemo.librarian.memory import load_rules
+from hlmemo.librarian.memory import load_rules, readable_rules
 from hlmemo.librarian.prompts import load_task
 from hlmemo.librarian.tasks import Plan, Proposal, user_message
 
@@ -75,6 +75,7 @@ class PairCheck:
                 redactor=w.provider.redactor,
             )
             await conn.commit()
+        rules = await readable_rules(w.connect, caps, rules)  # every ref visible to the device now
         task = load_task("contradiction")
         plan = Plan(
             OP,

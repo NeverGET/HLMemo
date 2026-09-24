@@ -458,12 +458,107 @@ async def test_sol41_rules_with_unreadable_refs_are_not_loaded(
             assert "Prefer none for unrelated deploy notes." in content
 
 
+async def test_sol43_rule_refs_are_judged_by_device_scope_on_every_path(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """A rule whose ref is readable by project but in a device_scope the device cannot see
+    (class:personal for a work device) never reaches that device's prompts, neither in
+    write_review nor in the W2a pair_check (Sol 43 #1)."""
+    import re
+
+    from hlmemo.librarian.memory import write_rule
+    from tests.integration._librarian_fixtures import NO_CONTRADICTION, enqueue_pair
+
+    hidden_item = item("Personal laptop note", "personal body", device_scope="class:personal")
+    (hidden,) = await write_items(connect, world.ctx_a, OTHER, [hidden_item])
+    (open_,) = await write_items(connect, world.ctx_a, OTHER, [item("Shared other note", "shared body")])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, Oracle())  # dev-a's own reviews: out of the way
+    async with await connect() as conn:
+        await write_rule(
+            conn,
+            title="r",
+            text="Owner rejected a link proposal (duplicate) for vX.",
+            clue_refs=[f"v{hidden.version_id}"],
+            dedupe="s43-hidden",
+        )
+        await write_rule(
+            conn,
+            title="r2",
+            text="Owner accepted a link proposal (refines) for vY.",
+            clue_refs=[f"v{open_.version_id}"],
+            dedupe="s43-open",
+        )
+        await conn.commit()
+    a, b = await write_items(
+        connect, world.ctx_b, OTHER, [item("Other note", "other body"), item("Other second", "second body")]
+    )
+    await embed(connect, embedder)
+    async with await connect() as conn:
+        await enqueue_pair(
+            conn,
+            project_id=world.other_id,
+            trigger_device_id=world.dev_b,
+            subject_vid=a.version_id,
+            candidate_vids=[b.version_id],
+            key="s43-pair",
+        )
+        await conn.commit()
+    oracle = Oracle()
+    llm = await _drain(
+        db_dsn, connect, lambda body: NO_CONTRADICTION if parse_input(body)[0] == "other" else oracle(body)
+    )
+    hidden_ref = re.compile(rf"\bv{hidden.version_id}\b")
+    seen: set[str] = set()
+    for req in llm.requests:  # every call here belongs to a dev-b job (write_review or pair_check)
+        task, _inp = parse_input(req)
+        content = req["messages"][1]["content"]
+        seen.add(task)
+        assert not hidden_ref.search(content), task
+        assert "Owner accepted a link proposal (refines)" in content.split("RULES", 1)[-1], task
+    assert {"place", "other"} <= seen
+
+
 async def test_same_pair_from_both_sides_is_one_question(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
     """Both reviews see the pair (the old item's job ran after the new one was written): only one
     pending question, the second is counted as a duplicate proposal."""
     await _pair(connect, world, embedder)
     both = {**CONTRA, (OLD[0], NEW[0]): ("contradicts", "old", "high")}
     await _drain(db_dsn, connect, Oracle(relations=both))
+    async with await connect() as conn:
+        assert await count(conn, "librarian_questions") == 1
+        cur = await conn.execute(
+            "SELECT sum((payload->'request'->>'duplicate_proposals')::int) FROM events"
+            " WHERE kind = 'librarian'"
+        )
+        assert await cur.fetchone() == (1,)
+    await _replay_identical(connect)
+
+
+async def test_sol43_concurrent_reviews_of_one_pair_ask_once(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """Two workers review the same pair from both sides AT THE SAME TIME (a barrier holds both
+    relate calls until both are in flight): the proposal path locks every subject item before the
+    duplicate check and holds it to commit, so exactly one question is asked (Sol 43)."""
+    import asyncio
+
+    await _pair(connect, world, embedder)
+    both = {**CONTRA, (OLD[0], NEW[0]): ("contradicts", "old", "high")}
+    arrived: list[int] = []
+    gate = asyncio.Event()
+
+    async def barrier(body: dict) -> None:
+        if parse_input(body)[0] == "relate":
+            arrived.append(1)
+            if len(arrived) >= 2:
+                gate.set()
+            await asyncio.wait_for(gate.wait(), 20)
+
+    llm = ScriptedLLM(default=Oracle(relations=both), on_request=barrier)
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    workers = [make_worker(lib_settings(db_dsn), provider, connect) for _ in range(2)]
+    await asyncio.gather(*(w.drain() for w in workers))
+    await provider.aclose()
+    assert len(arrived) >= 2  # both reviews were in flight together
     async with await connect() as conn:
         assert await count(conn, "librarian_questions") == 1
         cur = await conn.execute(

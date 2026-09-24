@@ -247,6 +247,9 @@ async def test_gp1_pipeline_replays_golden(db_dsn, connect, embedder) -> None:  
         f" the drop rule, pipeline exact {exact / world['n_pairs']:.3f}, questions {len(decided)}"
     )
     assert n_reached >= 150
+    # the recorded pipeline's decisions must stay at the G-LIVE-B bar (a regression in candidates,
+    # guards, dedupe or question planning fails here, with no network)
+    assert exact / world["n_pairs"] >= 0.90
 
     async with await connect() as conn:  # replay identity with the new kinds and projections
         before = await dump_w2b(conn)
@@ -255,3 +258,5 @@ async def test_gp1_pipeline_replays_golden(db_dsn, connect, embedder) -> None:  
         after = await dump_w2b(conn)
         for table in before:
             assert sorted(set(before[table]) ^ set(after[table])) == [], table
+            assert sorted(before[table]) == sorted(after[table]), table  # multiset: duplicate rows too
+        assert after == before

@@ -424,13 +424,14 @@ async def _rule(
 
 # --------------------------------------------------------------------------- expiry (30 days)
 async def expire_due(conn: AsyncConnection, *, limit: int = 500) -> int:
-    """Expire open questions past ``expires_at``: one ``librarian`` event (op ``expire``) per
-    project records the status changes (replayed as-is). Caller commits."""
+    """Expire open or approved-but-not-applied questions past ``expires_at`` (Sol 43 #2): one
+    ``librarian`` event (op ``expire``) per project records the status changes (replayed as-is).
+    Caller commits."""
     now = await q.clock_now(conn)
     cur = await conn.execute(
         """
         SELECT question_id::text, project_id FROM librarian_questions
-         WHERE status = 'open' AND expires_at <= %s
+         WHERE status IN ('open', 'approved') AND expires_at <= %s
          ORDER BY project_id, question_id LIMIT %s FOR UPDATE SKIP LOCKED
         """,
         (now, limit),

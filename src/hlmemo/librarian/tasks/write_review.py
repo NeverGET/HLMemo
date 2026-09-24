@@ -43,7 +43,7 @@ from hlmemo.db import librarian_queries as lq
 from hlmemo.librarian import candidates as cands
 from hlmemo.librarian import guards, privacy
 from hlmemo.librarian.errors import AuthorityLost, NotReady, PrivacyDenied, SchemaFail
-from hlmemo.librarian.memory import load_rules
+from hlmemo.librarian.memory import load_rules, readable_rules
 from hlmemo.librarian.prompts import load_task
 from hlmemo.librarian.tasks import Plan, Proposal, user_message
 
@@ -190,19 +190,6 @@ def verify_payload(pairs: list[tuple[Any, Any, bool]], start: int = 0) -> list[d
     return items
 
 
-async def readable_rules(conn: Any, rules: list[dict[str, Any]], allowed: list[int]) -> list[dict[str, Any]]:
-    """Working-memory rules whose clue refs all point to versions of projects the triggering device
-    may read now: a rule never carries another project's clue ids into a prompt (Sol 41 #1)."""
-    refs = sorted({int(r[1:].split(".")[0]) for rule in rules for r in rule.get("refs") or []})
-    if not refs:
-        return rules
-    cur = await conn.execute(
-        "SELECT version_id, project_ids FROM memory_versions WHERE version_id = ANY(%s)", (refs,)
-    )
-    ok = {int(v) for v, pids in await cur.fetchall() if set(pids) <= set(allowed)}
-    return [rule for rule in rules if all(int(r[1:].split(".")[0]) in ok for r in rule.get("refs") or [])]
-
-
 class _Pair:
     __slots__ = ("cand", "cross", "judgement", "judgement_profile", "scored", "subject")
 
@@ -280,8 +267,8 @@ class WriteReview:
                 meter=w.meter,
                 redactor=w.provider.redactor,
             )
-            rules = await readable_rules(conn, rules, allowed)
             await conn.commit()
+        rules = await readable_rules(w.connect, caps, rules)  # every ref visible to the device now
         if p.get("owner_note"):  # a custom answer's note: this job only (never working memory)
             note = w.provider.redactor.text(str(p["owner_note"]))[:500]
             rules = [*rules, {"clue": "owner", "rule": f"Owner note for this re-check: {note}", "refs": []}]
