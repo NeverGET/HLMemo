@@ -13,11 +13,13 @@ Two deterministic rules, applied after RRF fusion and the §4.9 dedupe:
 3. **Fact-level supersession** (``demote_partially_superseded``, D-076, Sol 56 #3, review 57): a
    live ``supersedes`` link with ``props.scope = part`` says that ONE statement of the older item
    (the link's quoted span) is outdated while its other statements stay valid, so the item is never
-   hidden. It is demoted below the item that replaced the statement ONLY when ALL the query's
-   evidence in the matched chunk lies INSIDE the quoted span (clause level, not merely the same
-   sentence): the chunk contains the span, some query term occurs in the span, and no query term
-   occurs in the chunk outside it (a mixed or ambiguous match is not demoted). With no query term
-   in the chunk at all (a semantic match), only when the span is most of the chunk. Runs on the
+   hidden. It is demoted below the item that replaced the statement ONLY when BOTH hold (D-087:
+   the read side must never be worse than the measured-neutral 6a96ba1 rule, so this rule can
+   only demote LESS than it): (i) the 6a96ba1 statement rule — the matched chunk contains the
+   quoted span and the chunk statement(s) sharing the most query terms overlap the span; (ii) the
+   review-57 clause rule — every query term found in the chunk lies INSIDE the span (a mixed or
+   same-sentence-but-other-clause match is not demoted). With no query term in the chunk at all
+   (a semantic match), only when the span is most of the chunk (as in 6a96ba1). Runs on the
    fetched head only (after ``n_fetch``), so no hit leaves the fetched set. Several constraints
    (chains A←B←C) form ONE stable topological order (smallest original rank first); an edge that
    would close a cycle is ignored (edges taken in a deterministic order), so a cycle never pushes
@@ -29,6 +31,7 @@ Two deterministic rules, applied after RRF fusion and the §4.9 dedupe:
 from __future__ import annotations
 
 import heapq
+import re
 from typing import Any
 
 from hlmemo.core.normalize import extract_terms, normalize
@@ -64,25 +67,47 @@ def newer_first_on_ties(hits: list[Any]) -> list[Any]:
 
 
 _EDGE = " \t\n\"'`“”„‚‘’«».,;:!?()[]{}…-–—"
+_LINE_MARK = re.compile(r"^\s*(?:[-*+•>|]+|\d+[.)]|#+)\s*")
+_SENT_SPLIT = re.compile(r"(?<=[.!?;])\s+")
 
 
 def _flat(text: str) -> str:
     return " ".join(normalize(text or "").split()).strip(_EDGE)
 
 
+def _statements(text: str) -> list[str]:
+    out: list[str] = []
+    for line in (text or "").splitlines():
+        line = _LINE_MARK.sub("", line).strip()
+        out.extend(part for part in _SENT_SPLIT.split(line) if part.strip())
+    return out or [text or ""]
+
+
+def _statement_rule(chunk_text: str, span: str, chunk: str, query_terms: set[str]) -> bool:
+    """The 6a96ba1 rule (measured neutral on the hold-out, D-087), unchanged."""
+    scored = [(len(set(extract_terms(st)) & query_terms), _flat(st)) for st in _statements(chunk_text)]
+    best = max(score for score, _st in scored)
+    if best == 0:  # a semantic match with no shared term: only when the span is most of the chunk
+        return len(span.split()) * 2 >= len(chunk.split())
+    return all(span in st or st in span for score, st in scored if score == best and st)
+
+
 def matched_in_span(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
     """Did the query match the OUTDATED span (``quote``) of this chunk, and nothing else of it?
-    See rule 3. ``query_terms`` are normalized terms (``extract_terms``)."""
+    Rule 3: the 6a96ba1 statement rule AND the review-57 clause rule, so it never demotes a hit
+    the 6a96ba1 rule would keep. ``query_terms``: the query's normalized terms (``extract_terms``)."""
     span = _flat(quote)
     chunk = _flat(chunk_text)
     if len(span.split()) < 2 or span not in chunk:
         return False  # the matched chunk does not hold the outdated statement
+    if not _statement_rule(chunk_text, span, chunk, query_terms):
+        return False
     span_terms = set(extract_terms(span))
     rest_terms = set(extract_terms(chunk.replace(span, " | "))) - span_terms
     inside = query_terms & span_terms
     outside = query_terms & rest_terms
-    if not inside and not outside:  # a semantic match with no shared term
-        return len(span.split()) * 2 >= len(chunk.split())
+    if not inside and not outside:  # a semantic match: the statement rule decided (span = most of it)
+        return True
     return bool(inside) and not outside  # all the evidence inside the span; mixed = ambiguous
 
 

@@ -19,11 +19,14 @@ Reviews: `57-astra-review-j-delta.md`, `57-sol56-review-j-delta.md` (both DO-NOT
    (G6 `dump_projections`, the full jobs dump, `dump_w2b`) skip `run_after`/`last_error` of a
    still-queued librarian job, documented in each. Tests: repeated hand-backs write no event and the
    completion is the single terminal event; a permanently failing job has 4 back-offs + 1 terminal.
-4. **Same-sentence false demotion (Medium) — fixed.** A hit is demoted only when ALL the query's
-   evidence in the matched chunk lies inside the quoted span (clause level); a mixed match is not
-   demoted. The evidence is the query's discriminative terms (D-055 DF filter; 3+ characters or
-   identifiers). Example "API uses port 8080 and backups retain 30 days" / quote "API uses port
-   8080" / query "backups retain" → not demoted (unit test).
+4. **Same-sentence false demotion (Medium) — fixed, D-087-safe.** Rule 3 = the 6a96ba1 statement
+   rule (measured exactly baseline on the hold-out) AND the review-57 clause rule (every query term
+   found in the chunk lies inside the quoted span; a mixed match is not demoted), with the 6a96ba1
+   term set, so it can only demote LESS than 6a96ba1. Example "API uses port 8080 and backups
+   retain 30 days" / quote "API uses port 8080" / query "backups retain" → not demoted. A frozen
+   copy of the 6a96ba1 rule in the unit tests checks new ⇒ old over > 1000 generated cases; the
+   integration test checks that a multi-fact item whose still-valid clause matches keeps exactly
+   its rank. The a65a8f5 rule (demote wherever the item ranks, before `n_fetch`) is gone.
 5. **Cycles (Medium) — fixed.** Edges are taken in a deterministic order and an edge that would
    close a cycle is ignored, so the order is always a DAG and cycle members never drop below
    unrelated hits (unit test).

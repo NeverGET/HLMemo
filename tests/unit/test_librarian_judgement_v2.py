@@ -299,6 +299,75 @@ def test_partial_demotion_needs_the_evidence_inside_the_span() -> None:
     assert [h.logical_id for h in demote_partially_superseded(hits, link, _terms("API port"))] == [2, 1]
 
 
+def _rule_6a96ba1(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
+    """A frozen copy of the read-side rule of 6a96ba1 (measured neutral on the hold-out, D-087)."""
+    import re
+
+    from hlmemo.core.normalize import extract_terms, normalize
+
+    edge = " \t\n\"'`“”„‚‘’«».,;:!?()[]{}…-–—"
+
+    def flat(t: str) -> str:
+        return " ".join(normalize(t or "").split()).strip(edge)
+
+    stmts: list[str] = []
+    for line in chunk_text.splitlines():
+        line = re.sub(r"^\s*(?:[-*+•>|]+|\d+[.)]|#+)\s*", "", line).strip()
+        stmts.extend(p for p in re.split(r"(?<=[.!?;])\s+", line) if p.strip())
+    stmts = stmts or [chunk_text]
+    span, chunk = flat(quote), flat(chunk_text)
+    if len(span.split()) < 2 or span not in chunk:
+        return False
+    scored = [(len(set(extract_terms(st)) & query_terms), flat(st)) for st in stmts]
+    best = max(sc for sc, _st in scored)
+    if best == 0:
+        return len(span.split()) * 2 >= len(chunk.split())
+    return all(span in st or st in span for sc, st in scored if sc == best and st)
+
+
+def test_d087_rule3_never_demotes_more_than_the_neutral_6a96ba1_rule() -> None:
+    """D-087: the shipped rule demotes only a subset of what 6a96ba1 demoted (its read side was
+    exactly baseline on the hold-out); the a65a8f5 rule (demote wherever the item ranks) is gone."""
+    import itertools
+
+    from hlmemo.core.supersession import matched_in_span
+
+    clauses = [
+        "The API cache TTL is 60 seconds",
+        "the cache is stored in Redis 7 on the api host",
+        "cache keys are prefixed with the tenant id",
+        "API uses port 8080",
+        "backups retain 30 days",
+    ]
+    queries = [
+        "cache",
+        "API cache TTL",
+        "cache TTL seconds",
+        "Redis host",
+        "backups retain",
+        "API port",
+        "tenant id cache",
+        "what is the API port",
+        "unrelated words",
+        "the",
+    ]
+    checked = demoted = 0
+    for n in (1, 2, 3):
+        for combo in itertools.permutations(clauses, n):
+            for glue in (". ", " and ", "\n- "):
+                text = glue.join(combo) + "."
+                for quote in combo:
+                    for q in queries:
+                        terms = set(_terms(q))
+                        new = matched_in_span(text, quote, terms)
+                        assert not new or _rule_6a96ba1(text, quote, terms), (text, quote, q)
+                        checked += 1
+                        demoted += new
+    assert checked > 1000 and demoted > 0
+    # the multi-fact chunk and a query that also hits other statements ("cache"): never demoted
+    assert not matched_in_span(MULTI_CHUNK, SPAN, set(_terms("cache")))
+
+
 def test_partial_demotion_resolves_chains_in_one_stable_order() -> None:
     a = "The API cache TTL is 60 seconds."
     b = "The API cache TTL is 120 seconds."
