@@ -28,6 +28,10 @@ MAX_TOKENS: dict[str, int] = {
     "risk": 500,
     "risk_judge": 500,  # W2d memory.risk_check judge (api process, 4 s cap)
     "synthesis": 700,
+    # W2b (batched): ≤ 8 items / ≤ 8 pairs per call, reasoning tokens included by the providers
+    "place": 700,
+    "relate": 1400,
+    "relate_verify": 700,
 }
 
 _VERSION = re.compile(r"^v(\d+)\.md$")

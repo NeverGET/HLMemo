@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hlmemo.core import export_service
-from hlmemo.server.tools import handlers, risk, schemas
+from hlmemo.server.tools import answer, handlers, risk, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
 
@@ -63,6 +63,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         handlers.memory_call_the_day,
     ),
     *risk.tool_specs(ToolSpec),  # W2d: memory.risk_check, memory.register_lesson
+    ToolSpec(answer.NAME, answer.DESCRIPTION, answer.INPUT_SCHEMA, answer.memory_answer),  # W2c
 )
 
 # Client-protocol tools (W1.5; Sol consult 40 #1): dispatched by tools/call for the `hlm` CLI but

@@ -46,13 +46,18 @@ from hlmemo.core.retrieval import (
     rrf_fuse,
     split_terms,
 )
+from hlmemo.core.supersession import newer_first_on_ties
 from hlmemo.core.temporal import fmt_ts, parse_opt_ts
 from hlmemo.core.term_stats import StatsCache
 from hlmemo.db import import_queries as iq
+from hlmemo.db import librarian_queries as lq
 from hlmemo.db import read_queries as q
 from hlmemo.db.write_queries import ProjectRef
+from hlmemo.librarian.questions import pending_block
 
 PREPROC_VERSION = 1
+QUERY_CONTRACT = "query/2"  # W2b: optional `librarian` block + D-057 supersession (CC-4)
+LIBRARIAN_SHARE = 0.10  # the `librarian` block may take at most this share of token_budget (after hits)
 MIN_HIT_TOKENS = 40  # lower bound of a rendered hit; bounds how many rows are fetched for packing
 CURSOR_TOKENS = 70  # additive estimate for a signed ``next_cursor`` (exact measure decides)
 RAW_BODY_SEGMENT = 512  # characters per ``payload_body`` unit when raw pages the verbatim body (D-026)
@@ -218,11 +223,24 @@ async def query(
         pending = await q.indexing_pending(conn, project.project_id)
 
         ordered = dedupe_and_order(rrf_fuse(lexical, trigram, vector, title))
+        # D-057 (query/2): an applied `supersedes` link between two hits hides the superseded one
+        hidden = await lq.superseded_among(
+            conn,
+            [f.logical_id for f in ordered],
+            pid=project.project_id,
+            scopes=scopes,
+            valid_at=valid_at,
+            known_at=known_at,
+        )
+        if hidden:
+            ordered = [f for f in ordered if f.logical_id not in hidden]
         n_fetch = min(len(ordered), budget // MIN_HIT_TOKENS + 3)
         head = ordered[:n_fetch]
         rows = await q.hit_rows(conn, [f.chunk_id for f in head])
         for f in head:
             f.row = rows[f.chunk_id]
+        head = newer_first_on_ties(head)  # D-057: exact RRF tie, same title -> newer first
+        librarian = await pending_block(conn, ctx, project.project_id, now)
 
         card: CardInput | None = None
         found = await q.card_version(
@@ -240,13 +258,35 @@ async def query(
         "device_class": ctx.device_class,
         "evidence": "matched" if ordered else "none",
         "indexing_pending": pending,
+        "contract_version": QUERY_CONTRACT,
     }
     try:
-        return pack_query(
+        packed = pack_query(
             deps.meter, envelope, budget, card, head, total=len(ordered), terms=terms.preview_terms
         )
     except BudgetError as exc:
         raise ToolError(exc.code, str(exc), **exc.details) from exc
+    if librarian is not None:
+        _add_librarian_block(deps.meter, packed, librarian, budget)
+    return packed
+
+
+def _add_librarian_block(meter: Meter, envelope: dict[str, Any], block: dict[str, Any], budget: int) -> None:
+    """query/2: the optional ``librarian`` block is packed AFTER the hits (roadmap W2b; Sol 44):
+    into what the hits left, at most ``LIBRARIAN_SHARE`` of the budget, dropping notices from the
+    end, then the whole block; ``budget.used`` stays the exact measure."""
+    notices = list(block["notices"])
+    while True:
+        candidate = {**block, "notices": notices}
+        if meter.count(candidate) <= budget * LIBRARIAN_SHARE:
+            envelope["librarian"] = candidate
+            if meter.settle(envelope, budget) <= budget:
+                return
+            del envelope["librarian"]
+        if not notices:
+            meter.settle(envelope, budget)
+            return
+        notices = notices[:-1]
 
 
 # --------------------------------------------------------------------------- memory.drilldown
