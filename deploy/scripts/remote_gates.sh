@@ -29,23 +29,34 @@ Usage: remote_gates.sh --url https://FQDN[:PORT] [--state DIR] [options]
                         ~/.claude.json, ~/.codex/config.toml, ~/.gemini/config/mcp_config.json
                         after backing them up to deploy/.local/backups/) and run a headless
                         write->query per CLI. Owner-only; prints the restore command.
+  --librarian           R2 (librarian ON, observer): write a marker, wait for its librarian_write
+                        job and assert observer processing (0 links/invalidations applied,
+                        version_signals present, no applied proposal in `hlmemo.ops librarian
+                        audit`). SKIPs when the release has no `librarian audit` subcommand.
+  --librarian-wait S    seconds to wait for that job (default 300)
+
+Always: risk-check (W2d memory.risk_check returns a verdict; judged true|false is reported;
+SKIP on a release without the tool).
 EOF
 }
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 url='' state_dir='' insecure=0 tls='' ssh_config='' latency_n=20 p95_max=3000 drill=1 g7=0
+librarian=0 librarian_wait=300
 while (($#)); do
   case $1 in
-    --url|--state|--tls|--ssh-config|--latency-n|--latency-p95-ms)
+    --url|--state|--tls|--ssh-config|--latency-n|--latency-p95-ms|--librarian-wait)
       (($# >= 2)) || { echo "remote_gates: $1 needs a value" >&2; exit 64; }
       case $1 in
         --url) url=$2 ;; --state) state_dir=$2 ;; --tls) tls=$2 ;;
         --ssh-config) ssh_config=$2 ;; --latency-n) latency_n=$2 ;; --latency-p95-ms) p95_max=$2 ;;
+        --librarian-wait) librarian_wait=$2 ;;
       esac
       shift 2 ;;
     --insecure) insecure=1; shift ;;
     --no-drill) drill=0; shift ;;
     --g7) g7=1; shift ;;
+    --librarian) librarian=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "remote_gates: unknown argument: $1" >&2; usage >&2; exit 64 ;;
   esac
@@ -54,6 +65,7 @@ die() { printf 'remote_gates: %s\n' "$*" >&2; exit 1; }
 [[ $url =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$ ]] || { echo 'remote_gates: --url must be https://HOST[:PORT]' >&2; usage >&2; exit 64; }
 url=${url%/}
 [[ $latency_n =~ ^[1-9][0-9]*$ && $p95_max =~ ^[1-9][0-9]*$ ]] || { echo 'remote_gates: numeric --latency-* values required' >&2; exit 64; }
+[[ $librarian_wait =~ ^[1-9][0-9]*$ ]] || { echo 'remote_gates: --librarian-wait needs whole seconds' >&2; exit 64; }
 if [[ -z $state_dir ]]; then
   for conf in "$REPO_ROOT"/deploy/.local/*/deploy.conf; do
     [[ -f $conf ]] && grep -qxF "URL=$url" "$conf" && state_dir=$(dirname "$conf") && break
@@ -86,6 +98,8 @@ exec > >(tee -a "$log") 2>&1
 unset HLM_ADMIN_TOKEN HLM_REGISTRATION_SECRET
 uvrun() { uv run --quiet --frozen --project "$REPO_ROOT" "$@"; }
 rssh() { /usr/bin/ssh -F "$ssh_config" hlm-deploy "$@"; }
+# Remote shell prefix for stack.sh/backup.sh/restore.sh on the server (release checkout + prod.env).
+env_prefix='cd /opt/hlmemo/app && export HLM_ENV_FILE=/etc/hlmemo/prod.env &&'
 # Operator path (D-061): python -m hlmemo.ops in the api container over SSH.
 ops() { HLM_OPS_SSH_CONFIG=$ssh_config bash "$REPO_ROOT/deploy/scripts/hlm_ops.sh" --state "$state_dir" "$@"; }
 minted_id() { # minted_id META_FILE -> device id from hlmemo.ops mint/rotate stderr metadata
@@ -296,6 +310,104 @@ else
   gate wan-latency FAIL "${lat//$'\n'/ } (ceiling p95<=${p95_max}ms)"
 fi
 
+# ------------------------------------------------------------------ RG-risk (W2d memory.risk_check)
+# One lesson (looked up first, registered once per probe project) and a task that repeats its
+# mistake. PASS: the tool returns a verdict; judged true|false is reported (false = retrieval-only:
+# librarian off, provider down or only the D-071 fallback left; the reason says which).
+risk=$(env "${tls_env[@]}" INSECURE="$insecure" uv run --quiet --frozen --project "$REPO_ROOT" python - "$url" "$probe_state" <<'PY' 2>&1
+import json, os, sys, uuid
+import httpx
+url, state = sys.argv[1], sys.argv[2]
+st = json.load(open(state))
+token, project = st["device_token"], st["project"]
+verify = False if (os.environ.get("INSECURE") == "1" and not os.environ.get("SSL_CERT_FILE")) else True
+h = {"Authorization": f"Bearer {token}", "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+TITLE = "remote-gates risk lesson: restore.sh ran over the live database without a fresh backup"
+with httpx.Client(base_url=url, verify=verify, timeout=60) as c:
+    r = c.post("/mcp", headers=h, json={"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "remote-gates", "version": "1"}}})
+    r.raise_for_status()
+    h["MCP-Protocol-Version"] = r.json()["result"]["protocolVersion"]
+    seq = iter(range(1, 100))
+    def rpc(method, params):
+        r = c.post("/mcp", headers=h, json={"jsonrpc": "2.0", "id": next(seq), "method": method, "params": params})
+        r.raise_for_status()
+        return r.json()["result"]
+    if "memory.risk_check" not in {t["name"] for t in rpc("tools/list", {})["tools"]}:
+        print("SKIP memory.risk_check is not on tools/list (release before W2d)")
+        sys.exit(0)
+    def call(name, arguments):
+        res = rpc("tools/call", {"name": name, "arguments": arguments})
+        return bool(res.get("isError")), json.loads(res["content"][0]["text"])
+    err, found = call("memory.query", {"project": project, "query": TITLE, "token_budget": 2048})
+    if err or TITLE not in json.dumps(found.get("hits", [])):
+        err, ack = call("memory.register_lesson", {"project": project, "request_id": str(uuid.uuid4()),
+            "mistake": TITLE + ". Every write since the last dump was lost.",
+            "fix": "Always run deploy/backup/backup.sh right before restore.sh; never restore over live data outside a maintenance window.",
+            "tags": ["remote-gates"]})
+        if err:
+            sys.exit(f"register_lesson failed: {ack.get('code')}")
+    err, res = call("memory.risk_check", {"project": project, "token_budget": 2048,
+        "task": "Run deploy/backup/restore.sh on the production host now, over the live database, without taking a new backup first."})
+    if err:
+        sys.exit(f"risk_check failed: {res.get('code')} {res.get('message')}")
+    print(f"verdict={res.get('verdict')} judged={str(res.get('judged')).lower()} judge={res.get('judge')} "
+          f"reason={res.get('reason') or '-'} warnings={len(res.get('warnings') or [])} candidates={res.get('candidates_considered')}")
+PY
+)
+risk_last=$(tail -1 <<< "$risk")
+if [[ $risk_last == SKIP* ]]; then
+  gate risk-check SKIP "${risk_last#SKIP }"
+elif [[ $risk_last =~ ^verdict=(warn|no_matching_evidence)\ judged=(true|false)\  ]]; then
+  note=''
+  if ((librarian)) && [[ ${BASH_REMATCH[2]} == false ]]; then note=' (librarian ON, yet retrieval-only: see reason)'; fi
+  gate risk-check PASS "$risk_last$note"
+else
+  gate risk-check FAIL "${risk//$'\n'/ }"
+fi
+
+# ------------------------------------------------------------------ RG-librarian (R2, D-058 observer)
+# A marker write enqueues librarian_write:<event> in the api (llm.env must reach it). Its librarian
+# event must be role=observer with placement only (signal_upsert -> version_signals) and no link or
+# close (invalidation) mutation; `hlmemo.ops librarian audit` must list none of its proposals as
+# applied. check_librarian.py `job` runs read-only in the api container, fed on ssh stdin.
+if ((librarian)); then
+  # Captured, not piped into grep -q: an early grep exit would SIGPIPE ssh and, under pipefail,
+  # turn an existing subcommand into a false SKIP.
+  lib_help=''
+  if ((have_ssh)); then lib_help=$(ops librarian audit --help 2>&1); fi
+  if ((!have_ssh)); then
+    gate librarian FAIL "no SSH config at $ssh_config"
+  elif [[ $lib_help != *--project* ]]; then
+    gate librarian SKIP 'python -m hlmemo.ops librarian audit is missing from the deployed release (W2b ops); gate skipped'
+  else
+    lib_marker="gates-lib-$stamp-$RANDOM"
+    out=$(probe --mode write-marker --marker "$lib_marker" 2>&1); rc=$?
+    printf '%s\n' "$out" | sed 's/^/    /'
+    lib_vid=$(sed -n 's/^VERSION_ID \([0-9][0-9]*\)$/\1/p' <<< "$out" | tail -1)
+    if ((rc != 0)) || [[ -z $lib_vid ]]; then
+      gate librarian FAIL "marker write $lib_marker failed"
+    else
+      printf -v cmd '%s bash deploy/scripts/stack.sh exec -T api python - job --version-id %q --wait %q' \
+        "$env_prefix" "$lib_vid" "$librarian_wait"
+      echo "    waiting up to ${librarian_wait}s for the librarian_write job of v$lib_vid ($lib_marker)"
+      rssh "$cmd" < "$REPO_ROOT/deploy/scripts/check_librarian.py" > "$work/librarian-job.json" 2> "$work/librarian-job.err" ||
+        sed 's/^/    job check: /' "$work/librarian-job.err"
+      ops librarian audit --project "$probe_project" --json > "$work/librarian-audit.json" 2> "$work/librarian-audit.err" ||
+        sed 's/^/    audit: /' "$work/librarian-audit.err"
+      out=$(python3 "$REPO_ROOT/deploy/scripts/check_librarian.py" observer-gate --job "$work/librarian-job.json" \
+        --audit "$work/librarian-audit.json" --version-id "$lib_vid" 2>&1)
+      printf '%s\n' "$out" | sed 's/^/    /'
+      out=$(tail -1 <<< "$out")
+      if [[ $out == 'RESULT librarian PASS '* ]]; then
+        gate librarian PASS "${out#RESULT librarian PASS }"
+      else
+        gate librarian FAIL "${out#RESULT librarian FAIL }"
+      fi
+    fi
+  fi
+fi
+
 # ------------------------------------------------------------------ G8 backup/restore drill
 if ((!drill)); then
   gate backup-restore SKIP '--no-drill'
@@ -303,7 +415,6 @@ elif ((!have_ssh)); then
   gate backup-restore FAIL "no SSH config at $ssh_config"
 else
   drill_ok=1 drill_detail=''
-  env_prefix='cd /opt/hlmemo/app && export HLM_ENV_FILE=/etc/hlmemo/prod.env &&'
   dump=$(rssh "$env_prefix bash deploy/backup/backup.sh" </dev/null 2>"$work/backup.err" | tail -1)
   sed 's/^/    /' "$work/backup.err"
   [[ $dump =~ ^/[A-Za-z0-9_./-]+\.dump$ ]] || { drill_ok=0; drill_detail="backup failed ($dump)"; }

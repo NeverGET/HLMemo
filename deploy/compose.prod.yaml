@@ -89,11 +89,15 @@ services:
     tmpfs:
       - /tmp:size=64m,mode=1777
       - /var/spool/hlmemo:size=320m,uid=10001,gid=10001,mode=0700
+    # R2: the same optional llm.env as the librarian (last, so it wins over app.env's HLM_PROFILE).
+    # The api runs the memory.risk_check judge and enqueues librarian jobs only when it enables them.
     env_file:
       - path: ${HLM_APP_ENV_FILE:-./app.env}
         required: true
       - path: ${HLM_API_ENV_FILE:-./api.env}
         required: true
+      - path: ${HLM_LLM_ENV_FILE:-./llm.env}
+        required: false
     command: ["python", "-m", "hlmemo.server.app"]
     # Cold cgroup peak 1536 MiB + spool 320 MiB + /tmp 64 MiB, with 25% headroom.
     mem_limit: 2560m
@@ -142,9 +146,11 @@ services:
       start_period: 90s
 
   # Librarian (PHASE2-4-ROADMAP §2/§6, W2a): same image, no ONNX model, no port, no /ready role.
-  # Off until R2 (HLM_LIBRARIAN_ENABLED=false idles with a heartbeat). The provider key lives in
-  # llm.env only (mounted here, never into db/worker/caddy); budget/role defaults in llm.env.example.
-  # llm.env is optional and sits next to app.env (deploy/scripts/common.sh sets HLM_LLM_ENV_FILE).
+  # R2: llm.env switches it (HLM_LIBRARIAN_ENABLED, HLM_LIBRARIAN_ROLE=observer; installed by
+  # deploy/scripts/install_llm_env.sh). Without llm.env it idles with a heartbeat (default false).
+  # The provider key lives in llm.env only, mounted here and into the api, never into
+  # db/worker/migrate/caddy. llm.env is optional and sits next to app.env (common.sh sets
+  # HLM_LLM_ENV_FILE); budget/role defaults in llm.env.example.
   librarian:
     <<: *app
     env_file:
@@ -155,9 +161,6 @@ services:
     environment:
       <<: *app-environment
       HLM_LIBRARIAN_HEARTBEAT_FILE: /tmp/hlm-librarian-heartbeat.json
-      # R1 pin: shipped with the release and wins over llm.env, so no env file can switch the
-      # librarian on. R2 enables it by removing this line (a reviewed --accept-compose-change).
-      HLM_LIBRARIAN_ENABLED: "false"
     command: ["python", "-m", "hlmemo.librarian.worker"]
     mem_limit: 512m
     cpus: 0.5
