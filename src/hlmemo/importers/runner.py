@@ -83,7 +83,7 @@ async def fetch_full(call: Call, project: str, logical_ids: list[int]) -> list[d
     return out
 
 
-async def resolve_missing(call: Call, plan: Plan) -> None:
+async def resolve_missing(call: Call, plan: Plan, *, confirm_close: bool = False) -> None:
     """Re-map missing items onto new records, else close them (bodies fetched by id)."""
     if not plan.missing:
         return
@@ -92,7 +92,7 @@ async def resolve_missing(call: Call, plan: Plan) -> None:
     for it in full:  # one logical item may have several live segments: the head version
         if heads.get(it["logical_id"], {}).get("version_id", 0) < it["version_id"]:
             heads[it["logical_id"]] = it
-    remap(plan, list(heads.values()))
+    remap(plan, list(heads.values()), confirm_close=confirm_close)
 
 
 # --------------------------------------------------------------------------- import
@@ -105,8 +105,7 @@ def _item(e: Entry, links: list[dict[str, Any]] | None) -> dict[str, Any]:
         "tags": list(rec.tags),
     }
     ex = rec.export
-    if not e.native:  # a native item mapped back onto itself keeps having no source
-        item["source"] = rec.source()
+    item["source"] = rec.source()
     if rec.describes:
         item["describes"] = list(rec.describes)
     if ex is not None:
@@ -257,7 +256,6 @@ async def run_import(
             if not again or again[0].action == "unchanged":
                 return {"versions": [], "replayed": True, "unchanged": True}
             e.action, e.logical_id, e.expected = again[0].action, again[0].logical_id, again[0].expected
-            e.native = again[0].native
             res = await send(e.record.key, e.record.sha256, _item(e, links), e.expected, action)
         if isinstance(res, ToolCallError):
             failures.append({"key": e.record.key, "code": res.code, "message": res.message[:300]})

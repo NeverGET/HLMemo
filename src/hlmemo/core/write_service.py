@@ -845,6 +845,21 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                             old.valid_from, old.valid_to, p.interval.start, p.interval.end
                         )
                     )
+        if p.logical_id is not None and it.close and p.interval.end is not None:
+            # W1.5 `close` (Sol 43 #3): the item's outgoing edges end with it. Every current link
+            # segment reaching past valid_to is superseded; only its part before valid_to survives.
+            taken = {o.link_id for olds in link_supersedes.values() for o in olds}
+            for old in await q.current_links_from(
+                conn, p.logical_id, valid_from=p.interval.end, valid_to=None
+            ):
+                if old.link_id in taken:
+                    continue
+                link_supersedes.setdefault((p.logical_id, old.dst_logical_id, old.rel), []).append(old)
+                superseded_recorded.append(old.recorded_at)
+                link_survivors.extend(
+                    (old, seg)
+                    for seg in surviving_segments(old.valid_from, old.valid_to, p.interval.end, None)
+                )
     T = select_T(now, *superseded_recorded)
 
     # ---- chunking + id allocation ---------------------------------------------------------
