@@ -1,0 +1,16 @@
+# Phase 5 pro tier (D-066): `openai/gpt-6-luna-pro` routed through OpenRouter, for hard judgements
+# (consolidation, contradiction resolution). Same request shape as openrouter-gpt6-luna. Key from env only.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "openai/gpt-6-luna-pro"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+HLM_LLM_REASONING = '{"effort":"low"}'
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny" }, usage = { include = true } }
+# USD per 1M tokens. OpenRouter list 2026-09-24: 0.10 / 0.50 (>272k-token tier 0.20 / 0.75; the
+# openai/fast endpoint 0.20 / 1.00): the reservation uses the worst endpoint.
+price_in_per_m  = 0.20
+price_out_per_m = 1.00
+# bench v2 ran with json_object; switch to json_schema only after a re-bench.
+supports_json_schema = false
+# Not qualified for the risk judge (D-071): G-LIVE-C 2026-09-24 FAIL at reasoning low, only 48/80 calls
+# fit the 4 s cap (false-warn 0.150); the risk judge stays on the routine tier (openrouter-gpt6-luna).
+disabled_tasks = ["risk_judge"]
