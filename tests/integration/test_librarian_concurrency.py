@@ -13,6 +13,9 @@
   until the second job has committed a new batch of the same project; the first then fills that
   batch (ready) and opens the next. Its event id is allocated after its locks, so it replays AFTER
   the second job: the rebuild succeeds (no second open batch) and every projection is identical.
+* Review 57, signal-only jobs: two placement jobs on ONE version; the first is held between its
+  event id and its commit (at most 3 s) while the second tries to commit. Its signal target is
+  locked before its event id, so the second waits and commits after it: live == replay.
 * Sol 56 #5, the connection envelope: the worker never holds more of its own connections than
   ``HLM_LIBRARIAN_DB_CONNECTIONS`` minus the pool; a configuration that cannot fit is refused.
 """
@@ -274,3 +277,105 @@ async def test_sol56_connection_envelope(db_dsn, connect, embedder) -> None:  # 
     # 3 jobs + the shared lease renewer + the loop's lease: within 8 - 3 (the pool's share)
     assert worker.db_slots == 5 and bounded.limit == 5
     assert 3 <= bounded.peak <= 5 and bounded.open == 0
+
+
+async def test_review57_signal_only_jobs_on_one_version_replay_identically(
+    db_dsn, connect, monkeypatch
+) -> None:  # noqa: ANN001
+    import asyncio
+    import contextvars
+
+    from hlmemo.librarian import actor
+    from hlmemo.librarian.jobs import enqueue, job_spec
+
+    slug = "conc-signal"
+    ctx = await _project(connect, slug)
+    from hlmemo.core.write_service import default_deps
+
+    (v,) = await write_items(  # no review job of its own: only the two placement jobs below
+        connect,
+        ctx,
+        slug,
+        [{"kind": "session_note", "title": "Notes", "body": "Session notes."}],
+        deps=default_deps(),
+    )
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT project_id FROM projects WHERE slug = %s", (slug,))
+        (pid,) = await cur.fetchone()
+        specs = [
+            job_spec(
+                kind="librarian_write",
+                dedupe_key=f"librarian_write:sig{k}",
+                payload={
+                    "op": "write_review",
+                    "versions": [
+                        {
+                            "version_id": v.version_id,
+                            "kind": "session_note",
+                            "client_importance": None,
+                            "client_stability": False,
+                        }
+                    ],
+                },
+            )
+            for k in (1, 2)
+        ]
+        await enqueue(conn, project_id=pid, trigger_device_id=ctx.device_id, specs=specs)
+        await conn.commit()
+        cur = await conn.execute("SELECT job_id FROM jobs WHERE kind = 'librarian_write' ORDER BY job_id")
+        first, second = [r[0] for r in await cur.fetchall()]
+    calls = {"n": 0}
+
+    def place(body):  # noqa: ANN001, ANN202 - a different importance per call
+        calls["n"] += 1
+        vid = f"v{v.version_id}"
+        return {"items": [{"id": vid, "importance": 2 * calls["n"], "stability": "volatile"}]}
+
+    provider = make_provider(db_dsn, ScriptedLLM(default=place), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_concurrency=2), provider, connect)
+    current: contextvars.ContextVar[int | None] = contextvars.ContextVar("job", default=None)
+    second_done = asyncio.Event()
+    process, apply, mutate = worker.process, worker.apply, actor.apply_mutations
+
+    async def traced_process(job):  # noqa: ANN001, ANN202
+        try:
+            await process(job)
+        finally:
+            if job.job_id == second:
+                second_done.set()
+
+    async def traced_apply(conn, job, plan):  # noqa: ANN001, ANN202
+        current.set(job.job_id)
+        return await apply(conn, job, plan)
+
+    async def held_mutations(conn, mutations, event_id, at):  # noqa: ANN001, ANN202
+        if current.get() == first:  # between the event id and the commit of the first job
+            try:
+                await asyncio.wait_for(second_done.wait(), 3.0)
+            except TimeoutError:
+                pass  # the second job is waiting on the target lock (the fix)
+        return await mutate(conn, mutations, event_id, at)
+
+    worker.process = traced_process  # type: ignore[method-assign]
+    worker.apply = traced_apply  # type: ignore[method-assign]
+    monkeypatch.setattr(actor, "apply_mutations", held_mutations)
+    assert await worker.drain() == 2
+    await provider.aclose()
+    monkeypatch.setattr(actor, "apply_mutations", mutate)
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT importance FROM version_signals WHERE version_id = %s", (v.version_id,)
+        )
+        (live,) = await cur.fetchone()
+        before = await dump_w2b(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT importance FROM version_signals WHERE version_id = %s", (v.version_id,)
+        )
+        (replayed,) = await cur.fetchone()
+        after = await dump_w2b(conn)
+    assert replayed == live  # the last committed signal is the last event
+    for table in before:
+        assert sorted(set(before[table]) ^ set(after[table])) == [], table
+    assert after == before

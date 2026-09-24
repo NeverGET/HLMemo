@@ -10,24 +10,25 @@ Two deterministic rules, applied after RRF fusion and the §4.9 dedupe:
    fused score that are near-duplicates (same normalized title) and have different
    ``valid_from``, the newer one is ranked first. No other order changes, so G3 is untouched
    unless a fixture has exact-score, same-title pairs.
-3. **Fact-level supersession** (``demote_partially_superseded``, D-076, Sol 56 #3): a live
-   ``supersedes`` link with ``props.scope = part`` says that ONE statement of the older item (the
-   link's quoted span) is outdated while its other statements stay valid, so the item is never
-   hidden. It is demoted below the item that replaced the statement ONLY when the query matched
-   that outdated statement: the hit's matched chunk contains the quoted span AND the chunk's
-   statement(s) that share the most query terms overlap the span (with no shared term at all, only
-   when the span is most of the chunk). A query that matches a still-valid statement of the same
-   item leaves it in place. Runs on the fetched head only (after ``n_fetch``), so no hit leaves the
-   fetched set; several constraints (multi-hop chains A←B←C) are resolved by ONE stable
-   topological order (smallest original rank first; a cycle keeps its original order). A demoted
-   hit's displayed score is capped at its predecessor's (scores stay non-increasing). Without
-   such links (every database before the librarian applies one) the order is unchanged.
+3. **Fact-level supersession** (``demote_partially_superseded``, D-076, Sol 56 #3, review 57): a
+   live ``supersedes`` link with ``props.scope = part`` says that ONE statement of the older item
+   (the link's quoted span) is outdated while its other statements stay valid, so the item is never
+   hidden. It is demoted below the item that replaced the statement ONLY when ALL the query's
+   evidence in the matched chunk lies INSIDE the quoted span (clause level, not merely the same
+   sentence): the chunk contains the span, some query term occurs in the span, and no query term
+   occurs in the chunk outside it (a mixed or ambiguous match is not demoted). With no query term
+   in the chunk at all (a semantic match), only when the span is most of the chunk. Runs on the
+   fetched head only (after ``n_fetch``), so no hit leaves the fetched set. Several constraints
+   (chains A←B←C) form ONE stable topological order (smallest original rank first); an edge that
+   would close a cycle is ignored (edges taken in a deterministic order), so a cycle never pushes
+   its members below unrelated hits. A demoted hit's displayed score is capped at its
+   predecessor's (scores stay non-increasing). Without such links (every database before the
+   librarian applies one) the order is unchanged.
 """
 
 from __future__ import annotations
 
 import heapq
-import re
 from typing import Any
 
 from hlmemo.core.normalize import extract_terms, normalize
@@ -63,33 +64,39 @@ def newer_first_on_ties(hits: list[Any]) -> list[Any]:
 
 
 _EDGE = " \t\n\"'`“”„‚‘’«».,;:!?()[]{}…-–—"
-_LINE_MARK = re.compile(r"^\s*(?:[-*+•>|]+|\d+[.)]|#+)\s*")
-_SENT_SPLIT = re.compile(r"(?<=[.!?;])\s+")
 
 
 def _flat(text: str) -> str:
     return " ".join(normalize(text or "").split()).strip(_EDGE)
 
 
-def _statements(text: str) -> list[str]:
-    out: list[str] = []
-    for line in (text or "").splitlines():
-        line = _LINE_MARK.sub("", line).strip()
-        out.extend(part for part in _SENT_SPLIT.split(line) if part.strip())
-    return out or [text or ""]
-
-
 def matched_in_span(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
-    """Did the query match the OUTDATED statement (``quote``) of this chunk? See rule 3."""
+    """Did the query match the OUTDATED span (``quote``) of this chunk, and nothing else of it?
+    See rule 3. ``query_terms`` are normalized terms (``extract_terms``)."""
     span = _flat(quote)
     chunk = _flat(chunk_text)
     if len(span.split()) < 2 or span not in chunk:
         return False  # the matched chunk does not hold the outdated statement
-    scored = [(len(set(extract_terms(st)) & query_terms), _flat(st)) for st in _statements(chunk_text)]
-    best = max(score for score, _st in scored)
-    if best == 0:  # a semantic match with no shared term: only when the span is most of the chunk
+    span_terms = set(extract_terms(span))
+    rest_terms = set(extract_terms(chunk.replace(span, " | "))) - span_terms
+    inside = query_terms & span_terms
+    outside = query_terms & rest_terms
+    if not inside and not outside:  # a semantic match with no shared term
         return len(span.split()) * 2 >= len(chunk.split())
-    return all(span in st or st in span for score, st in scored if score == best and st)
+    return bool(inside) and not outside  # all the evidence inside the span; mixed = ambiguous
+
+
+def _reaches(succ: dict[int, list[int]], start: int, goal: int) -> bool:
+    todo, seen = [start], {start}
+    while todo:
+        node = todo.pop()
+        if node == goal:
+            return True
+        for nxt in succ.get(node, []):
+            if nxt not in seen:
+                seen.add(nxt)
+                todo.append(nxt)
+    return False
 
 
 def demote_partially_superseded(
@@ -102,13 +109,13 @@ def demote_partially_superseded(
     succ: dict[int, list[int]] = {}
     indeg = dict.fromkeys(pos, 0)
     for src, dst, quote in sorted(links):
-        if src not in pos or dst not in pos or src == dst:
+        if src not in pos or dst not in pos or src == dst or dst in succ.get(src, []):
             continue
         row = hits[pos[dst]].row
         if row is None or not matched_in_span(row.text, quote, terms):
             continue
-        if dst in succ.get(src, []):
-            continue
+        if _reaches(succ, dst, src):
+            continue  # this edge would close a cycle: ignored (the earlier edges stand)
         succ.setdefault(src, []).append(dst)
         indeg[dst] += 1
     if not succ:
@@ -123,9 +130,7 @@ def demote_partially_superseded(
             indeg[dst] -= 1
             if indeg[dst] == 0:
                 heapq.heappush(ready, pos[dst])
-    seen = set(order)
-    order += [i for i in range(len(hits)) if i not in seen]  # a cycle keeps its original order
-    out = [hits[i] for i in order]
+    out = [hits[i] for i in order]  # a DAG: every hit is emitted
     for k in range(1, len(out)):
         if out[k].score > out[k - 1].score:
             out[k].score = out[k - 1].score

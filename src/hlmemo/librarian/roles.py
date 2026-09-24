@@ -151,7 +151,12 @@ async def releasable(
     it has not planned yet and will read the answer; a RUNNING one may hold an older snapshot (Sol
     54j #1). The job re-checks role, TTL, staleness and authority under its own locks: an answer
     whose action went stale is ``superseded`` there with the recorded reason ``stale``, never left
-    pending."""
+    pending.
+
+    D-086 §1: a ``widen_scope`` answer is NEVER released here (propose-only in every role, D-058):
+    the batch path would skip it anyway, so selecting it would requeue an apply job forever. It
+    stays ``accepted_pending`` (``ops librarian questions list``: awaiting ``owner_apply``) until an
+    explicit ``memory.answer`` by a device with write on every touched project applies it."""
     from hlmemo.librarian.tasks.apply_batch import proposal_actions
 
     cur = await conn.execute(
@@ -159,6 +164,8 @@ async def releasable(
         SELECT lq.batch_id::text, lq.project_id, lq.project_ids, lq.proposal
           FROM librarian_questions lq
          WHERE lq.status = 'accepted_pending' AND lq.batch_id IS NOT NULL
+           AND lq.kind <> 'widen_scope'
+           AND NOT (lq.proposal->'actions' @> '[{"op": "widen_scope"}]'::jsonb)
            AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'librarian_write'
                             AND j.payload->>'op' = 'apply_batch'
                             AND j.payload->>'batch_id' = lq.batch_id::text

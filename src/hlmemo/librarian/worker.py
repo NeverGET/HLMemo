@@ -17,9 +17,9 @@ calls outside any transaction), then applies the plan in ONE transaction:
 Systemic failures (provider outage, open breaker, ``HLM_LLM_MODE=off``) hand the job back without
 consuming an attempt; a budget refusal or the per-job call ceiling pauses the whole librarian
 (heartbeat ``breaker_state=budget``). Job-specific failures back off and fail after 5 attempts.
-Events per job (Sol 56 #4): exactly ONE terminal event (done or failed, both under
-``uuid5("job:<dedupe_key>")``); a back-off adds one compact non-terminal ``defer`` event (≤ 4 per
-job); a systemic hand-back writes the job row only.
+Events per job (D-086 §2, amends D-062 / Sol 38 #6): exactly ONE terminal event (done or failed,
+both under ``uuid5("job:<dedupe_key>")``); a back-off adds one compact non-terminal ``defer`` event
+(≤ 4 per job); a systemic hand-back writes the job row only (non-authoritative for replay).
 
 Connections (Sol 56 #5): at most ``HLM_LIBRARIAN_DB_CONNECTIONS`` (default 8): one own connection
 per job slot at a time (opened lazily for apply/defer, never held through provider calls), the
@@ -552,10 +552,10 @@ class LibrarianWorker:
         fail it (job-specific, ``lease.mark_failed`` semantics). Lease-fenced: a lost lease changes
         and records nothing. Returns the resulting status.
 
-        Events (D-062 "one event per job", Sol 56 #4): a job has EXACTLY ONE terminal ``librarian``
-        event — its completion (``apply``) or its permanent failure (here) — both under the job's
-        own request id ``uuid5("job:<dedupe_key>")``, so a job can never record both. Queue state
-        lives in the job row:
+        Events (D-086 §2, amending D-062 "one event per job" and Sol 38 #6): a job has EXACTLY
+        ONE terminal ``librarian`` event — its completion (``apply``) or its permanent failure
+        (here) — both under the job's own request id ``uuid5("job:<dedupe_key>")``, so a job can
+        never record both. Queue state lives in the job row:
 
         * a systemic hand-back (provider outage, open breaker, budget pause, embeddings not ready,
           LLM off) consumes no attempt and changes only scheduling hints (``run_after``,
@@ -622,6 +622,24 @@ class LibrarianWorker:
         return str(status)
 
     # ------------------------------------------------------------------ apply
+    @staticmethod
+    async def _lock_targets(conn: AsyncConnection, plan: Plan) -> None:
+        """Review 57 (signal-only replay race): EVERY item this plan writes — the subjects of its
+        placement signals (``version_signals`` is last-writer-wins per version) and the assessed
+        items of its proposals — is locked with the write path's per-item lock, ONCE, in sorted
+        order, BEFORE the event id is allocated. Two jobs writing the same target then commit in
+        the order of their event ids, so replay (event-id order) ends in the live state. Re-taking
+        a lock later in the same transaction (``_plan_questions``) is a no-op."""
+        vids = sorted({int(sig["version_id"]) for sig in plan.signals})
+        lids = {int(k) for prop in plan.proposals for k in prop.assessed}
+        if vids:
+            cur = await conn.execute(
+                "SELECT DISTINCT logical_id FROM memory_versions WHERE version_id = ANY(%s)", (vids,)
+            )
+            lids.update(int(r[0]) for r in await cur.fetchall())
+        if lids:
+            await q.lock_logical_ids(conn, sorted(lids))
+
     async def _plan_questions(
         self,
         conn: AsyncConnection,
@@ -1037,6 +1055,7 @@ class LibrarianWorker:
                     for sig in plan.signals:  # annotate(P) on the subject: every role
                         if not actor.allowed(ctx, caps, "annotate", [int(p) for p in sig["project_ids"]]):
                             raise AuthorityLost("E_ANNOTATE_CAPABILITY")
+                    await self._lock_targets(conn, plan)
                     direct, questions, superseded = await self._plan_questions(conn, job, plan, ctx, role, T)
                     applied, recorded = await actor.materialize(conn, ctx, caps, [*plan.signals, *direct])
                     batch_changes = await self._assign_batches(conn, job, questions)
@@ -1189,7 +1208,8 @@ class LibrarianWorker:
             async with conn.transaction():
                 await lock_role_order(conn, exclusive=False)
                 cur = await conn.execute(
-                    "SELECT EXISTS (SELECT 1 FROM librarian_questions WHERE status = 'accepted_pending')"
+                    "SELECT EXISTS (SELECT 1 FROM librarian_questions WHERE status = 'accepted_pending'"
+                    " AND kind <> 'widen_scope')"  # D-086: a widen waits for the owner's answer
                 )
                 if not (await cur.fetchone())[0]:
                     return 0
