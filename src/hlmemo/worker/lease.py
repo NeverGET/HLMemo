@@ -49,8 +49,15 @@ class LeasedJob:
 
 
 async def lease_jobs(
-    conn: AsyncConnection, kinds: list[str] | tuple[str, ...], limit: int, *, lease_seconds: int
+    conn: AsyncConnection,
+    kinds: list[str] | tuple[str, ...],
+    limit: int,
+    *,
+    lease_seconds: int,
+    exclude_ops: tuple[str, ...] = (),
 ) -> list[LeasedJob]:
+    """``exclude_ops``: payload ops this worker must not even lease (D-074: an OBSERVER librarian
+    leaves ``apply_batch`` jobs queued, untouched, for a promoted worker)."""
     token = str(uuid.uuid4())
     async with conn.transaction():
         cur = await conn.execute(
@@ -58,6 +65,7 @@ async def lease_jobs(
             WITH cand AS (
                 SELECT job_id FROM jobs
                 WHERE kind = ANY(%(kinds)s)
+                  AND NOT (COALESCE(payload->>'op', '') = ANY(%(xops)s))
                   AND ((status = 'queued' AND run_after <= now())
                        OR (status = 'running' AND lease_until < now()))
                 ORDER BY priority, run_after, job_id
@@ -71,7 +79,13 @@ async def lease_jobs(
              WHERE j.job_id = cand.job_id
             RETURNING j.job_id, j.kind, j.dedupe_key, j.payload, j.attempts, j.priority
             """,
-            {"kinds": list(kinds), "limit": limit, "token": token, "lease": lease_seconds},
+            {
+                "kinds": list(kinds),
+                "limit": limit,
+                "token": token,
+                "lease": lease_seconds,
+                "xops": list(exclude_ops),
+            },
         )
         rows = await cur.fetchall()
     await conn.commit()

@@ -58,7 +58,7 @@ from hlmemo.librarian.events import NS_LIBRARIAN, SCHEMA_VERSION_SYSTEM, insert_
 from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.reserved import reserved_ids
-from hlmemo.librarian.roles import ROLES, effective_role, lock_role_order
+from hlmemo.librarian.roles import lock_role_order, lowest_role
 from hlmemo.librarian.tasks.apply_batch import proposal_actions
 
 TOOL = "memory.answer"
@@ -105,35 +105,6 @@ async def _subjects_readable(conn: AsyncConnection, ctx: AuthContext, version_id
     return all(
         scope in scopes and any(ctx.has(int(p), Role.READ) for p in pids) for _vid, pids, scope in rows
     )
-
-
-async def _action_projects(conn: AsyncConnection, actions: list[dict[str, Any]]) -> set[int]:
-    """Every project an action touches, from the CURRENT rows (links: both endpoints' projects;
-    close: the item's projects; widen: the item's projects + the added ones)."""
-    out: set[int] = set()
-    lids: set[int] = set()
-    for a in actions:
-        out.update(int(p) for p in a.get("project_ids") or [])
-        out.update(int(p) for p in a.get("dst_project_ids") or [])
-        out.update(int(p) for p in a.get("add_project_ids") or [])
-        for key in ("src_logical_id", "dst_logical_id", "logical_id"):
-            if a.get(key) is not None:
-                lids.add(int(a[key]))
-    if lids:
-        cur = await conn.execute(
-            "SELECT DISTINCT unnest(project_ids) FROM memory_versions"
-            " WHERE logical_id = ANY(%s) AND superseded_at = 'infinity'",
-            (sorted(lids),),
-        )
-        out.update(int(r[0]) for r in await cur.fetchall())
-    return out
-
-
-async def _answer_role(conn: AsyncConnection, configured: str, project_ids: set[int]) -> str:
-    """The LOWEST effective librarian role over every touched project (D-074); the caller holds
-    the role-order lock (SHARED), so a concurrent ``set_role`` cannot interleave."""
-    roles = [await effective_role(conn, configured, p) for p in sorted(project_ids)]
-    return min(roles, key=ROLES.index) if roles else "observer"
 
 
 # --------------------------------------------------------------------------- memory.answer
@@ -183,7 +154,7 @@ async def answer(
         if not await _subjects_readable(conn, ctx, [int(v) for v in subject_vids]):
             raise not_found
         actions = proposal_actions(proposal)
-        union = {pid, *(int(p) for p in qprojects), *await _action_projects(conn, actions)}
+        union = {pid, *(int(p) for p in qprojects), *await actor.action_projects(conn, actions)}
         if not all(ctx.has(p, Role.WRITE) for p in sorted(union)):
             raise ToolError(
                 "E_FORBIDDEN_PROJECT", "answering needs write on every project the question touches"
@@ -221,7 +192,7 @@ async def answer(
         applied: dict[str, Any] = {"links": 0, "closed": [], "widened": []}
         write_events: list[int] = []
         new_status = {"accept": "applied", "reject": "rejected", "custom": "answered"}[request.decision]
-        role = await _answer_role(conn, configured, union)
+        role = await lowest_role(conn, configured, union)  # every touched project (D-074)
         if request.decision == "accept" and role == "observer":
             # D-074: a label only. No subject lock, no staleness verdict, no mutation, no widen:
             # the batch path applies it after a promotion, with the full recheck.

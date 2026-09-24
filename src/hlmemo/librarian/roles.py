@@ -20,7 +20,7 @@ from hlmemo.auth.context import AuthContext, Role
 from hlmemo.core.errors import ToolError
 from hlmemo.core.temporal import fmt_ts
 from hlmemo.db import write_queries as q
-from hlmemo.librarian.actor import apply_batch_changes, set_question_status
+from hlmemo.librarian.actor import action_projects, apply_batch_changes, set_question_status
 from hlmemo.librarian.errors import RoleNotAuthorized
 from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event
 from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
@@ -79,7 +79,8 @@ async def record_role_decision(
         raise ToolError("E_FORBIDDEN_PROJECT", "project role override needs admin on the project")
     await lock_role_order(conn, exclusive=True)
     at = await q.clock_now(conn)
-    jobs = await pending_apply_jobs(conn, role, project_id)
+    (event_id,) = await q.allocate_ids(conn, "events", 1)
+    jobs = await pending_apply_jobs(conn, role, project_id, event_id)
     await assign_job_ids(conn, jobs)
     resolved: dict[str, Any] = {"recorded_at": fmt_ts(at)}
     if jobs:
@@ -94,6 +95,7 @@ async def record_role_decision(
         request={"actor": CLIENT, "op": "set_role", "role": role, "decision": decision[:200]},
         resolved=resolved,
         at=at,
+        event_id=event_id,
     )
     assert event_id is not None
     if jobs:
@@ -112,19 +114,27 @@ async def _role_after(conn: AsyncConnection, role: str, decision_project: int | 
 
 
 async def pending_apply_jobs(
-    conn: AsyncConnection, role: str, decision_project: int | None
+    conn: AsyncConnection, role: str, decision_project: int | None, event_id: int
 ) -> list[dict[str, Any]]:
-    """D-074 promotion: one ``apply_batch`` job per batch holding ``accepted_pending`` questions
-    (of ``decision_project`` only, for a project decision) whose project is assistant+ after the
-    decision and which has no apply job queued or running (that one picks them up)."""
+    """D-074 promotion (Sol 49 #2): the ``accepted_pending`` answers this decision can release.
+
+    A question qualifies if the decided project is its home OR any project it touches (a project
+    decision), or any question at all (a deployment decision), AND every project it touches (home,
+    ``project_ids``, its actions' projects on the current rows) is assistant+ after the decision;
+    otherwise the promotion of its last observer project releases it later. One ``apply_batch`` job
+    per batch, keyed by this ``set_role`` event (``librarian_apply:<batch>:promo<event_id>``),
+    unless an apply job of that batch is already queued or running (that job picks them up; an
+    observer worker never leases it, D-074). The job re-checks everything under its own locks."""
+    from hlmemo.librarian.tasks.apply_batch import proposal_actions
+
     if role == "observer":
         return []
     cur = await conn.execute(
         """
-        SELECT DISTINCT ON (lq.batch_id) lq.batch_id::text, lq.project_id, lq.proposal->'capabilities'
+        SELECT lq.batch_id::text, lq.project_id, lq.project_ids, lq.proposal
           FROM librarian_questions lq
          WHERE lq.status = 'accepted_pending' AND lq.batch_id IS NOT NULL
-           AND (%(p)s::bigint IS NULL OR lq.project_id = %(p)s)
+           AND (%(p)s::bigint IS NULL OR lq.project_id = %(p)s OR %(p)s = ANY(lq.project_ids))
            AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'librarian_write'
                             AND j.payload->>'op' = 'apply_batch'
                             AND j.payload->>'batch_id' = lq.batch_id::text
@@ -133,13 +143,20 @@ async def pending_apply_jobs(
         """,
         {"p": decision_project},
     )
-    jobs = []
-    for batch_id, pid, caps in await cur.fetchall():
-        if await _role_after(conn, role, decision_project, int(pid)) == "observer":
+    released: dict[str, tuple[int, dict[str, Any]]] = {}
+    for batch_id, home, pids, proposal in await cur.fetchall():
+        if batch_id in released:
             continue
-        n = await decision_round(conn, batch_id)
-        jobs.append(apply_job(batch_id, int(pid), caps or {}, f":r{n}" if n else ""))
-    return jobs
+        touched = {int(home), *(int(x) for x in pids)} | await action_projects(
+            conn, proposal_actions(proposal)
+        )
+        after = [await _role_after(conn, role, decision_project, p) for p in sorted(touched)]
+        if "observer" not in after:
+            released[batch_id] = (int(home), proposal.get("capabilities") or {})
+    return [
+        apply_job(batch_id, home, caps, f":promo{event_id}")
+        for batch_id, (home, caps) in sorted(released.items())
+    ]
 
 
 def apply_job(batch_id: str, project_id: int, capabilities: dict[str, Any], rnd: str) -> dict[str, Any]:
@@ -182,6 +199,13 @@ async def effective_role(conn: AsyncConnection, configured: str, project_id: int
         row = await cur.fetchone()
         role = lower(role, row[0] if row else None)
     return role
+
+
+async def lowest_role(conn: AsyncConnection, configured: str, project_ids: set[int] | list[int]) -> str:
+    """The LOWEST effective role over every touched project (D-074; ``memory.answer``, the
+    worker's ``apply_batch`` and its autonomous direct path). Callers hold the role-order lock."""
+    roles = [await effective_role(conn, configured, int(p)) for p in sorted(set(project_ids))]
+    return min(roles, key=_RANK.__getitem__) if roles else "observer"
 
 
 # --------------------------------------------------------------------------- batch approval
@@ -308,6 +332,7 @@ __all__ = [
     "effective_role",
     "latest_role_decision",
     "lower",
+    "lowest_role",
     "pending_apply_jobs",
     "record_batch_decision",
     "record_role_decision",

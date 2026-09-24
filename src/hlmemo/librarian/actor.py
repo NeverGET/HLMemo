@@ -88,6 +88,29 @@ async def recheck(conn: AsyncConnection, capabilities: dict[str, Any], client: s
     return context_from_row(row, grants, client)
 
 
+async def action_projects(conn: AsyncConnection, actions: list[dict[str, Any]]) -> set[int]:
+    """Every project an action set touches, from the CURRENT rows (links: both endpoints'
+    projects; close: the item's projects; widen: the item's projects + the added ones). The role
+    of EACH is checked before anything is applied (D-074, Sol 49)."""
+    out: set[int] = set()
+    lids: set[int] = set()
+    for a in actions:
+        out.update(int(p) for p in a.get("project_ids") or [])
+        out.update(int(p) for p in a.get("dst_project_ids") or [])
+        out.update(int(p) for p in a.get("add_project_ids") or [])
+        for key in ("src_logical_id", "dst_logical_id", "logical_id"):
+            if a.get(key) is not None:
+                lids.add(int(a[key]))
+    if lids:
+        cur = await conn.execute(
+            "SELECT DISTINCT unnest(project_ids) FROM memory_versions"
+            " WHERE logical_id = ANY(%s) AND superseded_at = 'infinity'",
+            (sorted(lids),),
+        )
+        out.update(int(r[0]) for r in await cur.fetchall())
+    return out
+
+
 def allowed(ctx: AuthContext, capabilities: dict[str, Any], capability: str, project_ids: list[int]) -> bool:
     """Enqueue-time set ∩ current grants covers every project."""
     granted = set(capabilities.get(capability) or [])
