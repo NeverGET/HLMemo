@@ -283,6 +283,22 @@ def test_partial_demotion_only_when_the_query_matched_the_outdated_statement() -
     assert demote_partially_superseded(fresh, [(9, 1, SPAN)], _terms("cache TTL")) == fresh  # no hit 9
 
 
+def test_partial_demotion_needs_the_evidence_inside_the_span() -> None:
+    """Review 57: the same sentence is not enough — the query's evidence must lie INSIDE the
+    quoted outdated clause, and a mixed match is not demoted."""
+    from hlmemo.core.supersession import matched_in_span
+
+    text = "API uses port 8080 and backups retain 30 days."
+    span = "API uses port 8080"
+    assert not matched_in_span(text, span, set(_terms("backups retain")))
+    assert matched_in_span(text, span, set(_terms("API port")))
+    assert not matched_in_span(text, span, set(_terms("API port backups")))  # mixed: ambiguous
+    hits = [_Hit(1, 0.9, _Row(text)), _Hit(2, 0.8, _Row("API now uses port 8765."))]
+    link = [(2, 1, span)]
+    assert [h.logical_id for h in demote_partially_superseded(hits, link, _terms("backups retain"))] == [1, 2]
+    assert [h.logical_id for h in demote_partially_superseded(hits, link, _terms("API port"))] == [2, 1]
+
+
 def test_partial_demotion_resolves_chains_in_one_stable_order() -> None:
     a = "The API cache TTL is 60 seconds."
     b = "The API cache TTL is 120 seconds."
@@ -299,6 +315,14 @@ def test_partial_demotion_resolves_chains_in_one_stable_order() -> None:
     cyc = [_Hit(1, 0.9, _Row(a)), _Hit(3, 0.8, _Row(b))]
     both = [(3, 1, "API cache TTL is 60 seconds"), (1, 3, "API cache TTL is 120 seconds")]
     assert [h.logical_id for h in demote_partially_superseded(cyc, both, _terms("cache TTL"))] == [1, 3]
+    # review 57: a cycle never pushes its members below unrelated hits (the closing edge is ignored)
+    unrelated = _Hit(9, 0.7, _Row("unrelated note"))
+    three = [_Hit(1, 0.9, _Row(a)), _Hit(3, 0.8, _Row(b)), unrelated]
+    out = demote_partially_superseded(three, both, _terms("cache TTL"))
+    assert [h.logical_id for h in out] == [1, 3, 9]
+    four = [_Hit(3, 0.95, _Row(b)), _Hit(1, 0.9, _Row(a)), _Hit(9, 0.7, _Row("unrelated note"))]
+    out = demote_partially_superseded(four, both, _terms("cache TTL"))
+    assert [h.logical_id for h in out] == [1, 3, 9]  # the first edge (1 before 3) stands, 9 stays last
 
 
 def test_notice_and_legacy_close() -> None:

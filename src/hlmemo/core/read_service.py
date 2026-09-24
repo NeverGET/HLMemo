@@ -32,6 +32,7 @@ from hlmemo.core.budget import BudgetError, Meter, canonical, validate_budget
 from hlmemo.core.clues import Clue, InvalidClue, decode_clue, encode_clue
 from hlmemo.core.embedder import Embedder, default_model_dir
 from hlmemo.core.errors import ToolError
+from hlmemo.core.normalize import is_identifier
 from hlmemo.core.read_models import DrilldownRequest, QueryRequest, RawRequest, parse_request
 from hlmemo.core.retrieval import (
     L_MAX,
@@ -259,7 +260,9 @@ async def query_parts(
             f.row = rows[f.chunk_id]
         head = newer_first_on_ties(head)  # D-057: exact RRF tie, same title -> newer first
         if partial:  # D-076 fact-level supersession, only for a query that matched the outdated span
-            head = demote_partially_superseded(head, partial, terms.terms)
+            # the query's discriminative terms (D-055 DF filter), words of 3+ characters or identifiers
+            evidence = [t for t in terms.preview_terms if len(t) >= 3 or is_identifier(t)]
+            head = demote_partially_superseded(head, partial, evidence)
         librarian = await pending_block(conn, ctx, project.project_id, now)
 
         card: CardInput | None = None

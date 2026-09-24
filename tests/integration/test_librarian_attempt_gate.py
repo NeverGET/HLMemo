@@ -370,6 +370,36 @@ async def test_deferred_job_replays_its_run_after(db_dsn, connect, world, deps) 
             "SELECT status, attempts FROM jobs WHERE dedupe_key = 'librarian_write:deferred'"
         )
         assert await cur.fetchone() == ("queued", 0)
+    # D-086 §2: more hand-backs write nothing either; the completion is the ONE terminal event
+    for _ in range(2):
+        async with await connect() as conn:
+            await conn.execute(
+                "UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:deferred'"
+            )
+            await conn.commit()
+        provider = make_provider(db_dsn, llm, caps=Caps(zero, zero, zero))
+        await make_worker(lib_settings(db_dsn), provider, connect).drain()
+        await provider.aclose()
+    async with await connect() as conn:
+        await conn.execute("UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:deferred'")
+        await conn.commit()
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    assert await make_worker(lib_settings(db_dsn), provider, connect).drain() == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT request_id, payload->'resolved'->>'outcome' FROM events WHERE kind = 'librarian'"
+            " AND (payload->'request'->>'job_key' = 'librarian_write:deferred'"
+            "      OR payload->'resolved'->'done'->>'dedupe_key' = 'librarian_write:deferred')"
+        )
+        from hlmemo.librarian.events import NS_LIBRARIAN
+
+        [(rid, outcome)] = await cur.fetchall()
+        assert rid == uuid.uuid5(NS_LIBRARIAN, "job:librarian_write:deferred") and outcome == "proposed"
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
 
 
 async def test_one_terminal_event_per_job_and_compact_backoffs(db_dsn, connect, world, deps) -> None:  # noqa: ANN001

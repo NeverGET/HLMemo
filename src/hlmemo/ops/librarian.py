@@ -300,9 +300,21 @@ async def questions_list(
             "relation": rel,
             "supersedes": sup,
             "created_at": created.isoformat(),
+            "awaiting": _awaiting(kind, st),
         }
         for qid, slug, kind, st, clues, bid, created, rel, sup in await cur.fetchall()
     ]
+
+
+def _awaiting(kind: str, status: str) -> str | None:
+    """What an accepted question still waits for: a widen is applied ONLY by an explicit owner
+    ``memory.answer`` in a role above observer (D-086 §1, ``owner_apply``); any other accepted
+    answer is applied by the batch path once every touched project is promoted (``promotion``)."""
+    if kind == "widen_scope" and status in ("approved", "accepted_pending"):
+        return "owner_apply"
+    if status == "accepted_pending":
+        return "promotion"
+    return None
 
 
 def _print(obj: Any) -> None:
@@ -335,9 +347,10 @@ async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
                 _print({"questions": rows})
             else:
                 for r in rows:
+                    wait = f" awaiting={r['awaiting']}" if r["awaiting"] else ""
                     sys.stdout.write(
                         f"{r['question_id']} {r['project']:<20} {r['kind']:<13} {r['status']:<9}"
-                        f" {','.join(r['clues'])}\n"
+                        f" {','.join(r['clues'])}{wait}\n"
                     )
             return 0
         if action == "approve-batch":

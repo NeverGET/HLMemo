@@ -749,6 +749,11 @@ async def test_gq2_authorization_matrix(db_dsn, connect, world: World, embedder)
 
 
 async def test_gq2_widen_scope_accept_needs_write_on_both(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """D-058/D-086 §1: an accepted widen is applied ONLY by an explicit owner ``memory.answer``
+    from a device with write on both projects: a promotion, release jobs and the sweeper never
+    requeue it (no loop over several sweeper periods); it is listed as awaiting ``owner_apply``."""
+    from hlmemo.ops.librarian import questions_list
+
     lesson_o = ("Heredoc over ssh", "Never pipe a heredoc into ssh with bash -s: stdin is swallowed.")
     lesson_m = ("ssh stdin heredoc", "bash -s over ssh with a heredoc swallows stdin; do not do it.")
     (o,) = await write_items(
@@ -771,7 +776,21 @@ async def test_gq2_widen_scope_accept_needs_write_on_both(db_dsn, connect, world
     ack = await _answer(connect, world.ctx_a, _args(qid, "accept"))  # observer: a label, no widening
     assert ack["status"] == "accepted_pending" and ack["applied"]["widened"] == []
     assert await _user_state(connect, world) == before
-    await _promote(connect, world)  # the batch path never widens (D-058): a writer on both answers
+    released = await _promote(connect, world)  # the batch path never widens (D-058/D-086)
+    assert "jobs" not in released
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    for _period in range(3):  # several sweeper periods: nothing is requeued, no event written
+        assert await worker.maybe_release(force=True) == 0
+        await worker.drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        assert await count(conn, "jobs", "payload->>'op' = 'apply_batch'") == 0
+        assert await count(conn, "events", "payload->'request'->>'op' = 'release_pending'") == 0
+        [listed] = [r for r in await questions_list(conn, None, None) if r["question_id"] == qid]
+        await conn.rollback()
+    assert (listed["status"], listed["awaiting"]) == ("accepted_pending", "owner_apply")
+    assert await _user_state(connect, world) == before
     ack = await _answer(connect, world.ctx_a, _args(qid, "accept"), role="assistant")
     assert ack["status"] == "applied" and len(ack["applied"]["widened"]) == 1
     async with await connect() as conn:
