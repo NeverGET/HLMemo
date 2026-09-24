@@ -22,6 +22,7 @@ apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py
 | `tests/integration/test_migration_0006.py` | asserts `main@head` instead of `0006_librarian`; the failed-downgrade test pins `0006_librarian`. |
 | `tests/integration/test_gl3_llm_down.py` | api with `HLM_LIBRARIAN_ENABLED=true` (write-path enqueue), librarian `HLM_LIBRARIAN_EMBED_WAIT_S=0`; asserts the 100 write-path jobs complete once each. |
 | `tests/integration/{test_gl8_roles,test_librarian_cassettes}.py` | proposal shape `actions[]`; approved-and-applied questions are `applied`. |
+| `tests/integration/test_librarian_privacy_memory.py` | the working-memory rule references a MAIN item the triggering device can read (was the literal `v1`, which rule-ref filtering now drops); the librarian-device write assertion excludes that item's write. |
 
 ## Deviations (proposed decision text)
 > **D-0xx (proposed)** | W2b/W2c implementation choices (implementer B, consult 41):
@@ -71,3 +72,10 @@ apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py
 | new | duplicate-question check not atomic | it already ran under the subjects' item locks (held to commit, READ COMMITTED re-reads after the wait); now explicit (union lock before the loop) and tested with two workers in flight together (`test_sol43_concurrent_reviews_of_one_pair_ask_once`) |
 | B | pooled positive bar could hide a lost small class; summaries lacked mode/provider evidence | every positive class (contra_new/old/none, duplicate, refines) must be present with worst-over-reps recall ≥ 0.66; `SUMMARY.md`/`results.json` record the run mode and ledger calls per (mode, task, profile, model, outcome); G-LIVE-B re-run live |
 | GP1 | set comparison missed duplicate rows; accuracy only printed | multiset + list equality after rebuild; recorded pipeline exact ≥ 0.90 asserted |
+
+## Consult 44 (gpt-6-sol second delta, verdict NO: 3 items) — resolution
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | rule refs filtered once at plan time, not before each provider attempt | `memory.rules_still_readable` runs inside the precheck of EVERY attempt (write_review and pair_check); a lost ref raises `PrivacyDenied` (call skipped, audited as a denial) (`test_sol44_rule_ref_lost_mid_job_stops_the_next_calls`) |
+| 2 | TTL compared with the clock read before the lock waits | `_lock_approved` reads the clock AFTER the device/question locks and returns it as the job's `T` (`test_sol44_ttl_is_checked_after_the_lock_wait`: expires during a 1.5 s device-lock wait → `expired`; a mutant comparing with the earlier `T` fails it) |
+| 3 | fallback + chain artifacts in the old format | G-LIVE-B re-run live for all three configurations with the new runner (mode `live`, ledger calls per profile/model, per-class bar) |

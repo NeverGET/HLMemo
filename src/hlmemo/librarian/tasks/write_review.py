@@ -43,7 +43,7 @@ from hlmemo.db import librarian_queries as lq
 from hlmemo.librarian import candidates as cands
 from hlmemo.librarian import guards, privacy
 from hlmemo.librarian.errors import AuthorityLost, NotReady, PrivacyDenied, SchemaFail
-from hlmemo.librarian.memory import load_rules, readable_rules
+from hlmemo.librarian.memory import load_rules, readable_rules, rules_still_readable
 from hlmemo.librarian.prompts import load_task
 from hlmemo.librarian.tasks import Plan, Proposal, user_message
 
@@ -286,6 +286,8 @@ class WriteReview:
                 if not again.device_ok:
                     raise AuthorityLost("E_AUTHORITY_LOST")
                 if not all(again.allowed(v) for v in ids):
+                    raise PrivacyDenied("E_PRIVACY_DENIED")
+                if not await rules_still_readable(w.connect, caps, rules):  # rule refs too (Sol 44 #1)
                     raise PrivacyDenied("E_PRIVACY_DENIED")
 
             return precheck
