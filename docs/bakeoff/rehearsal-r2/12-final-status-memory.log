@@ -1,0 +1,45 @@
+# 2026-09-24T03:06:34Z final state before cleanup
+ready       ready failing=-
+migration   0008_librarian_tasks
+devices     {'pending': 1, 'revoked': 18, 'trusted': 9}
+worker      ready=0 oldest_ready_age_s=None last_done_at=2026-09-24T03:05:42.735104+00:00 expired_leases=0
+librarian   ready=0 in_flight=0 role=observer breaker=closed (ledger) failed_24h=0 spend_today_usd=0.635878 spend_hour_usd=0.003249 reserved_usd=0.0
+jobs        embed          done     662
+jobs        librarian_write done     479
+## llm_calls ledger by task/profile/outcome (latency, cost)
+     task      |       profile        | outcome | count | p50_ms | p95_ms | max_ms |  usd   
+---------------+----------------------+---------+-------+--------+--------+--------+--------
+ place         | openrouter-gpt6-luna | ok      |   469 |   2853 |   5630 |  14951 | 0.0856
+ relate        | openrouter-gpt6-luna | ok      |   596 |   3806 |   8579 |  22262 | 0.5249
+ relate_verify | openrouter           | ok      |    45 |   1163 |   3309 |   4163 | 0.0170
+ risk_judge    | openrouter-gpt6-luna | ok      |    16 |   1436 |   3286 |   3286 | 0.0006
+ risk_judge    | openrouter-gpt6-luna | timeout |     5 |   3561 |   3638 |   3638 | 0.0033
+(5 rows)
+
+     task      |       profile        | outcome | count | p50_ms | p95_ms |  usd   
+---------------+----------------------+---------+-------+--------+--------+--------
+ place         | openrouter-gpt6-luna | ok      |   477 |   2847 |   5630 | 0.0864
+ relate        | openrouter-gpt6-luna | ok      |   604 |   3774 |   8579 | 0.5276
+ relate_verify | openrouter           | ok      |    46 |   1163 |   3309 | 0.0171
+ risk_judge    | openrouter-gpt6-luna | ok      |    20 |   1541 |   3286 | 0.0008
+ risk_judge    | openrouter-gpt6-luna | timeout |     5 |   3561 |   3638 | 0.0033
+(5 rows)
+
+## risk_judge orphaned reservation (see bug note): 21 risk_check calls 02:54:5x-02:56:21 -> 20 ledger rows; reservation cb1c53d3 (created 02:55:06.5, job_id NULL) swept at expiry 03:05:06 as worst case
+## memory: peak docker stats per service over the three load runs (G-L3 neutral, G-L3 identifier, import burst) vs limits (MiB)
+service     limit  gl3-neutral  gl3-ident   burst  peak%
+db           2048          101        119     126     6%
+api          2560         1235       1239    1240    48%
+worker       1536         1003       1011    1010    66%
+librarian     512          125        133     126    26%
+caddy         256           14         14      15     6%
+cpu% peak per service (docker stats, 100% = 1 vCPU): {'db': 56.31, 'api': 100.8, 'worker': 103.65, 'librarian': 15.32, 'caddy': 1.78}
+host during write windows: cpu busy mean [92, 91, 95] max [99, 100, 99] load1 max [1.34, 2.02, 1.9]
+               total        used        free      shared  buff/cache   available
+Mem:            7913        2949        3803          47        1376        4964
+Swap:              0           0           0
+hlmemo-prod-api-1 1.228GiB / 2.5GiB 0.10%
+hlmemo-prod-librarian-1 135MiB / 512MiB 0.33%
+hlmemo-prod-worker-1 930.1MiB / 1.5GiB 0.17%
+hlmemo-prod-caddy-1 57.63MiB / 256MiB 0.00%
+hlmemo-prod-db-1 123MiB / 2GiB 0.36%
