@@ -110,13 +110,7 @@ class _Approved:
     projects: frozenset[int] = frozenset()  # the question's home + project_ids
 
 
-def _logical_ids(actions: list[dict[str, Any]]) -> list[int]:
-    """Every logical item an action set touches (assessed subjects, link endpoints, closes)."""
-    out: set[int] = set()
-    for a in actions:
-        out.update(int(k) for k in a.get("assessed") or {})
-        out.update(int(a[f]) for f in ("src_logical_id", "dst_logical_id", "logical_id") if a.get(f))
-    return sorted(out)
+_logical_ids = actor.action_logical_ids
 
 
 def audit_request(plan: Plan, job: LeasedJob) -> dict[str, Any]:
