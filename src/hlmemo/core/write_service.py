@@ -122,6 +122,10 @@ class WriteDeps:
     meter: Meter
     chunker: Chunker
     tokenizer_sha256: str
+    #: W2b: enqueue ``librarian_write:<event_id>`` with every write (``HLM_LIBRARIAN_ENABLED``)
+    librarian_enqueue: bool = False
+    #: W2b: first run_after of a relation review, seconds after the write (embeddings first)
+    librarian_delay_s: float = 0.0
 
     def chunker_descriptor(self) -> dict[str, Any]:
         return {
@@ -136,10 +140,14 @@ class WriteDeps:
 @lru_cache(maxsize=4)
 def _deps_for(model_dir: str) -> WriteDeps:
     d = Path(model_dir)
+    from hlmemo.config import get_settings
+
     return WriteDeps(
         meter=Meter(),
         chunker=Chunker(d, chunk_tok=CHUNK_TOK, overlap=CHUNK_OVERLAP),
         tokenizer_sha256=sha256_file(d / "onnx" / "tokenizer.json"),
+        librarian_enqueue=get_settings().librarian_enabled,
+        librarian_delay_s=get_settings().librarian_review_delay_s,
     )
 
 
@@ -1104,6 +1112,10 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     if batch.librarian_priority is not None:  # W2d/W1.5: replayable for the W2b enqueue
         resolved["librarian_priority"] = batch.librarian_priority
 
+    librarian_jobs = await _librarian_jobs(conn, ctx, deps, batch, plans, event_id)
+    if librarian_jobs:  # W2b: recorded with the event; replay re-creates the rows
+        resolved["librarian_jobs"] = librarian_jobs
+
     ack: dict[str, Any] = {
         "request_id": batch.request_id,
         "replayed": False,
@@ -1181,7 +1193,57 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
             payload=embed_job_payload(job["version_id"], embedder),
             run_after=T,
         )
+    if librarian_jobs:
+        from hlmemo.librarian.jobs import insert_recorded_jobs
+
+        await insert_recorded_jobs(conn, librarian_jobs, event_id, T)
     return ack
+
+
+async def _librarian_jobs(
+    conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, batch: _Batch, plans: list[_Plan], event_id: int
+) -> list[dict[str, Any]]:
+    """W2b: the ``librarian_write:<event_id>`` job descriptors for this batch (``[]`` when the
+    librarian is disabled or the project's policy is off). ``client_*`` say which placement fields
+    the client set itself (the librarian never overwrites them).
+
+    The job priority is the batch's server-side ``librarian_priority`` when set (W2d
+    ``register_lesson`` = 2, a W1.5 import = 6; recorded as ``resolved.librarian_priority`` in the
+    same event), else the trigger default (write / call_the_day = 3). The descriptors, priority
+    included, are recorded in ``resolved.librarian_jobs``, so replay re-creates identical rows.
+    A W1.5 ``close`` item is not reviewed: its version ends validity (never current), so the
+    privacy gate would only record it as a stale subject."""
+    if not deps.librarian_enqueue:
+        return []
+    from hlmemo.librarian.trigger import plan_jobs
+
+    raw_items = batch.request_payload.get("items") if batch.kind == "write" else None
+    versions = []
+    for p in plans:
+        if p.item.close:
+            continue
+        raw = raw_items[p.index] if isinstance(raw_items, list) and p.index < len(raw_items) else {}
+        raw = raw if isinstance(raw, dict) else {}
+        versions.append(
+            {
+                "version_id": p.version_id,
+                "kind": p.item.kind,
+                "client_importance": p.item.importance if "importance" in raw else None,
+                "client_stability": "stability" in raw or p.is_card,
+                "project_ids": list(p.project_ids),
+            }
+        )
+    return await plan_jobs(
+        conn,
+        ctx,
+        enabled=True,
+        kind=batch.kind,
+        event_id=event_id,
+        project_id=batch.project.project_id,
+        versions=versions,
+        delay_s=deps.librarian_delay_s,
+        priority=batch.librarian_priority,
+    )
 
 
 @lru_cache(maxsize=1)

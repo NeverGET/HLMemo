@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "place/v1",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 40},
+          "importance": {"type": "integer", "minimum": 1, "maximum": 10},
+          "stability": {"enum": ["stable", "volatile"]},
+          "topic_hint": {"type": "string", "maxLength": 200},
+          "tags_add": {"type": "array", "items": {"type": "string", "maxLength": 64}, "maxItems": 10}
+        },
+        "required": ["id", "importance", "stability"]
+      }
+    }
+  },
+  "required": ["items"]
+}

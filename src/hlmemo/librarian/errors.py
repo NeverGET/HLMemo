@@ -57,6 +57,15 @@ class PrivacyDenied(LibrarianError):
     """The privacy gate denied an item of the prompt immediately before a provider attempt."""
 
 
+class NotReady(LibrarianError):
+    """The job's inputs are not ready yet (W2b: the subject's embeddings are still being computed):
+    handed back without consuming an attempt, retried after ``retry_after_s``."""
+
+    def __init__(self, message: str, *, retry_after_s: float = 5.0) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
 class RoleNotAuthorized(LibrarianError):
     """The configured role has no matching owner decision event (§4b role ladder)."""
 
@@ -70,6 +79,7 @@ __all__ = [
     "LibrarianError",
     "LlmConfigError",
     "LlmDisabled",
+    "NotReady",
     "PrivacyDenied",
     "ProviderUnavailable",
     "RoleNotAuthorized",

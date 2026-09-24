@@ -36,11 +36,14 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from psycopg import AsyncConnection
 
+from hlmemo.auth.resolve import lock_device_access
 from hlmemo.core.budget import Meter
+from hlmemo.core.temporal import select_T
 from hlmemo.db import write_queries as q
 from hlmemo.librarian import actor
 from hlmemo.librarian.budget import DbBudget, budget_snapshot
@@ -50,6 +53,7 @@ from hlmemo.librarian.errors import (
     JobCallCapExceeded,
     LibrarianError,
     LlmDisabled,
+    NotReady,
     ProviderUnavailable,
     RoleNotAuthorized,
 )
@@ -58,10 +62,11 @@ from hlmemo.librarian.jobs import LIBRARIAN_JOB_KINDS, assign_job_ids, insert_re
 from hlmemo.librarian.provider import Provider, lineage_scope
 from hlmemo.librarian.redact import REDACTION_VERSION
 from hlmemo.librarian.reserved import reserved_ids
-from hlmemo.librarian.roles import check_role_at_start, effective_role
+from hlmemo.librarian.roles import check_role_at_start, effective_role, lock_role_order
 from hlmemo.librarian.tasks import Handler, Plan
-from hlmemo.librarian.tasks.apply_batch import ApplyBatch
+from hlmemo.librarian.tasks.apply_batch import ApplyBatch, proposal_actions
 from hlmemo.librarian.tasks.pair_check import PairCheck
+from hlmemo.librarian.tasks.write_review import WriteReview
 from hlmemo.worker.lease import BACKOFF_SECONDS, MAX_ATTEMPTS, LeasedJob, keep_lease, lease_jobs, mark_done
 
 log = logging.getLogger("hlmemo.librarian")
@@ -69,12 +74,13 @@ log = logging.getLogger("hlmemo.librarian")
 HANDLED_KINDS = ("librarian_write",)
 BUDGET_PAUSE_S = 60.0
 SWEEP_EVERY_S = 60.0
+EXPIRE_EVERY_S = 600.0
 
 ConnFactory = Callable[[], Awaitable[AsyncConnection]]
 
 
 def default_handlers() -> dict[str, Handler]:
-    return {PairCheck.op: PairCheck(), ApplyBatch.op: ApplyBatch()}
+    return {PairCheck.op: PairCheck(), ApplyBatch.op: ApplyBatch(), WriteReview.op: WriteReview()}
 
 
 AUDIT_CALL_FIELDS = ("profile", "model_id", "prompt_version", "schema_version", "input_digest", "output")
@@ -88,6 +94,15 @@ def error_code(exc: BaseException) -> str:
     if head.startswith("E_") and head.replace("_", "").isalnum():
         return head
     return f"E_{type(exc).__name__}"
+
+
+def _logical_ids(actions: list[dict[str, Any]]) -> list[int]:
+    """Every logical item an action set touches (assessed subjects, link endpoints, closes)."""
+    out: set[int] = set()
+    for a in actions:
+        out.update(int(k) for k in a.get("assessed") or {})
+        out.update(int(a[f]) for f in ("src_logical_id", "dst_logical_id", "logical_id") if a.get(f))
+    return sorted(out)
 
 
 def audit_request(plan: Plan, job: LeasedJob) -> dict[str, Any]:
@@ -159,6 +174,7 @@ class LibrarianWorker:
         self.pause_reason: str | None = None
         self._last_heartbeat = 0.0
         self._last_sweep = 0.0
+        self._last_expire = 0.0
 
     # ------------------------------------------------------------------ state
     @property
@@ -242,6 +258,10 @@ class LibrarianWorker:
                 except ProviderUnavailable as exc:
                     await conn.rollback()
                     await self.defer(conn, job, error_code(exc), release_s=max(1.0, exc.retry_after_s))
+                    self.stats.jobs_released += 1
+                except NotReady as exc:  # W2b: inputs (embeddings) still in flight; no attempt consumed
+                    await conn.rollback()
+                    await self.defer(conn, job, "E_NOT_READY", release_s=max(1.0, exc.retry_after_s))
                     self.stats.jobs_released += 1
                 except LlmDisabled:
                     await conn.rollback()
@@ -327,50 +347,184 @@ class LibrarianWorker:
 
     # ------------------------------------------------------------------ apply
     async def _plan_questions(
-        self, conn: AsyncConnection, job: LeasedJob, plan: Plan, ctx: Any, role: str, batch_id: str
+        self,
+        conn: AsyncConnection,
+        job: LeasedJob,
+        plan: Plan,
+        ctx: Any,
+        role: str,
+        T: Any,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
-        """Proposal job: (directly applicable mutations, question rows, superseded count)."""
+        """Proposal job: (directly applicable actions, question rows, superseded count).
+
+        ``autonomous`` applies the auto-rule class directly; everything else becomes a question
+        (``question(P)``: every touched project readable by the triggering device NOW). The actions
+        of a question are applied later by an owner decision under the relevant authority
+        (``apply_batch``: this job's capabilities; ``memory.answer``: the answering device)."""
         caps = plan.capabilities
         auto = role == "autonomous"
         direct: list[dict[str, Any]] = []
         questions: list[dict[str, Any]] = []
         superseded = 0
-        for i, (m, ok) in enumerate(zip(plan.mutations, plan.auto_ok, strict=True)):
-            stale = await actor.is_stale(conn, m)
+        redact = self.provider.redactor.value
+        expires = actor.ts(T + actor.QUESTION_TTL)
+        # every item of every proposal locked ONCE in sorted order (Sol 46: per-proposal locking
+        # interleaved across jobs could deadlock). Holding them to commit also makes the duplicate
+        # check below atomic: a concurrent job proposing the same pair waits here, then sees the row.
+        await q.lock_logical_ids(conn, [int(k) for prop in plan.proposals for k in prop.assessed])
+        for i, prop in enumerate(plan.proposals):
+            stale = await actor.is_stale(conn, {"assessed": prop.assessed})
             superseded += int(stale)
-            if auto and ok:
+            if auto and prop.auto_ok:
                 if not stale:
-                    direct.append(m)
+                    direct.extend(prop.actions)
                 continue
-            await actor.check_link(conn, ctx, caps, m)  # annotate(P) must hold to propose
-            touched = sorted({*map(int, m.get("project_ids", [])), *map(int, m.get("dst_project_ids", []))})
-            if not actor.allowed(ctx, caps, "question", touched):
+            if not actor.readable(ctx, caps, prop.project_ids):
                 raise AuthorityLost("E_QUESTION_CAPABILITY")
-            assessed = {int(k): int(v) for k, v in (m.get("assessed") or {}).items()}
+            if plan.op == "write_review" and await actor.pending_question_exists(
+                conn, prop.kind, sorted(set(prop.assessed.values()))
+            ):
+                # the same pair was already proposed (e.g. reviewed from its other side by an
+                # earlier job): one question per pending proposal, never a duplicate for the owner
+                plan.request_extra["duplicate_proposals"] = (
+                    plan.request_extra.get("duplicate_proposals", 0) + 1
+                )
+                continue
             questions.append(
                 {
                     "question_id": str(uuid.uuid5(NS_LIBRARIAN, f"{job.dedupe_key}#{i}")),
                     "job_key": job.dedupe_key,
-                    "batch_id": batch_id,
+                    "batch_id": None,
                     "project_id": job.payload.get("project_id"),
-                    "project_ids": touched,
-                    "kind": "contradiction",
-                    "subject_clues": plan.meta[i].get("subject_clues", []),
-                    "subject_version_ids": sorted(assessed.values()),
+                    "project_ids": sorted(set(prop.project_ids)),
+                    "kind": prop.kind,
+                    "subject_clues": list(prop.subject_clues),
+                    "subject_version_ids": sorted(set(prop.assessed.values())),
                     "proposal": {
-                        "mutation": m,
+                        "actions": prop.actions,
                         "capabilities": caps,
-                        "reason": plan.meta[i].get("reason", ""),
+                        "auto_class": prop.auto_ok,
+                        **redact(prop.meta),
                     },
                     "status": "superseded" if stale else "open",
+                    "expires_at": expires,
                 }
             )
         return direct, questions, superseded
+
+    async def _assign_batches(
+        self, conn: AsyncConnection, job: LeasedJob, questions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """§4b approval batches: fill the project's open batch up to ``BATCH_MAX`` open questions,
+        then mark it ``ready`` and open the next one (ids are deterministic per job)."""
+        if not questions:
+            return []
+        project_id = int(job.payload["project_id"])
+        changes: list[dict[str, Any]] = []
+        batch, n = await actor.open_batch(conn, project_id)
+        k = 0
+        for qn in questions:
+            if batch is None or (qn["status"] == "open" and n >= actor.BATCH_MAX):
+                if batch is not None:
+                    changes.append({"batch_id": batch, "status": "ready"})
+                batch = str(uuid.uuid5(NS_LIBRARIAN, f"batch:{job.dedupe_key}:{k}"))
+                k += 1
+                n = 0
+                changes.append(
+                    {"batch_id": batch, "project_id": project_id, "status": "open", "created": True}
+                )
+            qn["batch_id"] = batch
+            n += qn["status"] == "open"
+        return changes
+
+    @staticmethod
+    async def _lock_approved(
+        conn: AsyncConnection, plan: Plan, T: datetime
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[dict[str, Any]], datetime]:
+        """``apply_batch`` lock order (Sol 46), the same as a request and ``memory.answer``: the
+        device-access lock of every proposing device (sorted), then the question rows (``FOR
+        UPDATE``, by id), then (``_apply_approved``) every logical item once, sorted. Returns the
+        questions STILL approved (one decided otherwise since the plan is left alone) and the
+        status changes: an approved question past ``expires_at`` is ``expired``, never applied
+        (Sol 46 #2: the 30-day TTL bounds every not-yet-applied proposal, as in ``memory.answer``).
+        The TTL is compared with the clock read AFTER the lock waits (Sol 47 #2), which becomes the
+        job's ``T`` (the event is recorded at or after it)."""
+        devices = {
+            int(p["capabilities"]["trigger_device_id"])
+            for _qid, p in plan.approved
+            if (p.get("capabilities") or {}).get("trigger_device_id")
+        }
+        for device_id in sorted(devices):
+            await lock_device_access(conn, device_id)
+        cur = await conn.execute(
+            "SELECT question_id::text, status, expires_at FROM librarian_questions"
+            " WHERE question_id = ANY(%s::uuid[]) ORDER BY question_id FOR UPDATE",
+            ([qid for qid, _p in plan.approved],),
+        )
+        rows = {qid: (status, expires) for qid, status, expires in await cur.fetchall()}
+        now = max(T, await q.clock_now(conn))
+        live: list[tuple[str, dict[str, Any]]] = []
+        changes: list[dict[str, Any]] = []
+        for qid, proposal in plan.approved:
+            status, expires = rows.get(qid, (None, None))
+            if status != "approved":
+                continue
+            if expires is not None and expires <= now:
+                changes.append({"question_id": qid, "status": "expired"})
+                continue
+            live.append((qid, proposal))
+        return live, changes, now
+
+    async def _apply_approved(
+        self, conn: AsyncConnection, plan: Plan, approved: list[tuple[str, dict[str, Any]]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, list[datetime]]:
+        """``apply_batch``: each approved question under its own proposing job's capabilities."""
+        records: list[dict[str, Any]] = []
+        changes: list[dict[str, Any]] = []
+        superseded = 0
+        recorded: list[datetime] = []
+        planned: dict[str, set[Any]] = {"links": set(), "closed": set()}
+        # D-058 propose-only: an approved widen_scope stays approved until memory.answer by a
+        # writer on both projects (it never reaches the actor here)
+        todo = [
+            (qid, proposal, actions)
+            for qid, proposal in approved
+            for actions in [proposal_actions(proposal)]
+            if proposal.get("kind") != "widen_scope"
+            and not any(a.get("op") == "widen_scope" for a in actions)
+        ]
+        await q.lock_logical_ids(conn, [lid for _q, _p, actions in todo for lid in _logical_ids(actions)])
+        for qid, proposal, actions in todo:
+            assessed: dict[str, int] = {}
+            for a in actions:
+                assessed.update(a.get("assessed") or {})
+            # stale, or a subject an earlier question of this batch already closed: superseded
+            if {int(k) for k in assessed} & planned["closed"] or await actor.is_stale(
+                conn, {"assessed": assessed}
+            ):
+                changes.append({"question_id": qid, "status": "superseded"})
+                superseded += 1
+                continue
+            caps = proposal.get("capabilities") or plan.capabilities
+            try:
+                async with conn.transaction():  # savepoint: one question's failure applies nothing of it
+                    ctx = await actor.recheck(conn, caps, CLIENT)
+                    trial = {k: set(v) for k, v in planned.items()}
+                    recs, rec_at = await actor.materialize(conn, ctx, caps, actions, trial)
+                planned = trial
+            except AuthorityLost:
+                changes.append({"question_id": qid, "status": "authority_lost"})
+                continue
+            records.extend(recs)
+            recorded.extend(rec_at)
+            changes.append({"question_id": qid, "status": "applied"})
+        return records, changes, superseded, recorded
 
     async def apply(self, conn: AsyncConnection, job: LeasedJob, plan: Plan) -> None:
         caps = plan.capabilities
         project_id = job.payload.get("project_id")
         async with conn.transaction():
+            await lock_role_order(conn, exclusive=False)  # a demotion cannot interleave (Sol 44 #4)
             T = await q.clock_now(conn)
             role = await effective_role(conn, self.settings.librarian_role, project_id)
             ids = await reserved_ids(conn)
@@ -379,42 +533,56 @@ class LibrarianWorker:
             applied: list[dict[str, Any]] = []
             questions: list[dict[str, Any]] = []
             status_changes: list[dict[str, Any]] = []
+            batch_changes: list[dict[str, Any]] = []
             superseded = 0
+            recorded: list[datetime] = []
             detail: str | None = None
-            batch_id = str(uuid.uuid5(NS_LIBRARIAN, f"batch:{job.dedupe_key}"))
-            if plan.mutations and outcome in ("proposed", "approved"):
+            if plan.op == "apply_batch" and outcome == "approved":
+                live, status_changes, T = await self._lock_approved(conn, plan, T)
+                if role == "observer":
+                    # nothing applies; the approvals are handed back (questions open again, the
+                    # batch ready): a new decision round re-approves them once the role allows
+                    # it (Sol 44 #7; Sol 46: round-keyed answer events and apply job)
+                    outcome = "role_denied"
+                    status_changes += [{"question_id": qid, "status": "open"} for qid, _ in live]
+                    batch_changes = [{"batch_id": job.payload["batch_id"], "status": "ready"}]
+                else:
+                    applied, changes, superseded, recorded = await self._apply_approved(conn, plan, live)
+                    status_changes += changes
+                    outcome = "applied" if applied else "superseded" if superseded else "no_change"
+                    batch_changes = [{"batch_id": job.payload["batch_id"], "status": "applied"}]
+            elif (plan.proposals or plan.signals) and outcome in ("proposed", "approved"):
                 try:
                     ctx = await actor.recheck(conn, caps, CLIENT)
-                    if plan.op == "apply_batch":
-                        if role == "observer":
-                            outcome = "role_denied"
-                        else:
-                            direct = []
-                            for m, meta in zip(plan.mutations, plan.meta, strict=True):
-                                if await actor.is_stale(conn, m):
-                                    status_changes.append(
-                                        {"question_id": meta["question_id"], "status": "superseded"}
-                                    )
-                                    superseded += 1
-                                else:
-                                    direct.append(m)
-                            applied = await actor.materialize_links(conn, ctx, caps, direct)
-                            outcome = "applied" if direct else "superseded"
+                    for sig in plan.signals:  # annotate(P) on the subject: every role
+                        if not actor.allowed(ctx, caps, "annotate", [int(p) for p in sig["project_ids"]]):
+                            raise AuthorityLost("E_ANNOTATE_CAPABILITY")
+                    direct, questions, superseded = await self._plan_questions(conn, job, plan, ctx, role, T)
+                    applied, recorded = await actor.materialize(conn, ctx, caps, [*plan.signals, *direct])
+                    batch_changes = await self._assign_batches(conn, job, questions)
+                    if any(qn["status"] == "open" for qn in questions):
+                        outcome = "proposed"
+                    elif any(m["op"] != "signal_upsert" for m in applied):
+                        outcome = "applied"
+                    elif superseded:
+                        outcome = "superseded"
                     else:
-                        direct, questions, superseded = await self._plan_questions(
-                            conn, job, plan, ctx, role, batch_id
-                        )
-                        applied = await actor.materialize_links(conn, ctx, caps, direct)
-                        if any(qn["status"] == "open" for qn in questions):
-                            outcome = "proposed"
-                        elif applied:
-                            outcome = "applied"
-                        else:
-                            outcome = "superseded" if superseded else "no_change"
+                        outcome = "annotated" if applied else "no_change"
                 except AuthorityLost as exc:
-                    outcome, applied, questions, status_changes = "authority_lost", [], [], []
+                    outcome, applied, questions, status_changes, batch_changes = (
+                        "authority_lost",
+                        [],
+                        [],
+                        [],
+                        [],
+                    )
+                    recorded = []
                     detail = error_code(exc)
-            child_jobs = await assign_job_ids(conn, self._child_jobs(job, plan))
+            T = select_T(T, *recorded)  # a close supersedes rows: T is after every one of them
+            for qn in questions:
+                qn["expires_at"] = actor.ts(T + actor.QUESTION_TTL)
+            extra_jobs = actor.close_embed_jobs(applied)
+            child_jobs = await assign_job_ids(conn, [*self._child_jobs(job, plan), *extra_jobs])
             # run_after as it stands now (a retry/backoff moved it): replay restores it (Sol 37 #8)
             cur = await conn.execute("SELECT run_after FROM jobs WHERE job_id = %s", (job.job_id,))
             row = await cur.fetchone()
@@ -425,8 +593,9 @@ class LibrarianWorker:
                 "mutations": applied,
                 "questions": questions,
                 "question_status": status_changes,
+                "batches": batch_changes,
                 "superseded": superseded,
-                "batch_id": batch_id if questions else None,
+                "batch_id": questions[0]["batch_id"] if questions else None,
                 "jobs": child_jobs,
                 "done": {
                     "dedupe_key": job.dedupe_key,
@@ -452,6 +621,7 @@ class LibrarianWorker:
             if inserted is None:
                 raise _Duplicate(job.dedupe_key)
             await actor.apply_mutations(conn, applied, event_id, T)
+            await actor.apply_batch_changes(conn, batch_changes, event_id, T)
             await actor.insert_questions(conn, questions, event_id, T)
             await actor.set_question_status(conn, status_changes, T)
             if resolved["jobs"]:
@@ -500,6 +670,20 @@ class LibrarianWorker:
         if swept:
             log.warning("librarian: swept %s expired reservation(s) as worst-case spend", swept)
 
+    async def maybe_expire(self) -> None:
+        """W2c: open questions older than 30 days expire (one recorded event per project)."""
+        if time.monotonic() - self._last_expire < EXPIRE_EVERY_S:
+            return
+        self._last_expire = time.monotonic()
+        from hlmemo.librarian.questions import expire_due
+
+        async with await self.connect() as conn:
+            async with conn.transaction():
+                n = await expire_due(conn)
+            await conn.commit()
+        if n:
+            log.info("librarian: expired %s question(s)", n)
+
     async def run_forever(self, stop: asyncio.Event) -> None:
         async with await self.connect() as conn:
             await check_role_at_start(conn, self.settings.librarian_role)
@@ -508,6 +692,7 @@ class LibrarianWorker:
             leased = 0
             try:
                 await self.maybe_sweep()
+                await self.maybe_expire()
                 leased = await self.run_once()
                 await self.heartbeat()
             except Exception as exc:  # noqa: BLE001 - database hiccups: retry after a pause

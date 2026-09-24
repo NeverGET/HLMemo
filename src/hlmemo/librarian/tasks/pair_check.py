@@ -19,9 +19,9 @@ from typing import Any
 from hlmemo.core.temporal import fmt_ts
 from hlmemo.librarian import privacy
 from hlmemo.librarian.errors import AuthorityLost, PrivacyDenied
-from hlmemo.librarian.memory import load_rules
+from hlmemo.librarian.memory import load_rules, readable_rules, rules_still_readable
 from hlmemo.librarian.prompts import load_task
-from hlmemo.librarian.tasks import Plan, user_message
+from hlmemo.librarian.tasks import Plan, Proposal, user_message
 
 OP = "pair_check"
 MAX_CANDIDATES = 8
@@ -75,6 +75,7 @@ class PairCheck:
                 redactor=w.provider.redactor,
             )
             await conn.commit()
+        rules = await readable_rules(w.connect, caps, rules)  # every ref visible to the device now
         task = load_task("contradiction")
         plan = Plan(
             OP,
@@ -103,6 +104,8 @@ class PairCheck:
                 if not again.device_ok:
                     raise AuthorityLost("E_AUTHORITY_LOST")
                 if not all(again.allowed(v) for v in ids):
+                    raise PrivacyDenied("E_PRIVACY_DENIED")
+                if not await rules_still_readable(w.connect, caps, rules):  # rule refs too (Sol 47 #1)
                     raise PrivacyDenied("E_PRIVACY_DENIED")
 
             try:
@@ -142,36 +145,48 @@ class PairCheck:
                 "assessed": assessed,
             }
             pair_clues = [f"v{subj.version_id}", f"v{cand.version_id}"]
-            plan.mutations.append(
-                {
-                    **base,
-                    "rel": "contradicts",
-                    "src_logical_id": subj.logical_id,
-                    "dst_logical_id": cand.logical_id,
-                    "valid_from": fmt_ts(subj.valid_from),
-                    "project_ids": list(subj.project_ids),
-                    "dst_project_ids": list(cand.project_ids),
-                }
-            )
-            plan.auto_ok.append(same_class)
-            plan.meta.append({"reason": reason, "subject_clues": pair_clues})
-            if out.get("supersedes") in ("A", "B"):
-                newer, older = (subj, cand) if out["supersedes"] == "B" else (cand, subj)
-                plan.mutations.append(
+            touched = sorted({*subj.project_ids, *cand.project_ids})
+
+            def proposal(
+                m: dict[str, Any],
+                auto: bool = same_class,
+                assessed: dict[str, int] = assessed,
+                clues: list[str] = pair_clues,
+                touched: list[int] = touched,
+                reason: str = reason,
+            ) -> Proposal:
+                return Proposal("contradiction", [m], auto, assessed, clues, touched, {"reason": reason})
+
+            plan.proposals.append(
+                proposal(
                     {
                         **base,
-                        "rel": "supersedes",
-                        "src_logical_id": newer.logical_id,
-                        "dst_logical_id": older.logical_id,
-                        "valid_from": fmt_ts(newer.valid_from),
-                        "project_ids": list(newer.project_ids),
-                        "dst_project_ids": list(older.project_ids),
+                        "rel": "contradicts",
+                        "src_logical_id": subj.logical_id,
+                        "dst_logical_id": cand.logical_id,
+                        "valid_from": fmt_ts(subj.valid_from),
+                        "project_ids": list(subj.project_ids),
+                        "dst_project_ids": list(cand.project_ids),
                     }
                 )
-                plan.auto_ok.append(same_class)
-                plan.meta.append({"reason": reason, "subject_clues": pair_clues})
+            )
+            if out.get("supersedes") in ("A", "B"):
+                newer, older = (subj, cand) if out["supersedes"] == "B" else (cand, subj)
+                plan.proposals.append(
+                    proposal(
+                        {
+                            **base,
+                            "rel": "supersedes",
+                            "src_logical_id": newer.logical_id,
+                            "dst_logical_id": older.logical_id,
+                            "valid_from": fmt_ts(newer.valid_from),
+                            "project_ids": list(newer.project_ids),
+                            "dst_project_ids": list(older.project_ids),
+                        }
+                    )
+                )
         plan.request_extra["candidates"] = [f"v{c.version_id}" for c in kept]
-        if not plan.mutations:
+        if not plan.proposals:
             plan.outcome = "no_change"
         return plan
 

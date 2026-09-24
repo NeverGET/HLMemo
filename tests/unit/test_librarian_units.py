@@ -76,6 +76,9 @@ def test_max_tokens_per_task() -> None:
         "risk": 500,
         "risk_judge": 500,  # W2d memory.risk_check judge
         "synthesis": 700,
+        "place": 700,  # W2b batched tasks (<= 8 items / pairs per call)
+        "relate": 1400,
+        "relate_verify": 700,
     }
     for task in ("placement", "contradiction", "summary", "risk"):
         spec = load_task(task)
