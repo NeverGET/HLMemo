@@ -1,0 +1,9 @@
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Review the post-e2e quick fixes: branch `worktree-agent-ae29184860bd65a3c` (worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ae29184860bd65a3c), commits 7661009 and 4169ea6 on top of 132dda6. Diff: `git -C <wt> diff 132dda6 HEAD`. Context: docs/status/E2E-PROD-REPORT.md §6 findings #1, #2, #6, #9, #10; DECISIONS D-062, D-067, D-072, D-073, D-080.
+The implementer's choices (to be logged): auto-memory type → kind (feedback→lesson; user/project/reference→fact); lesson-splitting heuristics (≥2 rule headings or ≥2 bullets of ≥5 words; stable keys from the heading or first words; the shared context copied into each rule); a kind change alone = a revision; the risk judge gets title + the best-matching window for lessons > 1,200 chars; `projects.policy.librarian_cross_project=exclude` is TWO-WAY (an excluded project is never a candidate for others AND draws candidates only from itself; risk_check too); ops status breaker naming; hlm.export validation skip; the realdata client keep-alive.
+STATIC REVIEW ONLY. Judge:
+- (1) Can the policy be bypassed (widen_scope proposals, cross-project candidates via links, risk_check via hlm-global, answer application)? Who may set it (authz)? Is it replay-safe?
+- (2) Does lesson splitting risk splitting a single rule wrongly, or changing keys on a benign edit (a revision storm)?
+- (3) Does the kind-change revision interact badly with the W1.5 source ownership / Item.close / the export round trip?
+- (4) Is the risk-window selection safe (privacy, and only readable text)?
+- (5) Anything blocking merge.
+OUTPUT (≤ 350 words): ## Verdict (MERGE / MERGE-WITH-FIXES / DO-NOT-MERGE); ## Findings (table, max 6); ## Decision-log text (5 lines) for the choices.
