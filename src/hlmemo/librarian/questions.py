@@ -19,7 +19,10 @@ token_budget?}`` → an ack, in ONE transaction (PHASE2-4-ROADMAP W2c, CC-3, D-0
    if any is ``observer``, ``accept`` records the answer with status ``accepted_pending`` and changes
    no user item, link, validity or scope. After a promotion (``set_role`` assistant+), those
    questions are applied through the normal ``apply_batch`` path with the full recheck.
-   ``accept`` otherwise: every assessed subject is locked and compared with its head; a revision since the
+   ``accept`` otherwise: every item the actions touch is locked (the write path's per-item lock),
+   THEN the cross-project policy is rechecked on the items' CURRENT projects (``authority_lost``,
+   reason ``policy_excluded``: nothing applied; Sol 54/55), then every assessed subject is
+   compared with its head; a revision since the
    proposal makes the question ``superseded`` and NOTHING is applied (G-Q3). Otherwise the
    proposed actions are applied as the answering device's act: links and the bi-temporal close
    through the actor's materialize/apply (recorded ids, replayed like every librarian mutation);
@@ -201,6 +204,11 @@ async def answer(
             assessed: dict[str, int] = {}
             for a in actions:
                 assessed.update(a.get("assessed") or {})
+            # Sol 55: the write path's per-item lock on EVERY item the actions touch, taken BEFORE
+            # the policy recheck, so a concurrent revision (say one adding an excluded project to
+            # the widened item) has committed and is read by policy_blocked (CURRENT project_ids),
+            # and nothing can revise those items until this answer commits
+            await q.lock_logical_ids(conn, actor.action_logical_ids(actions))
             if await actor.policy_blocked(conn, actions, union):
                 # the cross-project policy NOW forbids this relation (Sol 54 #2): nothing applied,
                 # not even an approved widen_scope; the question is closed as authority_lost

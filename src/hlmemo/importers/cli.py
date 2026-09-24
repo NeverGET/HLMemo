@@ -127,6 +127,8 @@ def human_summary(rep: dict[str, Any]) -> str:
         )
         for f in w["failed"]:
             lines.append(f"  FAILED {f['key']}: {f['code']} {f['message']}")
+        for k in w.get("kept_open") or []:
+            lines.append(f"  kept open ({k['reason']}; not stored: {', '.join(k['absent'])}): {k['key']}")
     return "\n".join(lines)
 
 

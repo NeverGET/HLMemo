@@ -12,8 +12,11 @@ returns ``None`` (the file stays one item, unchanged). Deterministic, no LLM:
   Without rule headings: ≥ 2 top-level ``-``/``*``/``+`` bullets, each of at least
   ``RULE_MIN_WORDS`` words, make one rule per bullet (its indented and lazy continuation lines
   included). Never split: numbered lists, checklists and procedure lists (an intro such as
-  "steps:" / "in this order:", or items led by first/then/next/finally…) — ordered steps of ONE
-  procedure — and a list with a short item (``- disk``), which is a list inside one rule.
+  "steps:" / "in this order:", items led by first/then/next/finally…, or a list whose items are
+  ALL short (≤ ``STEP_MAX_WORDS`` words) and carry no rule marker — never/always/must/because/
+  otherwise/instead, a ``:`` explanation, a bold label… — i.e. plain sequential instructions,
+  Sol 55) — ordered steps of ONE procedure — and a list with a short item (``- disk``), which is a
+  list inside one rule.
 * **Shared context.** The file's other text (preamble, ``**Why:**`` paragraphs between the lists,
   the section text around a bullet list) plus the frontmatter ``description`` is copied into
   every rule's ``## Context`` (at most ``CONTEXT_MAX`` characters), so each rule stands alone.
@@ -40,6 +43,8 @@ from typing import Any
 from hlmemo.importers.common import FENCE_RE, HEADING_RE, Section, clip, slug
 
 RULE_MIN_WORDS = 5
+#: a list of unmarked items this short (all of them) is a procedure, not a set of rules
+STEP_MAX_WORDS = 12
 CONTEXT_MAX = 600
 LEAD_MAX = 100
 ANCHOR_MAX = 48
@@ -56,6 +61,13 @@ _STEP_LEAD_RE = re.compile(
     r"^(?:\[[ xX]\]\s|step\s*\d+\b|first(?:ly)?\b|second(?:ly)?\b|third(?:ly)?\b|then\b|next\b"
     r"|after(?:wards| that)?\b|finally\b|lastly\b|önce\b|sonra\b|ardından\b|zuerst\b|dann\b"
     r"|danach\b|schließlich\b)",
+    re.I,
+)
+#: what makes a bullet read as a RULE rather than as one step of a procedure (EN / TR / DE)
+_RULE_MARKER_RE = re.compile(
+    r"\b(?:never|always|don'?t|do not|doesn'?t|must(?:n'?t)?|should(?:n'?t)?|avoid|instead|because|"
+    r"otherwise|or (?:it|else)|unless|careful|beware|asla|her zaman|mutlaka|kesinlikle|yoksa|çünkü|"
+    r"sakın|nie(?:mals)?|immer|nicht|muss|sonst|weil)\b|[:;!→⇒]|\*\*|\s[—–]\s|\s-\s",
     re.I,
 )
 #: a bullet's explicit name: a leading bold phrase with a separator (``**Stash is shared:**``,
@@ -193,10 +205,14 @@ def _is_procedure(blocks: list[_Block]) -> bool:
             intro = _intro(b)
             if intro is not None and _PROCEDURE_INTRO_RE.search(intro):
                 return True
-    leads = [re.sub(r"\*\*|__", "", _bullet_text(b)).lstrip() for b in blocks if b.bullet]
-    return sum(1 for lead in leads if _STEP_LEAD_RE.match(lead)) >= 2 or any(
+    texts = [_bullet_text(b) for b in blocks if b.bullet]
+    leads = [re.sub(r"\*\*|__", "", t).lstrip() for t in texts]
+    if sum(1 for lead in leads if _STEP_LEAD_RE.match(lead)) >= 2 or any(
         lead.startswith(("[ ]", "[x]", "[X]")) for lead in leads
-    )
+    ):
+        return True
+    # plain sequential instructions: every item short and none reads as a rule (Sol 55)
+    return all(_words(t) <= STEP_MAX_WORDS and not _RULE_MARKER_RE.search(t) for t in texts)
 
 
 def _bullet_rules(text: str) -> tuple[list[tuple[str, str]], str] | None:
