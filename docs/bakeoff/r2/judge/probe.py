@@ -42,6 +42,8 @@ from typing import Any
 
 import httpx
 
+# The Phase-0 core that every release must expose; later phases add tools (risk_check,
+# register_lesson, answer, ...), so the check is "core ⊆ listed", not equality.
 EXPECTED_TOOLS = {
     "memory.query",
     "memory.drilldown",
@@ -284,7 +286,7 @@ class Probe:
         except httpx.HTTPError as exc:
             return self.check("mcp/tools-list", False, f"{type(exc).__name__}: {exc}")
         tools = {t.get("name") for t in ((body or {}).get("result") or {}).get("tools", [])}
-        ok = status == 200 and tools == EXPECTED_TOOLS
+        ok = status == 200 and EXPECTED_TOOLS <= tools
         return self.check("mcp/tools-list", ok, f"status={status} tools={sorted(t for t in tools if t)}")
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> tuple[int, bool, Any]:

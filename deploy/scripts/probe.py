@@ -117,11 +117,10 @@ class Probe:
             "memory.raw",
             "memory.write",
             "memory.call_the_day",
-            "memory.risk_check",
-            "memory.register_lesson",
         }
-        if {tool["name"] for tool in tools} != expected:
-            raise ValueError("tools/list does not expose exactly the seven expected memory tools")
+        # Core ⊆ listed: later phases add tools (risk_check, register_lesson, answer, ...).
+        if not expected <= {tool["name"] for tool in tools}:
+            raise ValueError("tools/list does not expose the core memory tools")
 
     def ops(self, *args):
         """`python -m hlmemo.ops ARGS` in this project's api container -> (stdout, stderr metadata)."""
