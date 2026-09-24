@@ -1,0 +1,15 @@
+## Verdict
+
+**DO-NOT-MERGE**
+
+## Findings
+
+| severity | file:line | defect | concrete trigger | fix |
+|---|---|---|---|---|
+| Yüksek | `src/hlmemo/core/synthesis_service.py:136–142` | Çağrı sonrası kontrol, D-062’nin tüm sahip projelerde yetki şartını uygulamıyor. Normal okuma görünürlüğü proje **kesişimiyle** yeterli sayılıyor (`db/risk_queries.py:34`). | Kaynak A+B ortak sahipli; sorgu A üzerinden yapılırken LLM çağrısı sırasında B izni kaldırılır. A izni kaldığından sentez yine döner. | Prompt’a giren bütün kaynaklar için gizlilik/yetki kontrolünü çağrı sonrasında kilitler altında tekrarla; yetki kaybında türetilmiş yanıtı kaldır. |
+| Yüksek | `src/hlmemo/core/synthesis_service.py:303–306`; `:152–155` | Bir atıf çıkarıldığında ona dayanan metin korunuyor. Kalan atıf, çıkarılan kaynağın iddiasını destekliyormuş gibi sunuluyor. | “A’nın değeri amber-3; B’nin portu 45123” iki kaynağı引用lar. A çağrı sırasında değiştirilir veya bütçe paketlemesinde çıkarılır; cümle yalnız B’ye atıfla aynen kalır. `render()` üzerinden doğrudan doğrulandı. | Destekleyici atıflardan herhangi biri geçersizleşirse cümlenin tamamını çıkar; bütçe paketlemesinde de aynı kuralı uygula. |
+| Orta | `src/hlmemo/librarian/tasks/synthesis.py:293–294`; `src/hlmemo/librarian/provider.py:443–448` | Altı saniyelik toplam süre, geçici hatalarda fallback’e ulaşılmasını engelliyor. Provider, primary’den vazgeçmeden önce beş deneme yapıyor; yalnız beklemeler **15 saniye**. | Primary anında sürekli HTTP 503 döndürür, fallback sağlıklıdır. Sentez üçüncü denemeden sonraki beklemede zaman aşımına uğrar; fallback hiç çağrılmaz. | Senteze özel deneme/süre paylaşımı uygula; toplam süre içinde fallback için zaman ayır. Gerçek provider zinciriyle 503 ve timeout testleri ekle. |
+| Yüksek | `src/hlmemo/cli/preflight.py:181`; `tests/integration/test_w2e_glive_d.py:187–188` | Gerekli W-E kabul kanıtı olmadan otomatik sentez açılıyor. Roadmap `:105,270`, corpus A∪B üzerinde iyileşme, kategori gerileme sınırı ve stale-claim kontrolü istiyor. Sunulan fixture açıkça corpus-B holdout olmadığını söylüyor (`tests/fixtures/synthesis/README.md:19–27`); gate yalnız toplam pozitif doğruluk farkını denetliyor. | Kullanıcı mevcut wrapper’a `?` ile biten görev verir; ayar yapmadan kalite kapısı kanıtlanmamış özellik etkinleşir. | Gerekli W-E değerlendirmesi geçene kadar varsayılanı kapalı tut. |
+| Orta | `tests/integration/test_w2e_glive_d.py:96–101`; `tests/integration/test_w2e_synthesis_calibration.py:94` | Kazanç ve eşik kalibrasyonu yanlış fast-path tabanına dayanıyor: top-3 ölçülüyor; mevcut wrapper top-5 drilldown istiyor (`src/hlmemo/cli/preflight.py:63–66`). | Doğru cevap dördüncü/beşinci hit’tedir. Mevcut akış bulabilecekken değerlendirme fast-path’i başarısız sayar, sentezin kazancını şişirir. | Top-5 tabanıyla eşiği yeniden kalibre et ve canlı karşılaştırmayı tekrarla. |
+
+Kontrol: kaynak incelemesi ve izole `render()` çalıştırması; DB/live entegrasyon testleri çalıştırılmadı.
