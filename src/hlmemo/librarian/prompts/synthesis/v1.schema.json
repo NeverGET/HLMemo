@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "synthesis/v1",
+  "type": "object",
+  "properties": {
+    "status": {"enum": ["answered", "insufficient_evidence"]},
+    "sentences": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "minLength": 1, "maxLength": 800},
+          "cite": {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 16}}
+        },
+        "required": ["text", "cite"]
+      }
+    }
+  },
+  "required": ["status", "sentences"]
+}

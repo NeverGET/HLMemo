@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hlmemo.core import export_service
-from hlmemo.server.tools import handlers, risk, schemas
+from hlmemo.server.tools import handlers, query, risk, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
 
@@ -25,15 +25,7 @@ class ToolSpec:
 
 
 TOOLS: tuple[ToolSpec, ...] = (
-    ToolSpec(
-        "memory.query",
-        "Hybrid (lexical + trigram + vector, RRF) search over the project's memory at a bi-temporal "
-        "point. Returns the project card, ranked hits with clues and query-centred preview excerpts, "
-        "and evidence:'matched'|'none' within token_budget. Drill the top 5 clues with "
-        "memory.drilldown before relying on a preview. Read-only.",
-        schemas.QUERY_INPUT,
-        handlers.memory_query,
-    ),
+    query.tool_spec(ToolSpec),  # W2e: query/2 (`synthesize`), app-bound; no flag = Phase-0 path
     ToolSpec(
         "memory.drilldown",
         "Expand up to 20 clues (v<version_id> for a whole item, v<version_id>.<ordinal> for a chunk "
