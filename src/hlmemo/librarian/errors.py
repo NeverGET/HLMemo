@@ -45,6 +45,11 @@ class JobCallCapExceeded(LibrarianError):
     """A job asked for more provider calls than ``HLM_LLM_JOB_CALL_CAP`` (loop guard)."""
 
 
+class DeadlineExceeded(LibrarianError):
+    """The caller's deadline (``Provider.complete(deadline=)``) leaves no room for another attempt:
+    raised BEFORE a reservation or a request, so no attempt is ever cut mid-flight by the caller."""
+
+
 class SchemaFail(LibrarianError):
     """The model answered twice with output that is not schema-valid JSON."""
 
@@ -75,6 +80,7 @@ __all__ = [
     "BreakerOpen",
     "BudgetDeferred",
     "CassetteMiss",
+    "DeadlineExceeded",
     "JobCallCapExceeded",
     "LibrarianError",
     "LlmConfigError",

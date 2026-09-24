@@ -52,6 +52,7 @@ from hlmemo.librarian.errors import (
     AuthorityLost,
     BudgetDeferred,
     CassetteMiss,
+    DeadlineExceeded,
     LlmConfigError,
     LlmDisabled,
     PrivacyDenied,
@@ -286,10 +287,16 @@ class RiskJudge:
         if not self.breaker.allow():
             return JudgeResult(UNAVAILABLE)
         self.in_flight += 1  # no await since the check: atomic on the event loop
+        # One deadline for the whole call. The provider budgets every HTTP timeout to end before
+        # it (the privacy gates and DB bookkeeping use part of the cap) and starts no attempt,
+        # reservation or backoff without room, so the backstop below never has to cut a request
+        # mid-flight; if it ever does, the provider still settles the reservation and writes the
+        # ledger row (shielded).
+        deadline = asyncio.get_running_loop().time() + self.timeout_s
         try:
-            async with asyncio.timeout(self.timeout_s):
-                result = await self._judge(task, items, capabilities)
-        except TimeoutError:
+            async with asyncio.timeout_at(deadline):
+                result = await self._judge(task, items, capabilities, deadline)
+        except (TimeoutError, DeadlineExceeded):
             self.breaker.failure()
             result = JudgeResult(TIMEOUT)
         except (ProviderUnavailable, httpx.HTTPError, OSError) as exc:
@@ -317,7 +324,9 @@ class RiskJudge:
         result.latency_ms = int((time.perf_counter() - t0) * 1000)
         return result
 
-    async def _judge(self, task: str, items: list[JudgeItem], capabilities: dict[str, Any]) -> JudgeResult:
+    async def _judge(
+        self, task: str, items: list[JudgeItem], capabilities: dict[str, Any], deadline: float
+    ) -> JudgeResult:
         assert self.provider is not None
         ids = [it.version_id for it in items]
         verdict, loaded = await privacy.gate(self.connect, capabilities, ids)
@@ -346,7 +355,11 @@ class RiskJudge:
                 raise PrivacyDenied("E_PRIVACY_DENIED")
 
         res = await self.provider.complete(
-            self.spec, user_message(task, lessons), validate=_consistency, precheck=precheck
+            self.spec,
+            user_message(task, lessons),
+            validate=_consistency,
+            precheck=precheck,
+            deadline=deadline,
         )
         self.breaker.success()
         matches: list[tuple[int, str]] = []
