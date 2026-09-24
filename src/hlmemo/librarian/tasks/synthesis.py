@@ -197,20 +197,31 @@ def claims(text: str) -> list[str]:
     return [c for c in out if c.strip()]
 
 
-def supported(claim: str, hay: str) -> bool:
-    """``claim`` occurs verbatim (case-insensitive, whitespace-collapsed) in ``hay``; tolerated:
-    thousands separators, a number glued to its unit (``10s`` for ``10 s``) and hyphen-joined parts
-    (``top-3`` for ``top 3``)."""
-    c = _norm(claim)
-    if not c or c in hay:
+def _token_in(tok: str, hay: str) -> bool:
+    """``tok`` occurs in ``hay`` as a WHOLE token (Sol 52 #2): not preceded or followed by a word
+    character, and a number is not part of a longer number ("42" is not in "142", "4.2" or "42.5";
+    "foo" is not in "foobar")."""
+    if not tok:
         return True
-    if "," in c and c.replace(",", "") in hay.replace(",", ""):
+    before = r"(?<!\w)" + (r"(?<!\d[.,])" if tok[0].isdigit() else "")
+    after = r"(?!\w)" + (r"(?![.,]\d)" if tok[-1].isdigit() else "")
+    return re.search(before + re.escape(tok) + after, hay) is not None
+
+
+def supported(claim: str, hay: str) -> bool:
+    """``claim`` occurs verbatim as a whole token (case-insensitive, whitespace-collapsed) in
+    ``hay``; tolerated: thousands separators, a number glued to its unit (``10s`` for ``10 s``) and
+    hyphen-joined parts (``top-3`` for ``top 3``), each part again a whole token."""
+    c = _norm(claim)
+    if not c or _token_in(c, hay):
+        return True
+    if "," in c and _token_in(c.replace(",", ""), hay.replace(",", "")):
         return True
     m = _NUM_UNIT.match(c)
-    if m and m.group(1) in hay:
+    if m and _token_in(m.group(1), hay):
         return True
     if "-" in c and re.fullmatch(r"[\w.-]+", c):
-        return all(p in hay for p in c.split("-") if p)
+        return all(_token_in(p, hay) for p in c.split("-") if p)
     return False
 
 
