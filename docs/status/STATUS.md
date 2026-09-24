@@ -42,6 +42,8 @@ Owner framing: the librarian's gradual supervised learning (observe → apply) h
 
 - 1x:xx L DONE (branch worktree-agent-a143819e825766fb8: d5c8209 slice 1, d3ce0ac slice 2 + migration 0009; all gates green flags off/on; stress G-L3 at 100% rendition coverage 541/515 ms > 500). Running: dual review 58 (astra-low + 5.6-sol xhigh, prompt docs/consults/58-prompt-l-pivot-dual.md) and the Sol 53 hold-out measurement on pinned d3ce0ac (→ docs/private/*/results-pivot-l/, branch eval-pivot-l).
 
+- 1x:xx D-088/D-089/D-090 recorded. Pivot hold-out: query rewrite passes all Sol 53 thresholds (Turkish 17→26, +8.3 pts); cap OFF; renditions (slice 2 + 0009) deferred out of R3 until translate ≥90% acceptance. J: review 60 fixes (legacy proposal NULL strand, SCC cycles, clause, dump mask, ordering property) + int-r3-j merge with main. L: D-088 fixes + pivot-s1 branch + translate reliability. R3 = int-r3-j + pivot-s1 (rewrite ON) after a delta dual review and a re-measure on final code.
+
 ## GOAL (D-051/D-058) — active
 Phases 2-5 per docs/decisions/PHASE2-4-ROADMAP.md → gates → incremental releases → final acceptance (HLMemo self-migration, then the corpus-A project) → delete local dev stack + lima VMs.
 State 2026-09-23 night: **R1 is LIVE in production** (ee6ce9c, D-068): D-055 retrieval, W0a access hardening (ops over SSH, closed registration), W2a librarian foundation (DISABLED). Owner device id 21 `cemals-mb-pro-3` (hlmemo:write); the three CLIs point to production; the repo hlm.toml points to production, project hlmemo. **Dogfood D1 starts in the next chat** (a restart is needed so the MCP connection uses device 21).
