@@ -8,9 +8,8 @@
       "importance": 6,
       "stability": "volatile",
       "tags_add": [
-       "llm",
        "budget",
-       "entwicklung"
+       "llm"
       ],
       "topic_hint": "LLM-Budgetgrenzen"
      }
@@ -21,10 +20,13 @@
      {
       "confidence": "high",
       "id": "v97",
-      "new_quote": "10 $ pro Tag, 60 $ pro Monat und 3 $ pro Stunde",
-      "old_quote": "10 $ pro Tag",
-      "reason": "Dieselbe Entwicklungsobergrenze; die neue Angabe ergänzt Monats- und Stundenlimits.",
+      "new_quote": "10 $ pro Tag, 60 $ pro Monat",
+      "old_quote": "10 $ pro Tag.",
+      "reason": "Die neue Notiz ergänzt Monats- und Stundenlimits zur Entwicklungs-Tagesobergrenze.",
+      "refiner": "new",
       "relation": "refines",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -32,8 +34,11 @@
       "id": "v101",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Entwicklungsobergrenzen und ein später festzulegendes Produktionsbudget sind verschiedene Sachverhalte.",
+      "reason": "Entwicklungsbudget und später festzulegendes Produktionsbudget betreffen unterschiedliche Phasen.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -41,8 +46,11 @@
       "id": "v98",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Budgetobergrenzen und vorhandenes OpenRouter-Guthaben sind unterschiedliche Angaben.",
+      "reason": "Guthaben und Budgetobergrenzen sind verschiedene Angaben.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -73,15 +81,22 @@
     }
    ],
    "dropped_by_rule": 2,
-   "guards": {},
+   "guards": {
+    "action_to_question": 1
+   },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "action_unverified",
+      "action_quotes"
+     ],
      "id": "v97",
+     "refiner": "new",
      "relation": "refines",
      "subject": "v102",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "question"
     }
    ],
    "lexical_only": null,
@@ -113,9 +128,8 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "llm",
       "budget",
-      "entwicklung"
+      "llm"
      ],
      "topic_hint": "LLM-Budgetgrenzen",
      "version_id": 102
@@ -159,7 +173,7 @@
         "valid_from": "2026-09-22T00:00:00.000000Z"
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         22
@@ -177,15 +191,20 @@
       "confidence": "high",
       "cos": 0.9807,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "action_unverified",
+       "action_quotes"
+      ],
+      "judgement": "v2",
       "quotes": {
-       "new": "10 $ pro Tag, 60 $ pro Monat und 3 $ pro Stunde",
-       "old": "10 $ pro Tag"
+       "new": "10 $ pro Tag, 60 $ pro Monat",
+       "old": "10 $ pro Tag."
       },
-      "reason": "Dieselbe Entwicklungsobergrenze; die neue Angabe ergänzt Monats- und Stundenlimits.",
+      "reason": "Die neue Notiz ergänzt Monats- und Stundenlimits zur Entwicklungs-Tagesobergrenze.",
+      "refiner": "new",
       "relation": "refines",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": null
      },
      "question_id": "207eb9f3-0113-530f-a4c4-f79b86e1bdbd",
@@ -214,7 +233,8 @@
       "importance": 5,
       "stability": "volatile",
       "tags_add": [
-       "model"
+       "varsayılan model",
+       "yapılandırma"
       ],
       "topic_hint": "kütüphaneci modeli"
      }
@@ -227,17 +247,25 @@
       "id": "v106",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Excluded Gemini model is distinct from the default librarian model.",
+      "reason": "Default model and excluded model are different claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
       "confidence": "high",
       "id": "v103",
-      "new_quote": "Varsayılan kütüphaneci modeli artık openai/gpt-6-luna.",
-      "old_quote": "The default librarian model is deepseek/deepseek-v4.1-flash.",
-      "reason": "Default librarian model changed from deepseek to openai/gpt-6-luna.",
+      "new_quote": "artık openai/gpt-6-luna",
+      "old_quote": "default librarian model is deepseek/deepseek-v4.1-flash",
+      "reason": "The default librarian model changed from deepseek to openai.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "The default librarian model is deepseek/deepseek-v4.1-flash."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -245,8 +273,11 @@
       "id": "v104",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Default model and fallback profile are distinct settings.",
+      "reason": "Default and fallback librarian profiles are distinct settings.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -254,8 +285,11 @@
       "id": "v107",
       "new_quote": "",
       "old_quote": "",
-      "reason": "A planned pro tier model is distinct from the current default.",
+      "reason": "A planned pro tier is distinct from the current default model.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -263,8 +297,11 @@
       "id": "v105",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Embedding model choice is a different attribute from librarian default.",
+      "reason": "Embedding model choice is a different setting.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -272,9 +309,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -320,21 +359,28 @@
    ],
    "dropped_by_rule": 0,
    "guards": {
+    "action_to_question": 1,
     "verified": 1
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
+     "flags": [
+      "action_quotes"
+     ],
      "id": "v103",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v108",
      "supersedes": "new",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -370,7 +416,8 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "model"
+      "varsayilan-model",
+      "yapilandirma"
      ],
      "topic_hint": "kütüphaneci modeli",
      "version_id": 108
@@ -430,7 +477,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "default librarian model is deepseek/deepseek-v4.1-flash",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 131,
@@ -450,7 +499,7 @@
         "version_id": 103
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         23
@@ -465,23 +514,29 @@
        ],
        "trigger_device_id": 20
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8464,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "action_quotes"
+      ],
+      "judgement": "v2",
       "quotes": {
-       "new": "Varsayılan kütüphaneci modeli artık openai/gpt-6-luna.",
-       "old": "The default librarian model is deepseek/deepseek-v4.1-flash."
+       "new": "artık openai/gpt-6-luna",
+       "old": "default librarian model is deepseek/deepseek-v4.1-flash"
       },
-      "reason": "Default librarian model changed from deepseek to openai/gpt-6-luna.",
+      "reason": "The default librarian model changed from deepseek to openai.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -516,7 +571,7 @@
        "deployment",
        "soak period"
       ],
-      "topic_hint": "release process"
+      "topic_hint": "release acceptance"
      }
     ]
    },
@@ -527,8 +582,13 @@
       "id": "v109",
       "new_quote": "only after the release has soaked for 24 hours",
       "old_quote": "right after the remote gates pass",
-      "reason": "Release acceptance timing changed from immediate to after a 24-hour soak.",
+      "reason": "Acceptance timing changed from immediately after gates to after a 24-hour soak.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Run deploy.sh --accept-release right after the remote gates pass."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -536,8 +596,11 @@
       "id": "v112",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Release acceptance and backup timer installation are different actions.",
+      "reason": "Release acceptance timing differs from backup timer installation timing.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -545,8 +608,11 @@
       "id": "v113",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Acceptance timing and secret-backup deletion are different claims.",
+      "reason": "Backup deletion effect is distinct from when release acceptance should run.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -554,8 +620,11 @@
       "id": "v111",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The gate count and target URL do not address acceptance timing.",
+      "reason": "Gate count and target URL differ from release acceptance timing.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -563,8 +632,11 @@
       "id": "v110",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Rollback policy is distinct from release acceptance timing.",
+      "reason": "Rollback restriction is a separate release-management claim.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -572,9 +644,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -624,9 +698,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v109",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v114",
      "supersedes": "new",
      "tier": "action",
@@ -635,6 +711,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -673,7 +750,7 @@
       "deployment",
       "soak-period"
      ],
-     "topic_hint": "release process",
+     "topic_hint": "release acceptance",
      "version_id": 114
     }
    ],
@@ -731,7 +808,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "right after the remote gates pass",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 138,
@@ -766,16 +845,19 @@
        ],
        "trigger_device_id": 21
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.9336,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "only after the release has soaked for 24 hours",
        "old": "right after the remote gates pass"
       },
-      "reason": "Release acceptance timing changed from immediate to after a 24-hour soak.",
+      "reason": "Acceptance timing changed from immediately after gates to after a 24-hour soak.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
       "tier": "action",
       "verification": {
@@ -783,6 +865,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -811,12 +894,11 @@
     "items": [
      {
       "id": "v12",
-      "importance": 6,
-      "stability": "volatile",
+      "importance": 7,
+      "stability": "stable",
       "tags_add": [
        "postgresql",
-       "production",
-       "version"
+       "database"
       ],
       "topic_hint": "production database"
      }
@@ -829,8 +911,13 @@
       "id": "v7",
       "new_quote": "Production now runs PostgreSQL 17",
       "old_quote": "Production runs PostgreSQL 16.",
-      "reason": "Production database version changed from PostgreSQL 16 to 17.",
+      "reason": "Production database version changed from PostgreSQL 16 to PostgreSQL 17.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Production runs PostgreSQL 16."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -838,8 +925,11 @@
       "id": "v8",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Production version and planned PostgreSQL 18 evaluation can both be true.",
+      "reason": "A plan to evaluate PostgreSQL 18 can coexist with the current production version.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -847,8 +937,11 @@
       "id": "v9",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Local development database is a different environment from production.",
+      "reason": "Local development database version is a different environment from production.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -857,7 +950,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Connection pool size is a different database attribute.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -866,7 +962,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Backup format is a different database attribute.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -874,9 +973,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -926,9 +1027,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v7",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v12",
      "supersedes": "new",
      "tier": "action",
@@ -937,6 +1040,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -967,14 +1071,13 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 6,
+     "importance": 7,
      "importance_src": "librarian",
      "op": "signal_upsert",
-     "stability_suggested": "volatile",
+     "stability_suggested": "stable",
      "tags_add": [
       "postgresql",
-      "production",
-      "version"
+      "database"
      ],
      "topic_hint": "production database",
      "version_id": 12
@@ -1034,7 +1137,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "Production runs PostgreSQL 16.",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 16,
@@ -1069,16 +1174,19 @@
        ],
        "trigger_device_id": 4
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.9005,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "Production now runs PostgreSQL 17",
        "old": "Production runs PostgreSQL 16."
       },
-      "reason": "Production database version changed from PostgreSQL 16 to 17.",
+      "reason": "Production database version changed from PostgreSQL 16 to PostgreSQL 17.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
       "tier": "action",
       "verification": {
@@ -1086,6 +1194,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -1117,10 +1226,10 @@
       "importance": 6,
       "stability": "stable",
       "tags_add": [
-       "memory limit",
-       "cpu limit"
+       "memory",
+       "cpu"
       ],
-      "topic_hint": "container resources"
+      "topic_hint": "container resource limits"
      }
     ]
    },
@@ -1129,10 +1238,13 @@
      {
       "confidence": "high",
       "id": "v115",
-      "new_quote": "limited to 512 MiB of memory and 0.5 CPU",
-      "old_quote": "limited to 512 MiB of memory",
-      "reason": "Same librarian container memory limit; new item adds its CPU limit.",
+      "new_quote": "512 MiB of memory and 0.5 CPU",
+      "old_quote": "512 MiB of memory",
+      "reason": "Adds the librarian container's CPU limit to its memory limit.",
+      "refiner": "new",
       "relation": "refines",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1141,7 +1253,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Different container: librarian versus api.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1150,7 +1265,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Different container: librarian versus worker.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1159,7 +1277,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Different container: librarian versus caddy.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1167,9 +1288,24 @@
       "id": "v118",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Different attribute: resource limits versus ONNX model loading.",
+      "reason": "Memory and CPU limits differ from whether the service loads a model.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
+     }
+    ]
+   },
+   {
+    "results": [
+     {
+      "adds_detail": "B",
+      "conflict": false,
+      "current": "both",
+      "id": "p1",
+      "replaces_all": false,
+      "same_subject": true
      }
     ]
    }
@@ -1213,15 +1349,28 @@
     }
    ],
    "dropped_by_rule": 0,
-   "guards": {},
+   "guards": {
+    "verified": 1
+   },
    "judgements": [
     {
      "confidence": "high",
      "id": "v115",
+     "refiner": "new",
      "relation": "refines",
      "subject": "v120",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "action",
+     "verification": {
+      "agreed": true,
+      "answer": {
+       "adds_detail": "B",
+       "conflict": false,
+       "current": "both",
+       "same_subject": true
+      },
+      "kind": "confirm"
+     }
     }
    ],
    "lexical_only": null,
@@ -1253,10 +1402,10 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "memory-limit",
-      "cpu-limit"
+      "memory",
+      "cpu"
      ],
-     "topic_hint": "container resources",
+     "topic_hint": "container resource limits",
      "version_id": 120
     }
    ],
@@ -1317,15 +1466,26 @@
       "cos": 0.9657,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
-       "new": "limited to 512 MiB of memory and 0.5 CPU",
-       "old": "limited to 512 MiB of memory"
+       "new": "512 MiB of memory and 0.5 CPU",
+       "old": "512 MiB of memory"
       },
-      "reason": "Same librarian container memory limit; new item adds its CPU limit.",
+      "reason": "Adds the librarian container's CPU limit to its memory limit.",
+      "refiner": "new",
       "relation": "refines",
       "supersedes": "none",
       "tier": "action",
-      "verification": null
+      "verification": {
+       "agreed": true,
+       "answer": {
+        "adds_detail": "B",
+        "conflict": false,
+        "current": "both",
+        "same_subject": true
+       },
+       "kind": "confirm"
+      }
      },
      "question_id": "bd4c0592-8e2c-5b5c-baa0-cd801bc44dda",
      "status": "open",
@@ -1354,7 +1514,7 @@
       "stability": "stable",
       "tags_add": [
        "append-only",
-       "documentation"
+       "decisions"
       ],
       "topic_hint": "decision log"
      }
@@ -1367,8 +1527,11 @@
       "id": "v121",
       "new_quote": "logged append-only in docs/decisions/DECISIONS.md",
       "old_quote": "docs/decisions/DECISIONS.md is the append-only log of decisions",
-      "reason": "Both state that the same file is the append-only decision log.",
+      "reason": "Both state the same append-only decision log path.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1376,8 +1539,11 @@
       "id": "v122",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Consult storage is a different subject.",
+      "reason": "Design consult storage is a different subject.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1386,7 +1552,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Backlog tracking is a different subject.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1394,8 +1563,11 @@
       "id": "v124",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Research baseline is a different subject.",
+      "reason": "Research report baseline is a different subject.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1403,8 +1575,11 @@
       "id": "v123",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Resume-reading guidance is a different subject.",
+      "reason": "Resume reading order is a different subject.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -1449,15 +1624,20 @@
     }
    ],
    "dropped_by_rule": 0,
-   "guards": {},
+   "guards": {
+    "dup_to_relates": 1
+   },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v121",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v126",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "question"
     }
    ],
    "lexical_only": null,
@@ -1490,7 +1670,7 @@
      "stability_suggested": "stable",
      "tags_add": [
       "append-only",
-      "documentation"
+      "decisions"
      ],
      "topic_hint": "decision log",
      "version_id": 126
@@ -1527,15 +1707,14 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "dup": true,
-         "relation": "duplicate"
+         "relation": "relates"
         },
         "rel": "relates_to",
         "src_logical_id": 152,
         "valid_from": "2026-09-22T00:00:00.000000Z"
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         26
@@ -1553,15 +1732,18 @@
       "confidence": "high",
       "cos": 0.9728,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "logged append-only in docs/decisions/DECISIONS.md",
        "old": "docs/decisions/DECISIONS.md is the append-only log of decisions"
       },
-      "reason": "Both state that the same file is the append-only decision log.",
-      "relation": "duplicate",
+      "reason": "Both state the same append-only decision log path.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": null
      },
      "question_id": "9d30b2e6-506f-5f5c-a96b-6491aef7fd76",
@@ -1588,12 +1770,12 @@
      {
       "id": "v132",
       "importance": 5,
-      "stability": "stable",
+      "stability": "volatile",
       "tags_add": [
-       "python",
-       "docker"
+       "docker",
+       "python"
       ],
-      "topic_hint": "API image"
+      "topic_hint": "API build image"
      }
     ]
    },
@@ -1604,8 +1786,11 @@
       "id": "v127",
       "new_quote": "",
       "old_quote": "",
-      "reason": "API base image and shared Dockerfile are compatible claims.",
+      "reason": "The api base image and shared Dockerfile are different claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1613,8 +1798,11 @@
       "id": "v128",
       "new_quote": "",
       "old_quote": "",
-      "reason": "CI runner Python version is separate from the API image base.",
+      "reason": "The api image base and CI runner Python version concern different environments.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1622,8 +1810,11 @@
       "id": "v129",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Test image additions and API base image are different attributes.",
+      "reason": "The api base version and test-image additions are compatible, distinct attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1631,8 +1822,11 @@
       "id": "v130",
       "new_quote": "",
       "old_quote": "",
-      "reason": "A future Python 3.14 upgrade plan is compatible with the current API base.",
+      "reason": "A planned future upgrade is compatible with the current api base image.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1640,8 +1834,11 @@
       "id": "v131",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Pinned uv version is distinct from the API image base.",
+      "reason": "The api base image and pinned uv version are different attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -1708,12 +1905,12 @@
      "importance": 5,
      "importance_src": "librarian",
      "op": "signal_upsert",
-     "stability_suggested": "stable",
+     "stability_suggested": "volatile",
      "tags_add": [
-      "python",
-      "docker"
+      "docker",
+      "python"
      ],
-     "topic_hint": "API image",
+     "topic_hint": "API build image",
      "version_id": 132
     }
    ],
@@ -1737,7 +1934,7 @@
        "kütüphaneci",
        "otomatik sona erme"
       ],
-      "topic_hint": "soru süreleri"
+      "topic_hint": "soru süresi"
      }
     ]
    },
@@ -1748,8 +1945,11 @@
       "id": "v133",
       "new_quote": "30 gün sonra otomatik olarak sona erer",
       "old_quote": "bir süre sonra sona erer",
-      "reason": "Aynı soruların sona ermesi iddiasına 30 günlük süreyi ekliyor.",
+      "reason": "Yanıtsız kütüphaneci sorularının sona erme süresine 30 gün ayrıntısı ekleniyor.",
+      "refiner": "new",
       "relation": "refines",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1757,8 +1957,11 @@
       "id": "v137",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Soruların süresi ile cevaplama aracı farklı konular.",
+      "reason": "Soruların sona erme süresi ile cevaplama aracı farklı konular.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1766,8 +1969,11 @@
       "id": "v134",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Soruların süresi ile onay grubu boyutu farklı konular.",
+      "reason": "Soru süreleri ile onay grubu boyutu farklı konular.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1775,9 +1981,24 @@
       "id": "v136",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Arşiv adayı eşiği, cevapsız soruların sona ermesinden farklıdır.",
+      "reason": "Yanıtsız soruların sona ermesi ile arşiv adayı olma farklı süreçler.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
+     }
+    ]
+   },
+   {
+    "results": [
+     {
+      "adds_detail": "B",
+      "conflict": false,
+      "current": "both",
+      "id": "p1",
+      "replaces_all": false,
+      "same_subject": true
      }
     ]
    }
@@ -1814,15 +2035,28 @@
     }
    ],
    "dropped_by_rule": 1,
-   "guards": {},
+   "guards": {
+    "verified": 1
+   },
    "judgements": [
     {
      "confidence": "high",
      "id": "v133",
+     "refiner": "new",
      "relation": "refines",
      "subject": "v138",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "action",
+     "verification": {
+      "agreed": true,
+      "answer": {
+       "adds_detail": "B",
+       "conflict": false,
+       "current": "both",
+       "same_subject": true
+      },
+      "kind": "confirm"
+     }
     }
    ],
    "lexical_only": null,
@@ -1857,7 +2091,7 @@
       "kutuphaneci",
       "otomatik-sona-erme"
      ],
-     "topic_hint": "soru süreleri",
+     "topic_hint": "soru süresi",
      "version_id": 138
     }
    ],
@@ -1918,15 +2152,26 @@
       "cos": 0.9562,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "30 gün sonra otomatik olarak sona erer",
        "old": "bir süre sonra sona erer"
       },
-      "reason": "Aynı soruların sona ermesi iddiasına 30 günlük süreyi ekliyor.",
+      "reason": "Yanıtsız kütüphaneci sorularının sona erme süresine 30 gün ayrıntısı ekleniyor.",
+      "refiner": "new",
       "relation": "refines",
       "supersedes": "none",
       "tier": "action",
-      "verification": null
+      "verification": {
+       "agreed": true,
+       "answer": {
+        "adds_detail": "B",
+        "conflict": false,
+        "current": "both",
+        "same_subject": true
+       },
+       "kind": "confirm"
+      }
      },
      "question_id": "f6ea7ab8-8c58-58d5-abd5-3639118014c6",
      "status": "open",
@@ -1951,7 +2196,7 @@
     "items": [
      {
       "id": "v144",
-      "importance": 6,
+      "importance": 7,
       "stability": "stable",
       "tags_add": [
        "produktion",
@@ -1968,17 +2213,25 @@
       "id": "v140",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Production and staging domains are different scopes.",
+      "reason": "Production and staging are different domain scopes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
       "confidence": "high",
       "id": "v139",
-      "new_quote": "Produktions-Domain ist seit September mcp.hlmemo.com",
-      "old_quote": "production endpoint domain is hlmemo.example.net",
-      "reason": "The production domain changed from hlmemo.example.net to mcp.hlmemo.com.",
+      "new_quote": "mcp.hlmemo.com",
+      "old_quote": "hlmemo.example.net",
+      "reason": "Production domain changed from hlmemo.example.net to mcp.hlmemo.com.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "The production endpoint domain is hlmemo.example.net."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -1986,8 +2239,11 @@
       "id": "v143",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The production domain and DNS provider are different attributes.",
+      "reason": "Production domain and DNS provider are different attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -1995,8 +2251,11 @@
       "id": "v141",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The production domain and TLS certificate issuer are different attributes.",
+      "reason": "Production domain and TLS issuer are different attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -2004,8 +2263,11 @@
       "id": "v142",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The production domain and MCP endpoint path are different attributes.",
+      "reason": "Production domain and endpoint path are different attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -2013,9 +2275,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -2061,21 +2325,28 @@
    ],
    "dropped_by_rule": 0,
    "guards": {
+    "quote_unverified": 1,
     "verified": 1
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
+     "flags": [
+      "quote_unverified"
+     ],
      "id": "v139",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v144",
      "supersedes": "new",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -2106,7 +2377,7 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 6,
+     "importance": 7,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
@@ -2172,7 +2443,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 173,
@@ -2192,7 +2465,7 @@
         "version_id": 139
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         29
@@ -2207,23 +2480,29 @@
        ],
        "trigger_device_id": 26
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.883,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "quote_unverified"
+      ],
+      "judgement": "v2",
       "quotes": {
-       "new": "Produktions-Domain ist seit September mcp.hlmemo.com",
-       "old": "production endpoint domain is hlmemo.example.net"
+       "new": "mcp.hlmemo.com",
+       "old": "hlmemo.example.net"
       },
-      "reason": "The production domain changed from hlmemo.example.net to mcp.hlmemo.com.",
+      "reason": "Production domain changed from hlmemo.example.net to mcp.hlmemo.com.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -2255,8 +2534,9 @@
       "importance": 8,
       "stability": "stable",
       "tags_add": [
-       "testing",
-       "database"
+       "backups",
+       "restore testing",
+       "data integrity"
       ],
       "topic_hint": "backup restore"
      }
@@ -2267,10 +2547,13 @@
      {
       "confidence": "high",
       "id": "v145",
-      "new_quote": "after every backup-script change",
+      "new_quote": "restore the newest dump into a scratch database",
       "old_quote": "Test backups by restoring them.",
-      "reason": "Same general backup-testing lesson; new item adds a trigger and restore procedure.",
+      "reason": "New adds when and how to perform the same general backup-restore test.",
+      "refiner": "new",
       "relation": "refines",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -2278,8 +2561,11 @@
       "id": "v148",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Key-rotation frequency is a separate backup practice.",
+      "reason": "Backup restore testing and annual encryption-key rotation are distinct lessons.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -2287,8 +2573,11 @@
       "id": "v146",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Encryption at rest is a separate backup requirement.",
+      "reason": "Backup restore testing and encryption at rest are distinct requirements.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -2296,8 +2585,11 @@
       "id": "v147",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Whether to back up embeddings is separate from restore testing.",
+      "reason": "Restore testing and excluding recomputable embeddings concern different backup claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -2305,9 +2597,11 @@
    {
     "results": [
      {
+      "adds_detail": "B",
       "conflict": false,
       "current": "both",
       "id": "p1",
+      "replaces_all": false,
       "same_subject": true
      }
     ]
@@ -2346,16 +2640,21 @@
    ],
    "dropped_by_rule": 0,
    "guards": {
+    "action_to_question": 1,
     "verified": 1
    },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "action_quotes"
+     ],
      "id": "v145",
+     "refiner": "new",
      "relation": "refines",
      "subject": "v149",
      "supersedes": "none",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
@@ -2396,8 +2695,9 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "testing",
-      "database"
+      "backups",
+      "restore-testing",
+      "data-integrity"
      ],
      "topic_hint": "backup restore",
      "version_id": 149
@@ -2452,15 +2752,18 @@
       "confidence": "high",
       "cos": 0.8909,
       "cross_project": true,
-      "flags": [],
+      "flags": [
+       "action_quotes"
+      ],
+      "judgement": "v2",
       "quotes": {
-       "new": "after every backup-script change",
+       "new": "restore the newest dump into a scratch database",
        "old": "Test backups by restoring them."
       },
-      "reason": "Same general backup-testing lesson; new item adds a trigger and restore procedure.",
+      "reason": "New adds when and how to perform the same general backup-restore test.",
       "relation": "refines",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
@@ -2494,14 +2797,14 @@
     "items": [
      {
       "id": "v154",
-      "importance": 10,
+      "importance": 9,
       "stability": "stable",
       "tags_add": [
-       "security",
-       "tokens",
+       "secrets",
+       "stdin",
        "logging"
       ],
-      "topic_hint": "secret handling"
+      "topic_hint": "token security"
      }
     ]
    },
@@ -2510,10 +2813,13 @@
      {
       "confidence": "high",
       "id": "v150",
-      "new_quote": "pass tokens via stdin, never via argv",
+      "new_quote": "pass tokens via stdin",
       "old_quote": "token'ları argv ile değil stdin ile ilet",
-      "reason": "Same general rule: keep secrets out of logs and pass tokens via stdin, not argv.",
+      "reason": "Same general security guidance across projects; the Turkish text states the same claims.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -2521,8 +2827,11 @@
       "id": "v152",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Git repository secret scanning is a different security rule.",
+      "reason": "Git repository and commit scanning are separate from logging secrets or passing tokens.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -2530,8 +2839,11 @@
       "id": "v151",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Token rotation frequency is a different security practice.",
+      "reason": "Token rotation cadence is a separate claim from safe token handling.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -2539,9 +2851,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": false,
       "current": "both",
       "id": "p1",
+      "replaces_all": false,
       "same_subject": true
      }
     ]
@@ -2573,16 +2887,20 @@
    ],
    "dropped_by_rule": 1,
    "guards": {
+    "dup_to_relates": 1,
     "verified": 1
    },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v150",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v154",
      "supersedes": "none",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
@@ -2618,16 +2936,16 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 10,
+     "importance": 9,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "security",
-      "tokens",
+      "secrets",
+      "stdin",
       "logging"
      ],
-     "topic_hint": "secret handling",
+     "topic_hint": "token security",
      "version_id": 154
     }
    ],
@@ -2680,15 +2998,18 @@
       "confidence": "high",
       "cos": 0.8921,
       "cross_project": true,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
-       "new": "pass tokens via stdin, never via argv",
+       "new": "pass tokens via stdin",
        "old": "token'ları argv ile değil stdin ile ilet"
       },
-      "reason": "Same general rule: keep secrets out of logs and pass tokens via stdin, not argv.",
-      "relation": "duplicate",
+      "reason": "Same general security guidance across projects; the Turkish text states the same claims.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
@@ -2723,25 +3044,29 @@
      {
       "id": "v160",
       "importance": 6,
-      "stability": "volatile",
+      "stability": "stable",
       "tags_add": [
        "llm",
-       "lineage",
-       "call ceiling"
+       "call-ceiling"
       ],
-      "topic_hint": "LLM call limit"
+      "topic_hint": "LLM call limits"
      }
     ]
    },
    {
     "results": [
      {
-      "confidence": "high",
+      "confidence": "med",
       "id": "v155",
       "new_quote": "per-job LLM call ceiling is now 20 calls per lineage",
       "old_quote": "per-job LLM call ceiling is 10 calls",
-      "reason": "The per-job LLM call ceiling changed from 10 to 20 calls.",
+      "reason": "The per-job call ceiling changed from 10 to 20 calls per lineage.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "The per-job LLM call ceiling is 10 calls."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -2749,8 +3074,11 @@
       "id": "v157",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The call ceiling and retry backoff are different claims.",
+      "reason": "Retry backoff is unrelated to the LLM call ceiling.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -2758,9 +3086,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -2789,17 +3119,20 @@
    },
    "judgements": [
     {
-     "confidence": "high",
+     "close_ok": true,
+     "confidence": "med",
      "id": "v155",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v160",
      "supersedes": "new",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -2833,13 +3166,12 @@
      "importance": 6,
      "importance_src": "librarian",
      "op": "signal_upsert",
-     "stability_suggested": "volatile",
+     "stability_suggested": "stable",
      "tags_add": [
       "llm",
-      "lineage",
       "call-ceiling"
      ],
-     "topic_hint": "LLM call limit",
+     "topic_hint": "LLM call limits",
      "version_id": 160
     }
    ],
@@ -2873,7 +3205,7 @@
         ],
         "props": {
          "by": "librarian",
-         "confidence": "high",
+         "confidence": "med",
          "relation": "contradicts"
         },
         "rel": "contradicts",
@@ -2896,8 +3228,10 @@
         ],
         "props": {
          "by": "librarian",
-         "confidence": "high",
-         "relation": "contradicts"
+         "confidence": "med",
+         "quote": "per-job LLM call ceiling is 10 calls",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 194,
@@ -2917,7 +3251,7 @@
         "version_id": 155
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         34
@@ -2932,23 +3266,27 @@
        ],
        "trigger_device_id": 29
       },
-      "confidence": "high",
+      "close_ok": true,
+      "confidence": "med",
       "cos": 0.9331,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "per-job LLM call ceiling is now 20 calls per lineage",
        "old": "per-job LLM call ceiling is 10 calls"
       },
-      "reason": "The per-job LLM call ceiling changed from 10 to 20 calls.",
+      "reason": "The per-job call ceiling changed from 10 to 20 calls per lineage.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -2983,7 +3321,7 @@
        "gpu",
        "inference server"
       ],
-      "topic_hint": "embedding inference"
+      "topic_hint": "embedding infrastructure"
      }
     ]
    },
@@ -2992,10 +3330,15 @@
      {
       "confidence": "high",
       "id": "v161",
-      "new_quote": "run on the GPU inference server",
+      "new_quote": "Embeddings run on the GPU inference server",
       "old_quote": "embeddings run on CPU with ONNX Runtime",
-      "reason": "Embedding hardware changed from GPU to CPU; existing item is later.",
+      "reason": "Embedding hardware changed; the later CPU/ONNX claim supersedes the GPU claim.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Embeddings run on the GPU inference server."
+      ],
+      "scope": "whole",
       "supersedes": "old"
      },
      {
@@ -3003,8 +3346,11 @@
       "id": "v165",
       "new_quote": "",
       "old_quote": "",
-      "reason": "A benchmark's rented GPU is a different workload from embedding hardware.",
+      "reason": "Embedding hardware and the benchmark's rented GPU are distinct claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3012,8 +3358,11 @@
       "id": "v163",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Thread count is a different embedder attribute from hardware.",
+      "reason": "Embedding hardware and embedder thread count are different attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3021,8 +3370,11 @@
       "id": "v164",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Vector search strategy is unrelated to embedding hardware.",
+      "reason": "Embedding hardware and vector-search scan threshold are different claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -3030,9 +3382,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -3075,9 +3429,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v161",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v166",
      "supersedes": "old",
      "tier": "action",
@@ -3086,6 +3442,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -3124,7 +3481,7 @@
       "gpu",
       "inference-server"
      ],
-     "topic_hint": "embedding inference",
+     "topic_hint": "embedding infrastructure",
      "version_id": 166
     }
    ],
@@ -3182,7 +3539,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "Embeddings run on the GPU inference server",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 196,
@@ -3217,16 +3576,19 @@
        ],
        "trigger_device_id": 30
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8961,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
-       "new": "run on the GPU inference server",
+       "new": "Embeddings run on the GPU inference server",
        "old": "embeddings run on CPU with ONNX Runtime"
       },
-      "reason": "Embedding hardware changed from GPU to CPU; existing item is later.",
+      "reason": "Embedding hardware changed; the later CPU/ONNX claim supersedes the GPU claim.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "old",
       "tier": "action",
       "verification": {
@@ -3234,6 +3596,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -3266,9 +3629,9 @@
       "stability": "stable",
       "tags_add": [
        "lease",
-       "job-konfiguration"
+       "job"
       ],
-      "topic_hint": "Librarian-Lease"
+      "topic_hint": "Librarian-Job-Lease"
      }
     ]
    },
@@ -3279,8 +3642,11 @@
       "id": "v168",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Lease durations concern different job types: librarian versus embed.",
+      "reason": "Librarian lease differs in scope from embed job lease.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3288,17 +3654,23 @@
       "id": "v170",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Lease duration and heartbeat interval are different attributes.",
+      "reason": "Lease duration and heartbeat interval are distinct attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
       "confidence": "high",
       "id": "v167",
-      "new_quote": "Lease eines Librarian-Jobs beträgt 120 Sekunden",
-      "old_quote": "A librarian job lease lasts 300 seconds",
-      "reason": "Same librarian lease has conflicting durations; neither is clearly later.",
+      "new_quote": "beträgt 120 Sekunden",
+      "old_quote": "lasts 300 seconds",
+      "reason": "Librarian job lease durations conflict: 120 versus 300 seconds.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3306,8 +3678,11 @@
       "id": "v169",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Lease duration and renewal interval are different attributes.",
+      "reason": "Lease duration and renewal interval can both be true.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3315,8 +3690,11 @@
       "id": "v171",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Lease duration and queue polling interval are different attributes.",
+      "reason": "Lease duration and queue polling interval are distinct.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -3361,15 +3739,21 @@
     }
    ],
    "dropped_by_rule": 0,
-   "guards": {},
+   "guards": {
+    "action_to_question": 1
+   },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "action_unverified",
+      "action_quotes"
+     ],
      "id": "v167",
      "relation": "contradicts",
      "subject": "v172",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "question"
     }
    ],
    "lexical_only": null,
@@ -3402,9 +3786,9 @@
      "stability_suggested": "stable",
      "tags_add": [
       "lease",
-      "job-konfiguration"
+      "job"
      ],
-     "topic_hint": "Librarian-Lease",
+     "topic_hint": "Librarian-Job-Lease",
      "version_id": 172
     }
    ],
@@ -3464,15 +3848,19 @@
       "confidence": "high",
       "cos": 0.9055,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "action_unverified",
+       "action_quotes"
+      ],
+      "judgement": "v2",
       "quotes": {
-       "new": "Lease eines Librarian-Jobs beträgt 120 Sekunden",
-       "old": "A librarian job lease lasts 300 seconds"
+       "new": "beträgt 120 Sekunden",
+       "old": "lasts 300 seconds"
       },
-      "reason": "Same librarian lease has conflicting durations; neither is clearly later.",
+      "reason": "Librarian job lease durations conflict: 120 versus 300 seconds.",
       "relation": "contradicts",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": null
      },
      "question_id": "1b67eef3-6948-58ce-9fad-47d012784ff5",
@@ -3502,9 +3890,9 @@
       "stability": "stable",
       "tags_add": [
        "observer",
-       "öneri sınırı"
+       "öneri"
       ],
-      "topic_hint": "kütüphaneci rolü"
+      "topic_hint": "varsayılan rol"
      }
     ]
    },
@@ -3515,8 +3903,11 @@
       "id": "v173",
       "new_quote": "varsayılan olarak gözlemci (observer) rolünde başlar",
       "old_quote": "starts in the observer role",
-      "reason": "Both state the librarian's default observer role and proposal-only behavior.",
+      "reason": "Both state the same default librarian role and proposal-only behavior.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3524,8 +3915,11 @@
       "id": "v175",
       "new_quote": "",
       "old_quote": "",
-      "reason": "This describes owner approval in assistant mode, not the librarian's default role.",
+      "reason": "Assistant-role owner approval is a separate claim from the librarian default role.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3533,8 +3927,11 @@
       "id": "v177",
       "new_quote": "",
       "old_quote": "",
-      "reason": "This describes how role changes are stored, not the default role.",
+      "reason": "Role-change event storage is separate from the librarian's default role.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -3565,15 +3962,20 @@
     }
    ],
    "dropped_by_rule": 2,
-   "guards": {},
+   "guards": {
+    "dup_to_relates": 1
+   },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v173",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v178",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "question"
     }
    ],
    "lexical_only": null,
@@ -3606,9 +4008,9 @@
      "stability_suggested": "stable",
      "tags_add": [
       "observer",
-      "oneri-siniri"
+      "oneri"
      ],
-     "topic_hint": "kütüphaneci rolü",
+     "topic_hint": "varsayılan rol",
      "version_id": 178
     }
    ],
@@ -3643,15 +4045,14 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "dup": true,
-         "relation": "duplicate"
+         "relation": "relates"
         },
         "rel": "relates_to",
         "src_logical_id": 215,
         "valid_from": "2026-09-22T00:00:00.000000Z"
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         37
@@ -3669,15 +4070,18 @@
       "confidence": "high",
       "cos": 0.8314,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "varsayılan olarak gözlemci (observer) rolünde başlar",
        "old": "starts in the observer role"
       },
-      "reason": "Both state the librarian's default observer role and proposal-only behavior.",
-      "relation": "duplicate",
+      "reason": "Both state the same default librarian role and proposal-only behavior.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": null
      },
      "question_id": "e3977392-2c11-5014-865e-9e22160d3cd5",
@@ -3710,7 +4114,7 @@
        "shell",
        "stdin"
       ],
-      "topic_hint": "SSH loop stdin"
+      "topic_hint": "ssh loop stdin"
      }
     ]
    },
@@ -3720,9 +4124,12 @@
       "confidence": "high",
       "id": "v13",
       "new_quote": "ssh without -n reads the loop's stdin",
-      "old_quote": "ssh without -n consumes the stdin",
-      "reason": "Same SSH stdin behavior and workaround inside a shell loop.",
+      "old_quote": "ssh without -n consumes the stdin of the surrounding loop",
+      "reason": "Both state ssh without -n consumes loop stdin and recommend -n or redirecting stdin.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3730,8 +4137,11 @@
       "id": "v14",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Different SSH lesson: process matching, not loop stdin.",
+      "reason": "This concerns pkill matching its own command line, not ssh consuming loop input.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3739,8 +4149,11 @@
       "id": "v15",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Deployment transport fact differs from the shell-loop lesson.",
+      "reason": "This describes deploy transport, a separate claim from ssh behavior in shell loops.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3748,8 +4161,11 @@
       "id": "v16",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Remote-command quoting advice is distinct from loop stdin handling.",
+      "reason": "This concerns quoting remote command arguments, not ssh consuming loop stdin.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -3787,15 +4203,20 @@
     }
    ],
    "dropped_by_rule": 1,
-   "guards": {},
+   "guards": {
+    "dup_to_relates": 1
+   },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v13",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v18",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "question"
     }
    ],
    "lexical_only": null,
@@ -3831,7 +4252,7 @@
       "shell",
       "stdin"
      ],
-     "topic_hint": "SSH loop stdin",
+     "topic_hint": "ssh loop stdin",
      "version_id": 18
     }
    ],
@@ -3866,15 +4287,14 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "dup": true,
-         "relation": "duplicate"
+         "relation": "relates"
         },
         "rel": "relates_to",
         "src_logical_id": 23,
         "valid_from": "2026-09-20T00:00:00.000000Z"
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         5
@@ -3892,15 +4312,18 @@
       "confidence": "high",
       "cos": 0.9753,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "ssh without -n reads the loop's stdin",
-       "old": "ssh without -n consumes the stdin"
+       "old": "ssh without -n consumes the stdin of the surrounding loop"
       },
-      "reason": "Same SSH stdin behavior and workaround inside a shell loop.",
-      "relation": "duplicate",
+      "reason": "Both state ssh without -n consumes loop stdin and recommend -n or redirecting stdin.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": null
      },
      "question_id": "fdc7405a-072d-5a34-9843-d3aa93f0ec18",
@@ -3929,10 +4352,11 @@
       "importance": 9,
       "stability": "stable",
       "tags_add": [
+       "git",
        "secrets",
-       "repository hygiene"
+       "data protection"
       ],
-      "topic_hint": "git staging"
+      "topic_hint": "git staging safety"
      }
     ]
    },
@@ -3943,8 +4367,11 @@
       "id": "v179",
       "new_quote": "Never run git add -A at the repository root",
       "old_quote": "Nie git add -A im Repository-Root ausführen",
-      "reason": "Same repository-root git add -A rule and .env warning; language differs.",
+      "reason": "Same repository-root git add -A warning; general lesson applies across projects.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3953,7 +4380,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Staged-file review is a separate lesson.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3961,8 +4391,11 @@
       "id": "v181",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Force-pushing to main is a separate lesson.",
+      "reason": "Force-push policy is a separate lesson.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -3970,8 +4403,11 @@
       "id": "v182",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Avoiding --no-verify is a separate lesson.",
+      "reason": "Commit-hook guidance is a separate lesson.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -3979,9 +4415,11 @@
    {
     "results": [
      {
+      "adds_detail": "A",
       "conflict": false,
       "current": "both",
       "id": "p1",
+      "replaces_all": false,
       "same_subject": true
      }
     ]
@@ -4020,16 +4458,20 @@
    ],
    "dropped_by_rule": 0,
    "guards": {
+    "dup_to_relates": 1,
     "verified": 1
    },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v179",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v183",
      "supersedes": "none",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
@@ -4070,10 +4512,11 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
+      "git",
       "secrets",
-      "repository-hygiene"
+      "data-protection"
      ],
-     "topic_hint": "git staging",
+     "topic_hint": "git staging safety",
      "version_id": 183
     }
    ],
@@ -4126,15 +4569,18 @@
       "confidence": "high",
       "cos": 0.9148,
       "cross_project": true,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "Never run git add -A at the repository root",
        "old": "Nie git add -A im Repository-Root ausführen"
       },
-      "reason": "Same repository-root git add -A rule and .env warning; language differs.",
-      "relation": "duplicate",
+      "reason": "Same repository-root git add -A warning; general lesson applies across projects.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
@@ -4172,7 +4618,8 @@
       "stability": "stable",
       "tags_add": [
        "onnxruntime",
-       "environment-variable"
+       "telemetry",
+       "interpreter"
       ],
       "topic_hint": "ORT telemetry"
      }
@@ -4183,10 +4630,13 @@
      {
       "confidence": "high",
       "id": "v184",
-      "new_quote": "Set ORT_DISABLE_TELEMETRY=1 before importing onnxruntime",
-      "old_quote": "Set ORT_DISABLE_TELEMETRY=1 before onnxruntime is imported",
-      "reason": "Same telemetry setting; new item adds the abort and rc 134 consequence.",
+      "new_quote": "its telemetry thread aborted the interpreter at exit with rc 134",
+      "old_quote": "Set ORT_DISABLE_TELEMETRY=1 before onnxruntime is imported.",
+      "reason": "Same general telemetry-setting lesson; new item adds the exit-abort consequence.",
+      "refiner": "new",
       "relation": "refines",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -4194,8 +4644,11 @@
       "id": "v185",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Telemetry disabling and intra-op thread limits are distinct lessons.",
+      "reason": "Thread-count guidance is a different claim from disabling telemetry.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -4203,8 +4656,11 @@
       "id": "v186",
       "new_quote": "",
       "old_quote": "",
-      "reason": "New item reports an exit code; existing item defines what code 134 means.",
+      "reason": "Exit-code meaning is a separate fact from the telemetry-abort lesson.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -4212,8 +4668,11 @@
       "id": "v187",
       "new_quote": "",
       "old_quote": "",
-      "reason": "ORT telemetry configuration and embedder session shutdown are different subjects.",
+      "reason": "Embedder shutdown guidance concerns a different component and action.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -4221,9 +4680,11 @@
    {
     "results": [
      {
+      "adds_detail": "B",
       "conflict": false,
       "current": "both",
       "id": "p1",
+      "replaces_all": false,
       "same_subject": true
      }
     ]
@@ -4262,16 +4723,21 @@
    ],
    "dropped_by_rule": 0,
    "guards": {
+    "action_to_question": 1,
     "verified": 1
    },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "action_quotes"
+     ],
      "id": "v184",
+     "refiner": "new",
      "relation": "refines",
      "subject": "v188",
      "supersedes": "none",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
@@ -4313,7 +4779,8 @@
      "stability_suggested": "stable",
      "tags_add": [
       "onnxruntime",
-      "environment-variable"
+      "telemetry",
+      "interpreter"
      ],
      "topic_hint": "ORT telemetry",
      "version_id": 188
@@ -4368,15 +4835,18 @@
       "confidence": "high",
       "cos": 0.9645,
       "cross_project": true,
-      "flags": [],
+      "flags": [
+       "action_quotes"
+      ],
+      "judgement": "v2",
       "quotes": {
-       "new": "Set ORT_DISABLE_TELEMETRY=1 before importing onnxruntime",
-       "old": "Set ORT_DISABLE_TELEMETRY=1 before onnxruntime is imported"
+       "new": "its telemetry thread aborted the interpreter at exit with rc 134",
+       "old": "Set ORT_DISABLE_TELEMETRY=1 before onnxruntime is imported."
       },
-      "reason": "Same telemetry setting; new item adds the abort and rc 134 consequence.",
+      "reason": "Same general telemetry-setting lesson; new item adds the exit-abort consequence.",
       "relation": "refines",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
@@ -4411,10 +4881,10 @@
      {
       "id": "v194",
       "importance": 5,
-      "stability": "volatile",
+      "stability": "stable",
       "tags_add": [
-       "config",
-       "tokens"
+       "configuration",
+       "token budget"
       ],
       "topic_hint": "write token budget"
      }
@@ -4426,9 +4896,14 @@
       "confidence": "high",
       "id": "v189",
       "new_quote": "raised to 4000 tokens",
-      "old_quote": "is 2000 tokens",
+      "old_quote": "2000 tokens.",
       "reason": "The default memory.write token_budget changed from 2000 to 4000 tokens.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "The default token_budget of memory.write is 2000 tokens."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -4436,8 +4911,11 @@
       "id": "v190",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Different operation: default write budget versus query budget range.",
+      "reason": "Query budget range is a separate setting from the write default.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -4445,8 +4923,11 @@
       "id": "v192",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Tokenizer metering is a different attribute from the default write budget.",
+      "reason": "Tokenizer metering is a separate claim from the write default.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -4454,8 +4935,11 @@
       "id": "v191",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Project card size limit is unrelated to the default write budget.",
+      "reason": "Project card size limit is separate from the write token budget.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -4463,8 +4947,11 @@
       "id": "v193",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Hit preview width is unrelated to the default write budget.",
+      "reason": "Hit preview width is separate from the write token budget.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -4472,9 +4959,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -4524,9 +5013,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v189",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v194",
      "supersedes": "new",
      "tier": "action",
@@ -4535,6 +5026,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -4568,10 +5060,10 @@
      "importance": 5,
      "importance_src": "librarian",
      "op": "signal_upsert",
-     "stability_suggested": "volatile",
+     "stability_suggested": "stable",
      "tags_add": [
-      "config",
-      "tokens"
+      "configuration",
+      "token-budget"
      ],
      "topic_hint": "write token budget",
      "version_id": 194
@@ -4631,7 +5123,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "2000 tokens.",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 236,
@@ -4666,16 +5160,19 @@
        ],
        "trigger_device_id": 35
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8927,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "raised to 4000 tokens",
-       "old": "is 2000 tokens"
+       "old": "2000 tokens."
       },
       "reason": "The default memory.write token_budget changed from 2000 to 4000 tokens.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
       "tier": "action",
       "verification": {
@@ -4683,6 +5180,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -4714,9 +5212,9 @@
       "importance": 8,
       "stability": "stable",
       "tags_add": [
+       "yedekleme",
        "hetzner",
-       "storage box",
-       "s3"
+       "storage box"
       ],
       "topic_hint": "yedekleme konumu"
      }
@@ -4729,8 +5227,13 @@
       "id": "v195",
       "new_quote": "Günlük yedekler artık Hetzner Storage Box'a gönderiliyor",
       "old_quote": "Daily backups are uploaded to an S3 bucket.",
-      "reason": "Daily backup destination changed from S3 to Hetzner Storage Box.",
+      "reason": "Yedekleme hedefi S3'ten Hetzner Storage Box'a değişmiş; eski kova kapatılmış.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Daily backups are uploaded to an S3 bucket."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -4738,8 +5241,11 @@
       "id": "v196",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Backup destination and application log destination are different subjects.",
+      "reason": "Yedekleme konumu ile uygulama loglarının journald hedefi farklı konular.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -4747,8 +5253,11 @@
       "id": "v197",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Backup destination and encryption method are different attributes.",
+      "reason": "Yedekleme hedefi ile yükleme öncesi age şifrelemesi farklı özelliklerdir.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -4756,9 +5265,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -4790,21 +5301,28 @@
    ],
    "dropped_by_rule": 2,
    "guards": {
+    "action_to_question": 1,
     "verified": 1
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
+     "flags": [
+      "action_quotes"
+     ],
      "id": "v195",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v200",
      "supersedes": "new",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -4840,9 +5358,9 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
+      "yedekleme",
       "hetzner",
-      "storage-box",
-      "s3"
+      "storage-box"
      ],
      "topic_hint": "yedekleme konumu",
      "version_id": 200
@@ -4902,7 +5420,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "Daily backups are uploaded to an S3 bucket.",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 243,
@@ -4922,7 +5442,7 @@
         "version_id": 195
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         43
@@ -4937,23 +5457,29 @@
        ],
        "trigger_device_id": 36
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8418,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "action_quotes"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "Günlük yedekler artık Hetzner Storage Box'a gönderiliyor",
        "old": "Daily backups are uploaded to an S3 bucket."
       },
-      "reason": "Daily backup destination changed from S3 to Hetzner Storage Box.",
+      "reason": "Yedekleme hedefi S3'ten Hetzner Storage Box'a değişmiş; eski kova kapatılmış.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -4982,14 +5508,14 @@
     "items": [
      {
       "id": "v206",
-      "importance": 8,
+      "importance": 7,
       "stability": "stable",
       "tags_add": [
-       "migration",
+       "database",
        "writer",
-       "deploy"
+       "deploy.sh"
       ],
-      "topic_hint": "Writer-Migrationen"
+      "topic_hint": "Migration und Deployment"
      }
     ]
    },
@@ -5000,8 +5526,13 @@
       "id": "v201",
       "new_quote": "nur bei gestoppten Writern",
       "old_quote": "api keeps serving writes",
-      "reason": "Migrationen: gestoppte Writer versus API serving writes; new item is later.",
+      "reason": "Migration writer state conflicts; the later new item replaces the old serving-writes policy.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Run migrations while the api keeps serving writes; downtime is not acceptable."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -5009,8 +5540,11 @@
       "id": "v204",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Writer downtime policy differs from lock-timeout behavior.",
+      "reason": "Writer shutdown policy and lock-timeout behavior are compatible, distinct migration claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -5018,8 +5552,11 @@
       "id": "v203",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Deployment writer policy differs from the migration command.",
+      "reason": "Stopping writers and the Alembic command are distinct migration details.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -5027,9 +5564,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": false,
       "same_subject": true
      }
     ]
@@ -5061,21 +5600,29 @@
    ],
    "dropped_by_rule": 2,
    "guards": {
+    "action_to_question": 1,
     "verified": 1
    },
    "judgements": [
     {
+     "close_ok": false,
      "confidence": "high",
+     "flags": [
+      "verifier_not_all",
+      "action_quotes"
+     ],
      "id": "v201",
      "relation": "contradicts",
+     "scope": "part",
      "subject": "v206",
      "supersedes": "new",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": false,
        "same_subject": true
       },
       "kind": "supersede"
@@ -5106,16 +5653,16 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 8,
+     "importance": 7,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "migration",
+      "database",
       "writer",
-      "deploy"
+      "deploy.sh"
      ],
-     "topic_hint": "Writer-Migrationen",
+     "topic_hint": "Migration und Deployment",
      "version_id": 206
     }
    ],
@@ -5173,27 +5720,16 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "api keeps serving writes",
+         "relation": "contradicts",
+         "scope": "part"
         },
         "rel": "supersedes",
         "src_logical_id": 250,
         "valid_from": "2026-09-10T00:00:00.000000Z"
-       },
-       {
-        "assessed": {
-         "245": 201,
-         "250": 206
-        },
-        "logical_id": 245,
-        "op": "version_close",
-        "project_ids": [
-         44
-        ],
-        "valid_to": "2026-09-10T00:00:00.000000Z",
-        "version_id": 201
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         44
@@ -5208,23 +5744,31 @@
        ],
        "trigger_device_id": 37
       },
+      "close_ok": false,
       "confidence": "high",
       "cos": 0.8876,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "verifier_not_all",
+       "action_quotes"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "nur bei gestoppten Writern",
        "old": "api keeps serving writes"
       },
-      "reason": "Migrationen: gestoppte Writer versus API serving writes; new item is later.",
+      "reason": "Migration writer state conflicts; the later new item replaces the old serving-writes policy.",
       "relation": "contradicts",
+      "resolution": "split_and_supersede",
+      "scope": "part",
       "supersedes": "new",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": false,
         "same_subject": true
        },
        "kind": "supersede"
@@ -5253,13 +5797,13 @@
     "items": [
      {
       "id": "v211",
-      "importance": 6,
+      "importance": 5,
       "stability": "stable",
       "tags_add": [
        "worker",
        "memory limit"
       ],
-      "topic_hint": "worker memory limit"
+      "topic_hint": "worker memory"
      }
     ]
    },
@@ -5270,8 +5814,13 @@
       "id": "v207",
       "new_quote": "limited to 1 GiB of memory",
       "old_quote": "limited to 1536 MiB of memory",
-      "reason": "Worker container memory limit differs; existing value is later.",
+      "reason": "The same worker memory limit differs; the existing value is later.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Since the OOM fix in March the worker container is limited to 1536 MiB of memory."
+      ],
+      "scope": "whole",
       "supersedes": "old"
      },
      {
@@ -5279,8 +5828,11 @@
       "id": "v209",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Memory limit and CPU allocation are different attributes.",
+      "reason": "CPU allocation is a different attribute from memory limit.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -5288,8 +5840,11 @@
       "id": "v208",
       "new_quote": "",
       "old_quote": "",
-      "reason": "API container is a different component from the worker.",
+      "reason": "The API container has a different memory limit scope.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -5297,8 +5852,11 @@
       "id": "v210",
       "new_quote": "",
       "old_quote": "",
-      "reason": "OOM restart behavior is different from the memory limit.",
+      "reason": "OOM restart behavior is a separate claim from memory limit.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -5306,9 +5864,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -5351,9 +5911,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v207",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v211",
      "supersedes": "old",
      "tier": "action",
@@ -5362,6 +5924,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -5392,7 +5955,7 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 6,
+     "importance": 5,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
@@ -5400,7 +5963,7 @@
       "worker",
       "memory-limit"
      ],
-     "topic_hint": "worker memory limit",
+     "topic_hint": "worker memory",
      "version_id": 211
     }
    ],
@@ -5458,7 +6021,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "limited to 1 GiB of memory",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 252,
@@ -5493,16 +6058,19 @@
        ],
        "trigger_device_id": 38
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8803,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "limited to 1 GiB of memory",
        "old": "limited to 1536 MiB of memory"
       },
-      "reason": "Worker container memory limit differs; existing value is later.",
+      "reason": "The same worker memory limit differs; the existing value is later.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "old",
       "tier": "action",
       "verification": {
@@ -5510,6 +6078,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -5542,7 +6111,7 @@
       "stability": "stable",
       "tags_add": [
        "macbook",
-       "device class"
+       "device-class"
       ],
       "topic_hint": "device registration"
      }
@@ -5553,10 +6122,13 @@
      {
       "confidence": "high",
       "id": "v212",
-      "new_quote": "device class work",
-      "old_quote": "device class personal",
-      "reason": "The owner's MacBook has conflicting device-class values; timestamps do not establish which is current.",
+      "new_quote": "registered with the device class work",
+      "old_quote": "registered with the device class personal",
+      "reason": "The owner's MacBook has conflicting device classes; neither claim is later.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -5565,7 +6137,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Different device: the g7 gates device.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -5573,8 +6148,11 @@
       "id": "v214",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Device-class registration and project write access are different attributes.",
+      "reason": "Device class and project write permission are separate attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -5582,9 +6160,24 @@
       "id": "v215",
       "new_quote": "",
       "old_quote": "",
-      "reason": "A visibility rule for class:work items, not the MacBook's registered class.",
+      "reason": "Visibility rule for class:work does not state the owner's device class.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
+     }
+    ]
+   },
+   {
+    "results": [
+     {
+      "adds_detail": "none",
+      "conflict": true,
+      "current": "unclear",
+      "id": "p1",
+      "replaces_all": false,
+      "same_subject": true
      }
     ]
    }
@@ -5621,7 +6214,9 @@
     }
    ],
    "dropped_by_rule": 0,
-   "guards": {},
+   "guards": {
+    "verified": 1
+   },
    "judgements": [
     {
      "confidence": "high",
@@ -5629,7 +6224,17 @@
      "relation": "contradicts",
      "subject": "v216",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "action",
+     "verification": {
+      "agreed": true,
+      "answer": {
+       "adds_detail": "none",
+       "conflict": true,
+       "current": "unclear",
+       "same_subject": true
+      },
+      "kind": "confirm"
+     }
     }
    ],
    "lexical_only": null,
@@ -5725,15 +6330,25 @@
       "cos": 0.9726,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
-       "new": "device class work",
-       "old": "device class personal"
+       "new": "registered with the device class work",
+       "old": "registered with the device class personal"
       },
-      "reason": "The owner's MacBook has conflicting device-class values; timestamps do not establish which is current.",
+      "reason": "The owner's MacBook has conflicting device classes; neither claim is later.",
       "relation": "contradicts",
       "supersedes": "none",
       "tier": "action",
-      "verification": null
+      "verification": {
+       "agreed": true,
+       "answer": {
+        "adds_detail": "none",
+        "conflict": true,
+        "current": "unclear",
+        "same_subject": true
+       },
+       "kind": "confirm"
+      }
      },
      "question_id": "6775cab3-d68b-5b59-8f48-5e19a051ba85",
      "status": "open",
@@ -5758,7 +6373,7 @@
     "items": [
      {
       "id": "v217",
-      "importance": 10,
+      "importance": 9,
       "stability": "stable",
       "tags_add": [
        "pytest",
@@ -5770,9 +6385,7 @@
       "id": "v218",
       "importance": 1,
       "stability": "volatile",
-      "tags_add": [
-       "office"
-      ],
+      "tags_add": [],
       "topic_hint": "office coffee machine"
      },
      {
@@ -5780,17 +6393,19 @@
       "importance": 4,
       "stability": "volatile",
       "tags_add": [
-       "planning"
+       "sprint",
+       "placement"
       ],
       "topic_hint": "sprint focus"
      },
      {
       "id": "v220",
-      "importance": 9,
+      "importance": 10,
       "stability": "stable",
       "tags_add": [
-       "credential security",
-       "gitleaks"
+       "security",
+       "gitleaks",
+       "pre-commit"
       ],
       "topic_hint": "secrets handling"
      }
@@ -5803,8 +6418,11 @@
       "id": "v220",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Test database safety and secret handling are different subjects.",
+      "reason": "Database testing safety and secret-committing practices are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -5812,8 +6430,11 @@
       "id": "v219",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Database testing guidance and sprint priorities are different subjects.",
+      "reason": "Database testing safety and sprint priorities are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -5876,9 +6497,7 @@
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "volatile",
-     "tags_add": [
-      "office"
-     ],
+     "tags_add": [],
      "topic_hint": "office coffee machine",
      "version_id": 218
     },
@@ -5889,20 +6508,22 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "planning"
+      "sprint",
+      "placement"
      ],
      "topic_hint": "sprint focus",
      "version_id": 219
     },
     {
      "capability": "annotate",
-     "importance": 9,
+     "importance": 10,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "credential-security",
-      "gitleaks"
+      "security",
+      "gitleaks",
+      "pre-commit"
      ],
      "topic_hint": "secrets handling",
      "version_id": 220
@@ -5922,37 +6543,42 @@
     "items": [
      {
       "id": "v221",
-      "importance": 7,
+      "importance": 8,
       "stability": "stable",
       "tags_add": [
-       "remote server",
-       "streamable http"
+       "mcp",
+       "architecture"
       ],
-      "topic_hint": "MCP architecture"
+      "topic_hint": "MCP server architecture"
      },
      {
       "id": "v222",
       "importance": 1,
       "stability": "stable",
-      "tags_add": [],
+      "tags_add": [
+       "readme",
+       "license"
+      ],
       "topic_hint": "README license badge"
      },
      {
       "id": "v223",
-      "importance": 6,
+      "importance": 7,
       "stability": "stable",
       "tags_add": [
-       "device login",
-       "CLI registration"
+       "device",
+       "onboarding",
+       "cli"
       ],
       "topic_hint": "device onboarding"
      },
      {
       "id": "v224",
-      "importance": 4,
+      "importance": 5,
       "stability": "volatile",
       "tags_add": [
-       "manual restart"
+       "worker",
+       "workaround"
       ],
       "topic_hint": "worker restart workaround"
      }
@@ -5965,8 +6591,11 @@
       "id": "v223",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Server architecture and device-registration procedure are different claims.",
+      "reason": "Server architecture differs from the device registration procedure.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6005,15 +6634,15 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 7,
+     "importance": 8,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "remote-server",
-      "streamable-http"
+      "mcp",
+      "architecture"
      ],
-     "topic_hint": "MCP architecture",
+     "topic_hint": "MCP server architecture",
      "version_id": 221
     },
     {
@@ -6022,31 +6651,36 @@
      "importance_src": "client",
      "op": "signal_upsert",
      "stability_suggested": "stable",
-     "tags_add": [],
+     "tags_add": [
+      "readme",
+      "license"
+     ],
      "topic_hint": "README license badge",
      "version_id": 222
     },
     {
      "capability": "annotate",
-     "importance": 6,
+     "importance": 7,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "device-login",
-      "cli-registration"
+      "device",
+      "onboarding",
+      "cli"
      ],
      "topic_hint": "device onboarding",
      "version_id": 223
     },
     {
      "capability": "annotate",
-     "importance": 4,
+     "importance": 5,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "manual-restart"
+      "worker",
+      "workaround"
      ],
      "topic_hint": "worker restart workaround",
      "version_id": 224
@@ -6066,7 +6700,7 @@
     "items": [
      {
       "id": "v225",
-      "importance": 9,
+      "importance": 10,
       "stability": "stable",
       "tags_add": [
        "backup",
@@ -6079,18 +6713,17 @@
       "importance": 2,
       "stability": "stable",
       "tags_add": [
-       "terminal",
-       "ui"
+       "editor",
+       "dark mode"
       ],
-      "topic_hint": "editor preference"
+      "topic_hint": "terminal preferences"
      },
      {
       "id": "v227",
       "importance": 3,
       "stability": "volatile",
       "tags_add": [
-       "open question",
-       "planning"
+       "open question"
       ],
       "topic_hint": "batch size"
      },
@@ -6099,8 +6732,8 @@
       "importance": 7,
       "stability": "stable",
       "tags_add": [
-       "infrastructure",
-       "vps"
+       "vps",
+       "infrastructure"
       ],
       "topic_hint": "production hosting"
      }
@@ -6114,7 +6747,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Restore procedure and production host specifications are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6153,7 +6789,7 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 9,
+     "importance": 10,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
@@ -6171,10 +6807,10 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "terminal",
-      "ui"
+      "editor",
+      "dark-mode"
      ],
-     "topic_hint": "editor preference",
+     "topic_hint": "terminal preferences",
      "version_id": 226
     },
     {
@@ -6184,8 +6820,7 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "open-question",
-      "planning"
+      "open-question"
      ],
      "topic_hint": "batch size",
      "version_id": 227
@@ -6197,8 +6832,8 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "infrastructure",
-      "vps"
+      "vps",
+      "infrastructure"
      ],
      "topic_hint": "production hosting",
      "version_id": 228
@@ -6222,7 +6857,8 @@
       "stability": "stable",
       "tags_add": [
        "security",
-       "ufw"
+       "ufw",
+       "ports"
       ],
       "topic_hint": "Docker firewall"
      },
@@ -6241,7 +6877,7 @@
       "stability": "stable",
       "tags_add": [
        "token budget",
-       "defaults"
+       "api convention"
       ],
       "topic_hint": "memory query"
      },
@@ -6251,7 +6887,7 @@
       "stability": "volatile",
       "tags_add": [
        "docker",
-       "release"
+       "build status"
       ],
       "topic_hint": "release build"
      }
@@ -6265,7 +6901,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Docker firewall behavior differs from the release R2 build status.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6273,8 +6912,11 @@
       "id": "v231",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Docker firewall behavior and memory.query token budgets are different subjects.",
+      "reason": "Docker port security and memory query token budgets are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6287,7 +6929,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Query token budget and Docker release build are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6346,7 +6991,8 @@
      "stability_suggested": "stable",
      "tags_add": [
       "security",
-      "ufw"
+      "ufw",
+      "ports"
      ],
      "topic_hint": "Docker firewall",
      "version_id": 229
@@ -6371,7 +7017,7 @@
      "stability_suggested": "stable",
      "tags_add": [
       "token-budget",
-      "defaults"
+      "api-convention"
      ],
      "topic_hint": "memory query",
      "version_id": 231
@@ -6384,7 +7030,7 @@
      "stability_suggested": "volatile",
      "tags_add": [
       "docker",
-      "release"
+      "build-status"
      ],
      "topic_hint": "release build",
      "version_id": 232
@@ -6408,7 +7054,7 @@
       "stability": "stable",
       "tags_add": [
        "güvenlik",
-       "komut satırı"
+       "şifre yönetimi"
       ],
       "topic_hint": "veritabanı şifreleri"
      },
@@ -6419,25 +7065,25 @@
       "tags_add": [
        "takvim"
       ],
-      "topic_hint": "toplantı zamanı"
+      "topic_hint": "durum toplantısı"
      },
      {
       "id": "v235",
       "importance": 6,
       "stability": "stable",
       "tags_add": [
-       "dokümantasyon",
-       "iletişim"
+       "yazışma",
+       "dokümantasyon"
       ],
-      "topic_hint": "dil tercihleri"
+      "topic_hint": "dil kuralları"
      },
      {
       "id": "v236",
-      "importance": 7,
+      "importance": 8,
       "stability": "stable",
       "tags_add": [
        "deploy",
-       "release"
+       "yayın süreci"
       ],
       "topic_hint": "sürüm yayınlama"
      }
@@ -6450,8 +7096,11 @@
       "id": "v236",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Komut satırında veritabanı şifresi kullanımı ile sürüm yayınlama adımları farklı konular.",
+      "reason": "Database password handling and release steps are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6459,8 +7108,11 @@
       "id": "v235",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Şifreleri komut satırı argümanı yapmama kuralı ile proje dili farklı konular.",
+      "reason": "Database password handling and project language are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6468,8 +7120,11 @@
       "id": "v234",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Veritabanı şifrelerinin kullanımı ile toplantı zamanı farklı konular.",
+      "reason": "Database password handling and a meeting time are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6481,8 +7136,11 @@
       "id": "v236",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Farklı konular: toplantı zamanı ve sürüm yayınlama adımları.",
+      "reason": "Toplantı bilgisi sürüm yayınlama adımlarından farklı bir konu.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6490,8 +7148,11 @@
       "id": "v235",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Farklı konular: toplantı zamanı ve proje dili.",
+      "reason": "Toplantı zamanı ile proje dili farklı konulardır.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6503,8 +7164,11 @@
       "id": "v236",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Proje dili and release procedure are different subjects.",
+      "reason": "Proje dili ile sürüm yayınlama adımları farklı konular.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6584,7 +7248,7 @@
      "stability_suggested": "stable",
      "tags_add": [
       "guvenlik",
-      "komut-satiri"
+      "sifre-yonetimi"
      ],
      "topic_hint": "veritabanı şifreleri",
      "version_id": 233
@@ -6598,7 +7262,7 @@
      "tags_add": [
       "takvim"
      ],
-     "topic_hint": "toplantı zamanı",
+     "topic_hint": "durum toplantısı",
      "version_id": 234
     },
     {
@@ -6608,21 +7272,21 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "dokumantasyon",
-      "iletisim"
+      "yazisma",
+      "dokumantasyon"
      ],
-     "topic_hint": "dil tercihleri",
+     "topic_hint": "dil kuralları",
      "version_id": 235
     },
     {
      "capability": "annotate",
-     "importance": 7,
+     "importance": 8,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
       "deploy",
-      "release"
+      "yayin-sureci"
      ],
      "topic_hint": "sürüm yayınlama",
      "version_id": 236
@@ -6646,19 +7310,19 @@
       "stability": "volatile",
       "tags_add": [
        "503",
-       "servis kesintisi"
+       "availability"
       ],
-      "topic_hint": "OpenRouter hatası"
+      "topic_hint": "OpenRouter errors"
      },
      {
       "id": "v238",
       "importance": 10,
       "stability": "stable",
       "tags_add": [
-       "veri kaybı",
-       "sql"
+       "data-loss",
+       "database-safety"
       ],
-      "topic_hint": "üretim veritabanı güvenliği"
+      "topic_hint": "production database safety"
      },
      {
       "id": "v239",
@@ -6666,18 +7330,18 @@
       "stability": "stable",
       "tags_add": [
        "postgresql",
-       "architekturentscheidung"
+       "architecture-decision"
       ],
-      "topic_hint": "bitemporale Schicht"
+      "topic_hint": "bitemporal storage"
      },
      {
       "id": "v240",
       "importance": 1,
       "stability": "volatile",
       "tags_add": [
-       "wetter"
+       "weather"
       ],
-      "topic_hint": "Berliner Wetter"
+      "topic_hint": "Berlin weather"
      }
     ]
    },
@@ -6688,8 +7352,11 @@
       "id": "v238",
       "new_quote": "",
       "old_quote": "",
-      "reason": "OpenRouter'ın geçici hatası, üretim veritabanı güvenlik kuralından farklı bir konu.",
+      "reason": "OpenRouter availability and production database safety are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6697,8 +7364,11 @@
       "id": "v239",
       "new_quote": "",
       "old_quote": "",
-      "reason": "OpenRouter hizmet hatası, bitemporal PostgreSQL/Graphiti kararından farklı.",
+      "reason": "OpenRouter errors and the PostgreSQL-versus-Graphiti decision are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6706,8 +7376,11 @@
       "id": "v240",
       "new_quote": "",
       "old_quote": "",
-      "reason": "OpenRouter'ın 503 hatası ile Berlin hava durumu farklı konular.",
+      "reason": "OpenRouter availability and Berlin weather are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6719,8 +7392,11 @@
       "id": "v239",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Different subjects: production data deletion rule versus choice of PostgreSQL over Graphiti.",
+      "reason": "Produktionsdatenbank-Sicherheitsregel und Architekturentscheidung betreffen unterschiedliche Claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6732,8 +7408,11 @@
       "id": "v240",
       "new_quote": "",
       "old_quote": "",
-      "reason": "PostgreSQL-Schicht und Wetter in Berlin sind verschiedene Themen.",
+      "reason": "PostgreSQL architecture decision and Berlin weather concern different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6806,9 +7485,9 @@
      "stability_suggested": "volatile",
      "tags_add": [
       "503",
-      "servis-kesintisi"
+      "availability"
      ],
-     "topic_hint": "OpenRouter hatası",
+     "topic_hint": "OpenRouter errors",
      "version_id": 237
     },
     {
@@ -6818,10 +7497,10 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "veri-kaybi",
-      "sql"
+      "data-loss",
+      "database-safety"
      ],
-     "topic_hint": "üretim veritabanı güvenliği",
+     "topic_hint": "production database safety",
      "version_id": 238
     },
     {
@@ -6832,9 +7511,9 @@
      "stability_suggested": "stable",
      "tags_add": [
       "postgresql",
-      "architekturentscheidung"
+      "architecture-decision"
      ],
-     "topic_hint": "bitemporale Schicht",
+     "topic_hint": "bitemporal storage",
      "version_id": 239
     },
     {
@@ -6844,9 +7523,9 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "wetter"
+      "weather"
      ],
-     "topic_hint": "Berliner Wetter",
+     "topic_hint": "Berlin weather",
      "version_id": 240
     }
    ],
@@ -6880,18 +7559,17 @@
        "stdin",
        "schleifen"
       ],
-      "topic_hint": "Deploy-Skripte"
+      "topic_hint": "Deploy-Skript"
      },
      {
       "id": "v243",
-      "importance": 9,
+      "importance": 8,
       "stability": "stable",
       "tags_add": [
-       "rollback",
-       "releases",
-       "datenwiederherstellung"
+       "deployment",
+       "wiederherstellung"
       ],
-      "topic_hint": "Rollback und Wiederherstellung"
+      "topic_hint": "Rollback-Verfahren"
      },
      {
       "id": "v244",
@@ -6899,7 +7577,7 @@
       "stability": "stable",
       "tags_add": [
        "git",
-       "feature-branches"
+       "branches"
       ],
       "topic_hint": "Branch-Namenskonvention"
      }
@@ -6912,8 +7590,11 @@
       "id": "v242",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Import-Pipeline-Fortschritt und ssh-Schleifenregel sind verschiedene Themen.",
+      "reason": "Der Import-Pipeline-Fortschritt betrifft ein anderes Thema als SSH in Schleifen.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6921,8 +7602,11 @@
       "id": "v244",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Pipeline-Fortschritt und Branch-Namenskonvention sind verschiedene Themen.",
+      "reason": "Pipeline-Fortschritt und Branch-Namenskonvention sind verschiedene Sachverhalte.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6930,8 +7614,11 @@
       "id": "v243",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Pipeline-Fortschritt und Rollback-Verfahren sind verschiedene Themen.",
+      "reason": "Pipeline-Fortschritt und Rollback-Verfahren sind verschiedene Sachverhalte.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6943,8 +7630,11 @@
       "id": "v243",
       "new_quote": "",
       "old_quote": "",
-      "reason": "SSH stdin handling and rollback procedure are different subjects.",
+      "reason": "SSH stdin handling and rollback procedure concern different deployment claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -6952,8 +7642,11 @@
       "id": "v244",
       "new_quote": "",
       "old_quote": "",
-      "reason": "SSH stdin handling and branch naming are different subjects.",
+      "reason": "SSH stdin handling and branch naming concern different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -6965,8 +7658,11 @@
       "id": "v244",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Rollback procedure and branch naming are different subjects.",
+      "reason": "Rollback procedures and feature-branch naming concern different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7061,21 +7757,20 @@
       "stdin",
       "schleifen"
      ],
-     "topic_hint": "Deploy-Skripte",
+     "topic_hint": "Deploy-Skript",
      "version_id": 242
     },
     {
      "capability": "annotate",
-     "importance": 9,
+     "importance": 8,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "rollback",
-      "releases",
-      "datenwiederherstellung"
+      "deployment",
+      "wiederherstellung"
      ],
-     "topic_hint": "Rollback und Wiederherstellung",
+     "topic_hint": "Rollback-Verfahren",
      "version_id": 243
     },
     {
@@ -7086,7 +7781,7 @@
      "stability_suggested": "stable",
      "tags_add": [
       "git",
-      "feature-branches"
+      "branches"
      ],
      "topic_hint": "Branch-Namenskonvention",
      "version_id": 244
@@ -7119,9 +7814,9 @@
       "importance": 9,
       "stability": "stable",
       "tags_add": [
-       "database",
-       "incident",
-       "table locking"
+       "database migration",
+       "table lock",
+       "production incident"
       ],
       "topic_hint": "migration outage"
      },
@@ -7130,7 +7825,7 @@
       "importance": 2,
       "stability": "stable",
       "tags_add": [
-       "acronym"
+       "project identity"
       ],
       "topic_hint": "project name"
      },
@@ -7140,7 +7835,7 @@
       "stability": "volatile",
       "tags_add": [
        "code review",
-       "w2b"
+       "branch status"
       ],
       "topic_hint": "branch review"
      }
@@ -7153,8 +7848,11 @@
       "id": "v246",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Embedding model revision and production outage are different subjects.",
+      "reason": "Embedding model revision and production migration outage describe unrelated facts.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7211,9 +7909,9 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "database",
-      "incident",
-      "table-locking"
+      "database-migration",
+      "table-lock",
+      "production-incident"
      ],
      "topic_hint": "migration outage",
      "version_id": 246
@@ -7225,7 +7923,7 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "acronym"
+      "project-identity"
      ],
      "topic_hint": "project name",
      "version_id": 247
@@ -7238,7 +7936,7 @@
      "stability_suggested": "volatile",
      "tags_add": [
       "code-review",
-      "w2b"
+      "branch-status"
      ],
      "topic_hint": "branch review",
      "version_id": 248
@@ -7261,8 +7959,8 @@
       "importance": 7,
       "stability": "stable",
       "tags_add": [
-       "job reliability",
-       "leases"
+       "job leases",
+       "duplicate runs"
       ],
       "topic_hint": "lease renewal"
      },
@@ -7287,11 +7985,11 @@
      },
      {
       "id": "v252",
-      "importance": 5,
+      "importance": 4,
       "stability": "stable",
       "tags_add": [
        "github",
-       "repository"
+       "git remote"
       ],
       "topic_hint": "repository hosting"
      }
@@ -7304,8 +8002,11 @@
       "id": "v250",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Lease renewal behavior and admin token handling are different subjects.",
+      "reason": "Lease renewal behavior and admin token handling concern different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7317,8 +8018,11 @@
       "id": "v252",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Admin token handling and GitHub repository ownership are different subjects.",
+      "reason": "Admin token handling and repository hosting are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7369,8 +8073,8 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "job-reliability",
-      "leases"
+      "job-leases",
+      "duplicate-runs"
      ],
      "topic_hint": "lease renewal",
      "version_id": 249
@@ -7408,7 +8112,7 @@
      "stability_suggested": "stable",
      "tags_add": [
       "github",
-      "repository"
+      "git-remote"
      ],
      "topic_hint": "repository hosting",
      "version_id": 252
@@ -7441,27 +8145,28 @@
       "importance": 6,
       "stability": "stable",
       "tags_add": [
-       "tests",
+       "testing",
        "replay"
       ],
       "topic_hint": "cassette recording"
      },
      {
       "id": "v255",
-      "importance": 7,
+      "importance": 8,
       "stability": "stable",
       "tags_add": [
-       "embeddings",
+       "model pinning",
        "reproducibility"
       ],
-      "topic_hint": "model versioning"
+      "topic_hint": "embedding model versions"
      },
      {
       "id": "v256",
       "importance": 3,
       "stability": "volatile",
       "tags_add": [
-       "testing"
+       "testing",
+       "feature flag"
       ],
       "topic_hint": "synthesis feature flag"
      }
@@ -7474,8 +8179,11 @@
       "id": "v256",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Gemini embeddings plan and synthesis flag status are different subjects.",
+      "reason": "A tentative next-week embedding plan differs from this week's synthesis flag setting.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7487,8 +8195,11 @@
       "id": "v255",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Cassette recording workflow and model revision pinning are different claims.",
+      "reason": "Cassette recording procedure and model revision pinning are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7552,7 +8263,7 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "tests",
+      "testing",
       "replay"
      ],
      "topic_hint": "cassette recording",
@@ -7560,15 +8271,15 @@
     },
     {
      "capability": "annotate",
-     "importance": 7,
+     "importance": 8,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "embeddings",
+      "model-pinning",
       "reproducibility"
      ],
-     "topic_hint": "model versioning",
+     "topic_hint": "embedding model versions",
      "version_id": 255
     },
     {
@@ -7578,7 +8289,8 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "testing"
+      "testing",
+      "feature-flag"
      ],
      "topic_hint": "synthesis feature flag",
      "version_id": 256
@@ -7601,8 +8313,7 @@
       "importance": 7,
       "stability": "stable",
       "tags_add": [
-       "approval",
-       "owner"
+       "approval"
       ],
       "topic_hint": "project ownership"
      },
@@ -7611,28 +8322,26 @@
       "importance": 5,
       "stability": "stable",
       "tags_add": [
-       "log format",
-       "observability"
+       "log format"
       ],
       "topic_hint": "tool logging"
      },
      {
       "id": "v259",
-      "importance": 8,
+      "importance": 9,
       "stability": "stable",
       "tags_add": [
        "git",
-       "data loss"
+       "data loss prevention"
       ],
-      "topic_hint": "shared branch safety"
+      "topic_hint": "shared branches"
      },
      {
       "id": "v260",
       "importance": 3,
-      "stability": "volatile",
+      "stability": "stable",
       "tags_add": [
-       "release",
-       "production"
+       "release"
       ],
       "topic_hint": "R1 deployment"
      }
@@ -7645,8 +8354,11 @@
       "id": "v260",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Owner approval and the R1 production deployment are different claims.",
+      "reason": "Owner approval and R1 deployment are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7690,8 +8402,7 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "approval",
-      "owner"
+      "approval"
      ],
      "topic_hint": "project ownership",
      "version_id": 257
@@ -7703,23 +8414,22 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "log-format",
-      "observability"
+      "log-format"
      ],
      "topic_hint": "tool logging",
      "version_id": 258
     },
     {
      "capability": "annotate",
-     "importance": 8,
+     "importance": 9,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
       "git",
-      "data-loss"
+      "data-loss-prevention"
      ],
-     "topic_hint": "shared branch safety",
+     "topic_hint": "shared branches",
      "version_id": 259
     },
     {
@@ -7727,10 +8437,9 @@
      "importance": 3,
      "importance_src": "librarian",
      "op": "signal_upsert",
-     "stability_suggested": "volatile",
+     "stability_suggested": "stable",
      "tags_add": [
-      "release",
-      "production"
+      "release"
      ],
      "topic_hint": "R1 deployment",
      "version_id": 260
@@ -7759,7 +8468,7 @@
      },
      {
       "id": "v262",
-      "importance": 9,
+      "importance": 10,
       "stability": "stable",
       "tags_add": [
        "privacy",
@@ -7772,8 +8481,8 @@
       "importance": 6,
       "stability": "stable",
       "tags_add": [
-       "formatting",
-       "ruff"
+       "ruff",
+       "formatting"
       ],
       "topic_hint": "kod stili"
      },
@@ -7842,8 +8551,8 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "formatting",
-      "ruff"
+      "ruff",
+      "formatting"
      ],
      "topic_hint": "kod stili",
      "version_id": 263
@@ -7876,7 +8585,7 @@
       "importance": 3,
       "stability": "volatile",
       "tags_add": [
-       "yeniden çalıştırma"
+       "test"
       ],
       "topic_hint": "G-L3 kapısı"
      },
@@ -7885,28 +8594,27 @@
       "importance": 9,
       "stability": "stable",
       "tags_add": [
-       "lock_timeout",
-       "yazma kesintisi"
+       "database",
+       "production",
+       "indexing"
       ],
-      "topic_hint": "canlı veritabanı indeksleri"
+      "topic_hint": "lock timeout"
      },
      {
       "id": "v267",
-      "importance": 8,
+      "importance": 7,
       "stability": "stable",
       "tags_add": [
-       "konfiguration",
-       "provider-agnostisch"
+       "configuration",
+       "architecture"
       ],
-      "topic_hint": "provider-agnostische Architektur"
+      "topic_hint": "Provider-agnostik arsitektur"
      },
      {
       "id": "v268",
       "importance": 2,
       "stability": "volatile",
-      "tags_add": [
-       "termin"
-      ],
+      "tags_add": [],
       "topic_hint": "Status-Meeting"
      }
     ]
@@ -7918,8 +8626,11 @@
       "id": "v266",
       "new_quote": "",
       "old_quote": "",
-      "reason": "G-L3 kapısının yeniden çalıştırılması, veritabanı indeks değişikliği kuralından farklıdır.",
+      "reason": "Farklı konular: devam eden kapı çalışması ve veritabanı kilit zaman aşımı dersi.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -7927,8 +8638,11 @@
       "id": "v268",
       "new_quote": "",
       "old_quote": "",
-      "reason": "G-L3 kapısı işi ile toplantının ertelenmesi farklı konulardır.",
+      "reason": "Farklı konular: devam eden kapı çalışması ve ertelenen durum toplantısı.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7940,8 +8654,11 @@
       "id": "v267",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Lock-timeout lesson differs from the provider-agnostic configuration principle.",
+      "reason": "Unrelated claims: lock timeouts during live index changes versus provider-agnostic configuration.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -7953,8 +8670,11 @@
       "id": "v268",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Architektur-Konfiguration und verschobenes Status-Meeting sind unterschiedliche Themen.",
+      "reason": "Architekturprinzip und verschobenes Status-Meeting sind unterschiedliche Sachverhalte.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -8019,7 +8739,7 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "yeniden-calistirma"
+      "test"
      ],
      "topic_hint": "G-L3 kapısı",
      "version_id": 265
@@ -8031,10 +8751,11 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "lock_timeout",
-      "yazma-kesintisi"
+      "database",
+      "production",
+      "indexing"
      ],
-     "topic_hint": "canlı veritabanı indeksleri",
+     "topic_hint": "lock timeout",
      "version_id": 266
     },
     {
@@ -8044,10 +8765,10 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "konfiguration",
-      "provider-agnostisch"
+      "configuration",
+      "architecture"
      ],
-     "topic_hint": "provider-agnostische Architektur",
+     "topic_hint": "Provider-agnostik arsitektur",
      "version_id": 267
     },
     {
@@ -8056,9 +8777,7 @@
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "volatile",
-     "tags_add": [
-      "termin"
-     ],
+     "tags_add": [],
      "topic_hint": "Status-Meeting",
      "version_id": 268
     }
@@ -8080,9 +8799,9 @@
       "importance": 3,
       "stability": "volatile",
       "tags_add": [
-       "fixture"
+       "testing"
       ],
-      "topic_hint": "Fixture für Platzierung"
+      "topic_hint": "Fixture work"
      },
      {
       "id": "v270",
@@ -8090,27 +8809,29 @@
       "stability": "stable",
       "tags_add": [
        "security",
-       "cli"
+       "cli",
+       "secrets"
       ],
-      "topic_hint": "Token-Sicherheit"
+      "topic_hint": "Token handling"
      },
      {
       "id": "v271",
       "importance": 5,
       "stability": "stable",
       "tags_add": [
-       "json"
+       "json",
+       "tools"
       ],
-      "topic_hint": "Tool-Ausgabeformat"
+      "topic_hint": "Tool response format"
      },
      {
       "id": "v272",
       "importance": 4,
       "stability": "volatile",
       "tags_add": [
-       "dependency"
+       "dependencies"
       ],
-      "topic_hint": "psycopg-Abhängigkeit"
+      "topic_hint": "psycopg upgrade"
      }
     ]
    },
@@ -8121,8 +8842,11 @@
       "id": "v270",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Different subjects: today's placement fixture task versus token handling guidance.",
+      "reason": "Die heutige Fixture-Aufgabe und die Regel zur Token-Übergabe betreffen unterschiedliche Themen.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -8166,9 +8890,9 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "fixture"
+      "testing"
      ],
-     "topic_hint": "Fixture für Platzierung",
+     "topic_hint": "Fixture work",
      "version_id": 269
     },
     {
@@ -8179,9 +8903,10 @@
      "stability_suggested": "stable",
      "tags_add": [
       "security",
-      "cli"
+      "cli",
+      "secrets"
      ],
-     "topic_hint": "Token-Sicherheit",
+     "topic_hint": "Token handling",
      "version_id": 270
     },
     {
@@ -8191,9 +8916,10 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "json"
+      "json",
+      "tools"
      ],
-     "topic_hint": "Tool-Ausgabeformat",
+     "topic_hint": "Tool response format",
      "version_id": 271
     },
     {
@@ -8203,9 +8929,9 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "dependency"
+      "dependencies"
      ],
-     "topic_hint": "psycopg-Abhängigkeit",
+     "topic_hint": "psycopg upgrade",
      "version_id": 272
     }
    ],
@@ -8223,7 +8949,7 @@
     "items": [
      {
       "id": "v273",
-      "importance": 7,
+      "importance": 6,
       "stability": "stable",
       "tags_add": [
        "postgresql",
@@ -8245,10 +8971,10 @@
       "importance": 9,
       "stability": "stable",
       "tags_add": [
-       "restore testing",
-       "data loss"
+       "backups",
+       "data integrity"
       ],
-      "topic_hint": "backup integrity"
+      "topic_hint": "backup validation"
      },
      {
       "id": "v276",
@@ -8256,7 +8982,7 @@
       "stability": "volatile",
       "tags_add": [
        "performance",
-       "testing"
+       "load testing"
       ],
       "topic_hint": "load test results"
      }
@@ -8269,8 +8995,11 @@
       "id": "v276",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Backup reliability and load-test latency are different subjects.",
+      "reason": "Backup restoration lesson and load-test latency are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -8309,7 +9038,7 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 7,
+     "importance": 6,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
@@ -8339,10 +9068,10 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "restore-testing",
-      "data-loss"
+      "backups",
+      "data-integrity"
      ],
-     "topic_hint": "backup integrity",
+     "topic_hint": "backup validation",
      "version_id": 275
     },
     {
@@ -8353,7 +9082,7 @@
      "stability_suggested": "volatile",
      "tags_add": [
       "performance",
-      "testing"
+      "load-testing"
      ],
      "topic_hint": "load test results",
      "version_id": 276
@@ -8377,7 +9106,7 @@
       "stability": "stable",
       "tags_add": [
        "utc",
-       "time handling"
+       "timezones"
       ],
       "topic_hint": "timestamp storage"
      },
@@ -8386,8 +9115,8 @@
       "importance": 3,
       "stability": "volatile",
       "tags_add": [
-       "tests",
-       "refactoring"
+       "testing",
+       "refactor"
       ],
       "topic_hint": "test helper rename"
      },
@@ -8406,8 +9135,8 @@
       "importance": 3,
       "stability": "volatile",
       "tags_add": [
-       "wallet",
-       "dependency"
+       "billing",
+       "blocker"
       ],
       "topic_hint": "OpenRouter funding"
      }
@@ -8420,8 +9149,11 @@
       "id": "v280",
       "new_quote": "",
       "old_quote": "",
-      "reason": "A test-helper rename and an OpenRouter wallet top-up concern different subjects.",
+      "reason": "A test-helper rename and an OpenRouter wallet top-up are unrelated claims.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -8466,7 +9198,7 @@
      "stability_suggested": "stable",
      "tags_add": [
       "utc",
-      "time-handling"
+      "timezones"
      ],
      "topic_hint": "timestamp storage",
      "version_id": 277
@@ -8478,8 +9210,8 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "tests",
-      "refactoring"
+      "testing",
+      "refactor"
      ],
      "topic_hint": "test helper rename",
      "version_id": 278
@@ -8504,8 +9236,8 @@
      "op": "signal_upsert",
      "stability_suggested": "volatile",
      "tags_add": [
-      "wallet",
-      "dependency"
+      "billing",
+      "blocker"
      ],
      "topic_hint": "OpenRouter funding",
      "version_id": 280
@@ -8525,13 +9257,13 @@
     "items": [
      {
       "id": "v24",
-      "importance": 8,
+      "importance": 7,
       "stability": "stable",
       "tags_add": [
-       "database",
+       "schedule",
        "retention"
       ],
-      "topic_hint": "backup schedule"
+      "topic_hint": "database backups"
      }
     ]
    },
@@ -8540,19 +9272,27 @@
      {
       "confidence": "high",
       "id": "v20",
-      "new_quote": "kept for 14 days",
-      "old_quote": "kept for 30 days",
+      "new_quote": "each backup is kept for 14 days",
+      "old_quote": "Each database backup is kept for 30 days.",
       "reason": "Database backup retention changed from 30 days to 14 days.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Each database backup is kept for 30 days."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
       "confidence": "high",
       "id": "v19",
-      "new_quote": "backed up every night at 03:30",
-      "old_quote": "backed up every night",
-      "reason": "Adds the nightly database backup time.",
+      "new_quote": "backed up every night at 03:30 Europe/Vilnius",
+      "old_quote": "backed up every night.",
+      "reason": "New item adds the nightly database backup time and timezone.",
+      "refiner": "new",
       "relation": "refines",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -8560,8 +9300,11 @@
       "id": "v21",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Application log retention is a different subject from database backups.",
+      "reason": "Database backups and application logs are different subjects.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -8569,8 +9312,11 @@
       "id": "v23",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Weekly vacuum schedule is a different operation.",
+      "reason": "Backup schedule and weekly vacuum schedule are different operations.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -8578,8 +9324,11 @@
       "id": "v22",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Restore drill procedure is a different subject.",
+      "reason": "Backup schedule and restore drill describe different operations.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -8587,9 +9336,19 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
+      "same_subject": true
+     },
+     {
+      "adds_detail": "B",
+      "conflict": false,
+      "current": "both",
+      "id": "p2",
+      "replaces_all": false,
       "same_subject": true
      }
     ]
@@ -8635,13 +9394,15 @@
    ],
    "dropped_by_rule": 0,
    "guards": {
-    "verified": 1
+    "verified": 2
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v20",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v24",
      "supersedes": "new",
      "tier": "action",
@@ -8650,6 +9411,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -8658,10 +9420,21 @@
     {
      "confidence": "high",
      "id": "v19",
+     "refiner": "new",
      "relation": "refines",
      "subject": "v24",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "action",
+     "verification": {
+      "agreed": true,
+      "answer": {
+       "adds_detail": "B",
+       "conflict": false,
+       "current": "both",
+       "same_subject": true
+      },
+      "kind": "confirm"
+     }
     }
    ],
    "lexical_only": null,
@@ -8688,15 +9461,15 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 8,
+     "importance": 7,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "database",
+      "schedule",
       "retention"
      ],
-     "topic_hint": "backup schedule",
+     "topic_hint": "database backups",
      "version_id": 24
     }
    ],
@@ -8754,7 +9527,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "Each database backup is kept for 30 days.",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 30,
@@ -8789,16 +9564,19 @@
        ],
        "trigger_device_id": 6
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8724,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
-       "new": "kept for 14 days",
-       "old": "kept for 30 days"
+       "new": "each backup is kept for 14 days",
+       "old": "Each database backup is kept for 30 days."
       },
       "reason": "Database backup retention changed from 30 days to 14 days.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
       "tier": "action",
       "verification": {
@@ -8806,6 +9584,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -8876,15 +9655,26 @@
       "cos": 0.8583,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
-       "new": "backed up every night at 03:30",
-       "old": "backed up every night"
+       "new": "backed up every night at 03:30 Europe/Vilnius",
+       "old": "backed up every night."
       },
-      "reason": "Adds the nightly database backup time.",
+      "reason": "New item adds the nightly database backup time and timezone.",
+      "refiner": "new",
       "relation": "refines",
       "supersedes": "none",
       "tier": "action",
-      "verification": null
+      "verification": {
+       "agreed": true,
+       "answer": {
+        "adds_detail": "B",
+        "conflict": false,
+        "current": "both",
+        "same_subject": true
+       },
+       "kind": "confirm"
+      }
      },
      "question_id": "78054de2-928e-5e6a-9f24-fd77268b6058",
      "status": "open",
@@ -8909,12 +9699,12 @@
     "items": [
      {
       "id": "v30",
-      "importance": 6,
-      "stability": "volatile",
+      "importance": 7,
+      "stability": "stable",
       "tags_add": [
-       "üretim",
        "api",
-       "port"
+       "port",
+       "üretim"
       ],
       "topic_hint": "API portu"
      }
@@ -8925,10 +9715,15 @@
      {
       "confidence": "high",
       "id": "v25",
-      "new_quote": "artık 8765 portunda dinliyor",
-      "old_quote": "8080 portunda dinliyor",
-      "reason": "Üretim API portu changed from 8080 to 8765.",
+      "new_quote": "8765 portunda dinliyor",
+      "old_quote": "8080 portunda dinliyor.",
+      "reason": "Üretim API portu 8080'den 8765'e değişmiş.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Üretimdeki API 8080 portunda dinliyor."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -8936,8 +9731,11 @@
       "id": "v29",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Staging API and production API are different scopes.",
+      "reason": "Production and staging APIs are different scopes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -8945,8 +9743,11 @@
       "id": "v27",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Caddy's externally exposed ports differ from the production API's listening port.",
+      "reason": "Caddy's externally exposed ports differ from the API's listening port.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -8954,8 +9755,11 @@
       "id": "v26",
       "new_quote": "",
       "old_quote": "",
-      "reason": "PostgreSQL and the production API are different services.",
+      "reason": "PostgreSQL port is a different service's setting.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -8963,8 +9767,11 @@
       "id": "v28",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Health endpoint behavior is unrelated to the production API port.",
+      "reason": "Health endpoint behavior is unrelated to the API port.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -8972,9 +9779,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -9024,9 +9833,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v25",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v30",
      "supersedes": "new",
      "tier": "action",
@@ -9035,6 +9846,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -9065,14 +9877,14 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 6,
+     "importance": 7,
      "importance_src": "librarian",
      "op": "signal_upsert",
-     "stability_suggested": "volatile",
+     "stability_suggested": "stable",
      "tags_add": [
-      "uretim",
       "api",
-      "port"
+      "port",
+      "uretim"
      ],
      "topic_hint": "API portu",
      "version_id": 30
@@ -9132,7 +9944,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "8080 portunda dinliyor.",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 37,
@@ -9167,16 +9981,19 @@
        ],
        "trigger_device_id": 7
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.9645,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
-       "new": "artık 8765 portunda dinliyor",
-       "old": "8080 portunda dinliyor"
+       "new": "8765 portunda dinliyor",
+       "old": "8080 portunda dinliyor."
       },
-      "reason": "Üretim API portu changed from 8080 to 8765.",
+      "reason": "Üretim API portu 8080'den 8765'e değişmiş.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
       "tier": "action",
       "verification": {
@@ -9184,6 +10001,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -9216,7 +10034,8 @@
       "stability": "volatile",
       "tags_add": [
        "embedding",
-       "threads"
+       "worker-threads",
+       "konfiguration"
       ],
       "topic_hint": "Embedding-Worker Threads"
      }
@@ -9228,9 +10047,14 @@
       "confidence": "high",
       "id": "v31",
       "new_quote": "mit 4 Intra-Op-Threads statt 2",
-      "old_quote": "runs with 2 intra-op threads",
-      "reason": "Embedding worker thread count changed from 2 to 4.",
+      "old_quote": "2 intra-op threads",
+      "reason": "Embedding-worker thread count changed from 2 to 4.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "The embedding worker runs with 2 intra-op threads."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -9239,7 +10063,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "API request-body thread pool is a different component.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9248,7 +10075,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Worker memory limit is a different attribute.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9257,7 +10087,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Embedding model revision is a different attribute.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -9265,9 +10098,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -9310,9 +10145,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v31",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v36",
      "supersedes": "new",
      "tier": "action",
@@ -9321,6 +10158,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -9357,7 +10195,8 @@
      "stability_suggested": "volatile",
      "tags_add": [
       "embedding",
-      "threads"
+      "worker-threads",
+      "konfiguration"
      ],
      "topic_hint": "Embedding-Worker Threads",
      "version_id": 36
@@ -9417,7 +10256,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "2 intra-op threads",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 44,
@@ -9452,16 +10293,19 @@
        ],
        "trigger_device_id": 8
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8877,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "mit 4 Intra-Op-Threads statt 2",
-       "old": "runs with 2 intra-op threads"
+       "old": "2 intra-op threads"
       },
-      "reason": "Embedding worker thread count changed from 2 to 4.",
+      "reason": "Embedding-worker thread count changed from 2 to 4.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
       "tier": "action",
       "verification": {
@@ -9469,6 +10313,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -9502,7 +10347,7 @@
       "tags_add": [
        "production",
        "provisioning",
-       "security"
+       "access-control"
       ],
       "topic_hint": "device registration"
      }
@@ -9514,9 +10359,14 @@
       "confidence": "high",
       "id": "v37",
       "new_quote": "Public device registration is closed in production",
-      "old_quote": "any client can register a device",
-      "reason": "Production registration changed from client-accessible to closed.",
+      "old_quote": "any client can register a device through POST /devices/register",
+      "reason": "Production device registration changed from client registration to operator minting.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "In production any client can register a device through POST /devices/register and the admin approves it."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -9524,8 +10374,11 @@
       "id": "v38",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Local development registration differs in environment from production.",
+      "reason": "Local development configuration differs from production registration.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9533,8 +10386,11 @@
       "id": "v39",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Token format is a separate device attribute.",
+      "reason": "Token format is unrelated to production registration policy.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9542,8 +10398,11 @@
       "id": "v40",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Self-revocation is separate from device registration.",
+      "reason": "Device self-revocation is a separate operation from registration.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -9551,9 +10410,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -9596,9 +10457,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v37",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v42",
      "supersedes": "new",
      "tier": "action",
@@ -9607,6 +10470,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -9644,7 +10508,7 @@
      "tags_add": [
       "production",
       "provisioning",
-      "security"
+      "access-control"
      ],
      "topic_hint": "device registration",
      "version_id": 42
@@ -9704,7 +10568,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "any client can register a device through POST /devices/register",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 51,
@@ -9739,16 +10605,19 @@
        ],
        "trigger_device_id": 9
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8791,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "Public device registration is closed in production",
-       "old": "any client can register a device"
+       "old": "any client can register a device through POST /devices/register"
       },
-      "reason": "Production registration changed from client-accessible to closed.",
+      "reason": "Production device registration changed from client registration to operator minting.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
       "tier": "action",
       "verification": {
@@ -9756,6 +10625,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -9803,7 +10673,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "Staging and production databases are different environments.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9811,8 +10684,11 @@
       "id": "v45",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The staging API and database are different services.",
+      "reason": "The database and API are different services.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9820,8 +10696,11 @@
       "id": "v44",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The port and PostgreSQL version are different attributes.",
+      "reason": "Port and PostgreSQL version are different attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9829,8 +10708,11 @@
       "id": "v46",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The pytest compose database is distinct from the staging database.",
+      "reason": "The pytest compose database is a different database scope.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9838,8 +10720,11 @@
       "id": "v47",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The VM SSH port forward is a different service and scope.",
+      "reason": "The VM SSH port forward is unrelated to the staging database port.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -9933,9 +10818,9 @@
       "importance": 6,
       "stability": "stable",
       "tags_add": [
-       "github-actions",
+       "github actions",
        "lint",
-       "unit-tests"
+       "unit tests"
       ],
       "topic_hint": "CI pipeline"
      }
@@ -9947,9 +10832,12 @@
       "confidence": "high",
       "id": "v49",
       "new_quote": "runs lint and the unit tests on every push to main",
-      "old_quote": "Every push to main triggers GitHub Actions, which runs lint and the unit tests",
-      "reason": "Same GitHub Actions push trigger and test jobs.",
+      "old_quote": "runs lint and the unit tests",
+      "reason": "Same GitHub Actions trigger and checks on pushes to main.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9957,8 +10845,11 @@
       "id": "v50",
       "new_quote": "",
       "old_quote": "",
-      "reason": "CI unit tests and locally run integration tests can both be true.",
+      "reason": "Unit-test CI and locally run integration tests can both be true.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9966,8 +10857,11 @@
       "id": "v52",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Pre-commit gitleaks is separate from CI push checks.",
+      "reason": "Pre-commit gitleaks is unrelated to push-triggered CI checks.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9975,8 +10869,11 @@
       "id": "v51",
       "new_quote": "",
       "old_quote": "",
-      "reason": "CI checks and manual deployment describe different actions.",
+      "reason": "CI running tests is compatible with CI never deploying.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -9984,8 +10881,11 @@
       "id": "v53",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Python version is a separate CI attribute from its checks.",
+      "reason": "Python version and installer are separate from CI trigger and checks.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -10030,15 +10930,20 @@
     }
    ],
    "dropped_by_rule": 0,
-   "guards": {},
+   "guards": {
+    "dup_to_relates": 1
+   },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v49",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v54",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "question"
     }
    ],
    "lexical_only": null,
@@ -10109,15 +11014,14 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "dup": true,
-         "relation": "duplicate"
+         "relation": "relates"
         },
         "rel": "relates_to",
         "src_logical_id": 65,
         "valid_from": "2026-08-01T00:00:00.000000Z"
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         11
@@ -10135,15 +11039,18 @@
       "confidence": "high",
       "cos": 0.9822,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "runs lint and the unit tests on every push to main",
-       "old": "Every push to main triggers GitHub Actions, which runs lint and the unit tests"
+       "old": "runs lint and the unit tests"
       },
-      "reason": "Same GitHub Actions push trigger and test jobs.",
-      "relation": "duplicate",
+      "reason": "Same GitHub Actions trigger and checks on pushes to main.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": null
      },
      "question_id": "aaa28e7d-1407-5148-8476-0ff741159f55",
@@ -10169,7 +11076,7 @@
     "items": [
      {
       "id": "v6",
-      "importance": 5,
+      "importance": 6,
       "stability": "volatile",
       "tags_add": [
        "ttl",
@@ -10187,7 +11094,12 @@
       "new_quote": "TTL is 300 seconds",
       "old_quote": "TTL is 60 seconds",
       "reason": "The API response cache TTL changed from 60 to 300 seconds.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "The API response cache TTL is 60 seconds."
+      ],
+      "scope": "whole",
       "supersedes": "new"
      },
      {
@@ -10195,8 +11107,11 @@
       "id": "v5",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Cache TTL and API rate limit are different attributes.",
+      "reason": "Cache TTL and public API rate limit are different settings.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10205,7 +11120,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "API cache TTL and session cookie lifetime are different settings.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10214,7 +11132,10 @@
       "new_quote": "",
       "old_quote": "",
       "reason": "API response cache and CDN static asset cache are different scopes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10222,8 +11143,11 @@
       "id": "v4",
       "new_quote": "",
       "old_quote": "",
-      "reason": "API cache TTL and Redis memory limit are different attributes.",
+      "reason": "API cache TTL and Redis memory limit are different settings.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -10231,9 +11155,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -10283,9 +11209,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v1",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v6",
      "supersedes": "new",
      "tier": "action",
@@ -10294,6 +11222,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -10324,7 +11253,7 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 5,
+     "importance": 6,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "volatile",
@@ -10390,7 +11319,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "TTL is 60 seconds",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 9,
@@ -10425,16 +11356,19 @@
        ],
        "trigger_device_id": 3
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.9392,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "TTL is 300 seconds",
        "old": "TTL is 60 seconds"
       },
       "reason": "The API response cache TTL changed from 60 to 300 seconds.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "new",
       "tier": "action",
       "verification": {
@@ -10442,6 +11376,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -10476,7 +11411,7 @@
        "pytest",
        "data safety"
       ],
-      "topic_hint": "test database safety"
+      "topic_hint": "test database"
      }
     ]
    },
@@ -10485,10 +11420,13 @@
      {
       "confidence": "high",
       "id": "v55",
-      "new_quote": "Always point HLM_TEST_DSN at a dedicated database",
-      "old_quote": "set HLM_TEST_DSN to a dedicated database",
-      "reason": "Both require a dedicated HLM_TEST_DSN database before pytest because tables are truncated.",
+      "new_quote": "HLM_TEST_DSN at a dedicated database",
+      "old_quote": "HLM_TEST_DSN to a dedicated database",
+      "reason": "Both require a dedicated HLM_TEST_DSN because pytest truncates tables.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10496,8 +11434,11 @@
       "id": "v57",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Test database safety and avoiding migrations on the shared dev database are distinct claims.",
+      "reason": "Test database safety differs from the rule against dev database migrations.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10505,8 +11446,11 @@
       "id": "v56",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Dev database name is a separate setup fact from the pytest database requirement.",
+      "reason": "The dev database name is a separate project setup fact.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10514,8 +11458,11 @@
       "id": "v58",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Retrieval clone details are a separate claim from the pytest database requirement.",
+      "reason": "Retrieval clone properties differ from test database guidance.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -10553,15 +11500,20 @@
     }
    ],
    "dropped_by_rule": 1,
-   "guards": {},
+   "guards": {
+    "dup_to_relates": 1
+   },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v55",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v60",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "question"
     }
    ],
    "lexical_only": null,
@@ -10596,7 +11548,7 @@
       "pytest",
       "data-safety"
      ],
-     "topic_hint": "test database safety",
+     "topic_hint": "test database",
      "version_id": 60
     }
    ],
@@ -10631,15 +11583,14 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "dup": true,
-         "relation": "duplicate"
+         "relation": "relates"
         },
         "rel": "relates_to",
         "src_logical_id": 72,
         "valid_from": "2026-09-22T00:00:00.000000Z"
        }
       ],
-      "auto_class": true,
+      "auto_class": false,
       "capabilities": {
        "annotate": [
         12
@@ -10657,15 +11608,18 @@
       "confidence": "high",
       "cos": 0.9785,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
-       "new": "Always point HLM_TEST_DSN at a dedicated database",
-       "old": "set HLM_TEST_DSN to a dedicated database"
+       "new": "HLM_TEST_DSN at a dedicated database",
+       "old": "HLM_TEST_DSN to a dedicated database"
       },
-      "reason": "Both require a dedicated HLM_TEST_DSN database before pytest because tables are truncated.",
-      "relation": "duplicate",
+      "reason": "Both require a dedicated HLM_TEST_DSN because pytest truncates tables.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": null
      },
      "question_id": "1bdb0287-a5a5-56d1-b3c5-7a241a0a4dc7",
@@ -10694,7 +11648,7 @@
       "importance": 8,
       "stability": "stable",
       "tags_add": [
-       "model revisions",
+       "revision pinning",
        "vector consistency"
       ],
       "topic_hint": "embedding models"
@@ -10704,12 +11658,15 @@
    {
     "results": [
      {
-      "confidence": "high",
+      "confidence": "med",
       "id": "v61",
       "new_quote": "pin embedding models by their commit revision",
       "old_quote": "Pin every Hugging Face model by its commit revision",
       "reason": "Both teach pinning model revisions to prevent silent embedding changes.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10717,8 +11674,11 @@
       "id": "v62",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Cache directory is a separate setup fact.",
+      "reason": "A model revision lesson differs from the build machine's cache directory.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10726,8 +11686,11 @@
       "id": "v65",
       "new_quote": "",
       "old_quote": "",
-      "reason": "GPU inference choice is unrelated to revision pinning.",
+      "reason": "Revision pinning and the choice of CPU inference are different lessons.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10735,8 +11698,11 @@
       "id": "v63",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Package installation policy is distinct from model revision pinning.",
+      "reason": "Model revision pinning differs from freezing Python package installations.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -10744,10 +11710,12 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": false,
       "current": "both",
       "id": "p1",
-      "same_subject": true
+      "replaces_all": false,
+      "same_subject": false
      }
     ]
    }
@@ -10785,22 +11753,27 @@
    ],
    "dropped_by_rule": 1,
    "guards": {
-    "verified": 1
+    "dup_to_relates": 1,
+    "verify_disagreed": 1
    },
    "judgements": [
     {
-     "confidence": "high",
+     "confidence": "med",
+     "flags": [
+      "duplicate_not_identical",
+      "verifier_rejected"
+     ],
      "id": "v61",
-     "relation": "duplicate",
+     "relation": "none",
      "subject": "v66",
      "supersedes": "none",
-     "tier": "action",
+     "tier": "abstain",
      "verification": {
-      "agreed": true,
+      "agreed": false,
       "answer": {
        "conflict": false,
        "current": "both",
-       "same_subject": true
+       "same_subject": false
       },
       "kind": "widen"
      }
@@ -10812,15 +11785,8 @@
    ]
   },
   "resolved": {
-   "batch_id": "e73f22b2-0836-54e0-a53b-4f6ecef73225",
-   "batches": [
-    {
-     "batch_id": "e73f22b2-0836-54e0-a53b-4f6ecef73225",
-     "created": true,
-     "project_id": 13,
-     "status": "open"
-    }
-   ],
+   "batch_id": null,
+   "batches": [],
    "done": {
     "attempts": 1,
     "dedupe_key": "librarian_write:66",
@@ -10835,93 +11801,16 @@
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
-      "model-revisions",
+      "revision-pinning",
       "vector-consistency"
      ],
      "topic_hint": "embedding models",
      "version_id": 66
     }
    ],
-   "outcome": "proposed",
+   "outcome": "annotated",
    "question_status": [],
-   "questions": [
-    {
-     "batch_id": "e73f22b2-0836-54e0-a53b-4f6ecef73225",
-     "expires_at": "<ts>",
-     "job_key": "librarian_write:66",
-     "kind": "widen_scope",
-     "project_id": 13,
-     "project_ids": [
-      13,
-      14
-     ],
-     "proposal": {
-      "actions": [
-       {
-        "add_project_ids": [
-         13
-        ],
-        "assessed": {
-         "75": 61,
-         "80": 66
-        },
-        "logical_id": 75,
-        "op": "widen_scope",
-        "version_id": 61
-       }
-      ],
-      "auto_class": false,
-      "capabilities": {
-       "annotate": [
-        13,
-        14
-       ],
-       "correct": [
-        13,
-        14
-       ],
-       "global_experience": false,
-       "librarian_memory": true,
-       "question": [
-        13,
-        14
-       ],
-       "trigger_device_id": 13
-      },
-      "confidence": "high",
-      "cos": 0.9325,
-      "cross_project": true,
-      "flags": [],
-      "quotes": {
-       "new": "pin embedding models by their commit revision",
-       "old": "Pin every Hugging Face model by its commit revision"
-      },
-      "reason": "Both teach pinning model revisions to prevent silent embedding changes.",
-      "relation": "duplicate",
-      "supersedes": "none",
-      "tier": "action",
-      "verification": {
-       "agreed": true,
-       "answer": {
-        "conflict": false,
-        "current": "both",
-        "same_subject": true
-       },
-       "kind": "widen"
-      }
-     },
-     "question_id": "b2b57a9e-539a-57b4-9df7-2e6a1c74e45e",
-     "status": "open",
-     "subject_clues": [
-      "v66",
-      "v61"
-     ],
-     "subject_version_ids": [
-      61,
-      66
-     ]
-    }
-   ],
+   "questions": [],
    "recorded_at": "<ts>",
    "role": "observer",
    "superseded": 0
@@ -10937,8 +11826,7 @@
       "stability": "stable",
       "tags_add": [
        "umask",
-       "container",
-       "git checkout"
+       "dosya izinleri"
       ],
       "topic_hint": "checkout dosya izinleri"
      }
@@ -10950,9 +11838,12 @@
       "confidence": "high",
       "id": "v67",
       "new_quote": "umask 077 ile yapılan git checkout",
-      "old_quote": "git checkout on the server under umask 077",
-      "reason": "Same checkout permission lesson; language differs, but the claim is identical.",
+      "old_quote": "under umask 077 left the files unreadable",
+      "reason": "Aynı checkout sorununu ve çözüm olarak umask 022 kullanımını anlatıyor.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10960,8 +11851,11 @@
       "id": "v69",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Unrelated deploy-user fact.",
+      "reason": "Deploy kullanıcısı bilgisi checkout umask dersinden farklı.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -10969,8 +11863,11 @@
       "id": "v70",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Unrelated git staging rule.",
+      "reason": "Git add -A kuralı checkout izinleri dersinden farklı.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -10978,9 +11875,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": false,
       "current": "both",
       "id": "p1",
+      "replaces_all": false,
       "same_subject": true
      }
     ]
@@ -11012,16 +11911,20 @@
    ],
    "dropped_by_rule": 2,
    "guards": {
+    "dup_to_relates": 1,
     "verified": 1
    },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v67",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v72",
      "supersedes": "none",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
@@ -11063,8 +11966,7 @@
      "stability_suggested": "stable",
      "tags_add": [
       "umask",
-      "container",
-      "git-checkout"
+      "dosya-izinleri"
      ],
      "topic_hint": "checkout dosya izinleri",
      "version_id": 72
@@ -11119,15 +12021,18 @@
       "confidence": "high",
       "cos": 0.8944,
       "cross_project": true,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "umask 077 ile yapılan git checkout",
-       "old": "git checkout on the server under umask 077"
+       "old": "under umask 077 left the files unreadable"
       },
-      "reason": "Same checkout permission lesson; language differs, but the claim is identical.",
-      "relation": "duplicate",
+      "reason": "Aynı checkout sorununu ve çözüm olarak umask 022 kullanımını anlatıyor.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
@@ -11165,10 +12070,10 @@
       "stability": "stable",
       "tags_add": [
        "ssh",
-       "stdin",
-       "shell-skripte"
+       "schleifen",
+       "stdin"
       ],
-      "topic_hint": "SSH in Schleifen"
+      "topic_hint": "ssh in Schleifen"
      }
     ]
    },
@@ -11179,8 +12084,11 @@
       "id": "v73",
       "new_quote": "In Skripten mit Schleifen immer ssh -n verwenden",
       "old_quote": "Always use ssh -n in scripts with loops",
-      "reason": "Gleiche allgemeine Regel für ssh -n in Schleifen, nur anders formuliert.",
+      "reason": "Same general lesson: use ssh -n in scripts with loops to prevent stdin consumption.",
+      "refiner": "none",
       "relation": "duplicate",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11188,8 +12096,11 @@
       "id": "v74",
       "new_quote": "",
       "old_quote": "",
-      "reason": "ControlMaster-Verbindung ist ein anderes Thema.",
+      "reason": "ControlMaster connection reuse is a different SSH lesson.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11197,8 +12108,11 @@
       "id": "v76",
       "new_quote": "",
       "old_quote": "",
-      "reason": "ssh -t in nicht-interaktiven Skripten ist eine andere Regel.",
+      "reason": "Avoiding forced TTYs is a separate SSH lesson.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11206,8 +12120,11 @@
       "id": "v75",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Deploy-Host-Alias ist projektspezifisch und ein anderer Sachverhalt.",
+      "reason": "A project-specific deploy host alias is a different fact.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11215,8 +12132,11 @@
       "id": "v77",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Betrieb entfernter Skripte mit bash -s ist eine andere Regel.",
+      "reason": "Remote script transfer and execution is a separate SSH lesson.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -11224,9 +12144,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": false,
       "current": "both",
       "id": "p1",
+      "replaces_all": false,
       "same_subject": true
      }
     ]
@@ -11272,16 +12194,20 @@
    ],
    "dropped_by_rule": 0,
    "guards": {
+    "dup_to_relates": 1,
     "verified": 1
    },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "duplicate_not_identical"
+     ],
      "id": "v73",
-     "relation": "duplicate",
+     "relation": "relates",
      "subject": "v78",
      "supersedes": "none",
-     "tier": "action",
+     "tier": "question",
      "verification": {
       "agreed": true,
       "answer": {
@@ -11323,10 +12249,10 @@
      "stability_suggested": "stable",
      "tags_add": [
       "ssh",
-      "stdin",
-      "shell-skripte"
+      "schleifen",
+      "stdin"
      ],
-     "topic_hint": "SSH in Schleifen",
+     "topic_hint": "ssh in Schleifen",
      "version_id": 78
     }
    ],
@@ -11379,15 +12305,18 @@
       "confidence": "high",
       "cos": 0.9017,
       "cross_project": true,
-      "flags": [],
+      "flags": [
+       "duplicate_not_identical"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "In Skripten mit Schleifen immer ssh -n verwenden",
        "old": "Always use ssh -n in scripts with loops"
       },
-      "reason": "Gleiche allgemeine Regel für ssh -n in Schleifen, nur anders formuliert.",
-      "relation": "duplicate",
+      "reason": "Same general lesson: use ssh -n in scripts with loops to prevent stdin consumption.",
+      "relation": "relates",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": {
        "agreed": true,
        "answer": {
@@ -11421,14 +12350,13 @@
     "items": [
      {
       "id": "v84",
-      "importance": 7,
+      "importance": 6,
       "stability": "stable",
       "tags_add": [
        "hetzner",
-       "server",
        "deployment"
       ],
-      "topic_hint": "deploy infrastructure"
+      "topic_hint": "deploy target"
      }
     ]
    },
@@ -11438,9 +12366,14 @@
       "confidence": "high",
       "id": "v79",
       "new_quote": "Deploys go to the Hetzner CX33 server",
-      "old_quote": "the Hetzner CX33 server was decommissioned",
-      "reason": "The deploy target conflicts with the later production move and decommissioning.",
+      "old_quote": "Hetzner CX33 server was decommissioned",
+      "reason": "The later production move decommissions the previously stated deploy target.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [
+       "Deploys go to the Hetzner CX33 server in Falkenstein."
+      ],
+      "scope": "whole",
       "supersedes": "old"
      },
      {
@@ -11448,8 +12381,11 @@
       "id": "v81",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Deploy destination and firewall inbound ports are different attributes.",
+      "reason": "Firewall inbound ports do not address the deploy target.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11457,8 +12393,11 @@
       "id": "v83",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The rehearsal VM is distinct from the deployment target.",
+      "reason": "The rehearsal VM is distinct from the deploy target.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11466,8 +12405,11 @@
       "id": "v82",
       "new_quote": "",
       "old_quote": "",
-      "reason": "TLS certificate issuance is unrelated to the deployment target.",
+      "reason": "TLS certificate issuance does not address the deploy target.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -11475,9 +12417,11 @@
    {
     "results": [
      {
+      "adds_detail": "none",
       "conflict": true,
       "current": "B",
       "id": "p1",
+      "replaces_all": true,
       "same_subject": true
      }
     ]
@@ -11520,9 +12464,11 @@
    },
    "judgements": [
     {
+     "close_ok": true,
      "confidence": "high",
      "id": "v79",
      "relation": "contradicts",
+     "scope": "whole",
      "subject": "v84",
      "supersedes": "old",
      "tier": "action",
@@ -11531,6 +12477,7 @@
       "answer": {
        "conflict": true,
        "current": "B",
+       "replaces_all": true,
        "same_subject": true
       },
       "kind": "supersede"
@@ -11561,16 +12508,15 @@
    "mutations": [
     {
      "capability": "annotate",
-     "importance": 7,
+     "importance": 6,
      "importance_src": "librarian",
      "op": "signal_upsert",
      "stability_suggested": "stable",
      "tags_add": [
       "hetzner",
-      "server",
       "deployment"
      ],
-     "topic_hint": "deploy infrastructure",
+     "topic_hint": "deploy target",
      "version_id": 84
     }
    ],
@@ -11628,7 +12574,9 @@
         "props": {
          "by": "librarian",
          "confidence": "high",
-         "relation": "contradicts"
+         "quote": "Deploys go to the Hetzner CX33 server",
+         "relation": "contradicts",
+         "scope": "whole"
         },
         "rel": "supersedes",
         "src_logical_id": 98,
@@ -11663,16 +12611,19 @@
        ],
        "trigger_device_id": 16
       },
+      "close_ok": true,
       "confidence": "high",
       "cos": 0.8774,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
        "new": "Deploys go to the Hetzner CX33 server",
-       "old": "the Hetzner CX33 server was decommissioned"
+       "old": "Hetzner CX33 server was decommissioned"
       },
-      "reason": "The deploy target conflicts with the later production move and decommissioning.",
+      "reason": "The later production move decommissions the previously stated deploy target.",
       "relation": "contradicts",
+      "scope": "whole",
       "supersedes": "old",
       "tier": "action",
       "verification": {
@@ -11680,6 +12631,7 @@
        "answer": {
         "conflict": true,
         "current": "B",
+        "replaces_all": true,
         "same_subject": true
        },
        "kind": "supersede"
@@ -11709,7 +12661,7 @@
      {
       "id": "v90",
       "importance": 5,
-      "stability": "stable",
+      "stability": "volatile",
       "tags_add": [
        "memory",
        "infrastructure"
@@ -11725,8 +12677,11 @@
       "id": "v85",
       "new_quote": "has 4 GB of RAM",
       "old_quote": "has 8 GB of RAM",
-      "reason": "Staging VM memory values conflict; neither claim is later.",
+      "reason": "Staging VM RAM values conflict; both claims have the same valid time.",
+      "refiner": "none",
       "relation": "contradicts",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11734,8 +12689,11 @@
       "id": "v87",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Memory and disk are different attributes.",
+      "reason": "Memory and disk are different attributes; both facts can be true.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11743,8 +12701,11 @@
       "id": "v86",
       "new_quote": "",
       "old_quote": "",
-      "reason": "The memory claims concern different VMs.",
+      "reason": "Production VM memory is a different scope from staging VM memory.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11752,8 +12713,11 @@
       "id": "v89",
       "new_quote": "",
       "old_quote": "",
-      "reason": "RAM and operating system are different attributes.",
+      "reason": "Operating system and memory are different attributes; both can be true.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11761,8 +12725,11 @@
       "id": "v88",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Swap status and RAM capacity can both be true.",
+      "reason": "Swap status is a separate VM setting from RAM capacity.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      }
     ]
@@ -11807,15 +12774,21 @@
     }
    ],
    "dropped_by_rule": 0,
-   "guards": {},
+   "guards": {
+    "action_to_question": 1
+   },
    "judgements": [
     {
      "confidence": "high",
+     "flags": [
+      "action_unverified",
+      "action_quotes"
+     ],
      "id": "v85",
      "relation": "contradicts",
      "subject": "v90",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "question"
     }
    ],
    "lexical_only": null,
@@ -11845,7 +12818,7 @@
      "importance": 5,
      "importance_src": "librarian",
      "op": "signal_upsert",
-     "stability_suggested": "stable",
+     "stability_suggested": "volatile",
      "tags_add": [
       "memory",
       "infrastructure"
@@ -11910,15 +12883,19 @@
       "confidence": "high",
       "cos": 0.9353,
       "cross_project": false,
-      "flags": [],
+      "flags": [
+       "action_unverified",
+       "action_quotes"
+      ],
+      "judgement": "v2",
       "quotes": {
        "new": "has 4 GB of RAM",
        "old": "has 8 GB of RAM"
       },
-      "reason": "Staging VM memory values conflict; neither claim is later.",
+      "reason": "Staging VM RAM values conflict; both claims have the same valid time.",
       "relation": "contradicts",
       "supersedes": "none",
-      "tier": "action",
+      "tier": "question",
       "verification": null
      },
      "question_id": "c805eed1-f6e0-549a-a46c-178b80aedcda",
@@ -11960,10 +12937,13 @@
      {
       "confidence": "high",
       "id": "v91",
-      "new_quote": "at p95 with 3 concurrent callers",
+      "new_quote": "within 500 ms at p95 with 3 concurrent callers",
       "old_quote": "within 500 ms at p95",
-      "reason": "Adds concurrency and write-load conditions to the same query latency target.",
+      "reason": "New query latency target adds concurrency and write-load conditions.",
+      "refiner": "new",
       "relation": "refines",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11971,8 +12951,11 @@
       "id": "v92",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Different operation: write acknowledgment latency.",
+      "reason": "Different operation: query latency versus write acknowledgment latency.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11980,8 +12963,11 @@
       "id": "v93",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Token budget is a different query attribute.",
+      "reason": "Token budget and query latency are different attributes.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11989,8 +12975,11 @@
       "id": "v94",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Measured p50 on corpus A differs from the p95 target claim.",
+      "reason": "Measured p50 on corpus A differs from a p95 latency target.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
      },
      {
@@ -11998,9 +12987,24 @@
       "id": "v95",
       "new_quote": "",
       "old_quote": "",
-      "reason": "Recall quality gate is a different performance attribute.",
+      "reason": "Recall gate is a different performance criterion.",
+      "refiner": "none",
       "relation": "none",
+      "replaced_statements": [],
+      "scope": "none",
       "supersedes": "none"
+     }
+    ]
+   },
+   {
+    "results": [
+     {
+      "adds_detail": "B",
+      "conflict": false,
+      "current": "both",
+      "id": "p1",
+      "replaces_all": false,
+      "same_subject": true
      }
     ]
    }
@@ -12044,15 +13048,28 @@
     }
    ],
    "dropped_by_rule": 0,
-   "guards": {},
+   "guards": {
+    "verified": 1
+   },
    "judgements": [
     {
      "confidence": "high",
      "id": "v91",
+     "refiner": "new",
      "relation": "refines",
      "subject": "v96",
      "supersedes": "none",
-     "tier": "action"
+     "tier": "action",
+     "verification": {
+      "agreed": true,
+      "answer": {
+       "adds_detail": "B",
+       "conflict": false,
+       "current": "both",
+       "same_subject": true
+      },
+      "kind": "confirm"
+     }
     }
    ],
    "lexical_only": null,
@@ -12149,15 +13166,26 @@
       "cos": 0.9481,
       "cross_project": false,
       "flags": [],
+      "judgement": "v2",
       "quotes": {
-       "new": "at p95 with 3 concurrent callers",
+       "new": "within 500 ms at p95 with 3 concurrent callers",
        "old": "within 500 ms at p95"
       },
-      "reason": "Adds concurrency and write-load conditions to the same query latency target.",
+      "reason": "New query latency target adds concurrency and write-load conditions.",
+      "refiner": "new",
       "relation": "refines",
       "supersedes": "none",
       "tier": "action",
-      "verification": null
+      "verification": {
+       "agreed": true,
+       "answer": {
+        "adds_detail": "B",
+        "conflict": false,
+        "current": "both",
+        "same_subject": true
+       },
+       "kind": "confirm"
+      }
      },
      "question_id": "114ae56a-b40b-5d61-b756-4abac032dc56",
      "status": "open",
