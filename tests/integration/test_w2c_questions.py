@@ -265,6 +265,100 @@ async def test_d074_observer_accept_then_promotion_rechecks_staleness(
     await _replay_identical(connect)
 
 
+async def test_sol49_cross_project_action_waits_for_every_touched_project(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Home A (MAIN) assistant, B (OTHER) observer: the A→B contradiction (links MAIN→OTHER + a
+    close in OTHER) applies NOTHING, on B or on A; it stays accepted_pending. Promoting B releases
+    it (the set_role event queues the apply) and it applies; replay identical (Sol 49 #1, #2)."""
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder, other_old=True)
+    ack = await _answer(connect, world.ctx_a, _args(qid, "accept"))
+    assert ack["status"] == "accepted_pending"
+    before = await _user_state(connect, world)
+    released = await _promote(connect, world)  # deployment assistant: both projects promoted
+    assert [j["payload"]["op"] for j in released["jobs"]] == ["apply_batch"]
+    async with await connect() as conn:  # ... but B is demoted again before the job runs
+        from hlmemo.librarian.roles import record_role_decision
+
+        await record_role_decision(
+            conn, role="observer", decided_by=world.ctx_admin, decision="D-b", project_id=world.other_id
+        )
+        await conn.commit()
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    assert await worker.drain() == 1
+    assert await _user_state(connect, world) == before  # 0 mutations on B AND on A
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("accepted_pending",)]
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->>'outcome', payload->'request'->'role_deferred' FROM events"
+            " WHERE kind = 'librarian' AND payload->'request'->>'op' = 'apply_batch'"
+        )
+        assert await cur.fetchall() == [("role_denied", [qid])]
+    resolved = await _promote(connect, world)  # a deployment decision alone does not lift B's override
+    assert "jobs" not in resolved
+    async with await connect() as conn:  # promoting B itself releases it
+        from hlmemo.librarian.roles import record_role_decision
+
+        event_id = await record_role_decision(
+            conn, role="assistant", decided_by=world.ctx_admin, decision="D-b2", project_id=world.other_id
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->'jobs' FROM events WHERE event_id = %s", (event_id,)
+        )
+        (jobs,) = await cur.fetchone()
+        assert [j["dedupe_key"].rsplit(":", 1)[1] for j in jobs] == [f"promo{event_id}"]
+    assert await worker.drain() == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("applied",)]
+        cur = await conn.execute("SELECT rel FROM links ORDER BY link_id")
+        assert [r[0] for r in await cur.fetchall()] == ["contradicts", "supersedes"]
+        cur = await conn.execute(
+            "SELECT count(*) FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'"
+            " AND valid_to <> 'infinity'",
+            (old.logical_id,),
+        )
+        assert await cur.fetchone() == (1,)
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_sol49_promotion_job_survives_an_observer_worker(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """accept under observer → promote → an OBSERVER worker sees the queue first and leaves the
+    apply job queued (no attempt, no event) → the promoted worker applies it; replay identical."""
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
+    before = await _user_state(connect, world)
+    await _promote(connect, world)
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    assert await make_worker(lib_settings(db_dsn), provider, connect).drain() == 0  # observer first
+    assert await _user_state(connect, world) == before
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status, attempts FROM jobs WHERE payload->>'op' = 'apply_batch'")
+        assert await cur.fetchall() == [("queued", 0)]
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("accepted_pending",)]
+    assert await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain() == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("applied",)]
+        cur = await conn.execute(
+            "SELECT count(*) FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'"
+            " AND valid_to <> 'infinity'",
+            (old.logical_id,),
+        )
+        assert await cur.fetchone() == (1,)
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
 async def test_gq1_accept_applies_directly_in_assistant(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
     """Promoted (decision + configured assistant): memory.answer applies as the answering device."""
     old, new, [(qid, _kind)] = await _propose(db_dsn, connect, world, embedder)
@@ -588,7 +682,15 @@ async def test_sol44_observer_hands_approvals_back(db_dsn, connect, world: World
         await conn.commit()
     llm = ScriptedLLM(default=Oracle())
     provider = make_provider(db_dsn, llm, budget_disabled=True)
-    await make_worker(lib_settings(db_dsn), provider, connect).drain()  # observer: role_denied
+    # an OBSERVER-configured worker does not even lease the apply job (D-074, Sol 49 #2)
+    assert await make_worker(lib_settings(db_dsn), provider, connect).drain() == 0
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status, attempts FROM jobs WHERE payload->>'op' = 'apply_batch'")
+        assert await cur.fetchall() == [("queued", 0)]
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("approved",)]
+    # an assistant-configured worker whose role is not decided acts as observer: hand-back
+    await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain()
     await provider.aclose()
     async with await connect() as conn:
         assert await count(conn, "links") == 0
@@ -614,7 +716,8 @@ async def test_sol46_handed_back_approvals_can_be_decided_again(
         await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
         await conn.commit()
     provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
-    await make_worker(lib_settings(db_dsn), provider, connect).drain()  # observer: handed back
+    # effective observer (assistant configured, no decision yet): handed back
+    await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain()
     async with await connect() as conn:
         again = await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
         assert again["accepted"] == 1
