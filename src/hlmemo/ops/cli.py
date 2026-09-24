@@ -72,6 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--exists-ok", action="store_true", help="succeed if the project already exists")
     psub.add_parser("list").add_argument("--json", action="store_true")
 
+    src = sub.add_parser("sources", help="W1.5 import sources: reconcile duplicate open source keys")
+    ssub = src.add_subparsers(dest="action", required=True)
+    ssub.add_parser("duplicates", help="(project, source_key) groups with >1 open current item").add_argument(
+        "--json", action="store_true"
+    )
+    cd = ssub.add_parser("close-duplicates", help="close all but the newest item of each duplicate group")
+    cd.add_argument("--yes", action="store_true", help="required: really close (validity ends)")
+
     st = sub.add_parser(
         "status", help="jobs ledger, worker progress, librarian heartbeat, devices, migration"
     )
@@ -169,6 +177,20 @@ async def _dispatch(conn: AsyncConnection, args: argparse.Namespace, settings: A
         else:
             for p in rows:
                 sys.stdout.write(f"{p['id']:>4}  {p['slug']:<28} {p['name']}\n")
+        return 0
+    if group == "sources" and action == "duplicates":
+        groups = await service.source_duplicates(conn)
+        if args.json:
+            _print({"duplicates": groups})
+        else:
+            for g in groups:
+                ids = ",".join(str(i["logical_id"]) for i in g["items"])
+                sys.stdout.write(f"{g['project']:<20} {g['source_key']}  logical_ids={ids}\n")
+        return 0
+    if group == "sources" and action == "close-duplicates":
+        if not args.yes:
+            raise HlmError("E_INVALID_ARG", "close-duplicates closes items (validity ends): pass --yes")
+        _print(await service.close_source_duplicates(conn))
         return 0
     raise HlmError("E_INVALID_ARG", f"unknown command {group} {action}")
 

@@ -24,7 +24,7 @@ from hlmemo import __version__
 from hlmemo.auth.errors import HlmError
 from hlmemo.auth.resolve import lock_device_access
 from hlmemo.auth.tokens import generate_token, hash_token
-from hlmemo.core.skeleton_card import write_skeleton_card
+from hlmemo.core.skeleton_card import operator_context, write_skeleton_card
 from hlmemo.db import auth_queries as q
 
 CLIENT = f"hlm-ops/{__version__}"
@@ -482,6 +482,102 @@ async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[
     out["breaker_state"] = state
     out["breaker_source"] = "ledger"
     return out
+
+
+#: open current rows = the rows the UNIQUE index mv_source_owner (0007) covers
+_OWNER_ROWS = "source_key IS NOT NULL AND superseded_at = 'infinity' AND valid_to = 'infinity'"
+NS_RECONCILE = uuid.UUID("7b1c2e54-9a36-4f0e-8d25-3c6a1f9e0b47")
+
+
+async def source_duplicates(conn: AsyncConnection) -> list[dict[str, Any]]:
+    """Groups of open current items sharing a (project, source_key) — what blocks 0007's UNIQUE
+    ``mv_source_owner`` build. Items oldest first (the last one is the one close-duplicates keeps)."""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            f"""
+            SELECT p.slug, mv.project_id, mv.source_key, mv.logical_id, mv.version_id, mv.recorded_at
+              FROM memory_versions mv JOIN projects p USING (project_id)
+             WHERE {_OWNER_ROWS}
+               AND (mv.project_id, mv.source_key) IN (
+                   SELECT project_id, source_key FROM memory_versions WHERE {_OWNER_ROWS}
+                    GROUP BY project_id, source_key HAVING count(*) > 1)
+             ORDER BY mv.project_id, mv.source_key, mv.recorded_at, mv.logical_id
+            """
+        )
+        rows = await cur.fetchall()
+    groups: dict[tuple[int, str], dict[str, Any]] = {}
+    for r in rows:
+        g = groups.setdefault(
+            (r["project_id"], r["source_key"]),
+            {"project": r["slug"], "source_key": r["source_key"], "items": []},
+        )
+        g["items"].append(
+            {
+                "logical_id": int(r["logical_id"]),
+                "version_id": int(r["version_id"]),
+                "recorded_at": r["recorded_at"].isoformat(),
+            }
+        )
+    return list(groups.values())
+
+
+async def close_source_duplicates(conn: AsyncConnection) -> dict[str, Any]:
+    """Keep the newest item of each duplicate group and close the others with an ordinary ``close``
+    write by device 1 (validity ends now; nothing is deleted; replayable)."""
+    from hlmemo.core.write_service import write
+
+    closed: list[dict[str, Any]] = []
+    for g in await source_duplicates(conn):
+        for it in g["items"][:-1]:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT mv.kind, mv.title, mv.body, mv.tags, mv.pinned, mv.stability, mv.importance,"
+                    " mv.device_scope, mv.valid_from, mv.source, mv.project_id,"
+                    " (SELECT array_agg(p.slug ORDER BY p.slug) FROM projects p"
+                    "   WHERE p.project_id = ANY(mv.project_ids) AND p.project_id <> mv.project_id) AS also,"
+                    " (SELECT array_agg(c.path ORDER BY c.path) FROM code_refs c"
+                    "   WHERE c.version_id = mv.version_id) AS describes"
+                    " FROM memory_versions mv WHERE mv.version_id = %s",
+                    (it["version_id"],),
+                )
+                row = await cur.fetchone()
+            assert row is not None
+            item: dict[str, Any] = {
+                "kind": row["kind"],
+                "title": row["title"],
+                "body": row["body"],
+                "tags": list(row["tags"]),
+                "pinned": bool(row["pinned"]),
+                "stability": row["stability"],
+                "device_scope": row["device_scope"],
+                "source": row["source"],
+                "logical_id": it["logical_id"],
+                "expected_version_id": it["version_id"],
+                "valid_from": row["valid_from"].isoformat(),
+                "close": True,
+            }
+            if row["importance"] is not None:
+                item["importance"] = row["importance"]
+            if row["also"]:
+                item["project_ids"] = [g["project"], *row["also"]]
+            if row["describes"]:
+                item["describes"] = list(row["describes"])
+            request = {
+                "project": g["project"],
+                "request_id": str(uuid.uuid5(NS_RECONCILE, f"close-duplicate:{it['version_id']}")),
+                "client": CLIENT,
+                "items": [item],
+            }
+            ack = await write(conn, operator_context(CLIENT), request)
+            closed.append(
+                {
+                    "project": g["project"],
+                    "source_key": g["source_key"],
+                    "logical_id": it["logical_id"],
+                    "version_id": ack.versions[0].version_id,
+                }
+            )
+    return {"closed": closed}
 
 
 def _read_heartbeat(path: Any) -> dict[str, Any] | None:

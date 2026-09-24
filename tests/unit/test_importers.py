@@ -282,29 +282,110 @@ def test_negative_date_evidence_is_ignored() -> None:
         assert common.heading_date(heading, UTC) == want, heading
 
 
+def _words(tag: str, n: int = 60) -> str:
+    return " ".join(f"{tag}{i}" for i in range(n))
+
+
+def _missing(lid: int, path: str, body: str) -> dict:
+    return {
+        "logical_id": lid,
+        "version_id": lid * 10,
+        "kind": "fact",
+        "source": _rec(path, body).source(),
+        "body": body,
+    }
+
+
+def _new(path: str, body: str) -> ImportRecord:
+    rec = _rec(path, body)
+    rec.file = path.split("#", 1)[0]
+    return rec
+
+
 def test_body_similarity_and_remap(meter: Meter) -> None:
     """Sol 42 #6: a renamed heading keeps its logical item (re-map), a removed section is closed."""
     from hlmemo.importers.plan import body_similarity, remap
 
-    body = "## Setup\n\n" + " ".join(f"word{i}" for i in range(60)) + "\n"
+    body = "## Setup\n\n" + _words("word") + "\n"
     renamed = body.replace("## Setup", "## Installation")
-    assert (
-        body_similarity(body, renamed) == 1.0 and body_similarity(body, "## X\n\nother text here now\n") < 0.1
-    )
-    new = _rec("a.md#installation", renamed)
-    new.file = "a.md"
-    gone = {"logical_id": 7, "version_id": 70, "kind": "fact", "source": _rec("a.md#setup", body).source()}
-    dropped = {"logical_id": 8, "version_id": 80, "kind": "fact", "source": _rec("a.md#old", "x").source()}
-    plan = classify(
-        "fx", "markdown", common.ParseResult(records=[new], scopes=["a.md"]), [gone, dropped], meter
-    )
-    assert sorted(it["logical_id"] for it in plan.missing) == [7, 8]
-    remap(plan, [dict(gone, body=body), dict(dropped, body="## Old\n\nentirely different words\n")])
-    (e,) = plan.entries
+    assert body_similarity(body, renamed) == 1.0
+    assert body_similarity(body, "## X\n\nother text here now\n") < 0.1
+    new = _new("a.md#installation", renamed)
+    keep = _rec("a.md#intro", "## Intro\n\n" + _words("intro") + "\n")
+    gone = _missing(7, "a.md#setup", body)
+    dropped = _missing(8, "a.md#old", "## Old\n\n" + _words("old") + "\n")
+    kept_item = {**_missing(9, "a.md#intro", keep.body), "source": keep.source()}
+    parsed = common.ParseResult(records=[new, keep], scopes=["a.md"])
+    plan = classify("fx", "markdown", parsed, [gone, dropped, kept_item], meter)
+    assert sorted(it["logical_id"] for it in plan.missing) == [7, 8] and plan.in_scope == 3
+    remap(plan, [gone, dropped])
+    e = next(e for e in plan.entries if e.record.key == "markdown:a.md#installation")
     assert (e.action, e.logical_id, e.expected, e.remapped_from) == ("changed", 7, 70, "markdown:a.md#setup")
     assert [it["logical_id"] for it in plan.closes] == [8]
     rep = report(plan, dry_run=True)
     assert rep["closed"] == ["markdown:a.md#old"] and rep["remapped"][0]["to"] == "markdown:a.md#installation"
+
+
+def test_remap_rejects_empty_bodies_and_ambiguous_candidates(meter: Meter) -> None:
+    """Sol 43 #4: heading-only sections never re-map (they used to score 1.0); two candidates above
+    the threshold on either side mean no re-map at all (the old items stay open, reported)."""
+    from hlmemo.importers.plan import body_similarity, remap
+
+    assert body_similarity("## A\n", "## B\n") == 0.0
+    head_only_old = _missing(1, "a.md#alpha", "## Alpha\n")
+    head_only_new = _new("a.md#beta", "## Beta\n")
+    plan = classify(
+        "fx",
+        "markdown",
+        common.ParseResult(records=[head_only_new], scopes=["a.md"]),
+        [head_only_old, _missing(2, "a.md#x", "## X\n\n" + _words("x") + "\n")],
+        meter,
+    )
+    remap(plan, plan.missing, confirm_close=True)
+    assert plan.remapped == [] and plan.entries[0].action == "new"
+    # one old section, two near-identical new sections (a duplicated section): ambiguous
+    body = "## Part\n\n" + _words("p") + "\n"
+    old = _missing(3, "b.md#part", body)
+    twins = [
+        _new("b.md#part-a", body.replace("Part", "Part A")),
+        _new("b.md#part-b", body.replace("Part", "Part B")),
+    ]
+    plan = classify("fx", "markdown", common.ParseResult(records=twins, scopes=["b.md"]), [old], meter)
+    remap(plan, plan.missing, confirm_close=True)
+    assert plan.remapped == [] and plan.closes == [] and [e.action for e in plan.entries] == ["new", "new"]
+    assert plan.ambiguous == [
+        {"from": "markdown:b.md#part", "candidates": ["markdown:b.md#part-a", "markdown:b.md#part-b"]}
+    ]
+    assert plan.kept == [{"key": "markdown:b.md#part", "reason": "remap-ambiguous"}]
+    # two old sections competing for one new record: ambiguous as well
+    olds = [_missing(4, "c.md#one", body), _missing(5, "c.md#two", body)]
+    plan = classify(
+        "fx", "markdown", common.ParseResult(records=[_new("c.md#three", body)], scopes=["c.md"]), olds, meter
+    )
+    remap(plan, plan.missing, confirm_close=True)
+    assert plan.remapped == [] and plan.closes == [] and len(plan.kept) == 2
+
+
+def test_mass_close_guard_applies_to_small_scopes(meter: Meter) -> None:
+    """Sol 43 #5: closing more than half of the in-scope items needs confirmation, at any size."""
+    from hlmemo.importers.plan import remap
+
+    items = [_missing(n, f"d.md#s{n}", f"## S{n}\n\n" + _words(f"s{n}") + "\n") for n in (1, 2, 3)]
+    survivor = _rec("d.md#s1", items[0]["body"])
+    for confirm, closes in ((False, []), (True, [2, 3])):
+        plan = classify(
+            "fx", "markdown", common.ParseResult(records=[survivor], scopes=["d.md"]), items, meter
+        )
+        remap(plan, plan.missing, confirm_close=confirm)
+        assert [it["logical_id"] for it in plan.closes] == closes
+        if not confirm:
+            assert [k["reason"].split(":")[0] for k in plan.kept] == ["mass-close-guard"] * 2
+    # exactly half is not "more than half": closed without confirmation
+    plan = classify(
+        "fx", "markdown", common.ParseResult(records=[survivor], scopes=["d.md"]), items[:2], meter
+    )
+    remap(plan, plan.missing)
+    assert [it["logical_id"] for it in plan.closes] == [2]
 
 
 def _export_rec(meta: dict, body: str = "text\n") -> ImportRecord:
@@ -313,28 +394,61 @@ def _export_rec(meta: dict, body: str = "text\n") -> ImportRecord:
     return rec
 
 
-def test_export_origin_mapping_is_ownership_checked(meter: Meter) -> None:
-    """Sol 42 #5: a crafted logical_id never binds; origin maps back only in its own project, only
-    onto a same-kind item without foreign provenance, and only if the file's version is the head."""
-    unrelated = {"logical_id": 5, "version_id": 50, "kind": "fact", "title": "t", "source": None}
+def test_export_identity_is_server_verified(meter: Meter) -> None:
+    """Sol 43 #1: an export file selects an existing item only if that item's OWN source is the
+    file's origin (it was created by importing that export). A crafted logical_id or a forged
+    origin — even with the current version_id — never selects a native item: new sourced item."""
+    native = {
+        "logical_id": 5,
+        "version_id": 50,
+        "kind": "fact",
+        "title": "t",
+        "tags": [],
+        "source": None,
+        "valid_from": "2026-01-01T00:00:00.000000Z",
+        "body_sha256": common.sha256_text("text\n"),
+    }
     base = {"kind": "fact", "title": "t", "valid_from": "2026-01-01T00:00:00.000000Z"}
-    # a file from project "aa" whose logical_id line names project bb's item 5
-    crafted = _export_rec({**base, "origin": "aa/77", "logical_id": 5, "version_id": 50})
-    plan = classify("bb", "markdown", common.ParseResult(records=[crafted]), [unrelated], meter)
-    assert [(e.action, e.logical_id) for e in plan.entries] == [("new", None)]
-    assert crafted.source()["path"] == "aa/77"
-    # an origin naming b/5 with a version that is not the head: rejected, never applied
-    stale = _export_rec({**base, "origin": "bb/5", "version_id": 49}, "changed text\n")
-    plan = classify("bb", "markdown", common.ParseResult(records=[stale]), [unrelated], meter)
-    assert plan.entries == [] and [r.reason for r in plan.rejected] == ["stale_or_foreign_export"]
-    # the right head version: a native revision (no source is written onto the item)
-    ok = _export_rec({**base, "origin": "bb/5", "version_id": 50}, "changed text\n")
-    (e,) = classify("bb", "markdown", common.ParseResult(records=[ok]), [unrelated], meter).entries
-    assert (e.action, e.logical_id, e.expected, e.native) == ("changed", 5, 50, True)
-    # kind mismatch or foreign provenance: rejected
-    sourced = dict(unrelated, source={"system": "serena", "path": "x.md", "sha256": "0" * 64})
-    plan = classify("bb", "markdown", common.ParseResult(records=[ok]), [sourced], meter)
-    assert [r.reason for r in plan.rejected] == ["origin_mismatch"]
+    crafted = _export_rec({**base, "origin": "aa/77", "logical_id": 5, "version_id": 50}, "evil\n")
+    forged = _export_rec({**base, "origin": "bb/5", "logical_id": 5, "version_id": 50}, "evil\n")
+    for rec in (crafted, forged):
+        plan = classify("bb", "markdown", common.ParseResult(records=[rec]), [native], meter)
+        assert [(e.action, e.logical_id) for e in plan.entries] == [("new", None)], rec.key
+    # an unedited export of this project's own item: identical content, nothing to write
+    same = _export_rec({**base, "origin": "bb/5", "version_id": 50})
+    (e,) = classify("bb", "markdown", common.ParseResult(records=[same]), [native], meter).entries
+    assert (e.action, e.logical_id) == ("unchanged", 5)
+    # an item created by importing that export (its source IS the origin) is revised
+    imported = dict(native, logical_id=6, version_id=60, source=forged.source())
+    (e,) = classify("bb", "markdown", common.ParseResult(records=[forged]), [native, imported], meter).entries
+    assert (e.action, e.logical_id, e.expected) == ("changed", 6, 60)
+
+
+def test_export_card_revises_only_a_skeleton_or_its_own_import(meter: Meter) -> None:
+    card = {
+        "logical_id": 9,
+        "version_id": 90,
+        "kind": "project_card",
+        "title": "Project card",
+        "tags": [],
+        "source": None,
+        "valid_from": "2026-01-01T00:00:00.000000Z",
+        "body_sha256": "0",
+    }
+    rec = _export_rec(
+        {
+            "kind": "project_card",
+            "title": "Project card",
+            "origin": "aa/3",
+            "valid_from": "2026-01-01T00:00:00.000000Z",
+        },
+        "# Their card\n",
+    )
+    plan = classify("bb", "markdown", common.ParseResult(records=[rec]), [card], meter)
+    assert plan.entries == [] and [r.reason for r in plan.rejected] == ["card_not_from_this_export"]
+    skeleton = dict(card, tags=["skeleton-card"])
+    (e,) = classify("bb", "markdown", common.ParseResult(records=[rec]), [skeleton], meter).entries
+    assert (e.action, e.expected) == ("changed", 90)
 
 
 def test_source_key_expression_is_pinned() -> None:
