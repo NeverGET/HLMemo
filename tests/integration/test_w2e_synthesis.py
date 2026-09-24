@@ -56,7 +56,7 @@ from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.tasks import synthesis as syn
 from hlmemo.server.app import create_app
 from hlmemo.server.tools import TOOL_BY_NAME, handlers, schemas
-from tests.integration._librarian_fixtures import ScriptedLLM, stub_chain
+from tests.integration._librarian_fixtures import ScriptedLLM, stub_chain, timeout_honouring
 from tests.integration._mcp_fixtures import (
     ADMIN_TOKEN,
     bearer,
@@ -339,7 +339,9 @@ async def test_fallback_label_budget_stop_and_disabled(connect, world, deps, wea
 async def test_breaker_and_in_flight_cap(connect, world, deps, weak_ids, db_dsn) -> None:  # noqa: ANN001
     q = weak_question(weak_ids)["question"]
     llm = ScriptedLLM(default=("stall", 30.0, {"status": "insufficient_evidence", "sentences": []}))
-    synth = stub_synth(db_dsn, llm, timeout_s=0.3)
+    # a cap with room for an attempt (a 0.3 s cap left none after the 0.3 s margin, so only the old
+    # task-level breaker could open); failures are counted per profile by the provider now
+    synth = stub_synth(db_dsn, llm, timeout_s=1.0)
     try:
         reasons = [(await run(connect, world, deps, q, synth))[0]["synthesis_reason"] for _ in range(4)]
         assert reasons == [syn.TIMEOUT] * syn.BREAKER_THRESHOLD + [syn.UNAVAILABLE], reasons
@@ -1263,3 +1265,68 @@ async def test_sol52_card_dropped_when_a_source_becomes_unreadable(connect, worl
             )
             await conn.commit()
         await synth.aclose()
+
+
+# --------------------------------------------------------------------------- latency policy (BACKLOG)
+async def _ledger_since(connect, since: Any) -> list[tuple[str, str]]:  # noqa: ANN001
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT profile, outcome FROM llm_calls WHERE task = %s AND created_at > %s"
+            " ORDER BY created_at, call_id",
+            (syn.TASK, since),
+        )
+        return [(r[0], r[1]) for r in await cur.fetchall()]
+
+
+async def _now(connect) -> Any:  # noqa: ANN001
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT clock_timestamp()")
+        return (await cur.fetchone())[0]
+
+
+async def test_stalled_primary_is_answered_by_the_fallback_within_the_total(
+    connect, world, deps, weak_ids, db_dsn
+) -> None:  # noqa: ANN001
+    """BACKLOG (D-084 bake-off): the primary stalls; ONE bounded primary attempt, then the fallback
+    answers inside the 7 s total (it used to be starved by the primary's retry/backoff)."""
+    q = weak_question(weak_ids)["question"]
+    seen: list[tuple[str, float]] = []
+
+    def route(host: str, body: dict[str, Any]) -> Any:
+        return "stall" if host == "stub-primary.invalid" else answer_citing(_ids(body), 1)
+
+    synth = syn.Synthesizer(
+        synth_settings(db_dsn), chain=stub_chain(fallback=True), transport=timeout_honouring(route, seen)
+    )
+    since = await _now(connect)
+    try:
+        out, ms = await run(connect, world, deps, q, synth)
+    finally:
+        await synth.aclose()
+    check_response(out)
+    assert out["synthesis"]["tier"] == "fallback" and out["synthesis"]["status"] == "answered", out
+    assert ms < ss.TOTAL_DEADLINE_S * 1000, ms
+    assert [h for h, _ in seen] == ["stub-primary.invalid", "stub-fallback.invalid"]
+    assert seen[0][1] <= syn.SYNTH_TIMEOUT_S * 0.55  # the primary's share of the cap, no retry
+    assert await _ledger_since(connect, since) == [("stub-primary", "timeout"), ("stub-fallback", "ok")]
+
+
+async def test_primary_503_falls_back_immediately(connect, world, deps, weak_ids, db_dsn) -> None:  # noqa: ANN001
+    q = weak_question(weak_ids)["question"]
+
+    def answer(body: dict[str, Any]) -> Any:
+        return 503 if body["model"].endswith("stub-primary") else answer_citing(_ids(body), 1)
+
+    llm = ScriptedLLM(default=answer)
+    synth = stub_synth(db_dsn, llm, fallback=True)
+    since = await _now(connect)
+    try:
+        out, ms = await run(connect, world, deps, q, synth)
+    finally:
+        await synth.aclose()
+    assert out["synthesis"]["tier"] == "fallback", out
+    assert llm.hosts == ["stub-primary.invalid", "stub-fallback.invalid"]  # no backoff, no retry
+    assert ms < 2000, ms
+    assert await _ledger_since(connect, since) == [("stub-primary", "http_error"), ("stub-fallback", "ok")]
+    # the primary's breaker counted one failure; the synthesis as a whole was a success
+    assert synth.provider.breaker("stub-primary").failures == 1 and synth.breaker.allow()

@@ -22,9 +22,13 @@ Same guards as the librarian worker:
   it was shown; any other id is DROPPED and counted. Abstention (``"none"``) is first-class.
 * **Qualification** (D-017): a profile whose file lists ``disabled_tasks = ["risk_judge"]`` is left
   out of the judge's chain (a model that fails the risk gate never judges; see D-066/G-LIVE-C).
-* A judge-level circuit breaker (3 consecutive timeouts/outages → skip the LLM for 30 s, doubling
-  to 15 min) keeps a stalled provider from costing every call the full cap, and at most
-  ``MAX_IN_FLIGHT`` judged calls run at once (the rest answer retrieval-only, ``busy``).
+* The ``latency`` attempt policy (``Provider.complete(attempt_policy="latency")``): one bounded
+  attempt per profile, no backoff, so a stalled primary ends in retrieval-only inside the cap
+  (the judge chain has no fallback: deepseek is disqualified, D-071).
+* Circuit breakers PER PROFILE (3 consecutive failed attempts → skip that profile for 30 s,
+  doubling to 15 min; the provider counts them, ``self.breaker`` is a ``ChainBreakers`` view)
+  keep a stalled provider from costing every call the full cap, and at most ``MAX_IN_FLIGHT``
+  judged calls run at once (the rest answer retrieval-only, ``busy``).
 * A model ``warn`` whose matches ALL cite ids it was not shown is a judge failure (``guard``):
   the result falls back to retrieval-only, it never turns into a judged "no matching evidence".
 """
@@ -63,7 +67,7 @@ from hlmemo.librarian.errors import (
 from hlmemo.librarian.ledger import DbLedger
 from hlmemo.librarian.profiles import LlmProfile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
-from hlmemo.librarian.provider import Breaker, Clock, Provider
+from hlmemo.librarian.provider import ChainBreakers, Clock, Provider
 from hlmemo.librarian.redact import Redactor
 
 log = logging.getLogger("hlmemo.librarian.risk_judge")
@@ -308,9 +312,9 @@ class RiskJudge:
         self.timeout_s = timeout_s
         self.in_flight = 0
         self.clock = clock or Clock()
-        self.breaker = Breaker(
-            self.clock, threshold=BREAKER_THRESHOLD, base_s=BREAKER_OPEN_S, max_s=BREAKER_MAX_OPEN_S
-        )
+        self.provider: Provider | None = None
+        #: the provider's per-profile breakers (a failing profile never suppresses the others)
+        self.breaker = ChainBreakers(lambda: self.provider)
         default_connect, conn_ctx = direct_connector(settings.db_dsn, settings)
         self.connect = connect or default_connect
         if provider is not None:
@@ -351,9 +355,9 @@ class RiskJudge:
             clock=self.clock,
             redactor=Redactor.from_settings(s),
             timeout_s=min(float(s.llm_timeout_s), HTTP_TIMEOUT_S),
-            breaker_threshold=s.llm_breaker_threshold,
-            breaker_open_s=s.llm_breaker_open_s,
-            breaker_max_open_s=s.llm_breaker_max_open_s,
+            breaker_threshold=BREAKER_THRESHOLD,  # the API judge's own per-profile breakers
+            breaker_open_s=BREAKER_OPEN_S,
+            breaker_max_open_s=BREAKER_MAX_OPEN_S,
             job_call_cap=s.llm_job_call_cap,
             budget_disabled=s.llm_budget_disabled,
         )
@@ -399,17 +403,14 @@ class RiskJudge:
         try:
             async with asyncio.timeout_at(deadline):
                 result = await self._judge(task, items, capabilities, deadline)
-        except (TimeoutError, DeadlineExceeded):
-            self.breaker.failure()
+        except (TimeoutError, DeadlineExceeded):  # the provider counted per-profile failures
             result = JudgeResult(TIMEOUT)
         except (ProviderUnavailable, httpx.HTTPError, OSError) as exc:
             log.warning("risk judge unavailable: %s", type(exc).__name__)
-            self.breaker.failure()
             result = JudgeResult(UNAVAILABLE)
         except BudgetDeferred:
             result = JudgeResult(BUDGET)
-        except SchemaFail:
-            self.breaker.success()  # the provider answered; the model output was the problem
+        except SchemaFail:  # the provider answered (its breaker closed); the model output was wrong
             result = JudgeResult(SCHEMA_FAIL)
         except (PrivacyDenied, AuthorityLost):
             result = JudgeResult(PRIVACY)
@@ -463,8 +464,8 @@ class RiskJudge:
             validate=_consistency,
             precheck=precheck,
             deadline=deadline,
+            attempt_policy="latency",  # one bounded attempt per profile inside the 4 s cap
         )
-        self.breaker.success()
         matches: list[tuple[int, str]] = []
         dropped = 0
         seen: set[int] = set()
