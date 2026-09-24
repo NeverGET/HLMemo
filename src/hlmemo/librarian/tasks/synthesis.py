@@ -17,9 +17,11 @@ privacy denial or model failure comes back as a status and the query answers wit
 * **D-067 guards**: schema + enum validation, status/sentences consistency (a mismatch is a schema
   failure, retried once), and the citation validator: every sentence must cite at least one excerpt
   id it was shown; ids it was not shown are dropped and counted, and a sentence left without a
-  valid citation is DROPPED. An answer with no surviving sentence is a failure (``guard``), never a
-  silent empty answer. **Abstention is first-class**: ``insufficient_evidence`` is a successful,
-  judged outcome.
+  valid citation is DROPPED. A support guard (Sol 51 #3) drops every sentence whose numbers,
+  identifiers, paths, commands or quoted strings do not occur verbatim in its cited excerpts; if
+  that leaves nothing, the result is an abstention. An answer with no surviving (cited) sentence
+  is a failure (``guard``), never a silent empty answer. **Abstention is first-class**:
+  ``insufficient_evidence`` is a successful, judged outcome.
 * **Qualification** (D-017, D-071): a profile whose file lists ``disabled_tasks = ["synthesis"]``
   is left out of the chain; a result from a qualified fallback profile is labelled ``fallback``.
 * A task-level circuit breaker (3 consecutive timeouts/outages → skip for 30 s, doubling to 15 min)
@@ -32,7 +34,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -159,19 +163,74 @@ def _consistency(obj: dict[str, Any]) -> str | None:
     return None
 
 
+_BACKTICK = re.compile(r"`([^`]+)`")
+_QUOTED = re.compile(r'"([^"]{2,})"|“([^”]{2,})”|«([^»]{2,})»')
+_EDGE = "()[]{}<>,;:!?'\"`“”‘’«»…*"
+_SYMBOLS = "€$£¥~≈≤≥±+%°#"
+_FILE_EXT = re.compile(r"\.(md|py|toml|json|jsonl|ya?ml|sh|log|txt|sql|js|ts|conf|env|lock|cfg|ini|html)$")
+_NUM_UNIT = re.compile(r"^(\d[\d.,]*)[a-z%µ]{1,3}$")
+_WS = re.compile(r"\s+")
+
+
+def _norm(text: str) -> str:
+    return _WS.sub(" ", unicodedata.normalize("NFKC", text).casefold()).strip()
+
+
+def claims(text: str) -> list[str]:
+    """The checkable literals of a sentence (Sol 51 #3): backticked spans, quoted strings, and every
+    token carrying a digit, ``_``, ``/``, ``::``, ``@``, ``=``, a leading ``-`` flag or a file
+    extension (numbers, identifiers, paths, commands). Edge punctuation and currency/unit symbols
+    are stripped. A cheap support guard, not a semantic check."""
+    out = [m.group(1) for m in _BACKTICK.finditer(text)]
+    out += [next(g for g in m.groups() if g) for m in _QUOTED.finditer(text)]
+    for tok in text.split():
+        core = tok.strip(_EDGE).rstrip(".").strip(_EDGE + _SYMBOLS + ".")
+        if len(core) < 1:
+            continue
+        if (
+            any(ch.isdigit() for ch in core)
+            or any(mark in core for mark in ("_", "/", "::", "@", "="))
+            or re.match(r"-{1,2}[A-Za-z]", core)
+            or _FILE_EXT.search(core.casefold())
+        ):
+            out.append(core)
+    return [c for c in out if c.strip()]
+
+
+def supported(claim: str, hay: str) -> bool:
+    """``claim`` occurs verbatim (case-insensitive, whitespace-collapsed) in ``hay``; tolerated:
+    thousands separators, a number glued to its unit (``10s`` for ``10 s``) and hyphen-joined parts
+    (``top-3`` for ``top 3``)."""
+    c = _norm(claim)
+    if not c or c in hay:
+        return True
+    if "," in c and c.replace(",", "") in hay.replace(",", ""):
+        return True
+    m = _NUM_UNIT.match(c)
+    if m and m.group(1) in hay:
+        return True
+    if "-" in c and re.fullmatch(r"[\w.-]+", c):
+        return all(p in hay for p in c.split("-") if p)
+    return False
+
+
 def validate_sentences(
     raw: list[Any], local: dict[str, Excerpt], redact: Callable[[str], str]
-) -> tuple[list[Sentence], int, int]:
-    """The citation validator (D-067): ``(kept, dropped, bad_cites)``. A cited id must be one shown
-    to the model (``local``); others are removed and counted. A sentence with no valid citation, or
-    with no text, is dropped. Kept text is redacted, whitespace-collapsed and length-capped."""
+) -> tuple[list[Sentence], int, int, int]:
+    """The citation validator (D-067): ``(kept, dropped, bad_cites, unsupported)``. A cited id must
+    be one shown to the model (``local``); others are removed and counted. A sentence with no valid
+    citation, or with no text, is dropped. Support guard (Sol 51 #3): every number, identifier,
+    path, command-like token and quoted string of a sentence must occur verbatim in the title or
+    text of at least one of its cited excerpts, else the sentence is dropped (``unsupported``).
+    Kept text is redacted, whitespace-collapsed and length-capped."""
     kept: list[Sentence] = []
-    dropped = bad = 0
+    dropped = bad = unsupported = 0
     for s in raw[:MAX_SENTENCES]:
         if not isinstance(s, dict):
             dropped += 1
             continue
         clues: list[str] = []
+        cited: list[Excerpt] = []
         for cid in s.get("cite") or []:
             ex = local.get(str(cid).strip())
             if ex is None:
@@ -179,13 +238,20 @@ def validate_sentences(
                 continue
             if ex.clue not in clues:
                 clues.append(ex.clue)
-        text = " ".join(redact(str(s.get("text") or "")).split())[:SENTENCE_CHARS]
+                cited.append(ex)
+        raw_text = " ".join(str(s.get("text") or "").split())
+        text = " ".join(redact(raw_text).split())[:SENTENCE_CHARS]
         if not clues or not text:
             dropped += 1
             continue
+        hay = _norm("\n".join(f"{e.title}\n{e.text}" for e in cited))
+        if not all(supported(c, hay) for c in claims(raw_text)):
+            dropped += 1
+            unsupported += 1
+            continue
         kept.append(Sentence(text, clues))
     dropped += max(0, len(raw) - MAX_SENTENCES)
-    return kept, dropped, bad
+    return kept, dropped, bad, unsupported
 
 
 class Synthesizer:
@@ -276,8 +342,14 @@ class Synthesizer:
 
     # ------------------------------------------------------------------ synthesis
     async def synthesize(
-        self, question: str, excerpts: list[Excerpt], capabilities: dict[str, Any]
+        self,
+        question: str,
+        excerpts: list[Excerpt],
+        capabilities: dict[str, Any],
+        *,
+        timeout_s: float | None = None,
     ) -> SynthResult:
+        """``timeout_s`` (the caller's remaining request deadline) can only shorten the cap."""
         t0 = time.perf_counter()
         if not self.enabled:
             return SynthResult(DISABLED)
@@ -290,7 +362,8 @@ class Synthesizer:
             return SynthResult(UNAVAILABLE)
         self.in_flight += 1  # no await since the check: atomic on the event loop
         try:
-            async with asyncio.timeout(self.timeout_s):
+            cap = self.timeout_s if timeout_s is None else max(0.05, min(self.timeout_s, timeout_s))
+            async with asyncio.timeout(cap):
                 result = await self._synthesize(question, excerpts, capabilities)
         except TimeoutError:
             self.breaker.failure()
@@ -354,7 +427,18 @@ class Synthesizer:
         if res.output.get("status") == INSUFFICIENT:
             return SynthResult(status, answer=INSUFFICIENT, denied=denied, profile=res.profile)
         redactor = self.provider.redactor
-        kept, dropped, bad = validate_sentences(res.output.get("sentences") or [], local, redactor.text)
+        kept, dropped, bad, unsupported = validate_sentences(
+            res.output.get("sentences") or [], local, redactor.text
+        )
+        if not kept and unsupported:  # Sol 51 #3: nothing the excerpts support survived: abstain
+            return SynthResult(
+                status,
+                answer=INSUFFICIENT,
+                denied=denied,
+                dropped=dropped,
+                bad_cites=bad,
+                profile=res.profile,
+            )
         if not kept:  # D-067: an answer whose every sentence is uncited is a failure, not an answer
             return SynthResult(GUARD, denied=denied, dropped=dropped, bad_cites=bad, profile=res.profile)
         return SynthResult(
@@ -398,6 +482,8 @@ __all__ = [
     "Synthesizer",
     "app_synthesizer",
     "close_app_synthesizer",
+    "claims",
+    "supported",
     "synthesis_chain",
     "user_message",
     "validate_sentences",
