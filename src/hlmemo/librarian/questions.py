@@ -11,9 +11,15 @@ token_budget?}`` → an ack, in ONE transaction (PHASE2-4-ROADMAP W2c, CC-3, D-0
 2. **Idempotency** per ``(project, device, request_id)`` like ``memory.write``: the stored ack
    (``replayed: true``) after re-authorization, or ``E_REQUEST_ID_CONFLICT`` on a different
    payload.
-3. The question must be ``open`` (or an ``approved`` ``widen_scope`` waiting for a writer on both
-   projects) and not past ``expires_at``; otherwise ``E_VERSION_CONFLICT {status}``.
-4. ``accept``: every assessed subject is locked and compared with its head; a revision since the
+3. The question must be ``open`` (or an ``approved``/``accepted_pending`` ``widen_scope`` waiting
+   for a writer on both projects) and not past ``expires_at``; otherwise ``E_VERSION_CONFLICT
+   {status}``.
+4. **D-074: in the OBSERVER role an answer is a LABEL, never an action.** Under the role-order lock
+   (SHARED, like the worker's apply) the effective librarian role of EVERY touched project is read;
+   if any is ``observer``, ``accept`` records the answer with status ``accepted_pending`` and changes
+   no user item, link, validity or scope. After a promotion (``set_role`` assistant+), those
+   questions are applied through the normal ``apply_batch`` path with the full recheck.
+   ``accept`` otherwise: every assessed subject is locked and compared with its head; a revision since the
    proposal makes the question ``superseded`` and NOTHING is applied (G-Q3). Otherwise the
    proposed actions are applied as the answering device's act: links and the bi-temporal close
    through the actor's materialize/apply (recorded ids, replayed like every librarian mutation);
@@ -40,6 +46,7 @@ from psycopg.types.json import Jsonb
 from pydantic import Field, field_validator
 
 from hlmemo.auth.context import AuthContext, Role
+from hlmemo.config import get_settings
 from hlmemo.core.budget import DEFAULT_WRITE_BUDGET, BudgetError, Meter, validate_budget
 from hlmemo.core.errors import ToolError
 from hlmemo.core.temporal import fmt_ts, select_T
@@ -51,6 +58,7 @@ from hlmemo.librarian.events import NS_LIBRARIAN, SCHEMA_VERSION_SYSTEM, insert_
 from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.reserved import reserved_ids
+from hlmemo.librarian.roles import ROLES, effective_role, lock_role_order
 from hlmemo.librarian.tasks.apply_batch import proposal_actions
 
 TOOL = "memory.answer"
@@ -121,11 +129,27 @@ async def _action_projects(conn: AsyncConnection, actions: list[dict[str, Any]])
     return out
 
 
+async def _answer_role(conn: AsyncConnection, configured: str, project_ids: set[int]) -> str:
+    """The LOWEST effective librarian role over every touched project (D-074); the caller holds
+    the role-order lock (SHARED), so a concurrent ``set_role`` cannot interleave."""
+    roles = [await effective_role(conn, configured, p) for p in sorted(project_ids)]
+    return min(roles, key=ROLES.index) if roles else "observer"
+
+
 # --------------------------------------------------------------------------- memory.answer
 async def answer(
-    conn: AsyncConnection, ctx: AuthContext, req: dict[str, Any], *, raw: dict[str, Any] | None = None
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    req: dict[str, Any],
+    *,
+    raw: dict[str, Any] | None = None,
+    configured_role: str | None = None,
 ) -> dict[str, Any]:
+    """``configured_role`` defaults to this process's ``HLM_LIBRARIAN_ROLE`` (R2: ``observer``;
+    llm.env reaches api and librarian alike); the effective role is that, lowered by the recorded
+    role decisions and project policy exactly as in the worker."""
     args = raw if raw is not None else req
+    configured = configured_role or get_settings().librarian_role
     request = parse_request(AnswerRequest, req)
     try:
         budget = validate_budget(request.token_budget, default=DEFAULT_WRITE_BUDGET)
@@ -142,6 +166,7 @@ async def answer(
             )
         pid = project.project_id
         await q.lock_request_key(conn, pid, ctx.device_id, request.request_id)
+        await lock_role_order(conn, exclusive=False)  # D-074: the role read below cannot change under us
         cur = await conn.execute(
             """
             SELECT question_id::text, project_id, project_ids, kind, subject_clues, subject_version_ids,
@@ -177,7 +202,9 @@ async def answer(
             return replay
 
         now = await q.clock_now(conn)
-        answerable = status in ANSWERABLE or (status == "approved" and kind == "widen_scope")
+        answerable = status in ANSWERABLE or (
+            kind == "widen_scope" and status in ("approved", "accepted_pending")
+        )
         expired = expires_at is not None and expires_at <= now
         if not answerable or expired:  # past 30 days nothing is applied, approved or not (Sol 44 #2)
             shown = "expired" if answerable and expired else status
@@ -194,7 +221,12 @@ async def answer(
         applied: dict[str, Any] = {"links": 0, "closed": [], "widened": []}
         write_events: list[int] = []
         new_status = {"accept": "applied", "reject": "rejected", "custom": "answered"}[request.decision]
-        if request.decision == "accept":
+        role = await _answer_role(conn, configured, union)
+        if request.decision == "accept" and role == "observer":
+            # D-074: a label only. No subject lock, no staleness verdict, no mutation, no widen:
+            # the batch path applies it after a promotion, with the full recheck.
+            new_status = "accepted_pending"
+        elif request.decision == "accept":
             assessed: dict[str, int] = {}
             for a in actions:
                 assessed.update(a.get("assessed") or {})
@@ -238,6 +270,7 @@ async def answer(
             "request_id": request.request_id,
             "question_id": qid,
             "status": new_status,
+            "role": role,
             "applied": applied,
             "rule": None if rule_vid is None else f"v{rule_vid}",
             "replayed": False,
@@ -254,6 +287,7 @@ async def answer(
             "rule_version_id": rule_vid,
             "write_events": write_events,
             "batch_id": batch_id,
+            "role": role,
         }
         await conn.execute(
             """
@@ -431,7 +465,7 @@ async def expire_due(conn: AsyncConnection, *, limit: int = 500) -> int:
     cur = await conn.execute(
         """
         SELECT question_id::text, project_id FROM librarian_questions
-         WHERE status IN ('open', 'approved') AND expires_at <= %s
+         WHERE status IN ('open', 'approved', 'accepted_pending') AND expires_at <= %s
          ORDER BY project_id, question_id LIMIT %s FOR UPDATE SKIP LOCKED
         """,
         (now, limit),

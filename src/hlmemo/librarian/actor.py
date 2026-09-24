@@ -527,9 +527,11 @@ async def set_question_status(conn: AsyncConnection, changes: list[dict[str, Any
 
 
 async def pending_question_exists(conn: AsyncConnection, kind: str, subject_version_ids: list[int]) -> bool:
-    """An open or approved question of ``kind`` over exactly these subject versions exists."""
+    """A pending (open, approved or accepted_pending) question of ``kind`` over exactly these
+    subject versions exists."""
     cur = await conn.execute(
-        "SELECT 1 FROM librarian_questions WHERE kind = %s AND status IN ('open', 'approved')"
+        "SELECT 1 FROM librarian_questions WHERE kind = %s"
+        " AND status IN ('open', 'approved', 'accepted_pending')"
         " AND subject_version_ids = %s::bigint[] LIMIT 1",
         (kind, sorted(set(subject_version_ids))),
     )

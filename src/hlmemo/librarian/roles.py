@@ -65,7 +65,12 @@ async def record_role_decision(
     decision: str,
     project_id: int | None = None,
 ) -> int:
-    """Record an owner role decision (``hlm.ops librarian role …``; a D-entry is the ``decision``)."""
+    """Record an owner role decision (``hlm.ops librarian role …``; a D-entry is the ``decision``).
+
+    D-074: a promotion (assistant+) releases the ``accepted_pending`` answers recorded under
+    observer to the normal batch path: the same event enqueues one ``apply_batch`` job per batch
+    holding such questions whose project is assistant+ after this decision (``resolved.jobs``,
+    replayed as-is). The job applies them with the full recheck (TTL, staleness, capabilities)."""
     if role not in _RANK:
         raise ToolError("E_INVALID_ARG", f"unknown librarian role {role!r}")
     if project_id is None and not decided_by.is_admin:
@@ -74,6 +79,11 @@ async def record_role_decision(
         raise ToolError("E_FORBIDDEN_PROJECT", "project role override needs admin on the project")
     await lock_role_order(conn, exclusive=True)
     at = await q.clock_now(conn)
+    jobs = await pending_apply_jobs(conn, role, project_id)
+    await assign_job_ids(conn, jobs)
+    resolved: dict[str, Any] = {"recorded_at": fmt_ts(at)}
+    if jobs:
+        resolved["jobs"] = jobs
     event_id = await insert_system_event(
         conn,
         kind="librarian",
@@ -82,11 +92,71 @@ async def record_role_decision(
         client=decided_by.client,
         request_id=uuid.uuid4(),
         request={"actor": CLIENT, "op": "set_role", "role": role, "decision": decision[:200]},
-        resolved={"recorded_at": fmt_ts(at)},
+        resolved=resolved,
         at=at,
     )
     assert event_id is not None
+    if jobs:
+        await insert_recorded_jobs(conn, jobs, event_id, at)
     return event_id
+
+
+async def _role_after(conn: AsyncConnection, role: str, decision_project: int | None, pid: int) -> str:
+    """The effective role of ``pid`` once this decision is recorded (``effective_role`` with the
+    decision as the configured role; the worker still needs a matching ``HLM_LIBRARIAN_ROLE``)."""
+    deployment = role if decision_project is None else (await latest_role_decision(conn, None) or "observer")
+    project = role if decision_project == pid else await latest_role_decision(conn, pid)
+    cur = await conn.execute("SELECT policy->>'librarian_role' FROM projects WHERE project_id = %s", (pid,))
+    row = await cur.fetchone()
+    return lower(lower(deployment, project), row[0] if row else None)
+
+
+async def pending_apply_jobs(
+    conn: AsyncConnection, role: str, decision_project: int | None
+) -> list[dict[str, Any]]:
+    """D-074 promotion: one ``apply_batch`` job per batch holding ``accepted_pending`` questions
+    (of ``decision_project`` only, for a project decision) whose project is assistant+ after the
+    decision and which has no apply job queued or running (that one picks them up)."""
+    if role == "observer":
+        return []
+    cur = await conn.execute(
+        """
+        SELECT DISTINCT ON (lq.batch_id) lq.batch_id::text, lq.project_id, lq.proposal->'capabilities'
+          FROM librarian_questions lq
+         WHERE lq.status = 'accepted_pending' AND lq.batch_id IS NOT NULL
+           AND (%(p)s::bigint IS NULL OR lq.project_id = %(p)s)
+           AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'librarian_write'
+                            AND j.payload->>'op' = 'apply_batch'
+                            AND j.payload->>'batch_id' = lq.batch_id::text
+                            AND j.status IN ('queued', 'running'))
+         ORDER BY lq.batch_id, lq.question_id
+        """,
+        {"p": decision_project},
+    )
+    jobs = []
+    for batch_id, pid, caps in await cur.fetchall():
+        if await _role_after(conn, role, decision_project, int(pid)) == "observer":
+            continue
+        n = await decision_round(conn, batch_id)
+        jobs.append(apply_job(batch_id, int(pid), caps or {}, f":r{n}" if n else ""))
+    return jobs
+
+
+def apply_job(batch_id: str, project_id: int, capabilities: dict[str, Any], rnd: str) -> dict[str, Any]:
+    """The ``apply_batch`` job of one decision round of ``batch_id`` (round 0 keeps the W2a key)."""
+    key = f"librarian_apply:{batch_id}{rnd}"
+    return job_spec(
+        kind="librarian_write",
+        dedupe_key=key,
+        priority=4,
+        payload={
+            "op": "apply_batch",
+            "batch_id": batch_id,
+            "project_id": project_id,
+            "capabilities": capabilities,
+            "lineage": str(uuid.uuid5(NS_LIBRARIAN, f"lineage:{key}")),
+        },
+    )
 
 
 async def check_role_at_start(conn: AsyncConnection, configured: str) -> None:
@@ -185,20 +255,7 @@ async def record_batch_decision(
         approved += status == "approved"
         jobs = []
         if i == len(rows) - 1 and approved:
-            jobs = [
-                job_spec(
-                    kind="librarian_write",
-                    dedupe_key=f"librarian_apply:{batch_id}{rnd}",
-                    priority=4,
-                    payload={
-                        "op": "apply_batch",
-                        "batch_id": batch_id,
-                        "project_id": project_id,
-                        "capabilities": rows[0]["proposal"].get("capabilities") or {},
-                        "lineage": str(uuid.uuid5(NS_LIBRARIAN, f"lineage:librarian_apply:{batch_id}{rnd}")),
-                    },
-                )
-            ]
+            jobs = [apply_job(batch_id, project_id, rows[0]["proposal"].get("capabilities") or {}, rnd)]
         await assign_job_ids(conn, jobs)
         last = i == len(rows) - 1
         batches = (
@@ -245,11 +302,13 @@ async def record_batch_decision(
 __all__ = [
     "ROLES",
     "batch_questions",
+    "apply_job",
     "check_role_at_start",
     "decision_round",
     "effective_role",
     "latest_role_decision",
     "lower",
+    "pending_apply_jobs",
     "record_batch_decision",
     "record_role_decision",
 ]

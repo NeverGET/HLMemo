@@ -96,6 +96,19 @@ def error_code(exc: BaseException) -> str:
     return f"E_{type(exc).__name__}"
 
 
+#: question statuses an ``apply_batch`` job applies: batch approvals and owner accepts recorded
+#: under observer (D-074)
+APPLICABLE = ("approved", "accepted_pending")
+
+
+@dataclass(slots=True)
+class _Approved:
+    question_id: str
+    proposal: dict[str, Any]
+    status: str
+    expires_at: datetime | None
+
+
 def _logical_ids(actions: list[dict[str, Any]]) -> list[int]:
     """Every logical item an action set touches (assessed subjects, link endpoints, closes)."""
     out: set[int] = set()
@@ -440,15 +453,15 @@ class LibrarianWorker:
     @staticmethod
     async def _lock_approved(
         conn: AsyncConnection, plan: Plan, T: datetime
-    ) -> tuple[list[tuple[str, dict[str, Any]]], list[dict[str, Any]], datetime]:
+    ) -> tuple[list[_Approved], list[dict[str, Any]], datetime]:
         """``apply_batch`` lock order (Sol 46), the same as a request and ``memory.answer``: the
         device-access lock of every proposing device (sorted), then the question rows (``FOR
         UPDATE``, by id), then (``_apply_approved``) every logical item once, sorted. Returns the
-        questions STILL approved (one decided otherwise since the plan is left alone) and the
-        status changes: an approved question past ``expires_at`` is ``expired``, never applied
-        (Sol 46 #2: the 30-day TTL bounds every not-yet-applied proposal, as in ``memory.answer``).
-        The TTL is compared with the clock read AFTER the lock waits (Sol 47 #2), which becomes the
-        job's ``T`` (the event is recorded at or after it)."""
+        questions STILL ``approved`` or ``accepted_pending`` (D-074; one decided otherwise since the
+        plan is left alone) and the status changes: a question past ``expires_at`` is ``expired``,
+        never applied (Sol 46 #2: the 30-day TTL bounds every not-yet-applied proposal). The TTL is
+        compared with the clock read AFTER each lock wait (here and after the item locks, Sol 47 #2
+        and Sol 48), which becomes the job's ``T`` (the event is recorded at or after it)."""
         devices = {
             int(p["capabilities"]["trigger_device_id"])
             for _qid, p in plan.approved
@@ -463,22 +476,24 @@ class LibrarianWorker:
         )
         rows = {qid: (status, expires) for qid, status, expires in await cur.fetchall()}
         now = max(T, await q.clock_now(conn))
-        live: list[tuple[str, dict[str, Any]]] = []
+        live: list[_Approved] = []
         changes: list[dict[str, Any]] = []
         for qid, proposal in plan.approved:
             status, expires = rows.get(qid, (None, None))
-            if status != "approved":
+            if status not in APPLICABLE:
                 continue
             if expires is not None and expires <= now:
                 changes.append({"question_id": qid, "status": "expired"})
                 continue
-            live.append((qid, proposal))
+            live.append(_Approved(qid, proposal, status, expires))
         return live, changes, now
 
     async def _apply_approved(
-        self, conn: AsyncConnection, plan: Plan, approved: list[tuple[str, dict[str, Any]]]
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, list[datetime]]:
-        """``apply_batch``: each approved question under its own proposing job's capabilities."""
+        self, conn: AsyncConnection, plan: Plan, approved: list[_Approved], T: datetime
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, list[datetime], datetime]:
+        """``apply_batch``: each approved question under its own proposing job's capabilities.
+        After the item-lock wait the TTL is checked again against a FRESH clock (Sol 48), which
+        becomes the job's ``T``."""
         records: list[dict[str, Any]] = []
         changes: list[dict[str, Any]] = []
         superseded = 0
@@ -487,17 +502,22 @@ class LibrarianWorker:
         # D-058 propose-only: an approved widen_scope stays approved until memory.answer by a
         # writer on both projects (it never reaches the actor here)
         todo = [
-            (qid, proposal, actions)
-            for qid, proposal in approved
-            for actions in [proposal_actions(proposal)]
-            if proposal.get("kind") != "widen_scope"
-            and not any(a.get("op") == "widen_scope" for a in actions)
+            (a, actions)
+            for a in approved
+            for actions in [proposal_actions(a.proposal)]
+            if a.proposal.get("kind") != "widen_scope"
+            and not any(x.get("op") == "widen_scope" for x in actions)
         ]
-        await q.lock_logical_ids(conn, [lid for _q, _p, actions in todo for lid in _logical_ids(actions)])
-        for qid, proposal, actions in todo:
+        await q.lock_logical_ids(conn, [lid for _a, actions in todo for lid in _logical_ids(actions)])
+        T = max(T, await q.clock_now(conn))  # the last lock wait is over: the TTL against NOW
+        for a, actions in todo:
+            qid, proposal = a.question_id, a.proposal
+            if a.expires_at is not None and a.expires_at <= T:
+                changes.append({"question_id": qid, "status": "expired"})
+                continue
             assessed: dict[str, int] = {}
-            for a in actions:
-                assessed.update(a.get("assessed") or {})
+            for x in actions:
+                assessed.update(x.get("assessed") or {})
             # stale, or a subject an earlier question of this batch already closed: superseded
             if {int(k) for k in assessed} & planned["closed"] or await actor.is_stale(
                 conn, {"assessed": assessed}
@@ -518,7 +538,25 @@ class LibrarianWorker:
             records.extend(recs)
             recorded.extend(rec_at)
             changes.append({"question_id": qid, "status": "applied"})
-        return records, changes, superseded, recorded
+        return records, changes, superseded, recorded, T
+
+    @staticmethod
+    async def _batch_after_apply(conn: AsyncConnection, batch_id: str, denied: bool) -> list[dict[str, Any]]:
+        """The batch row changes of an apply (the row is locked last). A decided batch becomes
+        ``applied`` (or ``ready`` again when the role denied it); a batch that still collects open
+        questions (a promotion released its ``accepted_pending`` answers, D-074) keeps its status."""
+        cur = await conn.execute(
+            "SELECT status, EXISTS (SELECT 1 FROM librarian_questions"
+            "                        WHERE batch_id = %s AND status = 'open')"
+            " FROM librarian_batches WHERE batch_id = %s",
+            (batch_id, batch_id),
+        )
+        row = await cur.fetchone()
+        if row is None or row[1]:
+            return []
+        if denied:
+            return [{"batch_id": batch_id, "status": "ready"}] if row[0] == "decided" else []
+        return [{"batch_id": batch_id, "status": "applied"}]
 
     async def apply(self, conn: AsyncConnection, job: LeasedJob, plan: Plan) -> None:
         caps = plan.capabilities
@@ -540,17 +578,24 @@ class LibrarianWorker:
             if plan.op == "apply_batch" and outcome == "approved":
                 live, status_changes, T = await self._lock_approved(conn, plan, T)
                 if role == "observer":
-                    # nothing applies; the approvals are handed back (questions open again, the
+                    # nothing applies; batch approvals are handed back (questions open again, the
                     # batch ready): a new decision round re-approves them once the role allows
-                    # it (Sol 44 #7; Sol 46: round-keyed answer events and apply job)
+                    # it (Sol 44 #7; Sol 46: round-keyed answer events and apply job). An owner's
+                    # accepted_pending answer (D-074) stays as it is until a promotion.
                     outcome = "role_denied"
-                    status_changes += [{"question_id": qid, "status": "open"} for qid, _ in live]
-                    batch_changes = [{"batch_id": job.payload["batch_id"], "status": "ready"}]
+                    status_changes += [
+                        {"question_id": a.question_id, "status": "open"}
+                        for a in live
+                        if a.status == "approved"
+                    ]
+                    batch_changes = await self._batch_after_apply(conn, job.payload["batch_id"], True)
                 else:
-                    applied, changes, superseded, recorded = await self._apply_approved(conn, plan, live)
+                    applied, changes, superseded, recorded, T = await self._apply_approved(
+                        conn, plan, live, T
+                    )
                     status_changes += changes
                     outcome = "applied" if applied else "superseded" if superseded else "no_change"
-                    batch_changes = [{"batch_id": job.payload["batch_id"], "status": "applied"}]
+                    batch_changes = await self._batch_after_apply(conn, job.payload["batch_id"], False)
             elif (plan.proposals or plan.signals) and outcome in ("proposed", "approved"):
                 try:
                     ctx = await actor.recheck(conn, caps, CLIENT)
