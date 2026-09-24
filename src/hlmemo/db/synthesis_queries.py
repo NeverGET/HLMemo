@@ -44,4 +44,32 @@ async def excerpt_rows(
     return out
 
 
-__all__ = ["ExcerptRow", "excerpt_rows"]
+@dataclass(slots=True)
+class VersionAccess:
+    version_id: int
+    project_ids: list[int]
+    device_scope: str
+    status: str
+    current: bool  # open on both time axes (not superseded, not expired)
+
+
+async def version_access(conn: AsyncConnection, version_ids: list[int]) -> list[VersionAccess]:
+    """The authorization-relevant columns of the given versions (the post-call re-check, Sol 51)."""
+    if not version_ids:
+        return []
+    cur = await conn.execute(
+        """
+        SELECT version_id, project_ids, device_scope, status,
+               superseded_at = 'infinity' AND valid_to = 'infinity'
+          FROM memory_versions WHERE version_id = ANY(%s)
+        """,
+        (list(version_ids),),
+        prepare=False,
+    )
+    return [
+        VersionAccess(int(r[0]), [int(x) for x in r[1]], str(r[2]), str(r[3]), bool(r[4]))
+        for r in await cur.fetchall()
+    ]
+
+
+__all__ = ["ExcerptRow", "VersionAccess", "excerpt_rows", "version_access"]

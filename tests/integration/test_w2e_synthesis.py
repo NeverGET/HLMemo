@@ -181,7 +181,7 @@ def _excerpt_texts(body: dict[str, Any]) -> str:
 def answer_citing(ids: list[str], n: int = 2, text: str = "The answer is stated here.") -> dict[str, Any]:
     return {
         "status": "answered",
-        "sentences": [{"text": f"{text} ({i})", "cite": [ids[i]]} for i in range(n)],
+        "sentences": [{"text": f"{text} ({'abcdefghij'[i]})", "cite": [ids[i]]} for i in range(n)],
     }
 
 
@@ -684,7 +684,7 @@ async def test_g2_budget_with_synthesis_on_the_wire(db_dsn, world, weak_ids) -> 
         cites = [[ids[0]], ids[: min(3, len(ids))], [ids[-1]], [ids[len(ids) // 2]]]
         return {
             "status": "answered",
-            "sentences": [{"text": f"{long} {i}.", "cite": c} for i, c in enumerate(cites)],
+            "sentences": [{"text": f"{long} {'abcd'[i]}.", "cite": c} for i, c in enumerate(cites)],
         }
 
     qs = {q["id"]: q for q in load_questions()}
@@ -788,3 +788,239 @@ async def test_g_surf_and_wire_contract(db_dsn, world) -> None:  # noqa: ANN001
         out = json.loads(res["content"][0]["text"])
         check_response(out)
         assert out["synthesis_reason"] in (syn.DISABLED, ss.STRONG), out
+
+
+# --------------------------------------------------------------------------- Sol 51 fixes
+async def test_sol51_nothing_unreadable_is_returned(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """#1/#2: during the call the device loses the scope of one cited item (class change) and the
+    grant of a co-owner project of another: both sentences (and a mixed one) are dropped whole,
+    the scope-lost item's hit is gone, the co-owned item stays a hit (readable via the home project)."""
+    from hlmemo.auth.context import Role
+    from hlmemo.worker.main import drain
+
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "INSERT INTO projects (slug, name) VALUES ('syn-co', 'co-owner') RETURNING project_id"
+        )
+        (co,) = await cur.fetchone()
+        await conn.execute(
+            "INSERT INTO device_project_grants (device_id, project_id, role, granted_by_device_id)"
+            " VALUES (%s, %s, 'write', 1)",
+            (world.device_id, co),
+        )
+        await conn.commit()
+    ctx = replace(world.ctx, grants={**world.ctx.grants, co: Role.WRITE})
+    await _write(
+        connect,
+        ctx,
+        [
+            {
+                "kind": "fact",
+                "title": "Walrus relay port",
+                "body": "The walrus relay listens on port 51234.",
+                "device_scope": "class:personal",
+            },
+            {
+                "kind": "fact",
+                "title": "Walrus relay owner",
+                "body": "The walrus relay is owned by team plum-seven.",
+                "project_ids": [PROJECT, "syn-co"],
+            },
+            {
+                "kind": "fact",
+                "title": "Walrus relay region",
+                "body": "The walrus relay runs in region eu-lima-two.",
+            },
+        ],
+    )
+    await drain(connect, deps.embedder)
+
+    def answer(body: dict[str, Any]) -> dict[str, Any]:
+        payload = json.loads(body["messages"][1]["content"].split("INPUT: ", 1)[1])
+        by = {
+            k: next(e["id"] for e in payload["excerpts"] if k in e["text"])
+            for k in ("51234", "plum-seven", "eu-lima-two")
+        }
+        return {
+            "status": "answered",
+            "sentences": [
+                {"text": "It runs in region eu-lima-two.", "cite": [by["eu-lima-two"]]},
+                {"text": "The walrus relay listens on port 51234.", "cite": [by["51234"]]},
+                {"text": "It is owned by team plum-seven.", "cite": [by["plum-seven"]]},
+                {"text": "Port 51234 in region eu-lima-two.", "cite": [by["51234"], by["eu-lima-two"]]},
+            ],
+        }
+
+    async def lose_access(_body: dict[str, Any]) -> None:
+        async with await connect() as conn:
+            await conn.execute("UPDATE devices SET class = 'work' WHERE device_id = %s", (world.device_id,))
+            await conn.execute(
+                "UPDATE device_project_grants SET revoked_at = now()"
+                " WHERE device_id = %s AND project_id = %s",
+                (world.device_id, co),
+            )
+            await conn.commit()
+
+    llm = ScriptedLLM(default=answer, on_request=lose_access)
+    synth = stub_synth(db_dsn, llm)
+    try:
+        out, _ = await run(connect, world, deps, "walrus relay port owner region?", synth, tau=1.0, ctx=ctx)
+    finally:
+        async with await connect() as conn:
+            await conn.execute(
+                "UPDATE devices SET class = 'personal' WHERE device_id = %s", (world.device_id,)
+            )
+            await conn.commit()
+        await synth.aclose()
+    assert llm.calls == 1
+    check_response(out)
+    assert "51234" not in canonical(out), out  # the scope-lost item: its sentences AND its hit are gone
+    s = out["synthesis"]
+    assert s["text"].startswith("It runs in region eu-lima-two. [") and "plum-seven" not in s["text"], s
+    assert s["dropped"] == 3 and len(s["clues"]) == 1, s
+    titles = {h["title"] for h in out["hits"]}
+    assert "Walrus relay port" not in titles and {"Walrus relay owner", "Walrus relay region"} <= titles
+
+
+async def test_sol51_rotated_token_loses_authority(connect, world, deps, weak_ids, db_dsn) -> None:  # noqa: ANN001
+    """#2: a token rotation (generation + 1) during the call discards the result (E_AUTH); a rotation
+    before the call is stopped by the pre-provider privacy gate (no request at all)."""
+    from hlmemo.auth.errors import HlmError
+
+    q = weak_question(weak_ids)["question"]
+
+    async def set_generation(value: str) -> None:
+        async with await connect() as conn:
+            await conn.execute(
+                f"UPDATE devices SET token_generation = {value} WHERE device_id = %s", (world.device_id,)
+            )
+            await conn.commit()
+
+    llm = ScriptedLLM(default=lambda body: answer_citing(_ids(body), 1))
+    llm.on_request = lambda _b: set_generation("token_generation + 1")
+    synth = stub_synth(db_dsn, llm)
+    try:
+        with pytest.raises(HlmError) as ei:
+            await run(connect, world, deps, q, synth)
+        assert ei.value.code == "E_AUTH" and llm.calls == 1
+        llm.on_request = None  # already rotated: the gate refuses before any request
+        with pytest.raises(HlmError) as ei:
+            await run(connect, world, deps, q, synth)
+        assert ei.value.code == "E_AUTH" and llm.calls == 1
+    finally:
+        await set_generation("1")
+        await synth.aclose()
+
+
+async def test_sol51_support_guard(connect, world, deps, weak_ids, db_dsn) -> None:  # noqa: ANN001
+    """#3: a sentence whose number/identifier no cited excerpt states is dropped; none left → abstain."""
+    q = weak_question(weak_ids)["question"]
+
+    def answer(body: dict[str, Any]) -> dict[str, Any]:
+        ids = _ids(body)
+        return {
+            "status": "answered",
+            "sentences": [
+                {"text": "The magic port is 987654321.", "cite": [ids[0]]},
+                {"text": "Set NO_SUCH_SETTING_XYZ to fix it.", "cite": [ids[1]]},
+                {"text": "A plain supported sentence.", "cite": [ids[0]]},
+            ],
+        }
+
+    llm = ScriptedLLM(default=answer)
+    synth = stub_synth(db_dsn, llm)
+    try:
+        out, _ = await run(connect, world, deps, q, synth)
+        check_response(out)
+        s = out["synthesis"]
+        assert s["text"].startswith("A plain supported sentence. [") and s["dropped"] == 2, s
+        llm.default = lambda body: {
+            "status": "answered",
+            "sentences": [{"text": "The magic port is 987654321.", "cite": [_ids(body)[0]]}],
+        }
+        out, _ = await run(connect, world, deps, q, synth)
+        check_response(out)
+        assert out["synthesis"]["status"] == "insufficient_evidence" and out["synthesis"]["dropped"] == 1, out
+    finally:
+        await synth.aclose()
+
+
+async def test_sol51_deadline_without_a_recheck_connection(connect, world, deps, weak_ids, db_dsn) -> None:  # noqa: ANN001
+    """#4: after the LLM neither a pooled nor an unpooled connection can be had: the fast-path result
+    comes back with synthesis_reason recheck_unavailable within the total deadline, never an error."""
+    from tests.integration._synthesis_fixtures import direct_connect
+
+    class Hang:
+        async def __aenter__(self) -> Any:
+            await asyncio.sleep(3600)
+
+        async def __aexit__(self, *exc: Any) -> bool:
+            return False
+
+    llm = ScriptedLLM(default=lambda body: answer_citing(_ids(body), 1))
+    synth = stub_synth(db_dsn, llm)
+    opened = 0
+
+    async def connect_then_hang() -> Any:  # the privacy gate's two connections work, then none
+        nonlocal opened
+        opened += 1
+        if opened > 2:
+            await asyncio.sleep(3600)
+        return await direct_connect(db_dsn)
+
+    synth.connect = connect_then_hang
+
+    async def detach() -> bool:
+        return True
+
+    q = weak_question(weak_ids)["question"]
+    try:
+        async with await connect() as conn:
+            await conn.commit()
+            t0 = time.perf_counter()
+            out = await ss.query_synthesize(
+                conn,
+                world.ctx,
+                _args(q),
+                deps=deps,
+                synth=synth,
+                detach=detach,
+                reconnect=Hang,
+                deadline_s=2.0,
+            )
+            elapsed = time.perf_counter() - t0
+    finally:
+        await synth.aclose()
+    assert llm.calls == 1 and out["synthesis_reason"] == ss.NO_RECHECK and out["hits"], out
+    assert elapsed < 2.6, elapsed
+    check_response(out)
+
+
+async def test_sol51_pool_of_two_concurrent_syntheses(db_dsn, world, weak_ids) -> None:  # noqa: ANN001
+    """#4 through the API: pool_max_size=2, six concurrent syntheses (1 s model) next to plain queries:
+    every call answers (a synthesis or synthesis_unavailable), none errors, all within the deadline."""
+    qs = {q["id"]: q for q in load_questions()}
+    async with small_pool_app(db_dsn, 2) as client:
+        app = client.app  # type: ignore[attr-defined]
+        _did, token = await _reader(client, "syn-pool2")
+        llm = ScriptedLLM(default=("stall", 1.0, {"status": "insufficient_evidence", "sentences": []}))
+        synth = _api_synth(app, llm)
+
+        async def one(question: str, synthesize: bool) -> tuple[float, dict[str, Any], bool]:
+            t0 = time.perf_counter()
+            args = {**_args(question, 1500), **({"synthesize": True} if synthesize else {})}
+            res = await call_tool_raw(client, token, "memory.query", args)
+            return time.perf_counter() - t0, json.loads(res["content"][0]["text"]), bool(res.get("isError"))
+
+        try:
+            got = await asyncio.gather(
+                *(one(qs[i]["question"], True) for i in weak_ids[:6]),
+                *(one(qs[i]["question"], False) for i in weak_ids[6:12]),
+            )
+        finally:
+            await synth.aclose()
+    print(f"\nSol 51 #4 pool=2: {[round(t, 2) for t, _, _ in got]} s")
+    assert not any(err for _, _, err in got), [o for _, o, e in got if e]
+    for _, out, _ in got[:6]:
+        assert "synthesis" in out or out["synthesis_unavailable"] is True, out
+    assert max(t for t, _, _ in got) <= ss.TOTAL_DEADLINE_S + 0.5
