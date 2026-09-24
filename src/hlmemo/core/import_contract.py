@@ -71,7 +71,7 @@ async def check_source_owners(
     seen: dict[str, int] = {}
     for p in plans:
         key = source_key(source_json(p.item))
-        if key is None:
+        if key is None or p.item.close:  # a close ends validity: it releases the key, never takes it
             continue
         if key in seen:
             raise invalid_arg(

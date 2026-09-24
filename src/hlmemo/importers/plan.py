@@ -8,12 +8,13 @@
 
 Export-format records (``exportfmt``) are identified by their ``origin`` (``<project>/<logical_id>``
 of the item that was exported) or, when the exported item had a real provenance, by that source.
-In a DIFFERENT project the origin becomes the item's source ``hlm:<origin>`` — a persistent,
-ownership-checked mapping (UNIQUE ``mv_source_owner``), so a re-import is idempotent and a crafted
-``logical_id`` in a file can never touch an unrelated item (Sol 42 #5). Only in the origin project
-itself does ``origin`` map back to that logical item, and only if the kind matches, the item has no
-foreign provenance, and — for a revision — the file's ``version_id`` is still the head
-(optimistic concurrency: a stale or foreign file is rejected, never applied).
+An export record selects an existing item only through a server-held identity: an item whose own
+``source`` is the record's (``hlm:<origin>`` — the item was created by importing that export — or
+the real provenance it carries). Otherwise it becomes a NEW item with that source (a persistent,
+ownership-checked mapping, UNIQUE ``mv_source_owner``), so re-imports are idempotent and neither a
+crafted ``logical_id`` nor a forged ``origin`` can revise an unrelated item (Sol 42 #5, 43 #1). An
+unedited export re-imported into its own project is ``unchanged`` (identical content, no write).
+The project card is revised only while it is the skeleton or when it came from that export.
 
 Items this source imported earlier under the run's paths that are no longer produced are *missing*:
 :func:`remap` pairs them with ``new`` records by body similarity (a renamed heading or a moved file
@@ -37,14 +38,17 @@ from hlmemo.importers.common import ImportRecord, ParseResult, Reject
 NS_IMPORT = uuid.UUID("0c6f3c1e-5b7a-4f2e-9d41-7a2b8e6c1d09")
 CLIENT = "hlm-import/1"
 ORIGIN_SYSTEM = "hlm"
+SKELETON_TAG = "skeleton-card"  # core/skeleton_card.SKELETON_TAG (no server import on the client)
 #: files skipped for these reasons keep their earlier items open (the content may still be valid)
 KEEP_REASONS = ("unreadable", "binary", "too-large", "secret-pattern")
 #: body similarity (word 3-shingle Jaccard, heading line excluded) needed to re-map a missing item
 REMAP_SAME_FILE = 0.6
 REMAP_OTHER_FILE = 0.9
-#: never close more than this share of the run's in-scope items at once (wrong --base etc.)
+#: closing more than this share of the run's in-scope items needs an explicit confirmation, whatever
+#: the scope's size (a wrong --base, a moved tree, a mostly deleted directory: Sol 43 #5)
 MASS_CLOSE_SHARE = 0.5
-MASS_CLOSE_MIN = 5
+#: a re-map needs real content on both sides (heading-only / empty sections never match)
+MIN_REMAP_WORDS = 8
 
 
 @dataclass(slots=True)
@@ -54,7 +58,6 @@ class Entry:
     logical_id: int | None = None
     head_version_id: int | None = None
     expected: int | None = None  # expected_version_id of the write (None: a new item)
-    native: bool = False  # an export record mapped back onto its own origin item (no source written)
     remapped_from: str | None = None
     tokens: int = 0
 
@@ -69,7 +72,9 @@ class Plan:
     closes: list[dict[str, Any]] = field(default_factory=list)  # full items to close
     kept: list[dict[str, Any]] = field(default_factory=list)  # {key, reason}: missing, not closed
     remapped: list[dict[str, Any]] = field(default_factory=list)
+    ambiguous: list[dict[str, Any]] = field(default_factory=list)  # {from, candidates}: no re-map
     rejected: list[Reject] = field(default_factory=list)
+    in_scope: int = 0  # open items of this source under the run's paths (the mass-close base)
 
 
 def request_id(project: str, key: str, sha: str, expected: int | None = None, action: str = "write") -> str:
@@ -184,9 +189,12 @@ def classify(
     for k, it in sorted(by_key.items()):
         src = it.get("source") or {}
         path = str(src.get("path", ""))
-        if src.get("system") != system or k in produced or not _in_scope(path, parsed.scopes):
+        if src.get("system") != system or not _in_scope(path, parsed.scopes):
             continue
         if it.get("valid_to") is not None:  # already ended (e.g. closed by an earlier run)
+            continue
+        plan.in_scope += 1
+        if k in produced:
             continue
         reason = keep_files.get(path.split("#", 1)[0])
         if reason is not None:
@@ -217,34 +225,38 @@ def _classify_one(
             target["version_id"],
             expected=target["version_id"],
         )
-    native = False
+    lid_of = None
     if rec.kind_guess == "project_card":
         target = card
+        if target is not None and item_fingerprint(target, project) != record_fingerprint(rec):
+            # the project's one card is revised only if it is still the skeleton or was itself
+            # imported from this very export; a file never overwrites a curated card (Sol 43 #1)
+            skeleton = target.get("source") is None and SKELETON_TAG in (target.get("tags") or [])
+            if not skeleton and source_key(target.get("source")) != rec.key:
+                plan.rejected.append(Reject(rec.key, "card_not_from_this_export"))
+                return None
     else:
+        # Sol 43 #1: an export file selects an existing item ONLY through a server-held identity:
+        # the item's own source equals this file's source/origin (it was created by importing
+        # this export). A bare `origin:` naming an item never selects it; the file becomes a new
+        # sourced item instead. The one exception writes nothing: an origin item of this project
+        # whose content is identical is `unchanged`.
         target = by_key.get(rec.key)
         origin = split_origin(ex.get("origin") or "") if ex.get("source") is None else None
         if target is None and origin is not None and origin[0] == project:
             cand = by_lid.get(origin[1])
-            if cand is not None:
-                foreign = (cand.get("source") or {}).get("system") not in (None, ORIGIN_SYSTEM)
-                if cand["kind"] != rec.kind_guess or foreign:
-                    plan.rejected.append(Reject(rec.key, "origin_mismatch"))
-                    return None
-                target, native = cand, cand.get("source") is None
+            if cand is not None and item_fingerprint(cand, project) == record_fingerprint(rec):
+                lid_of = cand
+    if lid_of is not None:
+        return Entry(
+            rec, "unchanged", lid_of["logical_id"], lid_of["version_id"], expected=lid_of["version_id"]
+        )
     if target is None:
         return Entry(rec, "new")
+    lid, head = target["logical_id"], target["version_id"]
     if item_fingerprint(target, project) == record_fingerprint(rec):
-        return Entry(
-            rec, "unchanged", target["logical_id"], target["version_id"], expected=target["version_id"]
-        )
-    expected = target["version_id"]
-    if native:
-        # the file must still describe the head it was exported from (a crafted or stale file whose
-        # version_id is not the head is rejected: it would silently overwrite newer content)
-        if ex.get("version_id") != target["version_id"]:
-            plan.rejected.append(Reject(rec.key, "stale_or_foreign_export"))
-            return None
-    return Entry(rec, "changed", target["logical_id"], target["version_id"], expected=expected, native=native)
+        return Entry(rec, "unchanged", lid, head, expected=head)
+    return Entry(rec, "changed", lid, head, expected=head)
 
 
 # --------------------------------------------------------------------------- remap + close
@@ -265,43 +277,60 @@ def body_similarity(a: str, b: str) -> float:
     else:
         sa = {tuple(ta[i : i + 3]) for i in range(len(ta) - 2)}
         sb = {tuple(tb[i : i + 3]) for i in range(len(tb) - 2)}
-    if not sa and not sb:
-        return 1.0
+    if not sa or not sb:  # an empty / heading-only body matches nothing (Sol 43 #4)
+        return 0.0
     return len(sa & sb) / len(sa | sb)
 
 
-def remap(plan: Plan, old_items: list[dict[str, Any]]) -> None:
-    """Pair missing items with ``new`` records (one-to-one, best score first): same file needs a
-    body similarity >= 0.6, another file >= 0.9. Matched records become revisions of the old item
-    (their new source key moves with them); the other missing items are closed, unless that would
-    close more than half of the run's in-scope items (then all are kept and reported)."""
+def remap(plan: Plan, old_items: list[dict[str, Any]], *, confirm_close: bool = False) -> None:
+    """Pair missing items with ``new`` records: same file needs a body similarity >= 0.6, another
+    file >= 0.9, and both bodies need >= 8 words (a heading-only or empty section never re-maps).
+    A pair is taken only when it is UNAMBIGUOUS — the old item has exactly one candidate and that
+    candidate has exactly one old item; ambiguous items stay open and are reported (Sol 43 #4).
+    Matched records become revisions of the old item (their new source key moves with them). The
+    other missing items are closed — unless that closes more than half of the run's in-scope items,
+    whatever the scope's size, and ``confirm_close`` was not given (Sol 43 #5)."""
     olds = {it["logical_id"]: it for it in old_items}
     news = [e for e in plan.entries if e.action == "new" and e.record.export is None]
-    scored: list[tuple[float, str, str, int, int]] = []
+    by_old: dict[int, list[tuple[float, int]]] = {}
+    by_new: dict[int, list[int]] = {}
     for lid, old in olds.items():
+        if len(_tokens(old.get("body") or "")) < MIN_REMAP_WORDS:
+            continue
         old_file = str((old.get("source") or {}).get("path", "")).split("#", 1)[0]
         for n, e in enumerate(news):
+            if len(_tokens(e.record.body)) < MIN_REMAP_WORDS:
+                continue
             sim = body_similarity(old.get("body") or "", e.record.body)
             need = REMAP_SAME_FILE if e.record.file == old_file else REMAP_OTHER_FILE
             if sim >= need:
-                scored.append((sim, e.record.key, source_key(old.get("source")) or "", lid, n))
-    scored.sort(key=lambda s: (-s[0], s[1], s[2]))
+                by_old.setdefault(lid, []).append((sim, n))
+                by_new.setdefault(n, []).append(lid)
     used_old: set[int] = set()
-    used_new: set[int] = set()
-    for sim, new_key, old_key, lid, n in scored:
-        if lid in used_old or n in used_new:
+    ambiguous: set[int] = set()
+    for lid in sorted(by_old):
+        cands = by_old[lid]
+        old_key = source_key(olds[lid].get("source")) or ""
+        if len(cands) != 1 or len(by_new[cands[0][1]]) != 1:
+            ambiguous.add(lid)
+            keys = sorted({news[n].record.key for _s, n in cands})
+            for _s, n in cands:  # the other old items competing for the same record, too
+                for other in by_new[n]:
+                    ambiguous.add(other)
+            plan.ambiguous.append({"from": old_key, "candidates": keys})
             continue
+        sim, n = cands[0]
         used_old.add(lid)
-        used_new.add(n)
         e = news[n]
-        old = olds[lid]
-        e.action, e.logical_id, e.head_version_id = "changed", lid, old["version_id"]
-        e.expected, e.remapped_from = old["version_id"], old_key
-        plan.remapped.append({"from": old_key, "to": new_key, "score": round(sim, 3)})
-    rest = [olds[lid] for lid in sorted(olds) if lid not in used_old]
-    in_scope = len(plan.missing) + sum(1 for e in plan.entries if e.action != "new")
-    if len(rest) > max(MASS_CLOSE_MIN, MASS_CLOSE_SHARE * in_scope):
-        plan.kept += [{"key": source_key(it.get("source")), "reason": "mass-close-guard"} for it in rest]
+        e.action, e.logical_id, e.head_version_id = "changed", lid, olds[lid]["version_id"]
+        e.expected, e.remapped_from = olds[lid]["version_id"], old_key
+        plan.remapped.append({"from": old_key, "to": e.record.key, "score": round(sim, 3)})
+    for lid in sorted(ambiguous - used_old):
+        plan.kept.append({"key": source_key(olds[lid].get("source")), "reason": "remap-ambiguous"})
+    rest = [olds[lid] for lid in sorted(olds) if lid not in used_old and lid not in ambiguous]
+    if rest and len(rest) > MASS_CLOSE_SHARE * max(plan.in_scope, 1) and not confirm_close:
+        reason = f"mass-close-guard: {len(rest)} of {plan.in_scope} in-scope items; confirm to close"
+        plan.kept += [{"key": source_key(it.get("source")), "reason": reason} for it in rest]
         return
     plan.closes = rest
 
@@ -347,6 +376,7 @@ def report(plan: Plan, *, dry_run: bool) -> dict[str, Any]:
         "rejected": [{"key": r.key, "reason": r.reason, "date": r.date} for r in rejected],
         "duplicate_groups": parsed.duplicate_groups,
         "remapped": sorted(plan.remapped, key=lambda r: r["to"]),
+        "remap_ambiguous": sorted(plan.ambiguous, key=lambda r: r["from"]),
         "closed": sorted(source_key(it.get("source")) or "" for it in plan.closes),
         "missing": sorted(plan.kept, key=lambda k: str(k["key"])),
         "token_estimate": {

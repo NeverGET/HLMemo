@@ -892,6 +892,10 @@ def import_cmd(
     keep_missing: Annotated[
         bool, typer.Option("--keep-missing", help="report items no longer in the source; do not close")
     ] = False,
+    confirm_close: Annotated[
+        bool,
+        typer.Option("--confirm-close", help="allow closing more than half of the in-scope items"),
+    ] = False,
 ) -> None:
     """Import legacy memories with provenance (idempotent: unchanged content makes 0 writes)."""
     from hlmemo.importers.cli import SOURCES, human_summary, run_import_command
@@ -914,6 +918,7 @@ def import_cmd(
             tz=tz,
             section_chars=section_chars,
             close=not keep_missing,
+            confirm_close=confirm_close,
         )
     except ValueError as exc:
         raise CliError(str(exc), EX_USAGE) from None

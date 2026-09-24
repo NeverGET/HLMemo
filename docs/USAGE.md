@@ -225,14 +225,20 @@ hlm import markdown export/ --project hlmemo                  # re-import maps f
 - `describes`: repository files mentioned in the text (`src/x.py`) that exist under `--repo` → `code_refs`.
 - Items imported earlier that the run no longer produces: re-mapped when a new record has (nearly) the same
   body — a renamed heading or a moved file stays the same item, one revision (`remapped`) — else **closed**
-  (validity ends now; history stays; `closed`). `--keep-missing` reports them without closing; items of files
-  skipped for a read reason (unreadable, binary, too large, secret) are always kept (`missing`).
+  (validity ends now; history stays; outgoing links end too; `closed`). A re-map needs at least 8 words of
+  body on both sides (heading-only sections never re-map) and exactly one candidate: two or more candidates
+  above the threshold re-map nothing and are reported (`remap_ambiguous`, the old item stays open).
+  `--keep-missing` reports them without closing; items of files skipped for a read reason (unreadable,
+  binary, too large, secret) are always kept (`missing`). Closing more than half of the in-scope items of a
+  run — at any scope size — needs `--confirm-close`; without it they are kept (`mass-close-guard`).
 - Evidence dates: frontmatter `valid_from`/`date`, a `D-NNN | YYYY-MM-DD |` row, or a heading that STARTS
   with the date (`## 2026-09-24 — …`) or is `SESSION <date>`; dates in tables or prose are ignored.
 - `hlm export` files carry `origin: "<project>/<logical_id>"` (or the item's real `source`). Imported into
-  another project, the origin becomes the item's source (`hlm:<origin>`), so re-imports are idempotent and a
-  file can never overwrite an unrelated item; in its own project a file maps back only if its `version_id`
-  is still the head.
+  another project, the origin becomes the item's source (`hlm:<origin>`), so re-imports are idempotent. A
+  file selects an existing item ONLY through that item's own source (it was created by importing this
+  export): a crafted `logical_id` or a forged `origin` — even with the current `version_id` — never selects
+  a native item; such a file becomes a new sourced item (an unedited export of this project's own item is
+  `unchanged`). A card file revises only the skeleton card or a card imported from the same export.
 - The report lists new/changed/unchanged/closed/skipped/rejected, remapped, duplicate groups, missing
   (kept) and an o200k token estimate.
 
