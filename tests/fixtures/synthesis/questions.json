@@ -1,0 +1,2442 @@
+{
+ "version": 1,
+ "description": "W2e synthesis fixture: questions over HLMemo's public docs/ at the pinned corpus commit. keys are verbatim answer strings (any one answers); negatives have no answer in the corpus.",
+ "corpus": {
+  "commit": "ad7ccc2",
+  "root": "docs",
+  "importer": "markdown",
+  "section_chars": 8000,
+  "project": "syn-docs"
+ },
+ "questions": [
+  {
+   "id": "q001",
+   "question": "What keepalive setting was put on the three reverse proxies in the Caddyfile during the auth gate fix?",
+   "keys": [
+    "keepalive 4s",
+    "keepalive 4 s",
+    "keepalive of 4",
+    "4s keepalive",
+    "4 s keepalive"
+   ],
+   "file": "docs/consults/27-codex-auth-gate.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q002",
+   "question": "In the first bake-off, which database constraint broke re-registering a device after it had been revoked?",
+   "keys": [
+    "devices_fingerprint_key"
+   ],
+   "file": "docs/bakeoff/r1/repro/VERDICTS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q003",
+   "question": "According to the cross-review, which pool setting made an admin revoke fail while a device flooded the server with queued MCP requests?",
+   "keys": [
+    "pool_timeout_s"
+   ],
+   "file": "docs/bakeoff/r3/raw/xreview-by-opus.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q004",
+   "question": "Why were integer primary keys preferred over UUIDs when the Phase-0 spec conflicts were merged?",
+   "keys": [
+    "4 tokens",
+    "25 tokens",
+    "25 for a UUID"
+   ],
+   "file": "docs/decisions/PHASE0-CONFLICTS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q005",
+   "question": "After how long could a second worker take over a running job because the worker never renewed its lease?",
+   "keys": [
+    "120 s",
+    "120 seconds",
+    "120s"
+   ],
+   "file": "docs/consults/30-opus-review-exit-oom.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q006",
+   "question": "What is the maximum number of projects a single memory item may be attached to?",
+   "keys": [
+    "\"maxItems\":16",
+    "16 projects",
+    "at most 16",
+    "up to 16",
+    "maximum of 16",
+    "maximum is 16"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q007",
+   "question": "Which file does the warm-latency gate write with the machine and database versions it measured on?",
+   "keys": [
+    "HARDWARE.md"
+   ],
+   "file": "docs/consults/03-claude-phase0-spec.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q008",
+   "question": "How many tests passed when the round-10 re-measurement of the budget, auth and replay gates ran against hlm_o2?",
+   "keys": [
+    "69 passed",
+    "69 tests"
+   ],
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q009",
+   "question": "What recall did the finish verification report for Turkish queries in the G3 gate?",
+   "keys": [
+    "0.971"
+   ],
+   "file": "docs/consults/08-codex-finish-verification.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q010",
+   "question": "Which custom request header ended up in the reverse proxy access logs according to the second cross-review?",
+   "keys": [
+    "X-HLM-Registration-Secret"
+   ],
+   "file": "docs/bakeoff/r2/raw/xreview-by-astra.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q011",
+   "question": "What monthly euro price was quoted for the VPS plan the owner proposed on a 24-month term?",
+   "keys": [
+    "9.88"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q012",
+   "question": "How many questions does the fresh truth set have that is sealed before the private project's production import?",
+   "keys": [
+    "30-question",
+    "30 questions",
+    "30 question"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q013",
+   "question": "Which codex CLI version was pinned for the client smoke tests?",
+   "keys": [
+    "0.155.1"
+   ],
+   "file": "docs/decisions/PHASE0-ASSUMPTIONS-VERIFIED.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q014",
+   "question": "How many labelled proposals must be collected before the librarian may be promoted out of the observer role?",
+   "keys": [
+    "150 labeled",
+    "150 labelled"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q015",
+   "question": "Yavaş gövde yüklemelerinde toplam süre tavanı hangi formülle hesaplanıyor?",
+   "keys": [
+    "8192"
+   ],
+   "file": "docs/consults/24-codex-body.md",
+   "lang": "tr",
+   "split": "cal"
+  },
+  {
+   "id": "q016",
+   "question": "Which commit merged the winning branch of the third bake-off into main?",
+   "keys": [
+    "567a275"
+   ],
+   "file": "docs/bakeoff/r3/RESULT.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q017",
+   "question": "What extra smoke check did the dogfooding decision add to the client gate?",
+   "keys": [
+    "self-project"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q018",
+   "question": "Which index serves the head() lookup of the current version of a logical item?",
+   "keys": [
+    "mv_logical_current"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q019",
+   "question": "What LoCoMo benchmark score did the research report quote for Mem0, and what caveat came with it?",
+   "keys": [
+    "92.5"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q020",
+   "question": "Which SQLSTATE did duplicate open source keys raise while the import migration built its unique index?",
+   "keys": [
+    "23505"
+   ],
+   "file": "docs/consults/43-sol-review-w15-delta.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q021",
+   "question": "What strict sampled recall did the importer recall check over HLMemo's docs end at, and why was the bar not lowered?",
+   "keys": [
+    "0.794"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q022",
+   "question": "To which agy version were the client smoke tests re-pinned in the heartbeat round?",
+   "keys": [
+    "1.2.8"
+   ],
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q023",
+   "question": "What overall verdict did the first code review by the co-architect give after listing its top three fixes?",
+   "keys": [
+    "NO-GO",
+    "no go"
+   ],
+   "file": "docs/consults/07-codex-code-review.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q024",
+   "question": "With which exit code does the wrapper stop, without spawning the CLI, when the preflight fails in the codex Phase-0 design?",
+   "keys": [
+    "exits 69",
+    "exit 69",
+    "exit code 69",
+    "code 69"
+   ],
+   "file": "docs/consults/03-codex-phase0-design.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q025",
+   "question": "What anonymous memory peak was measured for the API container in the body/OOM review?",
+   "keys": [
+    "956"
+   ],
+   "file": "docs/consults/26-opus-review-body-oom.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q026",
+   "question": "Which Python base image tag did the assumption verification recommend instead of the originally pinned slim image?",
+   "keys": [
+    "3.12.14"
+   ],
+   "file": "docs/decisions/PHASE0-ASSUMPTIONS-VERIFIED.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q027",
+   "question": "How many provider calls may a single librarian job make at most before the loop guard stops it?",
+   "keys": [
+    "20 calls"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q028",
+   "question": "Why can a forged X-Forwarded-For header not change the loopback decision behind the reverse proxy?",
+   "keys": [
+    "proxy_headers=False",
+    "proxy_headers is False",
+    "proxy_headers false",
+    "proxy_headers=false"
+   ],
+   "file": "docs/consults/36-sol-review-w0a-delta.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q029",
+   "question": "What is the dimension of the embedding vectors used by the Phase-0 hybrid retrieval?",
+   "keys": [
+    "384"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q030",
+   "question": "What p95 query latency was reported by the verification after the N1 to N3 fixes?",
+   "keys": [
+    "289.8"
+   ],
+   "file": "docs/consults/10-codex-n1n3.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q031",
+   "question": "What is the default cap on the request body size for trusted requests?",
+   "keys": [
+    "67108864",
+    "64 MiB"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q032",
+   "question": "By how much did the recursive tree-summarisation method improve absolute accuracy on the QuALITY benchmark, according to the research report?",
+   "keys": [
+    "20%",
+    "%20",
+    "20 %",
+    "20 percent"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q033",
+   "question": "Which small VPS offer did the small-tier research recommend as the primary choice?",
+   "keys": [
+    "VPS-2"
+   ],
+   "file": "docs/research/06-vps-small-tier-2026-09.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q034",
+   "question": "How far in the future may an explicit evidence date of an imported memory be before the item is rejected?",
+   "keys": [
+    "5-minute",
+    "5 minutes",
+    "5 min",
+    "five minutes"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q035",
+   "question": "For how long could the per-project term-frequency cache stay stale according to the review of the retrieval fixes?",
+   "keys": [
+    "600 seconds",
+    "600 s",
+    "600s"
+   ],
+   "file": "docs/consults/33-sol-review-d055.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q036",
+   "question": "With what adjudicated scores did the deploy bake-off winner beat the other branch?",
+   "keys": [
+    "−0.5",
+    "-0.5"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q037",
+   "question": "What word limit did the round-3 prompt set for the co-architect's Phase-0 design answer?",
+   "keys": [
+    "1100",
+    "1,100"
+   ],
+   "file": "docs/consults/03-codex-prompt-phase0.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q038",
+   "question": "What input price per million tokens did the research report list for GPT-5 nano?",
+   "keys": [
+    "0.05"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q039",
+   "question": "What does the smallest Istanbul instance of Gcore cost per month before VAT?",
+   "keys": [
+    "33.91"
+   ],
+   "file": "docs/research/04-vps-turkey-analysis.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q040",
+   "question": "In how many of the import-recall questions was the right item found even though the evidence chunk itself was not returned?",
+   "keys": [
+    "29/34"
+   ],
+   "file": "docs/consults/42-sol-review-w15.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q041",
+   "question": "How many defects did the co-architect find in the first revision of the Phase 2-5 roadmap?",
+   "keys": [
+    "10 defects",
+    "ten defects"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q042",
+   "question": "Welchen Exit-Code liefert hlm, wenn das Gerät noch auf Freigabe wartet?",
+   "keys": [
+    "exit 77",
+    "exit code 77",
+    "code 77",
+    "Exit-Code 77"
+   ],
+   "file": "docs/USAGE.md",
+   "lang": "de",
+   "split": "test"
+  },
+  {
+   "id": "q043",
+   "question": "Which network range is trusted as a proxy by default in addition to loopback?",
+   "keys": [
+    "172.18.0.0/16"
+   ],
+   "file": "docs/consults/14-d037-app.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q044",
+   "question": "Within how many business days must standard contractual clauses be notified when personal data is moved out of Turkey?",
+   "keys": [
+    "5 business days",
+    "five business days"
+   ],
+   "file": "docs/research/04-vps-turkey-analysis.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q045",
+   "question": "What ef_search value did the co-architect's Phase-0 design propose for the optional approximate vector index?",
+   "keys": [
+    "ef_search=100",
+    "ef_search = 100",
+    "ef_search of 100",
+    "ef_search 100"
+   ],
+   "file": "docs/consults/03-codex-phase0-design.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q046",
+   "question": "How many bake-off repro tests had to pass before Phase 0 could be called done?",
+   "keys": [
+    "17 repro",
+    "all 17",
+    "17 tests"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q047",
+   "question": "Which embedding model ignored the requested dimensions parameter when probed through the router?",
+   "keys": [
+    "multilingual-e5-large"
+   ],
+   "file": "docs/research/05-embedding-models-2026-09.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q048",
+   "question": "Which exported environment variable could make a restore start the new image after the old code was checked out?",
+   "keys": [
+    "HLM_IMAGE"
+   ],
+   "file": "docs/consults/34-sol-review-w0a.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q049",
+   "question": "Which two commits did the implementer add to answer the DO-NOT-MERGE verdict on the access-hardening branch?",
+   "keys": [
+    "70d25bf",
+    "6ddd2c8"
+   ],
+   "file": "docs/consults/36-sol-prompt-w0a-delta.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q050",
+   "question": "Revoke isteği için toplam işlem süresi sınırı kaç saniye olarak türetildi?",
+   "keys": [
+    "24 saniye",
+    "24 seconds",
+    "24 s"
+   ],
+   "file": "docs/bakeoff/r3/raw/astra-final.md",
+   "lang": "tr",
+   "split": "test"
+  },
+  {
+   "id": "q051",
+   "question": "What address-space limit does the document extraction subprocess run with?",
+   "keys": [
+    "384 MiB"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q052",
+   "question": "From what range are the random token budgets drawn in the budget overflow test?",
+   "keys": [
+    "500, 8000",
+    "500 and 8000",
+    "500 to 8000",
+    "500–8000",
+    "500-8000"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q053",
+   "question": "Which commits of the bench workstream was the adversarial reviewer asked to examine?",
+   "keys": [
+    "bb03629",
+    "a158edf"
+   ],
+   "file": "docs/consults/40-sol-prompt-w2f.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q054",
+   "question": "In what format is a lesson passed to hlm close on the command line?",
+   "keys": [
+    "title::body"
+   ],
+   "file": "docs/USAGE.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q055",
+   "question": "Where does hlm keep the device token when no keyring backend is available?",
+   "keys": [
+    "credentials.toml"
+   ],
+   "file": "docs/USAGE.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q056",
+   "question": "What MRR does the corpus-A reference baseline have that every later gate is compared with?",
+   "keys": [
+    ".662"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q057",
+   "question": "In which repository do real deploy values such as tfvars, domains and IPs belong instead of the public repo?",
+   "keys": [
+    "hlmemo-ops"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q058",
+   "question": "How long are the text chunks that the embedding decision prescribes?",
+   "keys": [
+    "400-token",
+    "400 tokens",
+    "400 token"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q059",
+   "question": "How many pre-upgrade dumps should be kept by default after the retention defect was fixed?",
+   "keys": [
+    "N=5",
+    "last 5",
+    "5 by default",
+    "keep 5",
+    "5 pre-upgrade"
+   ],
+   "file": "docs/consults/11-codex-prompt-d034.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q060",
+   "question": "What do the container memory limits add up to for the 8 GB server sizing?",
+   "keys": [
+    "5.25 GiB",
+    "5.25"
+   ],
+   "file": "docs/consults/23-opus-closing-review.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q061",
+   "question": "What wide-area p95 latency did the remote gates measure at the first production deployment?",
+   "keys": [
+    "324 ms",
+    "324"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q062",
+   "question": "Which configuration file must hlm edit to register the memory server with agy?",
+   "keys": [
+    "mcp_config.json"
+   ],
+   "file": "docs/decisions/PHASE0-ASSUMPTIONS-VERIFIED.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q063",
+   "question": "How many 64 MiB uploads would be enough to exhaust the API's memory limit without the proxy in front, per the review of the D-037 fixes?",
+   "keys": [
+    "about 46",
+    "46 connections",
+    "46 ×",
+    "46 x"
+   ],
+   "file": "docs/consults/17-opus-review-d037.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q064",
+   "question": "Which fusion constant did the Phase-0 ranking ruling fix for reciprocal rank fusion?",
+   "keys": [
+    "k=60",
+    "k = 60",
+    "constant of 60",
+    "k of 60"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q065",
+   "question": "What change did the deploy review propose so that the deploy script does not silently stop after the backup step?",
+   "keys": [
+    "</dev/null",
+    "< /dev/null"
+   ],
+   "file": "docs/consults/12-opus-review-d034.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q066",
+   "question": "Which command in the backup script could delete the only remote recovery copies when a host is rebuilt?",
+   "keys": [
+    "sync --delete"
+   ],
+   "file": "docs/bakeoff/r2/blinded-findings.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q067",
+   "question": "How many tests passed in the clean full-suite runs of the D-039 source follow-up?",
+   "keys": [
+    "437 passed",
+    "437 tests"
+   ],
+   "file": "docs/consults/18-d039-source-followup.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q068",
+   "question": "What earlier query latency did the reviewer of the librarian foundation call a failure signal?",
+   "keys": [
+    "543 ms",
+    "543"
+   ],
+   "file": "docs/consults/35-sol-review-w2a.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q069",
+   "question": "How many clues can a single drilldown call expand at most?",
+   "keys": [
+    "1..20",
+    "20 clues",
+    "up to 20",
+    "at most 20",
+    "maximum of 20"
+   ],
+   "file": "docs/consults/03-claude-phase0-spec.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q070",
+   "question": "Which subnet was fixed for the compose frontend network in the D-039 fix?",
+   "keys": [
+    "172.30.39.0/24"
+   ],
+   "file": "docs/consults/18-codex-d039.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q071",
+   "question": "Which graph database does the research report say was acquired and archived, making it a risky choice?",
+   "keys": [
+    "Kuzu"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q072",
+   "question": "Which request option keeps the router from collecting prompt data for training?",
+   "keys": [
+    "data_collection"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q073",
+   "question": "Where is it logged when a user launches a coding CLI without the memory preflight?",
+   "keys": [
+    "hlm.log"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q074",
+   "question": "How much memory would average-linkage clustering of 20,000 items need just for the pairwise distances?",
+   "keys": [
+    "1.6 GiB"
+   ],
+   "file": "docs/consults/32-sol-review-roadmap.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q075",
+   "question": "What single-core Geekbench score did the VPS research quote for the overselling budget provider?",
+   "keys": [
+    "482"
+   ],
+   "file": "docs/research/02-vps-analysis.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q076",
+   "question": "What p99 latency did the gate report record in the last warm-latency measurement?",
+   "keys": [
+    "552 ms",
+    "552"
+   ],
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q077",
+   "question": "Which host ports did the prompt for the second deploy fix assign to the isolated bake stack?",
+   "keys": [
+    "18080",
+    "18443"
+   ],
+   "file": "docs/consults/13-codex-prompt-d035.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q078",
+   "question": "How does the query normalizer handle the German sharp s?",
+   "keys": [
+    "ß→ss",
+    "ß to ss",
+    "ß becomes ss",
+    "ß -> ss",
+    "ß → ss",
+    "ß as ss",
+    "ß into ss"
+   ],
+   "file": "docs/consults/03-claude-phase0-spec.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q079",
+   "question": "Under which chunker name is chunking recorded in the resolved part of a write event?",
+   "keys": [
+    "e5-window"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q080",
+   "question": "After how long past an unrefreshed invalidation do queries run without the document-frequency filter?",
+   "keys": [
+    "30 s",
+    "30 seconds",
+    "30s"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q081",
+   "question": "What one-word verdict did the review of the second deploy fix round give?",
+   "keys": [
+    "Nearly"
+   ],
+   "file": "docs/consults/15-opus-review-d035.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q082",
+   "question": "Which data-centre regions did the deploy bake-off brief propose for the server?",
+   "keys": [
+    "Falkenstein",
+    "Nuremberg"
+   ],
+   "file": "docs/bakeoff/r2/BRIEF.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q083",
+   "question": "At what time does the provisioned server reboot automatically for unattended upgrades?",
+   "keys": [
+    "04:30"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q084",
+   "question": "Which source file does the low-confidence synthesis workstream own?",
+   "keys": [
+    "tasks/synthesis.py",
+    "synthesis.py"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q085",
+   "question": "Which SQLSTATE revealed a hidden item's lock activity in the third bake-off's cross-review?",
+   "keys": [
+    "55P03"
+   ],
+   "file": "docs/bakeoff/r3/raw/xreview-by-astra.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q086",
+   "question": "What mitigation does the research report propose against runaway librarian costs?",
+   "keys": [
+    "cache-hit",
+    "cache hit"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q087",
+   "question": "Which Hetzner location did the latency analysis prefer for this workload?",
+   "keys": [
+    "nbg1"
+   ],
+   "file": "docs/research/04-vps-turkey-analysis.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q088",
+   "question": "Why do the retrieval candidate queries turn off server-side prepared statements?",
+   "keys": [
+    "generic plan"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q089",
+   "question": "What latency target did the research report set for the fast deterministic read path?",
+   "keys": [
+    "~200 ms",
+    "200 ms"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q090",
+   "question": "What did the first bake-off review suggest recording so that replay rebuilds surviving segments byte-identically?",
+   "keys": [
+    "last_access_at"
+   ],
+   "file": "docs/bakeoff/r1/raw/opus.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q091",
+   "question": "How does the health endpoint describe a device whose expiry time has passed?",
+   "keys": [
+    "expired: true",
+    "expired:true",
+    "\"expired\": true",
+    "expired=true"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q092",
+   "question": "What Turkish recall did the local e5-small model reach in the embedding benchmark that led to the move to a cloud embedder?",
+   "keys": [
+    "0.68"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q093",
+   "question": "Which fixed project name does the deploy smoke probe reuse after its fix?",
+   "keys": [
+    "deploy-smoke"
+   ],
+   "file": "docs/consults/11-codex-d034.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q094",
+   "question": "Which reverse-proxy setting was applied to the /mcp route so responses stream immediately?",
+   "keys": [
+    "flush_interval -1"
+   ],
+   "file": "docs/bakeoff/r2/raw/xreview-by-opus.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q095",
+   "question": "What length limit did the finish-round prompt set for the implementer's final message?",
+   "keys": [
+    "700 words",
+    "~700"
+   ],
+   "file": "docs/consults/08-codex-prompt-finish.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q096",
+   "question": "Which exchange format does the research report name as the closest existing example of sharing packaged memories between systems?",
+   "keys": [
+    "COGX"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q097",
+   "question": "How many librarian jobs per day did the model cost analysis assume?",
+   "keys": [
+    "60 jobs/day",
+    "60 jobs"
+   ],
+   "file": "docs/research/01-librarian-model-analysis.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q098",
+   "question": "What memory limit is planned for the new librarian service on the small production VPS?",
+   "keys": [
+    "512m",
+    "512 MiB",
+    "512 MB"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q099",
+   "question": "How many database tables did the Phase-0 tool-surface decision fix?",
+   "keys": [
+    "7 tables",
+    "seven tables"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q100",
+   "question": "After roughly how many daily session closes with card updates did reading the card's provenance start failing on the budget?",
+   "keys": [
+    "about 30",
+    "30 daily",
+    "~30",
+    "30 closes"
+   ],
+   "file": "docs/bakeoff/r1/blinded-findings.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q101",
+   "question": "According to the bake-off audit prompt, how many real defects beat twenty speculative ones?",
+   "keys": [
+    "5 real defects",
+    "five real defects"
+   ],
+   "file": "docs/bakeoff/r1/PROMPT.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q102",
+   "question": "How many tests passed in each run of the separate-native-worker acceptance for the D-037 fixes?",
+   "keys": [
+    "409 passed",
+    "409 tests"
+   ],
+   "file": "docs/consults/14-d037-verification.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q103",
+   "question": "How large were the stub files found in the legacy memory inventory that the importer must resolve or skip?",
+   "keys": [
+    "11-byte",
+    "11 byte",
+    "11 bytes"
+   ],
+   "file": "docs/research/03-legacy-memory-inventory-public.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q104",
+   "question": "How many ruff errors were counted in the deploy tests during the D-036 round?",
+   "keys": [
+    "22 errors"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q105",
+   "question": "Which job kinds did the first Claude Phase-0 spec allow in the jobs table?",
+   "keys": [
+    "archive_cycle",
+    "reembed"
+   ],
+   "file": "docs/consults/03-claude-phase0-spec.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q106",
+   "question": "What is the unique index called that ties an imported source key to its owner item?",
+   "keys": [
+    "mv_source_owner"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q107",
+   "question": "How much outbound traffic was included with the VPS that was first proposed?",
+   "keys": [
+    "20 TB"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q108",
+   "question": "Which wildcard DNS service does the deploy guide fall back to when there is no own domain?",
+   "keys": [
+    "sslip.io"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q109",
+   "question": "What is the recovery path after a bad release once the access hardening made rollbacks one-way?",
+   "keys": [
+    "roll forward"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q110",
+   "question": "Which example configuration file does the public repository ship instead of the private client config?",
+   "keys": [
+    "hlm.example.toml"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q111",
+   "question": "What token budget does a write use when the client does not pass one?",
+   "keys": [
+    "default 2000",
+    "2000 tokens",
+    "defaults to 2000",
+    "default of 2000"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q112",
+   "question": "How was Postgres being published on every network interface supposed to be fixed after the first code review?",
+   "keys": [
+    "127.0.0.1"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q113",
+   "question": "Above what size does the importer split a markdown file into one item per heading section?",
+   "keys": [
+    "8000",
+    "8,000"
+   ],
+   "file": "docs/USAGE.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q114",
+   "question": "Which pgvector image tag did the first Claude Phase-0 spec assume for the database?",
+   "keys": [
+    "0.8.1-pg17"
+   ],
+   "file": "docs/consults/03-claude-phase0-spec.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q115",
+   "question": "Which bench case did the review of the bench workstream say had been wrongly dropped by the adjudication?",
+   "keys": [
+    "T10-07"
+   ],
+   "file": "docs/consults/40-sol-review-w2f.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q116",
+   "question": "Which dead forwarding setting did the final deploy round of Phase 0 remove?",
+   "keys": [
+    "FORWARDED_ALLOW_IPS"
+   ],
+   "file": "docs/consults/21-codex-prompt-final-deploy.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q117",
+   "question": "How many public probes per window did the readiness test of the D-039 follow-up send?",
+   "keys": [
+    "500 public probes"
+   ],
+   "file": "docs/consults/18-d039-source-followup.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q118",
+   "question": "What false-warning rate did the fallback model show in the live risk-check gate?",
+   "keys": [
+    "0.25"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q119",
+   "question": "What share of the budget test cases took the too-small branch of memory.raw before cursor paging existed?",
+   "keys": [
+    "58/1000"
+   ],
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q120",
+   "question": "How long does a contract-maximum write take to embed on one CPU according to the backlog?",
+   "keys": [
+    "38 min"
+   ],
+   "file": "docs/status/BACKLOG.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q121",
+   "question": "How is the request id of the librarian's per-write event derived?",
+   "keys": [
+    "uuid5"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q122",
+   "question": "Which placeholder left in the env file makes the deploy script refuse to run?",
+   "keys": [
+    "CHANGE_ME"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q123",
+   "question": "With which exit code does the wrapper reject pass-through flags that would replace the injected first prompt?",
+   "keys": [
+    "exit 64",
+    "exit code 64",
+    "code 64"
+   ],
+   "file": "docs/USAGE.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q124",
+   "question": "What query p95 was measured while many writes were arriving, before the index and cache fixes?",
+   "keys": [
+    "6.7 s",
+    "6.7s",
+    "6.7 seconds"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q125",
+   "question": "Which migration name was the implementer allowed to add for versioning the idempotency hash?",
+   "keys": [
+    "0003_hash_version"
+   ],
+   "file": "docs/consults/10-codex-prompt-n1n3.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q126",
+   "question": "Which namespace constant is used to derive the request id of a librarian job's event?",
+   "keys": [
+    "NS_LIBRARIAN"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q127",
+   "question": "What lower minimum upload rate was proposed in the final Phase-0 round instead of 128 KiB/s?",
+   "keys": [
+    "8 KiB/s"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q128",
+   "question": "Which environment setting makes the server refuse to start with open registration or admin HTTP enabled?",
+   "keys": [
+    "HLM_DEPLOYMENT"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q129",
+   "question": "Where on the server does the deploy tooling append its deployment history?",
+   "keys": [
+    "deploy-history.log"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q130",
+   "question": "Which private-network tool did the owner postpone when the VPS firewall was enabled?",
+   "keys": [
+    "Tailscale"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q131",
+   "question": "Son deploy turunda eski MCP SDK 5 MB'lık bir gövdeye hangi HTTP durum koduyla cevap verdi?",
+   "keys": [
+    "413"
+   ],
+   "file": "docs/consults/21-codex-final-deploy.md",
+   "lang": "tr",
+   "split": "cal"
+  },
+  {
+   "id": "q132",
+   "question": "Which model won the implementation rounds of the bake-off?",
+   "keys": [
+    "astra"
+   ],
+   "file": "docs/bakeoff/SCOREBOARD.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q133",
+   "question": "Which contract amendment would non-US data residency for the EU fallback model require, according to the second co-architect round?",
+   "keys": [
+    "Modified Retention"
+   ],
+   "file": "docs/consults/02-codex-round2.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q134",
+   "question": "Which environment file also has to be mounted into the api service before the librarian release?",
+   "keys": [
+    "llm.env"
+   ],
+   "file": "docs/status/STATUS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q135",
+   "question": "For how long could a slow chunked upload keep 64 MiB of buffer occupied, according to the review of the auth gate?",
+   "keys": [
+    "2 h 17 min",
+    "2h17",
+    "2 h 17"
+   ],
+   "file": "docs/consults/28-opus-review-authgate.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q136",
+   "question": "How many trials per pinned CLI does the proactive-recall gate require?",
+   "keys": [
+    "300 trials"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q137",
+   "question": "What was the only textual difference in the Claude Code configuration after the round-10 client run?",
+   "keys": [
+    "tengu_"
+   ],
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q138",
+   "question": "What false-warning rate did the retrieval-only risk check have according to the prompt for the W2d review?",
+   "keys": [
+    "0.525"
+   ],
+   "file": "docs/consults/41-sol-prompt-w2d.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q139",
+   "question": "Which duplicate output field did the first spec review demand be removed from every tool result?",
+   "keys": [
+    "structuredContent"
+   ],
+   "file": "docs/consults/04-codex-review.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q140",
+   "question": "Which step of the deploy track covers self-hosting against the remote server?",
+   "keys": [
+    "DP6"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q141",
+   "question": "Which librarian capability is required to write an experience into the shared global project?",
+   "keys": [
+    "global_experience"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q142",
+   "question": "In which commit were the cross-cutting contracts frozen before the fan-out?",
+   "keys": [
+    "e5d79bb"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q143",
+   "question": "How long may the project card be at most?",
+   "keys": [
+    "512 pinned",
+    "512 tokens",
+    "512-token"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q144",
+   "question": "How often at most does the embedding worker print its heartbeat line?",
+   "keys": [
+    "10 s",
+    "10 seconds",
+    "10s"
+   ],
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q145",
+   "question": "Which heartbeat fields were added so that a worker stuck on a job no longer looks idle?",
+   "keys": [
+    "oldest_in_flight_age_s",
+    "in_flight_jobs"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q146",
+   "question": "How much write latency per chunk would synchronous embedding add if the async worker had to be cut?",
+   "keys": [
+    "50 ms"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q147",
+   "question": "Welche Variable wird erst nach einem erfolgreichen Deploy in die env-Datei geschrieben, damit jedes Release sein eigenes unveränderliches Image hat?",
+   "keys": [
+    "HLM_IMAGE_TAG"
+   ],
+   "file": "docs/consults/16-codex-prompt-d038.md",
+   "lang": "de",
+   "split": "cal"
+  },
+  {
+   "id": "q148",
+   "question": "How large did the orchestrator's opening position estimate a single user's whole memory to be?",
+   "keys": [
+    "10-20 MB",
+    "10–20 MB"
+   ],
+   "file": "docs/consults/00-claude-position.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q149",
+   "question": "How many tokens does the packer hold back so that the top previews can still be extended?",
+   "keys": [
+    "216"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q150",
+   "question": "Which layer of the research report's layer model is the per-project overview card?",
+   "keys": [
+    "L3"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q151",
+   "question": "Üretim sunucusunun veri merkezi hangi şehirde?",
+   "keys": [
+    "Vilnius"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "tr",
+   "split": "test"
+  },
+  {
+   "id": "q152",
+   "question": "What is the migration called that comes right after the import migration in the overnight renumbering?",
+   "keys": [
+    "0008_librarian_tasks"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q153",
+   "question": "Which Mistral model was on the first shortlist of librarian candidates?",
+   "keys": [
+    "mistral-small-2603"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q154",
+   "question": "Which bench gate checks that the spend limit option is honoured through the reservation?",
+   "keys": [
+    "G-B2"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q155",
+   "question": "How many attacking connections were held open while the real 38.4 MB write still succeeded in the final source round?",
+   "keys": [
+    "70 attacker",
+    "70 saldırgan",
+    "70 connections",
+    "70 hostile",
+    "70 attacking"
+   ],
+   "file": "docs/consults/22-codex-final-src.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q156",
+   "question": "Which write model does the research report recommend for merging concurrent writes from several computers and CLIs?",
+   "keys": [
+    "append-only"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q157",
+   "question": "Over how many chunks should the frozen recall fixture run according to the co-architect's architecture critique?",
+   "keys": [
+    "10,000 chunks",
+    "10000 chunks",
+    "10 000 chunks"
+   ],
+   "file": "docs/consults/01-codex-architecture-critique.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q158",
+   "question": "How many tables does the Phase-0 schema have once the device model was added?",
+   "keys": [
+    "8 tables",
+    "eight tables"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q159",
+   "question": "How is the temporary env file wiped after it has been copied to the server?",
+   "keys": [
+    "shred -u"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q160",
+   "question": "What preflight token budget did the first Claude Phase-0 spec put into the example configuration?",
+   "keys": [
+    "3000",
+    "3,000"
+   ],
+   "file": "docs/consults/03-claude-phase0-spec.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q161",
+   "question": "What median round-trip time did the owner's machine measure to Hetzner's Nuremberg location?",
+   "keys": [
+    "64.3"
+   ],
+   "file": "docs/research/04-vps-turkey-analysis.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q162",
+   "question": "According to the second delta review of the librarian foundation, how long after a write could the first query still receive the old term statistics?",
+   "keys": [
+    "31 s",
+    "31 seconds",
+    "31 saniye",
+    "31s"
+   ],
+   "file": "docs/consults/38-sol-review-w2a-delta2.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q163",
+   "question": "Which database holds the retrieval fixture that must never be truncated?",
+   "keys": [
+    "hlm_retr"
+   ],
+   "file": "docs/decisions/PHASE0-GATE-REPORT.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q164",
+   "question": "Which document defines the rules of the model bake-off between the two coding models?",
+   "keys": [
+    "PROTOCOL.md"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q165",
+   "question": "How many chunks did corpus A contain when the retrieval fixes were re-measured on merged main?",
+   "keys": [
+    "1,427",
+    "1427"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q166",
+   "question": "Which MCP server class does the spec say no longer exists in version 2 of the SDK?",
+   "keys": [
+    "FastMCP"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q167",
+   "question": "What would the losing deploy submission have scored without the penalty for duplicate env-file keys?",
+   "keys": [
+    "−8.0",
+    "-8.0"
+   ],
+   "file": "docs/bakeoff/r2/RESULT.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q168",
+   "question": "Which timestamps does Graphiti keep for each fact according to the research report?",
+   "keys": [
+    "t_invalid",
+    "t_expired"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q169",
+   "question": "At what time of day does the backup timer run the daily database backup?",
+   "keys": [
+    "03:15"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q170",
+   "question": "After roughly how many idle days does an item's retention fall below the archive threshold?",
+   "keys": [
+    "47 idle",
+    "about 47",
+    "47 days",
+    "~47"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q171",
+   "question": "What importance cap do items get when an accepted memory pack is activated?",
+   "keys": [
+    "≤ 6",
+    "at most 6",
+    "<= 6",
+    "importance 6",
+    "capped at 6"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q172",
+   "question": "OOM düzeltmesinde Caddy konteynerine hangi bellek sınırı verildi?",
+   "keys": [
+    "256 MiB"
+   ],
+   "file": "docs/consults/25-codex-oom.md",
+   "lang": "tr",
+   "split": "cal"
+  },
+  {
+   "id": "q173",
+   "question": "Which commits of the librarian foundation branch did the adversarial reviewer examine in the first round?",
+   "keys": [
+    "0f5b408",
+    "19be389"
+   ],
+   "file": "docs/consults/35-sol-prompt-w2a.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q174",
+   "question": "Which error does a revision with an outdated expected version receive?",
+   "keys": [
+    "E_VERSION_CONFLICT"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q175",
+   "question": "How is the referential integrity of an item's project list enforced, given that there are no array foreign keys?",
+   "keys": [
+    "application-enforced",
+    "in the application",
+    "application enforced",
+    "application-level",
+    "by the application"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q176",
+   "question": "What happens to the second model's role if Opus clearly wins the bake-off?",
+   "keys": [
+    "advisor"
+   ],
+   "file": "docs/bakeoff/PROTOCOL.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q177",
+   "question": "How many revocations did the flood regression complete in the D-037 middleware validation?",
+   "keys": [
+    "ten revocations",
+    "10 revocations",
+    "all ten"
+   ],
+   "file": "docs/consults/14-d037-middleware.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q178",
+   "question": "What did the roadmap turn the research report's silent dropping of old memories into?",
+   "keys": [
+    "reversible archive"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q179",
+   "question": "How much larger than the inventory should the legacy migration be planned for once the work computer is included?",
+   "keys": [
+    "2×",
+    "2x",
+    "twice"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q180",
+   "question": "Which test was named as the first one to write when the Phase-0 implementation started?",
+   "keys": [
+    "test_device1_restart_without_env_disables_admin"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q181",
+   "question": "Welche Halbwertszeit in Tagen verwendet die Formel für das Vergessen von Erinnerungen?",
+   "keys": [
+    "idle_days/14",
+    "/14",
+    "14 days",
+    "14-day",
+    "14 Tage",
+    "14 Tagen"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "de",
+   "split": "test"
+  },
+  {
+   "id": "q182",
+   "question": "Under which names do the memory tools show up inside Claude Code?",
+   "keys": [
+    "mcp__hlm__"
+   ],
+   "file": "docs/USAGE.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q183",
+   "question": "Which error is returned when the same session is closed a second time?",
+   "keys": [
+    "E_SESSION_CLOSED"
+   ],
+   "file": "docs/decisions/PHASE0-SPEC.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q184",
+   "question": "On which pgvector image was the schema re-validated before the round-5 go/no-go check?",
+   "keys": [
+    "0.8.6-pg17"
+   ],
+   "file": "docs/consults/05-codex-prompt-go.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q185",
+   "question": "What did the review of the risk-check workstream flag as high severity about the judge call?",
+   "keys": [
+    "request transaction",
+    "device lock"
+   ],
+   "file": "docs/consults/41-sol-review-w2d.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q186",
+   "question": "From which file does the local compose stack read the admin token?",
+   "keys": [
+    ".hlm-dev.env"
+   ],
+   "file": "docs/USAGE.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q187",
+   "question": "Which published canary port must stay unreachable from outside in the firewall gate?",
+   "keys": [
+    "5555"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q188",
+   "question": "Which merge commit brought the importer fixes into main before the delta review?",
+   "keys": [
+    "0c0c013"
+   ],
+   "file": "docs/consults/43-sol-prompt-w15-delta.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q189",
+   "question": "What bench score did the default librarian model have after the strict gold adjudication?",
+   "keys": [
+    "94.9"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q190",
+   "question": "Which setting's default fell back into the git checkout according to the D-035 findings?",
+   "keys": [
+    "HLM_BACKUP_DIR"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q191",
+   "question": "How much json-file log is kept per container in the production deploy guide?",
+   "keys": [
+    "5 x 10 MB",
+    "5 × 10 MB",
+    "50 MB"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q192",
+   "question": "On top of which base commit was the first access-hardening branch reviewed?",
+   "keys": [
+    "82200ae"
+   ],
+   "file": "docs/consults/34-sol-prompt-w0a.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q193",
+   "question": "How many clusters does the first stage of the bounded topic clustering create for n items?",
+   "keys": [
+    "ceil(n/25)",
+    "n/25"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q194",
+   "question": "How long did the second contestant need for the Phase-0 audit round of the bake-off?",
+   "keys": [
+    "9 min 4 s"
+   ],
+   "file": "docs/bakeoff/r1/RESULT.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q195",
+   "question": "Which leftover lock file could make every later deploy and timer backup fail after a reboot or OOM kill?",
+   "keys": [
+    ".operation.lock"
+   ],
+   "file": "docs/bakeoff/r2/blinded-findings.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q196",
+   "question": "On which rehearsal host was the first production release rehearsed?",
+   "keys": [
+    "hlm-2604"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q197",
+   "question": "Why was the cheapest Gemini model excluded when the librarian tiers were chosen?",
+   "keys": [
+    "21/30",
+    "prompt injection"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q198",
+   "question": "How was the final recall and latency run forced to stay read-only on the fixture database?",
+   "keys": [
+    "default_transaction_read_only"
+   ],
+   "file": "docs/consults/18-d039-source-followup.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q199",
+   "question": "Which setting in the deploy runner made the worker crash-loop on the first real deployment of the rehearsal?",
+   "keys": [
+    "umask 077"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q200",
+   "question": "How many tests passed in the full suite after the fix that allowed re-registering revoked device names?",
+   "keys": [
+    "470"
+   ],
+   "file": "docs/consults/19-codex-f15.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q201",
+   "question": "Which environment variable fixed the native abort when the test process exited?",
+   "keys": [
+    "ORT_DISABLE_TELEMETRY"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q202",
+   "question": "What hybrid recall did the cloud embedding model reach in the comparison that made the project keep the local embedder?",
+   "keys": [
+    "0.920"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q203",
+   "question": "Why was the GLM flash model eliminated in the first librarian model bench?",
+   "keys": [
+    "reasoning cannot be disabled",
+    "cannot disable reasoning",
+    "reasoning could not be disabled"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q204",
+   "question": "Which exponential decay factor for recency does the research report cite from Generative Agents?",
+   "keys": [
+    "0.995"
+   ],
+   "file": "docs/research/00-deep-research-report.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q205",
+   "question": "To what value did the synthetic recall gate rise after the real-data retrieval fixes?",
+   "keys": [
+    ".980",
+    "0.98"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q206",
+   "question": "What latency bound applies to the deterministic stage of the risk check?",
+   "keys": [
+    "300 ms"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q207",
+   "question": "How often does the librarian renew the lease on a running job?",
+   "keys": [
+    "every 30 s",
+    "30 seconds"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q208",
+   "question": "How is a device renewed once its expiry date has passed?",
+   "keys": [
+    "rotate --expires"
+   ],
+   "file": "docs/USAGE.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q209",
+   "question": "What share of answers was already visible in the query response in the first real-data baseline?",
+   "keys": [
+    ".098"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q210",
+   "question": "What time-to-live was chosen for the cached readiness result in the D-039 follow-up?",
+   "keys": [
+    "readiness_cache_ttl_s=1",
+    "1 second",
+    "one second"
+   ],
+   "file": "docs/consults/18-d039-source-followup.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q211",
+   "question": "Which log file holds the evidence that all three coding CLIs passed against production?",
+   "keys": [
+    "05-g7-all-pass.log"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q212",
+   "question": "Within how many seconds must the stack report healthy in the boot gate?",
+   "keys": [
+    "60 s",
+    "60 seconds"
+   ],
+   "file": "docs/decisions/VALIDATION-GATES.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q213",
+   "question": "Türk hosting sağlayıcıları için hangi kanunun yükümlülükleri araştırılmadı?",
+   "keys": [
+    "5651"
+   ],
+   "file": "docs/research/04-vps-turkey-analysis.md",
+   "lang": "tr",
+   "split": "test"
+  },
+  {
+   "id": "q214",
+   "question": "How long should clients expect 502 or 503 answers at the edge during an upgrade?",
+   "keys": [
+    "20-40 s",
+    "20–40 s",
+    "20 to 40"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q215",
+   "question": "Where inside the reverse proxy container is the root certificate of its local CA?",
+   "keys": [
+    "root.crt"
+   ],
+   "file": "docs/bakeoff/r2/raw/opus-final.md",
+   "lang": "en",
+   "split": "test"
+  },
+  {
+   "id": "q216",
+   "question": "How many proposals at most should one librarian approval batch contain by default?",
+   "keys": [
+    "25 proposals"
+   ],
+   "file": "docs/decisions/PHASE2-4-ROADMAP.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "q217",
+   "question": "Which Postgres 17 setting was added as an extra bound on request transactions in the source fix round?",
+   "keys": [
+    "transaction_timeout"
+   ],
+   "file": "docs/decisions/DECISIONS.md",
+   "lang": "en",
+   "split": "cal"
+  },
+  {
+   "id": "n01",
+   "question": "What eviction policy is configured for the Redis cache in front of the memory server?",
+   "keys": [],
+   "file": null,
+   "lang": "en",
+   "split": "test",
+   "negative": true
+  },
+  {
+   "id": "n02",
+   "question": "Which Kubernetes namespace does the production deployment of HLMemo run in?",
+   "keys": [],
+   "file": null,
+   "lang": "en",
+   "split": "cal",
+   "negative": true
+  },
+  {
+   "id": "n03",
+   "question": "What does the managed AWS RDS instance for HLMemo cost per month?",
+   "keys": [],
+   "file": null,
+   "lang": "en",
+   "split": "test",
+   "negative": true
+  },
+  {
+   "id": "n04",
+   "question": "Which GraphQL endpoint exposes the memory search to the coding agents?",
+   "keys": [],
+   "file": null,
+   "lang": "en",
+   "split": "cal",
+   "negative": true
+  },
+  {
+   "id": "n05",
+   "question": "On which port does the HLMemo gRPC server listen?",
+   "keys": [],
+   "file": null,
+   "lang": "en",
+   "split": "cal",
+   "negative": true
+  },
+  {
+   "id": "n06",
+   "question": "Which Elasticsearch index stores the embedded chunks?",
+   "keys": [],
+   "file": null,
+   "lang": "en",
+   "split": "test",
+   "negative": true
+  },
+  {
+   "id": "n07",
+   "question": "Who approved the migration of the event store to MongoDB, and when?",
+   "keys": [],
+   "file": null,
+   "lang": "en",
+   "split": "cal",
+   "negative": true
+  },
+  {
+   "id": "n08",
+   "question": "What uptime SLA percentage is promised to paying HLMemo customers?",
+   "keys": [],
+   "file": null,
+   "lang": "en",
+   "split": "test",
+   "negative": true
+  },
+  {
+   "id": "n09",
+   "question": "Kütüphaneci uyarıları hangi Slack kanalına gönderiliyor?",
+   "keys": [],
+   "file": null,
+   "lang": "tr",
+   "split": "test",
+   "negative": true
+  },
+  {
+   "id": "n10",
+   "question": "Wie viele Benutzer darf ein Team-Workspace in HLMemo höchstens haben?",
+   "keys": [],
+   "file": null,
+   "lang": "de",
+   "split": "test",
+   "negative": true
+  }
+ ]
+}
