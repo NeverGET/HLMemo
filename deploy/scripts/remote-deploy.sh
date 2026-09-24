@@ -413,11 +413,12 @@ dc exec -T api python -m hlmemo.ops device list </dev/null || echo 'WARNING: dev
 # R2 (D-058, Sol 48): the librarian's effective state. llm.env present: api settings, librarian
 # settings and heartbeat must all be enabled/live/observer and the api's risk judge must load with a
 # non-empty chain (it and the W2b enqueue run there). An unreachable provider is only reported.
-# Without llm.env (R1-style) it passes only while everything idles.
+# Without llm.env (R1-style) it passes only while everything idles. Sol 49: the heartbeat must be
+# fresh (<= 3 intervals, 30 s by default); a missing/stale one is re-read for up to 45 s first.
 # Like the public checks above, a failure leaves the new stack running (no database rollback).
 llm_env_state=absent
 if [[ -f ${HLM_LLM_ENV_FILE:-$(dirname "$HLM_ENV_FILE")/llm.env} ]]; then llm_env_state=present; fi
-dc exec -T librarian python - collect --service librarian --probe \
+dc exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
   < deploy/scripts/check_librarian.py > "$run_dir/librarian-report.json" || true
 dc exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$run_dir/api-report.json" || true
 if ! python3 deploy/scripts/check_librarian.py evaluate --llm-env "$llm_env_state" \
