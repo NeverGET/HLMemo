@@ -5,6 +5,10 @@ read right now: ``project_ids`` overlaps the projects the device holds a live gr
 project, other projects and ``hlm-global`` alike: the union of the per-project §4.4 (a) rules) and
 ``device_scope`` is one of the caller's scope values. Grants and scope come from the request's
 ``AuthContext`` (resolved under ``FOR SHARE`` in the request transaction), never from the payload.
+Isolation (``policy.librarian_cross_project = exclude``; ``candidates.relation_allowed``, Sol 54 #1)
+is part of the universe itself, read in the same statement (no extra round trip): for a home that is
+excluded only items lying entirely in it qualify; for any other home no item touching an excluded
+project qualifies, whether or not the caller holds a grant on that project.
 
 The universe is materialized first (it is small: lessons are a thin slice of a project) and the
 four RRF lists of the query path are computed over it: lexical (``tsv @@ term:*``), title (D-055),
@@ -21,15 +25,23 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from hlmemo.auth.resolve import lock_device_access
+from hlmemo.db.librarian_queries import CROSS_PROJECT_POLICY
 from hlmemo.db.read_queries import TITLE_TSV, Candidate, vector_literal
 
 LESSON_KINDS = ("lesson", "experience")
 
 _UNIVERSE = """
+iso AS MATERIALIZED (
+    SELECT COALESCE(array_agg(p.project_id), '{}')::bigint[] AS excluded,
+           COALESCE(bool_or(p.project_id = %(home)s::bigint), false) AS home_excluded
+      FROM projects p WHERE p.policy->>%(xkey)s = 'exclude'
+),
 lv AS MATERIALIZED (
     SELECT mv.version_id, mv.logical_id, mv.device_scope
-      FROM memory_versions mv
+      FROM memory_versions mv, iso
      WHERE mv.project_ids && %(pids)s::bigint[]
+       AND CASE WHEN iso.home_excluded THEN mv.project_ids <@ ARRAY[%(home)s::bigint]
+                ELSE NOT (mv.project_ids && iso.excluded) END
        AND mv.device_scope = ANY(%(scopes)s)
        AND mv.kind = ANY(%(kinds)s)
        AND mv.status = 'active'
@@ -45,9 +57,17 @@ class RiskFilter:
     scopes: list[str]
     at: datetime
     kinds: tuple[str, ...] = LESSON_KINDS
+    home: int | None = None  # the checking project (the isolation rule is relative to it)
 
     def params(self) -> dict[str, Any]:
-        return {"pids": self.pids, "scopes": self.scopes, "at": self.at, "kinds": list(self.kinds)}
+        return {
+            "pids": self.pids,
+            "scopes": self.scopes,
+            "at": self.at,
+            "kinds": list(self.kinds),
+            "home": self.home,
+            "xkey": CROSS_PROJECT_POLICY,
+        }
 
 
 @dataclass(slots=True)

@@ -13,4 +13,4 @@ Deployment footguns seen on the fixture stack:
 
 Found later:
 - Always pin the base image by digest; a floating tag pulled a different libc during a rebuild.
-- Keep the maintenance page on a separate host, because the proxy goes down together with the app.
+- **Maintenance page:** keep it on a separate host, because the proxy goes down together with the app.

@@ -25,27 +25,17 @@
   {
    "action": "new",
    "evidence": "none",
-   "key": "automemory:feedback_deploy_footguns.md#always-pin-the-base-image-by-digest-a-floating-t",
+   "key": "automemory:feedback_deploy_footguns.md#maintenance-page",
    "kind": "lesson",
-   "sha256": "b175b5e5440fb6a5c4c35c082848728291c2c0eabb8fda8db8f47c0befa811f2",
-   "title": "Deploy footguns › Always pin the base image by digest; a floating tag pulled a different libc during a rebuild. · feedback_deploy_footguns.md",
-   "tokens": 52,
+   "sha256": "2e9790ce46c9f9588c0079e7733cbc494230cfd1cda43e449eb8884c0d42e8af",
+   "title": "Deploy footguns › Maintenance page: keep it on a separate host, because the proxy goes down together with the app. · feedback_deploy_footguns.md",
+   "tokens": 54,
    "valid_from": null
   },
   {
    "action": "new",
    "evidence": "none",
-   "key": "automemory:feedback_deploy_footguns.md#keep-the-maintenance-page-on-a-separate-host-bec",
-   "kind": "lesson",
-   "sha256": "8012587aa06faa7a0261bbea71c9b56d4efb505901e6b6575aa67cdaf80b2c3e",
-   "title": "Deploy footguns › Keep the maintenance page on a separate host, because the proxy goes down together with the app. · feedback_deploy_footguns.md",
-   "tokens": 52,
-   "valid_from": null
-  },
-  {
-   "action": "new",
-   "evidence": "none",
-   "key": "automemory:feedback_deploy_footguns.md#never-restart-the-database-container-while-a-mig",
+   "key": "automemory:feedback_deploy_footguns.md#rule-1",
    "kind": "lesson",
    "sha256": "a36dc6fb103361f794248b8ea1a5969c0c56c49232c7539cc2d404a3df35c164",
    "title": "Deploy footguns › Never restart the database container while a migration runs: the half-applied schema needs a… · feedback_deploy_footguns.md",
@@ -55,7 +45,7 @@
   {
    "action": "new",
    "evidence": "none",
-   "key": "automemory:feedback_deploy_footguns.md#pass-n-to-every-ssh-call-inside-a-deploy-heredoc",
+   "key": "automemory:feedback_deploy_footguns.md#rule-2",
    "kind": "lesson",
    "sha256": "ac1f389a3c66e46cd8d8144119a546e80ad3d8faa3e2b84634e7a91bd443f85e",
    "title": "Deploy footguns › Pass `-n` to every `ssh` call inside a deploy heredoc, otherwise it reads the rest of the script… · feedback_deploy_footguns.md",
@@ -65,11 +55,21 @@
   {
    "action": "new",
    "evidence": "none",
-   "key": "automemory:feedback_deploy_footguns.md#the-cache-was-warmed-before-the-new-release-took",
+   "key": "automemory:feedback_deploy_footguns.md#rule-3",
    "kind": "lesson",
    "sha256": "2a5fe706ce3f1a0c41d6c16635655f4fe71ca03590db605f77710be1e058031d",
    "title": "Deploy footguns › the cache was warmed before the new release took traffic, so it served stale pages for an hour… · feedback_deploy_footguns.md",
    "tokens": 80,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:feedback_deploy_footguns.md#rule-4",
+   "kind": "lesson",
+   "sha256": "b175b5e5440fb6a5c4c35c082848728291c2c0eabb8fda8db8f47c0befa811f2",
+   "title": "Deploy footguns › Always pin the base image by digest; a floating tag pulled a different libc during a rebuild. · feedback_deploy_footguns.md",
+   "tokens": 52,
    "valid_from": null
   },
   {
@@ -128,11 +128,12 @@
  "rejected": [],
  "remap_ambiguous": [],
  "remapped": [],
+ "replaced_by_split": [],
  "skipped": [],
  "source": "automemory",
  "token_estimate": {
   "items": 11,
   "tokenizer": "o200k_base",
-  "tokens": 708
+  "tokens": 710
  }
 }

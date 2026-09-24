@@ -23,7 +23,7 @@ from mcp.server.lowlevel import Server
 
 from hlmemo.cli.mcp_client import UNLISTED_TOOLS, MemoryClient
 from hlmemo.librarian import risk_judge as rj
-from hlmemo.librarian.candidates import isolated_scope
+from hlmemo.librarian.candidates import isolated_scope, relation_allowed
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -82,12 +82,31 @@ def test_windows_fill_the_room_in_body_order() -> None:
 
 
 # --------------------------------------------------------------------------- #2 isolation rule
-def test_isolated_scope_both_directions() -> None:
+def test_isolation_rule_both_directions_and_multi_project_items() -> None:
+    """Sol 54 #1: one rule for every pairing; T=3 is excluded."""
+    x = {3}
+    assert relation_allowed({1, 2}, x) and relation_allowed({3}, x) and relation_allowed({1}, x)
+    assert not relation_allowed({1, 3}, x)  # A with T, or A with a multi-project [A, T] item
     allowed = [1, 2, 3, 4]
-    assert isolated_scope(1, allowed, set()) == allowed
-    assert isolated_scope(1, allowed, {3}) == [1, 2, 4]  # another project never sees T=3
-    assert isolated_scope(3, allowed, {3}) == [3]  # T sees only itself
-    assert isolated_scope(3, [1, 2], {3}) == []  # (home not readable: nothing)
+    assert isolated_scope([1], allowed, set()) == allowed
+    assert isolated_scope([1], allowed, x) == [1, 2, 4]  # another project never reaches T (or [A,T])
+    assert isolated_scope([3], allowed, x) == [3]  # T sees only items lying entirely in T
+    assert isolated_scope([1, 3], allowed, x) == []  # a subject spanning T and A: no candidate
+    assert isolated_scope([1, 2], allowed, x) == [1, 2, 4]
+    assert isolated_scope([3], [1, 2], x) == []  # (home not readable: nothing)
+
+
+def test_window_positions_survive_casefolding() -> None:
+    """Sol 54 #5: ``ß`` → ``ss`` and ``İ`` → ``i̇`` change lengths under casefold; the window is
+    chosen on ORIGINAL positions (an unmapped match would drift ~2 chars per such character)."""
+    pad = "Straße İzmir Großhändler. " * 40  # 120 length-changing characters before the rule
+    body = f"# {TITLE}\n\n" + "\n\n".join(FILLER[:10]) + "\n\n" + pad + "\n\n" + RULE + "\n\n" + pad + "\n"
+    at = body.index(RULE)
+    chunk = (at - len(pad) - 2, at + len(RULE) + len(pad))
+    text = rj.lesson_text(TITLE, body, [chunk], "alembic downgrade production database 0007 source_key")
+    assert RULE in text and len(text) <= rj.LESSON_TEXT_CHARS + 2
+    folded, origin = rj._folded("aßİb")
+    assert folded == "assi̇b" and origin == [0, 1, 1, 2, 2, 3]
 
 
 # --------------------------------------------------------------------------- #10 unlisted tools

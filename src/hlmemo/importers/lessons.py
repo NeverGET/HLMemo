@@ -5,13 +5,15 @@ lessons vs 1/12 with whole files).
 ``lesson``/``footgun`` file) that holds SEVERAL independent rules into one ``Section`` per rule, or
 returns ``None`` (the file stays one item, unchanged). Deterministic, no LLM:
 
-* **Rules.** Headings first: ≥ 2 headings at the shallowest level below a leading document title
-  (``# Title``), not counting label headings (``## Why``, ``## Fix``…, which belong to the rule
-  above them), make one rule per heading section. Otherwise, or inside a heading section: ≥ 2
-  top-level ``-``/``*``/``+`` bullets, each of at least ``RULE_MIN_WORDS`` words, make one rule
-  per bullet (its indented and lazy continuation lines included). Numbered lists are ordered
-  steps of ONE procedure and never split; a list with a short item (``- disk``) is a list inside
-  one rule and never split.
+* **Rules.** Headings first: a file with rule headings below its document title (``# Title``;
+  label headings such as ``## Why`` / ``## Fix`` belong to the rule above them) is split only at
+  them — ≥ 2 at the shallowest level make one rule per heading section, bullets inside a section
+  stay in it (details of that rule), and ONE rule heading means one rule: no split (Sol 54 #4).
+  Without rule headings: ≥ 2 top-level ``-``/``*``/``+`` bullets, each of at least
+  ``RULE_MIN_WORDS`` words, make one rule per bullet (its indented and lazy continuation lines
+  included). Never split: numbered lists, checklists and procedure lists (an intro such as
+  "steps:" / "in this order:", or items led by first/then/next/finally…) — ordered steps of ONE
+  procedure — and a list with a short item (``- disk``), which is a list inside one rule.
 * **Shared context.** The file's other text (preamble, ``**Why:**`` paragraphs between the lists,
   the section text around a bullet list) plus the frontmatter ``description`` is copied into
   every rule's ``## Context`` (at most ``CONTEXT_MAX`` characters), so each rule stands alone.
@@ -19,11 +21,13 @@ returns ``None`` (the file stays one item, unchanged). Deterministic, no LLM:
   rule's own text makes it derivable from explicit labels (``**Mistake:**``, ``**Fix:**``,
   ``**Why:**`` → mistake, ``**How to apply:**`` → context, …; the unlabelled statement fills the
   missing mistake or fix); otherwise the rule's text is kept verbatim, followed by ``## Context``.
-* **Stable keys (revision-safe, as W1.5's heading sections).** The anchor is the slug of the
-  rule's heading, or of its bullet's first words (``#never-restart-the-database-container``;
-  nested: ``#<heading>~<bullet>``), unique per file (``-2``…): inserting, removing or reordering
-  rules keeps every other key, so an edited rule is one revision; a rule whose first words change
-  is re-mapped by body similarity (``plan.remap``) or closed.
+* **Keys (revision-safe).** The anchor is the slug of the rule's NORMALIZED heading (leading
+  numbering such as ``3.`` / ``Rule 3:`` dropped), or of a bullet's explicit name label
+  (``- **Stash is shared:** …``; role labels like ``**Mistake:**`` are not names), and only for an
+  unlabelled bullet its SEQUENCE position (``#rule-3``, counted over the unlabelled bullets): a
+  wording fix inside a rule keeps its key and is one revision. A renamed heading or label is
+  re-mapped by body similarity on the rule text (``plan.remap``, the shared context cut): one
+  revision, not a close + new item. Keys are unique per file (``-2``…).
 """
 
 from __future__ import annotations
@@ -41,6 +45,24 @@ LEAD_MAX = 100
 ANCHOR_MAX = 48
 
 BULLET_RE = re.compile(r"^[-*+]\s+\S")  # numbered items are steps of one procedure: never split
+#: a list introduced like this is a procedure (ordered steps of one rule): never split
+_PROCEDURE_INTRO_RE = re.compile(
+    r"\b(?:steps?|in (?:this|the following|that) order|procedure|sequence|checklist|runbook|how to"
+    r"|adım(?:lar|ları)?|sırayla|schritte?|reihenfolge)\b",
+    re.I,
+)
+#: list items led like this are steps (two of them make the list a procedure); ``[ ]`` checkboxes too
+_STEP_LEAD_RE = re.compile(
+    r"^(?:\[[ xX]\]\s|step\s*\d+\b|first(?:ly)?\b|second(?:ly)?\b|third(?:ly)?\b|then\b|next\b"
+    r"|after(?:wards| that)?\b|finally\b|lastly\b|önce\b|sonra\b|ardından\b|zuerst\b|dann\b"
+    r"|danach\b|schließlich\b)",
+    re.I,
+)
+#: a bullet's explicit name: a leading bold phrase with a separator (``**Stash is shared:**``,
+#: ``**Stash**: …``, ``**Stash** — …``); a bold emphasis word (``**Never** run …``) is not a name
+_NAME_LABEL_RE = re.compile(r"^\*\*\s*([^*\n]{2,80}?)\s*(?::\s*\*\*|\*\*\s*(?::|—|–|-\s))")
+#: leading numbering of a heading (``3.``, ``3)``, ``Rule 3:``, ``Step 2 -``): not part of its key
+_HEADING_NUMBER_RE = re.compile(r"^(?:(?:rule|lesson|step|kural|ders|regel)\s*)?\d+[.):\-–—]*\s*", re.I)
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 #: label (lower-case; a label may continue with more words: ``why it matters``) → body section
@@ -163,12 +185,28 @@ def _intro(block: _Block) -> str | None:
     return paragraphs[-1] if paragraphs and paragraphs[-1].endswith(":") else None
 
 
+def _is_procedure(blocks: list[_Block]) -> bool:
+    """A list of ordered steps of one procedure (Sol 54 #4): an intro that announces steps, items
+    led by sequence words, or checkboxes."""
+    for n, b in enumerate(blocks):
+        if not b.bullet and n + 1 < len(blocks) and blocks[n + 1].bullet:
+            intro = _intro(b)
+            if intro is not None and _PROCEDURE_INTRO_RE.search(intro):
+                return True
+    leads = [re.sub(r"\*\*|__", "", _bullet_text(b)).lstrip() for b in blocks if b.bullet]
+    return sum(1 for lead in leads if _STEP_LEAD_RE.match(lead)) >= 2 or any(
+        lead.startswith(("[ ]", "[x]", "[X]")) for lead in leads
+    )
+
+
 def _bullet_rules(text: str) -> tuple[list[tuple[str, str]], str] | None:
     """``([(rule, its list's intro)], shared context)`` when ``text`` is ≥ 2 independent bullet
     rules, else None. A list intro (``Found later:``) is context for its own list only."""
     blocks = _blocks(text)
     bullets = [b for b in blocks if b.bullet]
     if len(bullets) < 2 or any(_words(_bullet_text(b)) < RULE_MIN_WORDS for b in bullets):
+        return None
+    if _is_procedure(blocks):
         return None
     rules: list[tuple[str, str]] = []
     shared: list[str] = []
@@ -188,8 +226,10 @@ def _bullet_rules(text: str) -> tuple[list[tuple[str, str]], str] | None:
 
 
 def _heading_rules(text: str) -> tuple[str, list[tuple[str, str]]] | None:
-    """``(preamble, [(heading, section text without its heading line)])`` when ``text`` has ≥ 2
-    rule headings at its shallowest level (a leading ``# title`` and label headings excluded)."""
+    """``(preamble, [(heading, section text without its heading line)])`` of the rule headings at
+    the shallowest level (a leading ``# title`` and label headings excluded); ``None`` when there is
+    no rule heading. ONE rule heading is one rule (``(preamble, [one])``): the caller never splits
+    it, and never splits the bullets under it."""
     hs: list[tuple[int, int, str, int]] = []  # (offset, level, title, end of the heading line)
     pos, fence = 0, None
     for line in text.splitlines(keepends=True):
@@ -209,8 +249,6 @@ def _heading_rules(text: str) -> tuple[str, list[tuple[str, str]]] | None:
         return None
     level = min(h[1] for h in rules)
     marks = [h for h in rules if h[1] == level]
-    if len(marks) < 2:
-        return None
     preamble = text[: marks[0][0]]
     out: list[tuple[str, str]] = []
     for n, (_off, _lvl, title, body_start) in enumerate(marks):
@@ -310,6 +348,19 @@ def _lead(text: str) -> str:
     return (cut[:space] if space >= LEAD_MAX // 2 else cut).rstrip(" ,;:.") + "…"
 
 
+def heading_key(heading: str) -> str:
+    """The anchor of a heading rule: its slug without leading numbering (renumbering keeps it)."""
+    return slug(_HEADING_NUMBER_RE.sub("", heading.strip()) or heading, ANCHOR_MAX)
+
+
+def name_label(rule: str) -> str | None:
+    """A bullet's explicit name (a leading bold phrase that is not a role label), else None."""
+    m = _NAME_LABEL_RE.match(rule.lstrip())
+    if m is None or role_of(m.group(1)) is not None:
+        return None
+    return m.group(1).strip()
+
+
 def _context(*parts: str) -> str:
     text = "\n\n".join(p.strip() for p in parts if p and p.strip())
     return clip(text, CONTEXT_MAX) if text else ""
@@ -324,27 +375,26 @@ def split(body: str, meta: dict[str, Any], doc_title: str) -> list[Section] | No
     by_heading = _heading_rules(body)
     if by_heading is not None:
         preamble, sections = by_heading
+        if len(sections) < 2:  # one rule heading: one rule, its bullets are its details
+            return None
         file_ctx = _context(description, _strip_title(preamble))
         for heading, inner in sections:
-            bullets = _bullet_rules(inner)
-            if bullets is None:
-                rules.append((slug(heading, ANCHOR_MAX), heading, rule_body(inner, file_ctx, heading)))
-                continue
-            items, section_ctx = bullets
-            for item, intro in items:
-                lead = _lead(item)
-                ctx = _context(description, _strip_title(preamble), intro, section_ctx)
-                anchor = f"{slug(heading, ANCHOR_MAX)}~{slug(lead, ANCHOR_MAX)}"
-                rules.append((anchor, f"{heading} › {lead}", rule_body(item, ctx)))
+            rules.append((heading_key(heading), heading, rule_body(inner, file_ctx, heading)))
     else:
         bullets = _bullet_rules(body)
         if bullets is None:
             return None
         items, shared = bullets
+        position = 0
         for item, intro in items:
-            lead = _lead(item)
             ctx = _context(description, intro, _strip_title(shared))
-            rules.append((slug(lead, ANCHOR_MAX), lead, rule_body(item, ctx)))
+            name = name_label(item)
+            if name is None:
+                position += 1
+                key = f"rule-{position}"
+            else:
+                key = slug(name, ANCHOR_MAX)
+            rules.append((key, _lead(item), rule_body(item, ctx)))
     seen: dict[str, int] = {}
     out: list[Section] = []
     for base, lead, text in rules:
@@ -354,4 +404,13 @@ def split(body: str, meta: dict[str, Any], doc_title: str) -> list[Section] | No
     return out
 
 
-__all__ = ["CONTEXT_MAX", "RULE_MIN_WORDS", "derive", "role_of", "rule_body", "split"]
+__all__ = [
+    "CONTEXT_MAX",
+    "RULE_MIN_WORDS",
+    "derive",
+    "heading_key",
+    "name_label",
+    "role_of",
+    "rule_body",
+    "split",
+]

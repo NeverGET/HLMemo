@@ -28,21 +28,21 @@
   {
    "action": "new",
    "evidence": "none",
-   "key": "serena:lessons_learned.md#a-heredoc-that-starts-ssh-must-use-ssh-n-or-it-s",
+   "key": "serena:lessons_learned.md#rule-1",
    "kind": "lesson",
-   "sha256": "fd92cf82a5900020709c9e80fa3557016f2f43b740d902310b849673ccf219c9",
-   "title": "Lessons learned › A heredoc that starts `ssh` must use `ssh -n`, or it swallows the rest of the script. · lessons_learned.md",
-   "tokens": 25,
+   "sha256": "7a82590e858bbf7507c8f7ea163d1d17ccafefc4c8fef204cdb62192ebf2c261",
+   "title": "Lessons learned › Never run the test suite against the development database: it truncates every table. · lessons_learned.md",
+   "tokens": 16,
    "valid_from": null
   },
   {
    "action": "new",
    "evidence": "none",
-   "key": "serena:lessons_learned.md#never-run-the-test-suite-against-the-development",
+   "key": "serena:lessons_learned.md#rule-2",
    "kind": "lesson",
-   "sha256": "7a82590e858bbf7507c8f7ea163d1d17ccafefc4c8fef204cdb62192ebf2c261",
-   "title": "Lessons learned › Never run the test suite against the development database: it truncates every table. · lessons_learned.md",
-   "tokens": 16,
+   "sha256": "fd92cf82a5900020709c9e80fa3557016f2f43b740d902310b849673ccf219c9",
+   "title": "Lessons learned › A heredoc that starts `ssh` must use `ssh -n`, or it swallows the rest of the script. · lessons_learned.md",
+   "tokens": 25,
    "valid_from": null
   },
   {
@@ -61,6 +61,7 @@
  "rejected": [],
  "remap_ambiguous": [],
  "remapped": [],
+ "replaced_by_split": [],
  "skipped": [],
  "source": "serena",
  "token_estimate": {
