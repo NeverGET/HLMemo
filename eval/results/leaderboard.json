@@ -44,6 +44,118 @@
       "tokens_query_mean": 2940.2
      },
      "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26"
+    },
+    {
+     "id": 2,
+     "corpus": "corpus_a",
+     "label": "main@1e57e08 re-measure, no librarian (W-E eval copy, 0008)",
+     "date": "2026-09-24",
+     "commit": "1e57e08",
+     "config": {
+      "system": "main fast path (D-055 + W1.5 skeleton card + query/2 read-side supersession), no librarian",
+      "drill_top": 5,
+      "budget": 3000,
+      "librarian": null,
+      "db": "disposable copy of dev DB hlm migrated 0004->0008"
+     },
+     "config_hash": "e4b32a157711",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l2_key_top3": 0.75,
+      "l1_key": 0.533,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "tokens_query_mean": 2950.3
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-main-1e57e08-nolib.json"
+    },
+    {
+     "id": 3,
+     "corpus": "corpus_a",
+     "label": "W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy)",
+     "date": "2026-09-24",
+     "commit": "1e57e08",
+     "config": {
+      "system": "main fast path + W2b/W2c librarian (write_review backfill of all write events; approve-all by the eval harness)",
+      "drill_top": 5,
+      "budget": 3000,
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "profile": "openrouter-gpt6-luna",
+       "model": "openai/gpt-6-luna",
+       "reasoning": "low",
+       "fallback": "openrouter",
+       "fallback_model": "deepseek/deepseek-v4.1-flash",
+       "verifier": "cross",
+       "runner": "eval/realdata/run_librarian_eval.py"
+      },
+      "usd_per_query_note": "librarian (write-time) spend amortized over the 180 eval questions; the query path makes no LLM call",
+      "db": "disposable copy of dev DB hlm migrated 0004->0008"
+     },
+     "config_hash": "b818796e0272",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v1",
+      "relate_verify": "v1"
+     },
+     "schema_versions": {
+      "place": "v1",
+      "relate": "v1",
+      "relate_verify": "v1"
+     },
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.001368,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.783,
+     "secondary": {
+      "mrr": 0.654,
+      "l2_key": 0.761,
+      "l2_key_top3": 0.728,
+      "l1_key": 0.522,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.79,
+      "tokens_query_mean": 2945.4,
+      "librarian_usd": 0.2259,
+      "librarian_calls": 341,
+      "items_reviewed": 289,
+      "proposals": 76,
+      "applied": 70,
+      "closes": 9,
+      "proposal_precision_blind50": {
+       "correct": 21,
+       "near_miss": 26,
+       "incorrect": 3,
+       "strict": 0.42,
+       "lenient": 0.94
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-w2b-librarian-assistant-approveall.json"
     }
    ],
    "best": 1
@@ -83,6 +195,103 @@
       "tokens_query_mean": 2965.2
      },
      "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad"
+    },
+    {
+     "id": 2,
+     "corpus": "corpus_b_dev",
+     "label": "main@1e57e08 re-measure, no librarian (W-E eval copy, 0008)",
+     "date": "2026-09-24",
+     "commit": "1e57e08",
+     "config": {
+      "system": "main fast path (D-055 + W1.5 skeleton card + query/2 read-side supersession), no librarian",
+      "drill_top": 5,
+      "budget": 3000,
+      "librarian": null,
+      "db": "disposable copy of dev DB hlm migrated 0004->0008"
+     },
+     "config_hash": "e4b32a157711",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_evidence_r5": 0.219,
+      "tokens_query_mean": 2945.0
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-main-1e57e08-nolib.json"
+    },
+    {
+     "id": 3,
+     "corpus": "corpus_b_dev",
+     "label": "W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy)",
+     "date": "2026-09-24",
+     "commit": "1e57e08",
+     "config": {
+      "system": "main fast path + W2b/W2c librarian (write_review backfill of all write events; approve-all by the eval harness)",
+      "drill_top": 5,
+      "budget": 3000,
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "profile": "openrouter-gpt6-luna",
+       "model": "openai/gpt-6-luna",
+       "reasoning": "low",
+       "fallback": "openrouter",
+       "fallback_model": "deepseek/deepseek-v4.1-flash",
+       "verifier": "cross",
+       "runner": "eval/realdata/run_librarian_eval.py"
+      },
+      "usd_per_query_note": "librarian (write-time) spend amortized over the 180 eval questions; the query path makes no LLM call",
+      "db": "disposable copy of dev DB hlm migrated 0004->0008"
+     },
+     "config_hash": "b818796e0272",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v1",
+      "relate_verify": "v1"
+     },
+     "schema_versions": {
+      "place": "v1",
+      "relate": "v1",
+      "relate_verify": "v1"
+     },
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.001368,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.438,
+     "secondary": {
+      "hit@5": 0.611,
+      "mrr": 0.381,
+      "l2_key": 0.542,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_evidence_r5": 0.219,
+      "tokens_query_mean": 2945.2,
+      "librarian_usd": 0.0203,
+      "librarian_calls": 38,
+      "items_reviewed": 92,
+      "proposals": 15,
+      "applied": 14,
+      "closes": 1
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-w2b-librarian-assistant-approveall.json"
     }
    ],
    "best": 1
