@@ -49,6 +49,7 @@ from hlmemo.librarian.cassette import (
 from hlmemo.librarian.errors import (
     BreakerOpen,
     BudgetDeferred,
+    DeadlineExceeded,
     JobCallCapExceeded,
     LlmConfigError,
     LlmDisabled,
@@ -72,6 +73,27 @@ _LINEAGE: contextvars.ContextVar[str | None] = contextvars.ContextVar("hlm_llm_l
 _PRECHECK: contextvars.ContextVar[Callable[[], Awaitable[None]] | None] = contextvars.ContextVar(
     "hlm_llm_precheck", default=None
 )
+#: the caller's deadline on the event-loop clock (``complete(deadline=)``, e.g. the API's 4 s risk
+#: judge cap): each HTTP timeout is budgeted to end DEADLINE_MARGIN_S before it, and no attempt,
+#: reservation or backoff starts without MIN_ATTEMPT_S of room (DeadlineExceeded instead)
+_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("hlm_llm_deadline", default=None)
+DEADLINE_MARGIN_S = 0.3
+MIN_ATTEMPT_S = 0.2
+
+
+def _remaining_s() -> float | None:
+    """Seconds an attempt may still use before the caller's deadline (minus the margin)."""
+    deadline = _DEADLINE.get()
+    if deadline is None:
+        return None
+    return deadline - asyncio.get_running_loop().time() - DEADLINE_MARGIN_S
+
+
+async def _finalize(coro: Awaitable[Any]) -> None:
+    """Run ledger/reservation bookkeeping to completion even if the caller is being cancelled
+    (a cancelled attempt must still settle its reservation and write its llm_calls row)."""
+    task = asyncio.ensure_future(coro)
+    await asyncio.shield(task)
 
 
 @contextlib.contextmanager
@@ -344,12 +366,18 @@ class Provider:
         chain: list[LlmProfile] | None = None,
         lineage: str | None = None,
         precheck: Callable[[], Awaitable[None]] | None = None,
+        deadline: float | None = None,
     ) -> LlmResult:
+        """``deadline`` (event-loop time): the caller's hard cap. HTTP timeouts are budgeted to end
+        before it and no attempt starts without room (``DeadlineExceeded``), so an outer
+        ``asyncio.timeout`` at the same deadline never has to cut an attempt mid-flight."""
         token = _LINEAGE.set(lineage) if lineage is not None else None
         ptoken = _PRECHECK.set(precheck)
+        dtoken = _DEADLINE.set(deadline)
         try:
             return await self._complete(task, user, job_id=job_id, validate=validate, chain=chain)
         finally:
+            _DEADLINE.reset(dtoken)
             _PRECHECK.reset(ptoken)
             if token is not None:
                 _LINEAGE.reset(token)
@@ -445,7 +473,11 @@ class Provider:
                 transient += 1
                 if transient >= MAX_TRANSIENT_ATTEMPTS:
                     raise _Exhausted(f"{transient} transient failures")
-                await self.clock.sleep(BACKOFF_S[min(transient, len(BACKOFF_S)) - 1])
+                backoff = BACKOFF_S[min(transient, len(BACKOFF_S)) - 1]
+                remaining = _remaining_s()
+                if remaining is not None and remaining - backoff < MIN_ATTEMPT_S:
+                    raise DeadlineExceeded(f"no room for a retry of task {task.name} before the deadline")
+                await self.clock.sleep(backoff)
                 continue
             if att.kind == "fatal":
                 raise _Exhausted("non-retryable HTTP error", fatal=True)
@@ -455,7 +487,7 @@ class Provider:
                 err = task.schema_errors(obj) or (validate(obj) if validate else None)
             if err is None:
                 att.row.outcome = "ok" if schema_fails == 0 else "schema_retry_ok"
-                await self.ledger.record(att.row)
+                await _finalize(self.ledger.record(att.row))
                 assert obj is not None
                 return LlmResult(
                     output=obj,
@@ -470,7 +502,7 @@ class Provider:
                     usage=att.usage or {},
                 )
             att.row.outcome = "schema_fail"
-            await self.ledger.record(att.row)
+            await _finalize(self.ledger.record(att.row))
             schema_fails += 1
             if schema_fails >= 2:
                 raise SchemaFail(f"E_SCHEMA_FAIL task={task.name}")  # never the model output
@@ -519,6 +551,9 @@ class Provider:
             if not profile.priced:
                 raise LlmConfigError(f"profile {profile.name!r} has no prices; live calls refused")
             worst = profile.worst_usd(self.estimate_input_tokens(messages), task.max_tokens)
+        remaining = _remaining_s()
+        if remaining is not None and remaining < MIN_ATTEMPT_S:  # before any reservation
+            raise DeadlineExceeded(f"no room for an attempt of task {task.name} before the deadline")
         call_id = uuid.uuid4()
         if not await self.budget.reserve(call_id, worst, job_id):
             await self.ledger.record(
@@ -535,8 +570,15 @@ class Provider:
         try:
             await self._run_precheck()
             await self._claim_call(job_id)
+            http_timeout = self.timeout_s
+            remaining = _remaining_s()
+            if remaining is not None:  # the prechecks used time: budget this request to the deadline
+                if remaining < MIN_ATTEMPT_S:
+                    raise DeadlineExceeded(f"prechecks left no room for task {task.name}")
+                http_timeout = min(self.timeout_s, remaining)
         except BaseException:
-            await self.budget.settle(call_id, Decimal(0))  # nothing was sent: release the reservation
+            # nothing was sent: release the reservation (to completion, even when cancelled)
+            await _finalize(self.budget.settle(call_id, Decimal(0)))
             raise
 
         t0 = time.perf_counter()
@@ -545,38 +587,63 @@ class Provider:
                 "/chat/completions",
                 json=body,
                 headers={"Authorization": f"Bearer {profile.api_key or ''}"},
-                timeout=self.timeout_s,
+                timeout=http_timeout,
             )
+        except asyncio.CancelledError:
+            # cut mid-flight by the caller: billing unknown -> worst case; the ledger row is written
+            async def abandoned() -> None:
+                await self.budget.settle(call_id, None)
+                await self.ledger.record(
+                    self._row(
+                        profile,
+                        task,
+                        job_id,
+                        "timeout",
+                        call_id=call_id,
+                        request_sha256=request_sha,
+                        reserved_usd=worst,
+                        cost_usd=worst,
+                        latency_ms=_ms(t0),
+                    )
+                )
+
+            await _finalize(abandoned())
+            raise
         except httpx.TimeoutException:
-            await self.budget.settle(call_id, None)  # unknown whether billed: charge the worst case
-            await self.ledger.record(
-                self._row(
-                    profile,
-                    task,
-                    job_id,
-                    "timeout",
-                    call_id=call_id,
-                    request_sha256=request_sha,
-                    reserved_usd=worst,
-                    cost_usd=worst,
-                    latency_ms=_ms(t0),
+            # unknown whether billed: charge the worst case
+            await _finalize(self.budget.settle(call_id, None))
+            await _finalize(
+                self.ledger.record(
+                    self._row(
+                        profile,
+                        task,
+                        job_id,
+                        "timeout",
+                        call_id=call_id,
+                        request_sha256=request_sha,
+                        reserved_usd=worst,
+                        cost_usd=worst,
+                        latency_ms=_ms(t0),
+                    )
                 )
             )
             return _Attempt("transient")
         except httpx.TransportError:
             # the request may have reached the provider: billing is uncertain -> worst case
-            await self.budget.settle(call_id, None)
-            await self.ledger.record(
-                self._row(
-                    profile,
-                    task,
-                    job_id,
-                    "http_error",
-                    call_id=call_id,
-                    request_sha256=request_sha,
-                    reserved_usd=worst,
-                    cost_usd=worst,
-                    latency_ms=_ms(t0),
+            await _finalize(self.budget.settle(call_id, None))
+            await _finalize(
+                self.ledger.record(
+                    self._row(
+                        profile,
+                        task,
+                        job_id,
+                        "http_error",
+                        call_id=call_id,
+                        request_sha256=request_sha,
+                        reserved_usd=worst,
+                        cost_usd=worst,
+                        latency_ms=_ms(t0),
+                    )
                 )
             )
             return _Attempt("transient")
@@ -598,7 +665,7 @@ class Provider:
             # an unparseable 200 or a mid-generation provider error may have been billed.
             no_charge = 400 <= resp.status_code < 500
             charged = Decimal(0) if no_charge else worst
-            await self.budget.settle(call_id, charged)
+            await _finalize(self.budget.settle(call_id, charged))
             await self.ledger.record(
                 self._row(
                     profile,
@@ -630,7 +697,7 @@ class Provider:
             )
         usage = data.get("usage") or {}
         actual = self._actual_cost(profile, usage)
-        await self.budget.settle(call_id, actual)
+        await _finalize(self.budget.settle(call_id, actual))
         att = self._response(
             profile, task, job_id, data, request_sha, worst, latency, replay=False, raw=raw_bytes
         )
