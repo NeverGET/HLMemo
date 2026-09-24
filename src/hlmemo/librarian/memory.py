@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import replace
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -20,6 +21,7 @@ from psycopg import AsyncConnection
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.core.budget import Meter
 from hlmemo.core.errors import ToolError
+from hlmemo.librarian import privacy
 from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.reserved import MEMORY_PROJECT, reserved_ids
@@ -127,6 +129,32 @@ async def load_rules(
     return rules
 
 
+def _ref_vid(ref: str) -> int:
+    return int(ref[1:].split(".")[0])
+
+
+async def readable_rules(
+    conn_factory: Any, capabilities: dict[str, Any], rules: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The rules whose clue refs the triggering device may read NOW (Sol 41 #1, Sol 43 #1), for
+    EVERY prompt path (``write_review`` and ``pair_check``). Each referenced version must pass the
+    privacy gate's visibility rules in a fresh transaction under the D-062 locks: device trusted,
+    ``device_scope`` visible to its class (never ``device:``), every project readable (grant or
+    admin), in the enqueue-time ``question`` set and ``policy.librarian`` not ``off``, status
+    active. A ref to an older version is judged by that version's own scope and projects (that is
+    what the ref discloses). One unreadable or unknown ref and the rule is not loaded."""
+    refs = sorted({_ref_vid(r) for rule in rules for r in rule.get("refs") or []})
+    if not refs:
+        return rules
+    async with await conn_factory() as conn:
+        items = await privacy.load_items(conn, refs)
+        judged = [replace(it, current=True) for it in items.values()]  # visibility, not currency
+        verdict = await privacy.check(conn, capabilities, judged)
+        await conn.commit()
+    ok = {v for v in items if verdict.allowed(v)}
+    return [rule for rule in rules if all(_ref_vid(r) in ok for r in rule.get("refs") or [])]
+
+
 def memory_ctx(librarian_device_id: int, memory_project_id: int) -> AuthContext:
     """Internal context: the system device with write on ``hlm-librarian`` ONLY (never persisted)."""
     return AuthContext(
@@ -196,6 +224,7 @@ __all__ = [
     "memory_ctx",
     "overlapping_item",
     "parse_rule",
+    "readable_rules",
     "shingles",
     "write_rule",
 ]

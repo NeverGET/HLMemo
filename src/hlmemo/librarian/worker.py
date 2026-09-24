@@ -41,6 +41,7 @@ from typing import Any
 
 from psycopg import AsyncConnection
 
+from hlmemo.auth.resolve import lock_device_access
 from hlmemo.core.budget import Meter
 from hlmemo.core.temporal import select_T
 from hlmemo.db import write_queries as q
@@ -93,6 +94,15 @@ def error_code(exc: BaseException) -> str:
     if head.startswith("E_") and head.replace("_", "").isalnum():
         return head
     return f"E_{type(exc).__name__}"
+
+
+def _logical_ids(actions: list[dict[str, Any]]) -> list[int]:
+    """Every logical item an action set touches (assessed subjects, link endpoints, closes)."""
+    out: set[int] = set()
+    for a in actions:
+        out.update(int(k) for k in a.get("assessed") or {})
+        out.update(int(a[f]) for f in ("src_logical_id", "dst_logical_id", "logical_id") if a.get(f))
+    return sorted(out)
 
 
 def audit_request(plan: Plan, job: LeasedJob) -> dict[str, Any]:
@@ -358,6 +368,10 @@ class LibrarianWorker:
         superseded = 0
         redact = self.provider.redactor.value
         expires = actor.ts(T + actor.QUESTION_TTL)
+        # every item of every proposal locked ONCE in sorted order (Sol 43: per-proposal locking
+        # interleaved across jobs could deadlock). Holding them to commit also makes the duplicate
+        # check below atomic: a concurrent job proposing the same pair waits here, then sees the row.
+        await q.lock_logical_ids(conn, [int(k) for prop in plan.proposals for k in prop.assessed])
         for i, prop in enumerate(plan.proposals):
             stale = await actor.is_stale(conn, {"assessed": prop.assessed})
             superseded += int(stale)
@@ -423,8 +437,43 @@ class LibrarianWorker:
             n += qn["status"] == "open"
         return changes
 
+    @staticmethod
+    async def _lock_approved(
+        conn: AsyncConnection, plan: Plan, T: datetime
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[dict[str, Any]]]:
+        """``apply_batch`` lock order (Sol 43), the same as a request and ``memory.answer``: the
+        device-access lock of every proposing device (sorted), then the question rows (``FOR
+        UPDATE``, by id), then (``_apply_approved``) every logical item once, sorted. Returns the
+        questions STILL approved (one decided otherwise since the plan is left alone) and the
+        status changes: an approved question past ``expires_at`` is ``expired``, never applied
+        (Sol 43 #2: the 30-day TTL bounds every not-yet-applied proposal, as in ``memory.answer``)."""
+        devices = {
+            int(p["capabilities"]["trigger_device_id"])
+            for _qid, p in plan.approved
+            if (p.get("capabilities") or {}).get("trigger_device_id")
+        }
+        for device_id in sorted(devices):
+            await lock_device_access(conn, device_id)
+        cur = await conn.execute(
+            "SELECT question_id::text, status, expires_at FROM librarian_questions"
+            " WHERE question_id = ANY(%s::uuid[]) ORDER BY question_id FOR UPDATE",
+            ([qid for qid, _p in plan.approved],),
+        )
+        rows = {qid: (status, expires) for qid, status, expires in await cur.fetchall()}
+        live: list[tuple[str, dict[str, Any]]] = []
+        changes: list[dict[str, Any]] = []
+        for qid, proposal in plan.approved:
+            status, expires = rows.get(qid, (None, None))
+            if status != "approved":
+                continue
+            if expires is not None and expires <= T:
+                changes.append({"question_id": qid, "status": "expired"})
+                continue
+            live.append((qid, proposal))
+        return live, changes
+
     async def _apply_approved(
-        self, conn: AsyncConnection, plan: Plan
+        self, conn: AsyncConnection, plan: Plan, approved: list[tuple[str, dict[str, Any]]]
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, list[datetime]]:
         """``apply_batch``: each approved question under its own proposing job's capabilities."""
         records: list[dict[str, Any]] = []
@@ -432,10 +481,17 @@ class LibrarianWorker:
         superseded = 0
         recorded: list[datetime] = []
         planned: dict[str, set[Any]] = {"links": set(), "closed": set()}
-        for qid, proposal in plan.approved:
-            actions = proposal_actions(proposal)
-            if proposal.get("kind") == "widen_scope" or any(a.get("op") == "widen_scope" for a in actions):
-                continue  # D-058 propose-only: stays approved until memory.answer by a writer on both
+        # D-058 propose-only: an approved widen_scope stays approved until memory.answer by a
+        # writer on both projects (it never reaches the actor here)
+        todo = [
+            (qid, proposal, actions)
+            for qid, proposal in approved
+            for actions in [proposal_actions(proposal)]
+            if proposal.get("kind") != "widen_scope"
+            and not any(a.get("op") == "widen_scope" for a in actions)
+        ]
+        await q.lock_logical_ids(conn, [lid for _q, _p, actions in todo for lid in _logical_ids(actions)])
+        for qid, proposal, actions in todo:
             assessed: dict[str, int] = {}
             for a in actions:
                 assessed.update(a.get("assessed") or {})
@@ -479,14 +535,17 @@ class LibrarianWorker:
             recorded: list[datetime] = []
             detail: str | None = None
             if plan.op == "apply_batch" and outcome == "approved":
+                live, status_changes = await self._lock_approved(conn, plan, T)
                 if role == "observer":
                     # nothing applies; the approvals are handed back (questions open again, the
-                    # batch ready) so they can be decided again once the role allows it (Sol 41 #7)
+                    # batch ready): a new decision round re-approves them once the role allows
+                    # it (Sol 41 #7; Sol 43: round-keyed answer events and apply job)
                     outcome = "role_denied"
-                    status_changes = [{"question_id": qid, "status": "open"} for qid, _ in plan.approved]
+                    status_changes += [{"question_id": qid, "status": "open"} for qid, _ in live]
                     batch_changes = [{"batch_id": job.payload["batch_id"], "status": "ready"}]
                 else:
-                    applied, status_changes, superseded, recorded = await self._apply_approved(conn, plan)
+                    applied, changes, superseded, recorded = await self._apply_approved(conn, plan, live)
+                    status_changes += changes
                     outcome = "applied" if applied else "superseded" if superseded else "no_change"
                     batch_changes = [{"batch_id": job.payload["batch_id"], "status": "applied"}]
             elif (plan.proposals or plan.signals) and outcome in ("proposed", "approved"):

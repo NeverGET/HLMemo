@@ -16,7 +16,7 @@ apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py
 | `config.py` | `librarian_embed_wait_s` (300), `librarian_review_delay_s` (3), `librarian_verifier` (cross|self). |
 | `server/tools/__init__.py` | one `ToolSpec` line for `memory.answer` (+ import). Agent C adds its two tools the same way. |
 | `ops/cli.py` | `librarian.add_parser(sub)` + `if group == "librarian": return await librarian.dispatch(conn, args)`. |
-| `librarian/{actor,worker,roles,jobs,errors,prompts/__init__,tasks/__init__}.py` | W2a files extended (proposal groups, version_close/signal_upsert, batches, NotReady, expiry sweep, delay_s, MAX_TOKENS/JOB_NAMES). |
+| `librarian/{actor,worker,roles,jobs,errors,memory,prompts/__init__,tasks/__init__}.py` | W2a files extended (proposal groups, version_close/signal_upsert, batches + decision rounds, NotReady, expiry sweep, delay_s, MAX_TOKENS/JOB_NAMES, `memory.readable_rules`). |
 | `tests/conftest.py` | TRUNCATE list += `librarian_batches, version_signals`. |
 | `tests/integration/test_g2_wire.py` | advertised tool set += `memory.answer`. |
 | `tests/integration/test_migration_0006.py` | asserts `main@head` instead of `0006_librarian`; the failed-downgrade test pins `0006_librarian`. |
@@ -36,6 +36,9 @@ apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py
 > (9) W2a fix: `actor.recheck` now treats an EXPIRED device as untrusted at apply time (the privacy gate already did).
 > (10) Custom answers re-plan with a `write_review` job of the still-current subjects under the answering device's capabilities (priority 4). Every answer is a `librarian-rule` fact built only from the structured decision (template text + clue refs); the free-text note stays in the question's `answer` and reaches only that project's re-plan job (as a one-job rule). Rules whose clue refs are not all readable by the triggering device are not loaded into its prompts.
 > (11) One pending question per (kind, subject versions): a pair reviewed again from its other side is counted as `duplicate_proposals`, not asked twice.
+> (12) **TTL**: the 30-day `expires_at` bounds every not-yet-applied proposal (open OR approved): an approved question past it is `expired` at apply time, by the sweep, or on `memory.answer`.
+> (13) **Decision rounds**: an observer hand-back reopens a batch; the next decision is round n (= prior `apply_batch` events of the batch) and suffixes `:r<n>` to the answer request ids and the apply job key/lineage.
+> (14) **Lock order** (librarian = request): device-access locks (sorted) → question rows → logical items (sorted, once per transaction) → batch row.
 
 ## D-067 guard design (5 lines)
 1. Reference guard: only ids from the call's candidate set count (unknown/duplicate dropped, missing = abstention).
@@ -57,3 +60,14 @@ apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py
 | B | G-LIVE-B dominated by `none` | per-class worst-over-reps bars: positive recall ≥ .85, positive precision ≥ .90, direction ≥ .90, false cross raise ≤ .02; plus the production chain (luna + deepseek verifier) |
 | C1 | answer close skips actor checks | `memory.answer` materializes with the answering device's ctx + capability set (check_link/check_correct) |
 | C2 | notices before hits | now after hits (deviation 4 above) |
+
+## Consult 43 (gpt-6-sol delta review, verdict NO) — resolution
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | `readable_rules` checked projects only; `pair_check` loaded rules unfiltered | `librarian/memory.py:readable_rules` judges every ref with the privacy gate (trusted device, `device_scope` visible to its class, never `device:`, grant/admin, enqueue-time `question` set, policy not `off`, status active; an older version by its own scope); used by BOTH `write_review` and `pair_check` (`test_sol43_rule_refs_are_judged_by_device_scope_on_every_path`) |
+| 2 | approved question past TTL still applied by `apply_batch` | definitive rule: the 30-day TTL bounds every NOT-YET-APPLIED proposal. `apply_batch` re-reads status + `expires_at` under row lock (`worker._lock_approved`) → `expired`, nothing applied; the sweep expires `open` and `approved` (`test_sol43_approved_question_past_ttl_expires_at_apply`) |
+| 7 | re-approval after hand-back collided (same answer `request_id`, used apply job key) | decision rounds: `roles.decision_round` = prior `apply_batch` events of the batch; round n>0 suffixes `:r<n>` to the answer `request_id`, the apply job key and its lineage (`test_sol43_handed_back_approvals_can_be_decided_again`: same owner re-approves, promoted worker applies, keys `librarian_apply:B`, `librarian_apply:B:r1`) |
+| new | `apply_batch` took item locks before the device lock; per-question item locks not globally sorted | one order everywhere: device-access locks of every proposing device (sorted) → question rows `FOR UPDATE` (by id) → every touched logical item once (sorted) → batch row; the proposal path also locks the union of all proposals' items once, sorted (`test_sol43_apply_batch_takes_the_device_lock_before_item_locks`; a mutant with items first fails it) |
+| new | duplicate-question check not atomic | it already ran under the subjects' item locks (held to commit, READ COMMITTED re-reads after the wait); now explicit (union lock before the loop) and tested with two workers in flight together (`test_sol43_concurrent_reviews_of_one_pair_ask_once`) |
+| B | pooled positive bar could hide a lost small class; summaries lacked mode/provider evidence | every positive class (contra_new/old/none, duplicate, refines) must be present with worst-over-reps recall ≥ 0.66; `SUMMARY.md`/`results.json` record the run mode and ledger calls per (mode, task, profile, model, outcome); G-LIVE-B re-run live |
+| GP1 | set comparison missed duplicate rows; accuracy only printed | multiset + list equality after rebuild; recorded pipeline exact ≥ 0.90 asserted |

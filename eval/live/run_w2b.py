@@ -16,6 +16,13 @@ Metrics per rep (the pass rule takes the MINIMUM over reps):
   over every pair (≥ 0.90); an abstention is ``none``;
 * false supersede: pairs whose final supersession is raised but differs from gold, over the pairs
   whose gold has no supersession (≤ 0.02).
+Class bars (Sol 41; the overall exact rate is dominated by ``none`` pairs), worst over reps:
+positive recall ≥ 0.85, positive precision ≥ 0.90, supersession direction ≥ 0.90, false
+cross-project raise ≤ 0.02, and EVERY positive class (contra_new/contra_old/contra_none/duplicate/
+refines) present with recall ≥ 0.66 in every rep (Sol 43: a small class cannot be lost entirely
+while the pooled bar still passes). ``--chain A+B`` also runs the PRODUCTION chain (primary A,
+the verifier on B first, fallback B). Every summary records the run mode and the ledger's calls
+per (mode, task, profile, model, outcome), so live calls and the verifier's profile are evidenced.
 Also reported: per-class accuracy, the confusion matrix, per-confidence precision (the
 calibration evidence for ``guards.TIERS``), guard counters, verifier agreement, JSON failures,
 latency and cost. Outputs (redacted, no raw provider response): ``eval/live/<date>-w2b-<profile>/``.
@@ -79,7 +86,9 @@ CLASS_THRESHOLDS = {
     "positive_precision": 0.90,  # raised decisions that match gold exactly
     "direction": 0.90,  # gold supersessions decided with the right direction
     "false_cross_raise_max": 0.02,  # cross-project gold-none pairs raised (widen/question)
+    "positive_class_min": 0.66,  # each positive class, worst over reps (n=3 tolerates one miss)
 }
+POSITIVE_CLASSES = ("contra_new", "contra_old", "contra_none", "duplicate", "refines")
 MAX_JSON_FAIL_RATE = 0.02
 PLACE_BATCH = 4
 
@@ -332,12 +341,14 @@ async def run_profile(
             reps_out.append({"metrics": m, **out})
     finally:
         await provider.aclose()
-    summary = summarize(profile, reps_out, ledger)
+    summary = summarize(profile, reps_out, ledger, mode)
     summary["verifier"] = verifier_name or profile_name
     return summary
 
 
-def summarize(profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger) -> dict[str, Any]:
+def summarize(
+    profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger, mode: str = "live"
+) -> dict[str, Any]:
     ms = [r["metrics"] for r in reps]
     mins = {
         "placement": min(m["placement"] for m in ms),
@@ -347,6 +358,9 @@ def summarize(profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger) ->
     for key in ("positive_recall", "positive_precision", "direction"):
         mins[key] = min(m[key] for m in ms)
     mins["false_cross_raise"] = max(m["false_cross_raise"] for m in ms)
+    # a missing class counts as 0: the fixture must exercise every positive class
+    mins["per_class"] = {c: min(m["per_class"].get(c, 0.0) for m in ms) for c in POSITIVE_CLASSES}
+    mins["positive_class_min"] = min(mins["per_class"].values())
     means = {
         "positive_recall": round(statistics.fmean(m["positive_recall"] for m in ms), 4),
         "positive_precision": round(statistics.fmean(m["positive_precision"] for m in ms), 4),
@@ -367,14 +381,17 @@ def summarize(profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger) ->
         and mins["positive_precision"] >= CLASS_THRESHOLDS["positive_precision"]
         and mins["direction"] >= CLASS_THRESHOLDS["direction"]
         and mins["false_cross_raise"] <= CLASS_THRESHOLDS["false_cross_raise_max"]
+        and mins["positive_class_min"] >= CLASS_THRESHOLDS["positive_class_min"]
         and rate <= MAX_JSON_FAIL_RATE
         and sum(r["infra_error"] for r in reps) == 0
     )
     lat = sorted(x for r in reps for x in r["latency_ms"])
     cost = sum((Decimal(r.cost_usd) for r in ledger.rows), Decimal(0))
+    by_call = Counter(f"{r.mode}|{r.task}|{r.profile}|{r.model_id}|{r.outcome}" for r in ledger.rows)
     return {
         "profile": profile.name,
         "model_id": profile.model_id,
+        "mode": mode,
         "reps": len(reps),
         "worst": mins,
         "mean": means,
@@ -386,6 +403,7 @@ def summarize(profile: Any, reps: list[dict[str, Any]], ledger: MemoryLedger) ->
         "latency_p50_ms": lat[len(lat) // 2] if lat else None,
         "latency_p95_ms": lat[min(len(lat) - 1, int(len(lat) * 0.95))] if lat else None,
         "cost_usd": str(cost),
+        "ledger_calls": dict(sorted(by_call.items())),
         "pass": ok,
         "reps_detail": reps,
     }
@@ -397,8 +415,8 @@ def render(s: dict[str, Any], stamp: str) -> str:
     lines = [
         f"# G-LIVE-B {stamp} — profile `{s['profile']}` (`{s['model_id']}`), verifier `{s['verifier']}`",
         "",
-        f"Verdict: **{verdict}** · reps {s['reps']} · calls {s['calls']} · JSON-fail {s['json_fail']}"
-        f" ({s['json_fail_rate']:.1%}) · infra errors {s['infra_error']}"
+        f"Verdict: **{verdict}** · mode `{s['mode']}` · reps {s['reps']} · calls {s['calls']}"
+        f" · JSON-fail {s['json_fail']} ({s['json_fail_rate']:.1%}) · infra errors {s['infra_error']}"
         f" · p50/p95 {s['latency_p50_ms']}/{s['latency_p95_ms']} ms · cost ${s['cost_usd']}",
         "",
         "| metric | worst over reps | mean | threshold |",
@@ -415,6 +433,12 @@ def render(s: dict[str, Any], stamp: str) -> str:
         f"| supersession direction | {w['direction']:.3f} | {m['direction']:.3f} | ≥ {t['direction']:.2f} |",
         f"| false cross-project raise | {w['false_cross_raise']:.3f} | {m['false_cross_raise']:.3f}"
         f" | ≤ {t['false_cross_raise_max']:.2f} |",
+        "| every positive class (worst) | "
+        + ", ".join(f"{k} {v:.2f}" for k, v in w["per_class"].items())
+        + f" | | ≥ {t['positive_class_min']:.2f} each |",
+        "",
+        "Provider calls (ledger: mode | task | profile | model | outcome → n): "
+        + "; ".join(f"{k} → {v}" for k, v in s["ledger_calls"].items()),
         "",
         "Per class (rep 0): "
         + ", ".join(

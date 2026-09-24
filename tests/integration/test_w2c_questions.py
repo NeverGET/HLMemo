@@ -483,3 +483,147 @@ async def test_sol41_observer_hands_approvals_back(db_dsn, connect, world: World
         assert await cur.fetchall() == [("ready",)]
     await embed(connect, embedder)
     await _replay_identical(connect)
+
+
+async def test_sol43_handed_back_approvals_can_be_decided_again(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """After an observer hand-back the SAME owner approves again (round 1: its own answer request
+    ids and apply job key) and, once promoted, the approval really applies (Sol 43 #7)."""
+    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+
+    old, _new, _rows = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.commit()
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()  # observer: handed back
+    async with await connect() as conn:
+        again = await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        assert again["accepted"] == 1
+        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await conn.commit()
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("approved",)]
+    await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("applied",)]
+        cur = await conn.execute(
+            "SELECT dedupe_key FROM jobs WHERE dedupe_key LIKE 'librarian_apply:%%' ORDER BY job_id"
+        )
+        keys = [r[0] for r in await cur.fetchall()]
+        assert keys == [f"librarian_apply:{batch}", f"librarian_apply:{batch}:r1"]
+        cur = await conn.execute(
+            "SELECT count(*) FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'"
+            " AND valid_to <> 'infinity'",
+            (old.logical_id,),
+        )
+        assert await cur.fetchone() == (1,)  # the approval applied: OLD closed
+        cur = await conn.execute("SELECT status FROM librarian_batches")
+        assert await cur.fetchall() == [("applied",)]
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_sol43_approved_question_past_ttl_expires_at_apply(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """The TTL bounds every not-yet-applied proposal: an approved question whose expires_at passed
+    before its apply job ran is ``expired`` and nothing is applied (Sol 43 #2)."""
+    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await conn.execute(
+            "UPDATE librarian_questions SET expires_at = now() - interval '1 second' WHERE question_id = %s",
+            (qid,),
+        )
+        await conn.commit()
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("expired",)]
+        assert await count(conn, "links") == 0
+        assert await count(conn, "memory_versions", "superseded_at <> 'infinity'") == 0
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->'question_status' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+        )
+        assert await cur.fetchone() == ([{"question_id": qid, "status": "expired"}],)
+
+
+async def _lock_waiters(connect, n: int) -> None:  # noqa: ANN001
+    """Wait until ``n`` advisory-lock requests of THIS database are queued."""
+    import asyncio
+
+    for _ in range(200):
+        async with await connect() as conn:
+            cur = await conn.execute(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+                " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+            )
+            (k,) = await cur.fetchone()
+            await conn.rollback()
+        if k >= n:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"expected {n} queued advisory locks")
+
+
+async def test_sol43_apply_batch_takes_the_device_lock_before_item_locks(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Lock order (Sol 43): a request of the proposing device is in flight (device lock held, item
+    lock not yet) and a revocation is queued behind it. The apply queues behind the revocation
+    WITHOUT holding any item lock, so the request gets its item lock at once and everything
+    completes. With items first, the apply would hold the item and wait behind the revocation,
+    which waits for the request, which waits for the item: a (soft) deadlock that stalls the
+    request until the deadlock detector reorders the queue (deadlock_timeout, 1 s) — the
+    request's 500 ms lock_timeout fails that order (verified by a mutant)."""
+    import asyncio
+
+    from hlmemo.auth.resolve import lock_device_access
+    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+
+    old, _new, _rows = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await conn.commit()
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    async with await connect() as request, await connect() as revoke:
+        await lock_device_access(request, world.dev_a)  # the request resolved its device
+        revoking = asyncio.create_task(lock_device_access(revoke, world.dev_a, exclusive=True))
+        await _lock_waiters(connect, 1)
+        # let the revocation's one-shot deadlock check (deadlock_timeout 1 s) pass before a cycle
+        # could exist, so only the apply's and the request's own checks could reorder the queue
+        await asyncio.sleep(1.2)
+        applying = asyncio.create_task(worker.drain())
+        await _lock_waiters(connect, 2)  # the apply is queued behind the revocation
+        # the request's item lock (the write path's key; raw so the 500 ms timeout applies, which
+        # is below deadlock_timeout 1 s): free, the apply holds no item lock
+        await request.execute("SET lock_timeout = '500ms'")
+        await request.execute("SELECT pg_advisory_xact_lock(%s::bigint)", (old.logical_id,))
+        await request.commit()
+        await asyncio.wait_for(revoking, 10)
+        await revoke.rollback()  # not revoked after all
+        assert await asyncio.wait_for(applying, 30) == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("applied",)]
+    await embed(connect, embedder)
+    await _replay_identical(connect)

@@ -133,6 +133,18 @@ async def batch_questions(
     return [dict(zip(keys, r, strict=True)) for r in await cur.fetchall()]
 
 
+async def decision_round(conn: AsyncConnection, batch_id: str) -> int:
+    """How many decisions of ``batch_id`` already reached an ``apply_batch`` job (each records one
+    ``librarian`` event). An observer hand-back (``role_denied``) reopens the questions; the next
+    decision is round n+1, with its own answer ``request_id`` and apply job key (Sol 43 #7)."""
+    cur = await conn.execute(
+        "SELECT count(*) FROM events WHERE kind = 'librarian'"
+        " AND payload->'request'->>'op' = 'apply_batch' AND payload->'request'->>'batch_id' = %s",
+        (batch_id,),
+    )
+    return int((await cur.fetchone())[0])
+
+
 async def record_batch_decision(
     conn: AsyncConnection,
     *,
@@ -163,6 +175,8 @@ async def record_batch_decision(
     if unknown:
         raise ToolError("E_INVALID_ARG", f"unknown question ids {sorted(unknown)}")
     at = await q.clock_now(conn)
+    n = await decision_round(conn, batch_id)
+    rnd = f":r{n}" if n else ""  # round 0 keeps the W2a keys
     decided: dict[str, str] = {}
     approved = 0
     for i, r in enumerate(rows):
@@ -174,14 +188,14 @@ async def record_batch_decision(
             jobs = [
                 job_spec(
                     kind="librarian_write",
-                    dedupe_key=f"librarian_apply:{batch_id}",
+                    dedupe_key=f"librarian_apply:{batch_id}{rnd}",
                     priority=4,
                     payload={
                         "op": "apply_batch",
                         "batch_id": batch_id,
                         "project_id": project_id,
                         "capabilities": rows[0]["proposal"].get("capabilities") or {},
-                        "lineage": str(uuid.uuid5(NS_LIBRARIAN, f"lineage:librarian_apply:{batch_id}")),
+                        "lineage": str(uuid.uuid5(NS_LIBRARIAN, f"lineage:librarian_apply:{batch_id}{rnd}")),
                     },
                 )
             ]
@@ -197,7 +211,9 @@ async def record_batch_decision(
             project_id=project_id,
             device_id=approver.device_id,
             client=approver.client,
-            request_id=uuid.uuid5(NS_LIBRARIAN, f"answer:{r['question_id']}:{approver.device_id}:{status}"),
+            request_id=uuid.uuid5(
+                NS_LIBRARIAN, f"answer:{r['question_id']}:{approver.device_id}:{status}{rnd}"
+            ),
             request={
                 "op": "batch_decision",
                 "batch_id": batch_id,
@@ -230,6 +246,7 @@ __all__ = [
     "ROLES",
     "batch_questions",
     "check_role_at_start",
+    "decision_round",
     "effective_role",
     "latest_role_decision",
     "lower",
