@@ -94,7 +94,7 @@ Keep these private files together with mode 0600; each has exactly one example i
 | `api.env` | `api.env.example` | API only: cursor secret, trusted proxy CIDR (no admin token, D-061) |
 | `db.env` | `db.env.example` | DB only: PostgreSQL variables |
 | `backup.env` | `backup.env.example` | Host backup/upload only: S3 credentials and retention |
-| `llm.env` (optional) | `llm.env.example` | Librarian only: provider key, profile, spend guard (W2a). **Absent in R1** |
+| `llm.env` (optional) | `llm.env.example` | Librarian and API (risk judge, librarian enqueue): provider key, profile, role, spend guard. Absent in R1; R2 installs it with `install_llm_env.sh` |
 
 Replace the `CHANGE_ME_*` values (database password, cursor secret) with independent
 `openssl rand -hex 32` outputs; use the **same database password** in `db.env` and `app.env`'s DSN.
@@ -542,29 +542,106 @@ unrecorded `*.pre-w0-*` next to the env files; never delete them by hand.
 `--accept-compose-change=<sha256>` exactly like W0a. The runner stops/starts the librarian with the
 other writers, checks its heartbeat (`python -m hlmemo.librarian.health`) after `up --wait`, and on
 recovery to a model without it removes the new librarian container. See "Librarian (W2a)" below.
+**R2** (librarian ON) changes it again (the `HLM_LIBRARIAN_ENABLED` pin removed, `llm.env` mounted
+into the api): the full sequence is in "R2 release (librarian ON, observer)" below.
 
-### Librarian (W2a): off in R1, enabled at R2
+### Librarian (W2a service; switched by `llm.env` since R2)
 
 The `librarian` service runs the release image (`python -m hlmemo.librarian.worker`, 512 MiB, 0.5
-CPU, no port). In **R1 it is disabled**: `compose.prod.yaml` pins `HLM_LIBRARIAN_ENABLED: "false"`
-in the service environment, which wins over any env file. Disabled, it only writes a heartbeat
-every 10 s (healthcheck: heartbeat younger than 120 s); it leases no job, loads no provider and
-needs **no** `llm.env` and no OpenRouter key. Check it with `stack.sh ps librarian` and
-`stack.sh logs librarian` (expect `HLM_LIBRARIAN_ENABLED is false; idling`).
+CPU, no port). It writes a heartbeat every 10 s (healthcheck: heartbeat younger than 120 s; the
+heartbeat carries `enabled`, `role`, `breaker_state` and the spend fields). In **R1** the Compose
+model pinned `HLM_LIBRARIAN_ENABLED: "false"`; since **R2** there is no pin: `llm.env`
+(`/etc/hlmemo/llm.env`, optional, found next to `prod.env`; `HLM_LLM_ENV_FILE` overrides) decides,
+and without it the default is off. Off (no `llm.env`, `HLM_LIBRARIAN_ENABLED=false` or
+`HLM_LLM_MODE=off`), it leases no job, loads no provider and needs no key (`stack.sh logs
+librarian`: `... idling`). The same `llm.env` is mounted into the **api**, because the
+`memory.risk_check` judge (W2d) and the enqueue of `librarian_write` jobs run there; the key never
+reaches db, worker, migrate or caddy (`tests/deploy/test_compose_isolation.py`). A role above
+`observer` needs an owner decision event (D-062), else the librarian refuses to start.
 
-Enabling it (R2, a separate reviewed release):
+### R2 release (librarian ON, observer)
 
-1. On the server create `/etc/hlmemo/llm.env` (0600, deploy user) from `deploy/llm.env.example`:
-   set `OPENROUTER_API_KEY` (the only secret; mounted into the librarian container only), keep
-   `HLM_LIBRARIAN_ROLE=observer` and the spend-guard caps (`HLM_LLM_BUDGET_*_USD`,
-   `HLM_LLM_JOB_CALL_CAP`). Scripts find it next to `prod.env`; `HLM_LLM_ENV_FILE` overrides.
-2. Ship the R2 release that removes the `HLM_LIBRARIAN_ENABLED: "false"` pin (and sets
-   `HLM_LIBRARIAN_ENABLED=true` in `llm.env`), and deploy it with `--accept-compose-change`.
-3. `make gate-release` (G3, G4, G-L3) and `make gate-live` (G-LIVE-A) are release-blocking for R2.
-   A role above `observer` additionally needs an owner decision event (D-062).
+R2 turns the librarian on in the **observer** role (D-058: every link, duplicate or contradiction
+becomes a proposal; the only thing it applies is placement into `version_signals`) and enables the
+`memory.risk_check` LLM judge in the api (D-066 primary `openrouter-gpt6-luna`; D-071: the
+`openrouter` deepseek fallback never judges, so during a primary outage risk_check answers
+`judged:false, judge:"retrieval_only"`). Its Compose model differs from R1 (pin removed, `llm.env`
+also mounted into the api), so it ships with `--accept-compose-change`. Release-blocking before
+this sequence: `make gate-release` (G3, G4, G-L3; G-L3 also on the 2 vCPU VM), `make gate-live`
+(G-LIVE-A/B/C on gpt-6-luna and the fallback), the Sol review and the rehearsal on the VM.
 
-To switch it off again without a release: set `HLM_LLM_MODE=off` in `llm.env` and
-`stack.sh up -d --no-deps librarian` (it idles), or `stack.sh stop librarian`.
+Exact sequence, from the operator workstation at the repository root (`STATE` is the host's state
+directory written by `first_deploy.sh`; production: `deploy/.local/153.92.1.166`):
+
+```sh
+STATE=deploy/.local/<host>
+REF=$(git rev-parse <R2 release ref>)        # full 40-character SHA, already pushed to origin
+# 1. llm.env on the host: HLM_LIBRARIAN_ENABLED=true, HLM_LIBRARIAN_ROLE=observer,
+#    HLM_PROFILE=openrouter-gpt6-luna, HLM_FALLBACK_PROFILE=openrouter, the template's spend caps.
+#    OPENROUTER_API_KEY is read from ./.env (only that variable; --key-file FILE for another file)
+#    and travels on ssh stdin: never argv, a log or the output. 0600, deploy user; idempotent.
+bash deploy/scripts/install_llm_env.sh --state "$STATE"
+# 2. review the model change, then deploy with its exact hash
+git diff "$(ssh -F "$STATE/ssh_config" hlm-deploy cat /opt/hlmemo/current-ref </dev/null)" "$REF" -- deploy/compose.prod.yaml
+SHA256=$(git show "$REF:deploy/compose.prod.yaml" | shasum -a 256 | cut -d' ' -f1)
+PATH="$PWD/$STATE/bin:$PATH" bash deploy/scripts/deploy.sh --accept-compose-change="$SHA256" hlm-deploy "$REF"
+# 3. gates from outside, with the observer check (no drill: production holds real data)
+bash deploy/scripts/remote_gates.sh --url https://FQDN --state "$STATE" --no-drill --librarian
+# 4. health and spend
+bash deploy/scripts/hlm_ops.sh --state "$STATE" status
+```
+
+Installing `llm.env` first is safe on R1: the R1 model pins the librarian off and its api does not
+mount the file, and no running container reads it before the R2 containers are created. A changed
+`llm.env` is first copied to `llm.env.bak-<UTC stamp>` (0600; the newest 3 are kept); re-running
+with the same key prints `unchanged`. `install_llm_env.sh` rewrites the whole file from the
+template, so hand edits on the host are replaced (and kept in the backup) by the next install.
+
+After cutover the deployment prints the **librarian check** (`deploy/scripts/check_librarian.py`,
+after the device inventory): switch, role, heartbeat (`enabled`, `role`, `breaker_state`), spend,
+the api's risk-judge chain, and per profile whether its key is set and whether its base URL answers.
+It fails the deployment (the new stack stays running, no database rollback) when `llm.env` enables
+the librarian but the heartbeat is not `enabled=True` with the configured role (`observer`), when
+the api sees a different switch, or when a provider key is missing. An unreachable provider is
+**reported only** (`UNREACHABLE ...; reported only`): jobs wait with backoff and risk_check answers
+retrieval-only until it returns. Without `llm.env` the librarian idles and the check passes.
+
+`remote_gates.sh` then adds two gates. `risk-check` (always): one registered lesson plus a task
+that repeats its mistake; PASS when the tool returns a verdict, reporting `judged=true|false` and
+the reason. `librarian` (with `--librarian`): a marker write, its `librarian_write` job awaited
+(`--librarian-wait`, default 300 s), then the job's `librarian` event must be `role=observer` with
+only `signal_upsert` mutations (zero links, zero closes/invalidations), the marker must have a
+`version_signals` row, and `python -m hlmemo.ops librarian audit --project gates-probe --json` must
+list none of its proposals (or their batches) as applied. On a release without the `librarian
+audit` subcommand the gate is SKIPPED with that message.
+
+**Switch it off quickly** (no redeploy): set the switch in `llm.env` and recreate the two services
+that read it; `--no-deps` leaves db, worker, caddy and the one-shot `migrate` alone. The api restarts
+(about a minute of 502s), the librarian idles, the api stops enqueueing librarian jobs and
+risk_check answers retrieval-only; queued jobs wait. Back on: the same command with `true`.
+
+```sh
+ssh -F "$STATE/ssh_config" hlm-deploy 'sed -i "s/^HLM_LIBRARIAN_ENABLED=.*/HLM_LIBRARIAN_ENABLED=false/" /etc/hlmemo/llm.env &&
+  cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh up -d --no-deps librarian api' </dev/null
+```
+
+An instant brake that leaves the api untouched is `stack.sh stop librarian` (jobs queue up; the api
+still judges risk_check). To take the key off the host: `install_llm_env.sh --state "$STATE"
+--remove` (deletes `llm.env` and its backups), then the same `up -d --no-deps librarian api`. A
+rollback to R1 (`deploy.sh --rollback`) runs R1's model: librarian pinned off, api without the key;
+the file on the host is ignored.
+
+**Spend monitoring:** `hlm_ops.sh --state "$STATE" status` prints the `librarian` line: `ready`,
+`in_flight`, `role`, `breaker` (`open` = provider outage, `budget` = a cap tripped; `(ledger)` means
+inferred from the llm_calls ledger because the api cannot see the librarian's heartbeat file),
+`failed_24h`, `spend_today_usd`, `spend_hour_usd`, `reserved_usd`; `status --json` has the same
+fields under `librarian`. The caps in `llm.env` are a runaway guard with the D-058 development
+defaults, not a budget: `HLM_LLM_BUDGET_HOUR_USD=3`, `HLM_LLM_BUDGET_DAY_USD=10`,
+`HLM_LLM_BUDGET_MONTH_USD=60` (worst-case reservations at the profile's peak price) and
+`HLM_LLM_JOB_CALL_CAP=20` provider calls per job lineage. A tripped cap pauses the librarian
+(`breaker=budget`) and risk_check falls back to retrieval-only until the window rolls over. Check
+the spend after the gates, daily during the Phase 5 migration, and against the provider's own
+activity page; change a cap in `llm.env` and recreate `librarian api` as above.
 
 ### Application releases
 
