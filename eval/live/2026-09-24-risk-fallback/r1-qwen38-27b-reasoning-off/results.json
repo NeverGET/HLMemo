@@ -1,0 +1,59 @@
+{
+ "fixture": "tests/fixtures/risk",
+ "max_usd": "2",
+ "profiles": {
+  "qwen38-27b-reasoning-off": {
+   "calls": 80,
+   "catch_mean": 1.0,
+   "catch_min": 1.0,
+   "cost_usd": "0.0329755060",
+   "false_warn_max": 0.025,
+   "false_warn_mean": 0.025,
+   "latency_ms_p50": 1702.0,
+   "latency_ms_p95": 3454.5,
+   "model_id": "qwen/qwen3.8-27b",
+   "outcomes": {
+    "ok": 79,
+    "timeout": 1
+   },
+   "pass": true,
+   "reps": [
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.025,
+     "false_warns": [
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.02564102564102564,
+      "n_neg": 39,
+      "n_pos": 40
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 79,
+      "retrieval_only": 1
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  }
+ },
+ "reps": 1,
+ "spent_usd": "0.03297554"
+}
