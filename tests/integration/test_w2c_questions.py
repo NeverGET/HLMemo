@@ -1489,3 +1489,131 @@ async def test_review61_answer_rechecks_the_ttl_after_the_item_and_policy_lock_w
         assert await cur.fetchall() == [("open",)]  # the expiry sweep records it, not a refused answer
         assert await count(conn, "events", "kind = 'answer'") == 0
     await _nothing_applied(connect)
+
+
+# --------------------------------------------------------------------------- D-095: linearization point
+async def test_d095_apply_batch_judges_the_ttl_after_the_batch_row_lock(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """D-095 (consult 62): the apply passes every TTL check up to its policy locks, then waits for
+    the batch row (``FOR UPDATE``, the last lock of an apply) held by a concurrent batch writer, and
+    the question expires during that wait. The final fresh-clock check at the linearization point
+    makes it ``expired``: the batch is re-planned without it, nothing is applied, and the job's
+    event records no mutation."""
+    import asyncio
+
+    from hlmemo.librarian.roles import record_batch_decision
+
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.commit()
+    await _promote(connect, world)
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    async with await connect() as blocker:
+        await blocker.execute("SELECT 1 FROM librarian_batches WHERE batch_id = %s FOR UPDATE", (batch,))
+        await _expire_in(connect, qid, 2)
+        applying = asyncio.create_task(worker.drain())
+        await _lock_waits(connect, 1)  # every other lock taken: the apply waits for the batch row
+        await asyncio.sleep(2.5)  # the question expires during the wait
+        await blocker.rollback()
+        assert await asyncio.wait_for(applying, 30) == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("expired",)]
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->>'outcome', payload->'resolved'->'mutations',"
+            " payload->'resolved'->'question_status' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+        )
+        assert await cur.fetchall() == [("no_change", [], [{"question_id": qid, "status": "expired"}])]
+    await _nothing_applied(connect)
+    # (no replay identity here: expires_at was moved in the projection only, as a test shortcut)
+
+
+def _widen_question_items() -> tuple[tuple[str, str], tuple[str, str], Oracle]:
+    lesson_o = ("Heredoc over ssh", "Never pipe a heredoc into ssh with bash -s: stdin is swallowed.")
+    lesson_m = ("ssh stdin heredoc", "bash -s over ssh with a heredoc swallows stdin; do not do it.")
+    return lesson_o, lesson_m, Oracle(relations={(lesson_m[0], lesson_o[0]): ("refines", "none", "high")})
+
+
+@pytest.mark.parametrize("write", ["rule", "widen"])
+async def test_d095_answer_judges_the_ttl_after_the_rule_and_widen_writes(
+    db_dsn, connect, world: World, embedder, write: str
+) -> None:  # noqa: ANN001
+    """D-095 (consult 62): an assistant-role accept passes every TTL check up to its policy lock,
+    then its own writes wait — the ``librarian-rule`` fact's request-key lock (every answer), or
+    the widen revision's (``widen_scope``) — and the question expires during that wait. The final
+    check before the answer event rolls back the WHOLE transaction: ``E_VERSION_CONFLICT
+    {expired}``, no rule fact, no widened version, no write or answer event, no link or close."""
+    import asyncio
+
+    from hlmemo.librarian.events import NS_LIBRARIAN
+    from hlmemo.librarian.reserved import reserved_ids
+
+    if write == "rule":
+        _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+        widened = None
+    else:
+        lesson_o, lesson_m, oracle = _widen_question_items()
+        (widened,) = await write_items(
+            connect, world.ctx_a, OTHER, [{**item(*lesson_o, valid_from=D_OLD), "kind": "lesson"}]
+        )
+        await write_items(connect, world.ctx_a, MAIN, [{**item(*lesson_m), "kind": "lesson"}])
+        await embed(connect, embedder)
+        provider = make_provider(db_dsn, ScriptedLLM(default=oracle), budget_disabled=True)
+        await make_worker(lib_settings(db_dsn), provider, connect).drain()
+        await provider.aclose()
+        async with await connect() as conn:
+            cur = await conn.execute(
+                "SELECT question_id::text FROM librarian_questions WHERE kind = 'widen_scope'"
+            )
+            (qid,) = await cur.fetchone()
+    await _promote(connect, world)
+    args = _args(qid, "accept")
+    async with await connect() as conn:
+        ids = await reserved_ids(conn)
+        writes_before = await count(conn, "events", "kind = 'write'")
+        versions_before = await count(conn, "memory_versions")
+        await conn.rollback()
+    if widened is None:  # memory.write_rule's request key: the reserved memory project + device
+        rid = uuid.uuid5(NS_LIBRARIAN, f"rule:answer:{qid}:{args['request_id']}")
+        key = f"{ids.memory_project_id}:{ids.librarian_device_id}:{rid}"
+    else:  # the widen revision's request key: the item's home project + the answering device
+        rid = uuid.uuid5(NS_LIBRARIAN, f"widen:{args['request_id']}:{widened.logical_id}")
+        key = f"{world.other_id}:{world.dev_a}:{rid}"
+
+    async def answering() -> ToolError | dict[str, Any]:
+        try:
+            return await _answer(connect, world.ctx_a, args, role="assistant")
+        except ToolError as exc:
+            return exc
+
+    async with await connect() as blocker:
+        await blocker.execute("SELECT pg_advisory_xact_lock(1, hashtext(%s))", (key,))
+        await _expire_in(connect, qid, 2)
+        task = asyncio.create_task(answering())
+        await _lock_waits(connect, 1)  # item + policy locks passed: the write waits for its key
+        await asyncio.sleep(2.5)  # the question expires during the wait
+        await blocker.rollback()
+        res = await asyncio.wait_for(task, 30)
+    assert isinstance(res, ToolError), res
+    assert res.code == "E_VERSION_CONFLICT" and res.details["status"] == "expired"
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions WHERE question_id = %s", (qid,))
+        assert await cur.fetchone() == ("open",)
+        assert await count(conn, "events", "kind = 'answer'") == 0
+        assert await count(conn, "events", "kind = 'write'") == writes_before  # no rule, no widen
+        assert await count(conn, "memory_versions") == versions_before  # no rule fact, no revision
+        if widened is not None:
+            cur = await conn.execute(
+                "SELECT project_ids FROM memory_versions WHERE logical_id = %s"
+                " AND superseded_at = 'infinity'",
+                (widened.logical_id,),
+            )
+            assert await cur.fetchall() == [([world.other_id],)]  # not widened
+    await _nothing_applied(connect)
