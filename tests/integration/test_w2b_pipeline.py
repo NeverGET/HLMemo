@@ -519,6 +519,59 @@ async def test_sol43_rule_refs_are_judged_by_device_scope_on_every_path(
     assert {"place", "other"} <= seen
 
 
+async def test_sol44_rule_ref_lost_mid_job_stops_the_next_calls(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """The rule refs of a built prompt are re-checked before EVERY provider attempt with the
+    items: once a ref becomes invisible to the device mid-job, no further call carries it
+    (Sol 44 #1)."""
+    from hlmemo.librarian.memory import write_rule
+
+    (ref,) = await write_items(connect, world.ctx_a, OTHER, [item("Shared other note", "shared body")])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, Oracle())  # dev-a's own review: out of the way
+    async with await connect() as conn:
+        await write_rule(
+            conn,
+            title="r",
+            text="Owner accepted a link proposal (refines) for vY.",
+            clue_refs=[f"v{ref.version_id}"],
+            dedupe="s44",
+        )
+        await conn.commit()
+    await write_items(connect, world.ctx_b, OTHER, [item(*OLD, valid_from=D_OLD)])
+    await write_items(connect, world.ctx_b, OTHER, [item(*NEW, valid_from=D_NEW)])
+    await embed(connect, embedder)
+    hidden: list[bool] = []
+
+    async def hide_ref(_body: dict) -> None:  # right after the FIRST call left
+        if not hidden:
+            hidden.append(True)
+            async with await connect() as conn:  # the ref's scope narrows (test-only projection edit)
+                await conn.execute(
+                    "UPDATE memory_versions SET device_scope = 'class:personal' WHERE version_id = %s",
+                    (ref.version_id,),
+                )
+                await conn.commit()
+
+    llm = ScriptedLLM(default=Oracle(relations=CONTRA), on_request=hide_ref)
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()
+    await provider.aclose()
+    carried = [
+        "Owner accepted a link proposal (refines)" in r["messages"][1]["content"] for r in llm.requests
+    ]
+    # only the first call carried the rule: the rest of that job was stopped by its precheck, the
+    # next job loaded its rules without it
+    assert hidden and carried[0] and not any(carried[1:]) and len(carried) > 1
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT count(*) FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'write_review' AND payload::text LIKE '%%denied%%'"
+        )
+        assert (await cur.fetchone())[0] >= 1  # the stopped call is audited as a denial
+
+
 async def test_same_pair_from_both_sides_is_one_question(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
     """Both reviews see the pair (the old item's job ran after the new one was written): only one
     pending question, the second is counted as a duplicate proposal."""

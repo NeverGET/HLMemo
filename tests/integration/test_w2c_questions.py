@@ -562,6 +562,44 @@ async def test_sol43_approved_question_past_ttl_expires_at_apply(
         assert await cur.fetchone() == ([{"question_id": qid, "status": "expired"}],)
 
 
+async def test_sol44_ttl_is_checked_after_the_lock_wait(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """An approved question that expires WHILE the apply waits for its locks is ``expired``: the
+    TTL is compared with the clock read after the waits (Sol 44 #2)."""
+    import asyncio
+
+    from hlmemo.auth.resolve import lock_device_access
+    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await conn.commit()
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    async with await connect() as revoke:
+        await lock_device_access(revoke, world.dev_a, exclusive=True)  # a revocation in flight
+        async with await connect() as conn:
+            await conn.execute(
+                "UPDATE librarian_questions SET expires_at = clock_timestamp() + interval '1 second'"
+                " WHERE question_id = %s",
+                (qid,),
+            )
+            await conn.commit()
+        applying = asyncio.create_task(worker.drain())
+        await _lock_waiters(connect, 1)  # the apply waits for the device lock
+        await asyncio.sleep(1.5)  # the question expires during the wait
+        await revoke.rollback()
+        assert await asyncio.wait_for(applying, 30) == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("expired",)]
+        assert await count(conn, "links") == 0
+
+
 async def _lock_waiters(connect, n: int) -> None:  # noqa: ANN001
     """Wait until ``n`` advisory-lock requests of THIS database are queued."""
     import asyncio

@@ -155,6 +155,16 @@ async def readable_rules(
     return [rule for rule in rules if all(_ref_vid(r) in ok for r in rule.get("refs") or [])]
 
 
+async def rules_still_readable(
+    conn_factory: Any, capabilities: dict[str, Any], rules: list[dict[str, Any]]
+) -> bool:
+    """Every rule ref in an already built prompt is still readable: checked before EVERY provider
+    attempt with the items' own precheck (Sol 44 #1); a lost ref skips the call (``PrivacyDenied``)."""
+    if not any(rule.get("refs") for rule in rules):
+        return True
+    return len(await readable_rules(conn_factory, capabilities, rules)) == len(rules)
+
+
 def memory_ctx(librarian_device_id: int, memory_project_id: int) -> AuthContext:
     """Internal context: the system device with write on ``hlm-librarian`` ONLY (never persisted)."""
     return AuthContext(
@@ -225,6 +235,7 @@ __all__ = [
     "overlapping_item",
     "parse_rule",
     "readable_rules",
+    "rules_still_readable",
     "shingles",
     "write_rule",
 ]

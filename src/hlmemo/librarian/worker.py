@@ -440,13 +440,15 @@ class LibrarianWorker:
     @staticmethod
     async def _lock_approved(
         conn: AsyncConnection, plan: Plan, T: datetime
-    ) -> tuple[list[tuple[str, dict[str, Any]]], list[dict[str, Any]]]:
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[dict[str, Any]], datetime]:
         """``apply_batch`` lock order (Sol 43), the same as a request and ``memory.answer``: the
         device-access lock of every proposing device (sorted), then the question rows (``FOR
         UPDATE``, by id), then (``_apply_approved``) every logical item once, sorted. Returns the
         questions STILL approved (one decided otherwise since the plan is left alone) and the
         status changes: an approved question past ``expires_at`` is ``expired``, never applied
-        (Sol 43 #2: the 30-day TTL bounds every not-yet-applied proposal, as in ``memory.answer``)."""
+        (Sol 43 #2: the 30-day TTL bounds every not-yet-applied proposal, as in ``memory.answer``).
+        The TTL is compared with the clock read AFTER the lock waits (Sol 44 #2), which becomes the
+        job's ``T`` (the event is recorded at or after it)."""
         devices = {
             int(p["capabilities"]["trigger_device_id"])
             for _qid, p in plan.approved
@@ -460,17 +462,18 @@ class LibrarianWorker:
             ([qid for qid, _p in plan.approved],),
         )
         rows = {qid: (status, expires) for qid, status, expires in await cur.fetchall()}
+        now = max(T, await q.clock_now(conn))
         live: list[tuple[str, dict[str, Any]]] = []
         changes: list[dict[str, Any]] = []
         for qid, proposal in plan.approved:
             status, expires = rows.get(qid, (None, None))
             if status != "approved":
                 continue
-            if expires is not None and expires <= T:
+            if expires is not None and expires <= now:
                 changes.append({"question_id": qid, "status": "expired"})
                 continue
             live.append((qid, proposal))
-        return live, changes
+        return live, changes, now
 
     async def _apply_approved(
         self, conn: AsyncConnection, plan: Plan, approved: list[tuple[str, dict[str, Any]]]
@@ -535,7 +538,7 @@ class LibrarianWorker:
             recorded: list[datetime] = []
             detail: str | None = None
             if plan.op == "apply_batch" and outcome == "approved":
-                live, status_changes = await self._lock_approved(conn, plan, T)
+                live, status_changes, T = await self._lock_approved(conn, plan, T)
                 if role == "observer":
                     # nothing applies; the approvals are handed back (questions open again, the
                     # batch ready): a new decision round re-approves them once the role allows

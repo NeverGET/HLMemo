@@ -149,12 +149,15 @@ async def test_unreadable_candidate_dropped(db_dsn, connect, world: World, deps)
 
 
 async def test_working_memory_rules_loaded_and_scoped(db_dsn, connect, world: World, deps) -> None:  # noqa: ANN001
+    # the ref must be readable by the triggering device (W2b: rules with unreadable refs are never
+    # loaded into its prompts): an item of MAIN
+    (ref_vid,) = await _items(connect, world, deps, [item("TTL policy", "Later dated TTL facts win.")])
     async with await connect() as conn:
         v1 = await write_rule(
             conn,
             title="rule: TTL",
             text="Cache TTL facts are superseded by later dated ones.",
-            clue_refs=["v1"],
+            clue_refs=[f"v{ref_vid}"],
             dedupe="t1",
             importance=8,
             deps=deps,
@@ -168,8 +171,10 @@ async def test_working_memory_rules_loaded_and_scoped(db_dsn, connect, world: Wo
         with pytest.raises(ToolError):  # body limited to rule text
             await write_rule(conn, title="x", text="y" * 700, clue_refs=[], dedupe="t3", deps=deps)
         await conn.rollback()
-        cur = await conn.execute(
-            "SELECT device_id, project_id FROM events WHERE kind = 'write' ORDER BY event_id"
+        cur = await conn.execute(  # the rule writes (the ref item above is dev-a's own write)
+            "SELECT device_id, project_id FROM events WHERE kind = 'write' AND project_id <> %s"
+            " ORDER BY event_id",
+            (world.main_id,),
         )
         rows = await cur.fetchall()
         cur = await conn.execute("SELECT device_id FROM devices WHERE name = 'librarian' AND is_system")
