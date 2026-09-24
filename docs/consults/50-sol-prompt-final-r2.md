@@ -1,0 +1,5 @@
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Your consult 49 (docs/consults/49-sol-review-d074.md) said NO-GO with 4 blockers. The fixes are merged on local main: r2-observer-fix2 (b1da47f) and r2-check-fix2 (d2360e1). Review ONLY `git diff 1e7714b HEAD -- src deploy tests alembic` (ignore docs and eval). Also read D-074/D-075/D-076 in docs/decisions/DECISIONS.md: R2 ships the librarian in OBSERVER only, because the hold-out gates failed.
+STATIC REVIEW ONLY. Answer:
+(1) Is every Sol-49 blocker fixed? Give a one-line verdict each: cross-project apply role check; promotion stranding; the 0008 ruling (documented, not a migration); the stale heartbeat.
+(2) The FINAL question for R2 in OBSERVER mode: can the running system (librarian worker, memory.answer, ops commands, import burst) change any user item, link, validity or scope? Can a librarian or provider failure degrade query/write availability?
+OUTPUT (≤ 250 words): ## Verdict (GO-R2 / NO-GO); ## Per-blocker (4 lines); ## Residual risks (≤ 3 bullets, non-blocking).
