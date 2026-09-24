@@ -16,6 +16,22 @@ chain ``[primary, fallback?]`` and returns schema-valid JSON. Per profile:
 * before every network attempt the worst case is reserved atomically (``budget``) and the
   per-job call ceiling is checked; after it the reservation is settled at the actual cost.
 
+Attempt policies (``complete(attempt_policy=)``):
+
+* ``background`` (the librarian worker, the default): the retry/backoff above, per profile.
+* ``latency`` (deadline-bounded API callers: W2e synthesis 7 s / 6 s cap, W2d risk judge 4 s;
+  BACKLOG, D-084 bake-off): ONE bounded attempt per profile, no backoff sleeps. While a later
+  profile of the chain is still available (its breaker not open), an attempt may use at most
+  ``LATENCY_PRIMARY_SHARE`` of the remaining deadline; the last available profile gets the rest
+  (minus the margin). A timeout, 5xx/429/408, transport error or non-retryable HTTP error goes
+  straight to the next profile, so a stalled or failing primary leaves the fallback real time.
+  Every attempt still runs the privacy precheck (D-062), the reservation/settle and its ledger
+  row (shielded) and the per-lineage ceiling; the chain is the caller's (``disabled_tasks``:
+  the risk judge has no fallback, D-071). When every attempted profile timed out the call raises
+  ``DeadlineExceeded`` (the caller's ``timeout``), otherwise ``ProviderUnavailable``. Breaker
+  failures are counted per PROFILE (``ChainBreakers`` is an API caller's view of them), so a
+  failing primary never suppresses a working fallback.
+
 Every attempt writes exactly one ``llm_calls`` row. ``HLM_LLM_MODE`` selects live / record /
 replay (strict cassettes) / off. The raw provider response is never stored anywhere.
 """
@@ -79,6 +95,10 @@ _PRECHECK: contextvars.ContextVar[Callable[[], Awaitable[None]] | None] = contex
 _DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("hlm_llm_deadline", default=None)
 DEADLINE_MARGIN_S = 0.3
 MIN_ATTEMPT_S = 0.2
+#: ``latency`` policy: the share of the remaining deadline an attempt may use while a later
+#: profile is still available (the rest is left for it)
+LATENCY_PRIMARY_SHARE = 0.55
+ATTEMPT_POLICIES = ("background", "latency")
 
 
 def _remaining_s() -> float | None:
@@ -144,6 +164,12 @@ class Breaker:
     def remaining_s(self) -> float:
         return max(0.0, self.open_until - self.clock.monotonic()) if self.state == "open" else 0.0
 
+    def available(self) -> bool:
+        """Would ``allow()`` let a call through right now? (No side effect: no half-open trial.)"""
+        if self.state == "open":
+            return self.clock.monotonic() >= self.open_until
+        return not (self.state == "half_open" and self._trial)
+
     def success(self) -> None:
         self.failures = 0
         self.state = "closed"
@@ -163,6 +189,39 @@ class Breaker:
         self.state = "open"
         self.open_until = self.clock.monotonic() + self.window_s
         self._trial = False
+
+
+class ChainBreakers:
+    """An API caller's view of its provider's PER-PROFILE breakers: the call is refused only while
+    EVERY profile of the chain is unavailable, so an open primary never suppresses a working
+    fallback. The provider counts the failures (per profile, per attempt chain); ``success()``
+    closes them all (an operator or test reset). Without a provider (disabled) nothing is open."""
+
+    def __init__(self, provider: Callable[[], Provider | None]) -> None:
+        self._provider = provider
+
+    def _all(self) -> list[Breaker]:
+        p = self._provider()
+        return [] if p is None else [p.breaker(x.name) for x in p.chain]
+
+    def allow(self) -> bool:
+        breakers = self._all()
+        return not breakers or any(b.available() for b in breakers)
+
+    def remaining_s(self) -> float:
+        breakers = self._all()
+        if not breakers or any(b.available() for b in breakers):
+            return 0.0
+        return min(b.remaining_s() for b in breakers)
+
+    def success(self) -> None:
+        for b in self._all():
+            b.success()
+
+    @property
+    def state(self) -> str:
+        p = self._provider()
+        return "closed" if p is None else p.breaker_state()
 
 
 @dataclass(slots=True)
@@ -192,14 +251,16 @@ class LlmResult:
 
 
 class _Exhausted(Exception):
-    def __init__(self, reason: str, *, fatal: bool = False) -> None:
+    def __init__(self, reason: str, *, fatal: bool = False, timeout: bool = False) -> None:
         super().__init__(reason)
         self.fatal = fatal
+        self.timeout = timeout  # the profile's last attempt timed out (latency policy)
 
 
 @dataclass(slots=True)
 class _Attempt:
     kind: str  # "response" | "transient" | "fatal"
+    timeout: bool = False  # a transient that was an HTTP timeout
     content: str | None = None
     row: LedgerRow | None = None
     usage: dict[str, Any] | None = None
@@ -367,15 +428,22 @@ class Provider:
         lineage: str | None = None,
         precheck: Callable[[], Awaitable[None]] | None = None,
         deadline: float | None = None,
+        attempt_policy: str = "background",
     ) -> LlmResult:
         """``deadline`` (event-loop time): the caller's hard cap. HTTP timeouts are budgeted to end
         before it and no attempt starts without room (``DeadlineExceeded``), so an outer
-        ``asyncio.timeout`` at the same deadline never has to cut an attempt mid-flight."""
+        ``asyncio.timeout`` at the same deadline never has to cut an attempt mid-flight.
+        ``attempt_policy``: ``background`` (retry/backoff) or ``latency`` (one bounded attempt per
+        profile, then the next one; see the module doc)."""
+        if attempt_policy not in ATTEMPT_POLICIES:
+            raise LlmConfigError(f"unknown attempt_policy {attempt_policy!r}")
         token = _LINEAGE.set(lineage) if lineage is not None else None
         ptoken = _PRECHECK.set(precheck)
         dtoken = _DEADLINE.set(deadline)
         try:
-            return await self._complete(task, user, job_id=job_id, validate=validate, chain=chain)
+            return await self._complete(
+                task, user, job_id=job_id, validate=validate, chain=chain, latency=attempt_policy == "latency"
+            )
         finally:
             _DEADLINE.reset(dtoken)
             _PRECHECK.reset(ptoken)
@@ -390,25 +458,35 @@ class Provider:
         job_id: int | None,
         validate: Validator | None,
         chain: list[LlmProfile] | None,
+        latency: bool = False,
     ) -> LlmResult:
         if self.mode == "off":
             raise LlmDisabled("HLM_LLM_MODE=off")
         profiles = chain or self.chain
         user_redacted = self.redactor.redact(user).text
         attempted = False
+        timeouts_only = True
         reasons: list[str] = []
-        for profile in profiles:
+        for i, profile in enumerate(profiles):
             breaker = self.breaker(profile.name)
             if self.mode != "replay" and not breaker.allow():
                 await self.ledger.record(self._row(profile, task, job_id, "breaker_open"))
                 reasons.append(f"{profile.name}: breaker open")
                 continue
             attempted = True
+            share = None
+            if latency and any(self.breaker(p.name).available() for p in profiles[i + 1 :]):
+                remaining = _remaining_s()
+                if remaining is None or remaining * LATENCY_PRIMARY_SHARE >= MIN_ATTEMPT_S:
+                    share = LATENCY_PRIMARY_SHARE  # leave the rest of the deadline to the next profile
             try:
-                result = await self._run_profile(profile, task, user_redacted, job_id, validate)
+                result = await self._run_profile(
+                    profile, task, user_redacted, job_id, validate, latency=latency, share=share
+                )
             except _Exhausted as exc:
-                breaker.failure()
+                breaker.failure()  # per PROFILE: a failing primary never closes the fallback's way
                 reasons.append(f"{profile.name}: {exc}")
+                timeouts_only = timeouts_only and exc.timeout
                 continue
             except SchemaFail:
                 breaker.success()  # the endpoint answered; the model output was the problem
@@ -417,6 +495,8 @@ class Provider:
             return result
         if not attempted:
             raise BreakerOpen("; ".join(reasons), retry_after_s=self.retry_after_s())
+        if latency and timeouts_only:  # every bounded attempt ran out of time: the caller's timeout
+            raise DeadlineExceeded("every profile timed out: " + "; ".join(reasons))
         raise ProviderUnavailable("; ".join(reasons), retry_after_s=self.retry_after_s())
 
     # ------------------------------------------------------------------ internals
@@ -443,6 +523,9 @@ class Provider:
         user_redacted: str,
         job_id: int | None,
         validate: Validator | None,
+        *,
+        latency: bool = False,
+        share: float | None = None,
     ) -> LlmResult:
         messages = [
             {"role": "system", "content": task.system_for(profile.prompt_overrides)},
@@ -468,7 +551,11 @@ class Provider:
                     attempt=schema_fails + 1,
                 )
             )
-            att = await self._attempt(profile, task, body, att_key, messages, params, job_id, legacy_key=key)
+            att = await self._attempt(
+                profile, task, body, att_key, messages, params, job_id, legacy_key=key, share=share
+            )
+            if att.kind == "transient" and latency:  # no retry, no backoff: straight to the next profile
+                raise _Exhausted("transient failure (latency policy)", timeout=att.timeout)
             if att.kind == "transient":
                 transient += 1
                 if transient >= MAX_TRANSIENT_ATTEMPTS:
@@ -535,7 +622,10 @@ class Provider:
         params: dict[str, Any],
         job_id: int | None,
         legacy_key: str | None = None,
+        share: float | None = None,
     ) -> _Attempt:
+        """One network attempt (or its replay). ``share``: the fraction of the remaining deadline
+        this attempt may use (``latency`` policy while a later profile is available)."""
         request_sha = _sha(canonical(body))
         if self.mode == "replay":  # stands in for the HTTP attempt: same gate and ceiling
             await self._run_precheck()
@@ -575,7 +665,8 @@ class Provider:
             if remaining is not None:  # the prechecks used time: budget this request to the deadline
                 if remaining < MIN_ATTEMPT_S:
                     raise DeadlineExceeded(f"prechecks left no room for task {task.name}")
-                http_timeout = min(self.timeout_s, remaining)
+                budget_s = remaining * share if share is not None else remaining
+                http_timeout = min(self.timeout_s, max(budget_s, MIN_ATTEMPT_S))
         except BaseException:
             # nothing was sent: release the reservation (to completion, even when cancelled)
             await _finalize(self.budget.settle(call_id, Decimal(0)))
@@ -590,7 +681,13 @@ class Provider:
                 timeout=http_timeout,
             )
         except asyncio.CancelledError:
-            # cut mid-flight by the caller: billing unknown -> worst case; the ledger row is written
+            # cut mid-flight by the caller: billing unknown -> worst case; the ledger row is written.
+            # Cut AT the caller's deadline, the profile did not answer in time: a failure of THIS
+            # profile's breaker (per profile, never the whole task; a disconnect is not counted)
+            deadline = _DEADLINE.get()
+            if deadline is not None and asyncio.get_running_loop().time() >= deadline - 0.05:
+                self.breaker(profile.name).failure()
+
             async def abandoned() -> None:
                 await self.budget.settle(call_id, None)
                 await self.ledger.record(
@@ -627,7 +724,7 @@ class Provider:
                     )
                 )
             )
-            return _Attempt("transient")
+            return _Attempt("transient", timeout=True)
         except httpx.TransportError:
             # the request may have reached the provider: billing is uncertain -> worst case
             await _finalize(self.budget.settle(call_id, None))
@@ -770,7 +867,10 @@ def _ms(t0: float) -> int:
 
 
 __all__ = [
+    "ATTEMPT_POLICIES",
     "BACKOFF_S",
+    "ChainBreakers",
+    "LATENCY_PRIMARY_SHARE",
     "MAX_TRANSIENT_ATTEMPTS",
     "Breaker",
     "Clock",
