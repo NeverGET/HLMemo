@@ -1,0 +1,8 @@
+You are an adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). The previous review (docs/consults/56-sol-review-j-judgement.md, in Turkish) said DO-NOT-MERGE for workstream J (the librarian judgement v2 + concurrency + the promotion-stranding fix), with 3 High and 3 Medium findings. The fixes are commits 6a96ba1 and a23ac63 on branch `worktree-agent-ab3766c317d87ca93` (worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-ab3766c317d87ca93); the implementer's disposition is docs/consults/56j-disposition.md in that worktree. Review `git -C <wt> diff a65a8f5 HEAD -- src tests alembic deploy` plus the surrounding code you need. Context: DECISIONS D-062, D-074, D-077 (promotion stranding = a HARD prerequisite), D-058.
+STATIC REVIEW ONLY (no tests, no edits). For each of the 6 prior findings: FIXED / PARTIAL / NOT FIXED with file:line. Then try hard to break:
+- (a) stranding: any sequence of revisions, promotions, demotions and answers leaving an eligible accepted_pending answer never applied or superseded;
+- (b) replay: concurrent jobs, the batch-first locks, event-id allocation after the locks — can two jobs still interleave so that replay differs or deadlocks with the write path (the lock order vs D-062)?
+- (c) read-side demotion: can still-valid content be hidden, or can scope leak?
+- (d) the observer invariant (no user-data mutation);
+- (e) the connection envelope.
+OUTPUT (≤ 400 words): ## Verdict (MERGE / MERGE-WITH-FIXES / DO-NOT-MERGE); ## PROMOTION-READY (yes/no); ## Per-finding (6 lines); ## New findings (table, max 5: severity | file:line | trigger | fix).
