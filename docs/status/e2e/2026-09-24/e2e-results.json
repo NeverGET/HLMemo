@@ -1,0 +1,3183 @@
+{
+ "schema": 1,
+ "date": "2026-09-24",
+ "release": "R2 (6902f91, D-079); repo main 9ea3cad",
+ "server": "https://mcp.hlmemo.com",
+ "project": "hlmemo-e2e (test import; wiped before the final release)",
+ "client_note": "eval/probe clients used a keep-alive HTTPS transport and one MCP initialize per client (operator patch; the stock eval client opens a new TLS connection and re-initializes per call, ~800 ms overhead). Latencies are client-side from the owner's Mac, including ~95 ms WAN RTT.",
+ "step1_baseline": {
+  "at": "2026-09-24T03:44:29Z",
+  "ready_public": {
+   "http": 200,
+   "body": {
+    "status": "ready"
+   }
+  },
+  "ops_status": {
+   "ready": "ready",
+   "migration": [
+    "0008_librarian_tasks"
+   ],
+   "devices": {
+    "revoked": 18,
+    "trusted": 3
+   },
+   "worker": {
+    "ready_jobs": 0,
+    "expired_leases": 0
+   },
+   "librarian": {
+    "breaker_source": "ledger",
+    "breaker_state": "closed",
+    "failed_24h": 0,
+    "in_flight": 0,
+    "oldest_ready_age_s": null,
+    "ready": 0,
+    "reserved_usd": 0.0,
+    "role": "observer",
+    "spend_hour_usd": 0.000863,
+    "spend_today_usd": 0.000863
+   },
+   "jobs": [
+    {
+     "count": 26,
+     "kind": "embed",
+     "status": "done"
+    },
+    {
+     "count": 4,
+     "kind": "librarian_write",
+     "status": "done"
+    }
+   ]
+  },
+  "librarian_heartbeat": {
+   "enabled": true,
+   "role": "observer",
+   "breaker_state": "closed",
+   "age_s": 8
+  },
+  "docker_mem": {
+   "worker": {
+    "mem": "856MiB / 1.5GiB",
+    "mem_pct": "55.73%"
+   },
+   "api": {
+    "mem": "1.215GiB / 2.5GiB",
+    "mem_pct": "48.59%"
+   },
+   "librarian": {
+    "mem": "120.4MiB / 512MiB",
+    "mem_pct": "23.51%"
+   },
+   "caddy": {
+    "mem": "11.57MiB / 256MiB",
+    "mem_pct": "4.52%"
+   },
+   "db": {
+    "mem": "74.59MiB / 2GiB",
+    "mem_pct": "3.64%"
+   }
+  },
+  "host": {
+   "vcpu": 2,
+   "mem_total_mib": 7935,
+   "mem_available_mib": 4893,
+   "load1": 0.17
+  }
+ },
+ "step2_import": {
+  "by_source": {
+   "markdown": {
+    "counts": {
+     "changed": 0,
+     "closed": 0,
+     "missing": 0,
+     "new": 353,
+     "rejected": 0,
+     "skipped": 0,
+     "unchanged": 0
+    },
+    "writes": {
+     "closed": 0,
+     "failed": 0,
+     "link_revisions": 0,
+     "links_dropped": 0,
+     "replayed": 0,
+     "revisions": 0,
+     "written": 353
+    },
+    "token_estimate": 245572,
+    "kinds": {
+     "doc_chunk": 76,
+     "episode": 123,
+     "fact": 154
+    },
+    "date_evidence": {
+     "none": 275,
+     "decision-row": 78
+    },
+    "rejected": 0,
+    "skipped": 0,
+    "duplicate_groups": 0
+   },
+   "context": {
+    "counts": {
+     "changed": 0,
+     "closed": 0,
+     "missing": 0,
+     "new": 1,
+     "rejected": 0,
+     "skipped": 0,
+     "unchanged": 0
+    },
+    "writes": {
+     "closed": 0,
+     "failed": 0,
+     "link_revisions": 0,
+     "links_dropped": 0,
+     "replayed": 0,
+     "revisions": 0,
+     "written": 1
+    },
+    "token_estimate": 538,
+    "kinds": {
+     "fact": 1
+    },
+    "date_evidence": {
+     "none": 1
+    },
+    "rejected": 0,
+    "skipped": 0,
+    "duplicate_groups": 0
+   },
+   "automemory": {
+    "counts": {
+     "changed": 0,
+     "closed": 0,
+     "missing": 0,
+     "new": 9,
+     "rejected": 0,
+     "skipped": 0,
+     "unchanged": 0
+    },
+    "writes": {
+     "closed": 0,
+     "failed": 0,
+     "link_revisions": 0,
+     "links_dropped": 0,
+     "replayed": 0,
+     "revisions": 0,
+     "written": 9
+    },
+    "token_estimate": 3135,
+    "kinds": {
+     "fact": 9
+    },
+    "date_evidence": {
+     "none": 9
+    },
+    "rejected": 0,
+    "skipped": 0,
+    "duplicate_groups": 0
+   }
+  },
+  "wall_time": {
+   "markdown_s": 74.5,
+   "context_s": 3.0,
+   "automemory_s": 4.3
+  },
+  "items_total": 363,
+  "embed_drained_min_after_import": 4.9,
+  "gitleaks_source_set": "0 findings (130 files)"
+ },
+ "step3_load_probe": {
+  "pre_import": {
+   "n": 55,
+   "ok": 55,
+   "errors": {},
+   "qps": 2.04,
+   "p50_ms": 144.8,
+   "p95_ms": 598.7,
+   "p99_ms": 687.0,
+   "max_ms": 687.0,
+   "hits_mean": 0.0
+  },
+  "during_import": {
+   "n": 178,
+   "ok": 178,
+   "errors": {},
+   "qps": 2.01,
+   "p50_ms": 268.4,
+   "p95_ms": 404.9,
+   "p99_ms": 471.2,
+   "max_ms": 490.5,
+   "hits_mean": 17.6
+  },
+  "post_import_10min": {
+   "n": 1200,
+   "ok": 1200,
+   "errors": {},
+   "qps": 2.0,
+   "p50_ms": 240.2,
+   "p95_ms": 398.0,
+   "p99_ms": 635.8,
+   "max_ms": 1904.3,
+   "hits_mean": 17.8
+  },
+  "after_10min": {
+   "n": 1,
+   "ok": 1,
+   "errors": {},
+   "qps": null,
+   "p50_ms": 219.5,
+   "p95_ms": 219.5,
+   "p99_ms": 219.5,
+   "max_ms": 219.5,
+   "hits_mean": 16.0
+  },
+  "import_plus_10min": {
+   "n": 1378,
+   "ok": 1378,
+   "errors": {},
+   "qps": 2.0,
+   "p50_ms": 243.7,
+   "p95_ms": 401.2,
+   "p99_ms": 578.7,
+   "max_ms": 1904.3,
+   "hits_mean": 17.8
+  },
+  "all": {
+   "n": 1434,
+   "ok": 1434,
+   "errors": {},
+   "qps": 2.0,
+   "p50_ms": 242.0,
+   "p95_ms": 401.2,
+   "p99_ms": 635.8,
+   "max_ms": 1904.3,
+   "hits_mean": 17.1
+  }
+ },
+ "step4_librarian": {
+  "curve": [
+   {
+    "t": 1790221798.0,
+    "t_rel_import_end_min": -1.9,
+    "lib_ready": 0,
+    "lib_in_flight": 0,
+    "lib_done_total": 5,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.00094,
+    "reserved_usd": 0.0,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790221868.0,
+    "t_rel_import_end_min": -0.8,
+    "lib_ready": 189,
+    "lib_in_flight": 1,
+    "lib_done_total": 21,
+    "lib_failed": 0,
+    "embed_pending": 176,
+    "spend_today_usd": 0.003362,
+    "reserved_usd": 0.000701,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790221936.0,
+    "t_rel_import_end_min": 0.4,
+    "lib_ready": 325,
+    "lib_in_flight": 1,
+    "lib_done_total": 42,
+    "lib_failed": 0,
+    "embed_pending": 266,
+    "spend_today_usd": 0.006851,
+    "reserved_usd": 0.000783,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222004.0,
+    "t_rel_import_end_min": 1.5,
+    "lib_ready": 320,
+    "lib_in_flight": 1,
+    "lib_done_total": 46,
+    "lib_failed": 0,
+    "embed_pending": 176,
+    "spend_today_usd": 0.013403,
+    "reserved_usd": 0.0,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222072.0,
+    "t_rel_import_end_min": 2.6,
+    "lib_ready": 316,
+    "lib_in_flight": 1,
+    "lib_done_total": 51,
+    "lib_failed": 0,
+    "embed_pending": 92,
+    "spend_today_usd": 0.019952,
+    "reserved_usd": 0.002312,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222140.0,
+    "t_rel_import_end_min": 3.8,
+    "lib_ready": 313,
+    "lib_in_flight": 1,
+    "lib_done_total": 54,
+    "lib_failed": 0,
+    "embed_pending": 16,
+    "spend_today_usd": 0.025857,
+    "reserved_usd": 0.002286,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222211.0,
+    "t_rel_import_end_min": 4.9,
+    "lib_ready": 309,
+    "lib_in_flight": 1,
+    "lib_done_total": 58,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.031814,
+    "reserved_usd": 0.002359,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222278.0,
+    "t_rel_import_end_min": 6.1,
+    "lib_ready": 304,
+    "lib_in_flight": 1,
+    "lib_done_total": 63,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.042141,
+    "reserved_usd": 0.002109,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222346.0,
+    "t_rel_import_end_min": 7.2,
+    "lib_ready": 298,
+    "lib_in_flight": 1,
+    "lib_done_total": 69,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.051168,
+    "reserved_usd": 0.002276,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222412.0,
+    "t_rel_import_end_min": 8.3,
+    "lib_ready": 294,
+    "lib_in_flight": 1,
+    "lib_done_total": 73,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.058001,
+    "reserved_usd": 0.002188,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222481.0,
+    "t_rel_import_end_min": 9.4,
+    "lib_ready": 289,
+    "lib_in_flight": 1,
+    "lib_done_total": 78,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.065617,
+    "reserved_usd": 0.002289,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222551.0,
+    "t_rel_import_end_min": 10.6,
+    "lib_ready": 285,
+    "lib_in_flight": 1,
+    "lib_done_total": 81,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.072861,
+    "reserved_usd": 0.0,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222618.0,
+    "t_rel_import_end_min": 11.7,
+    "lib_ready": 283,
+    "lib_in_flight": 1,
+    "lib_done_total": 84,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.076874,
+    "reserved_usd": 0.001462,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222685.0,
+    "t_rel_import_end_min": 12.8,
+    "lib_ready": 279,
+    "lib_in_flight": 1,
+    "lib_done_total": 88,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.0817,
+    "reserved_usd": 0.002289,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222752.0,
+    "t_rel_import_end_min": 14.0,
+    "lib_ready": 276,
+    "lib_in_flight": 1,
+    "lib_done_total": 91,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.095453,
+    "reserved_usd": 0.00151,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222819.0,
+    "t_rel_import_end_min": 15.1,
+    "lib_ready": 272,
+    "lib_in_flight": 1,
+    "lib_done_total": 95,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.109632,
+    "reserved_usd": 0.003705,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222889.0,
+    "t_rel_import_end_min": 16.2,
+    "lib_ready": 267,
+    "lib_in_flight": 1,
+    "lib_done_total": 100,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.124358,
+    "reserved_usd": 0.002302,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790222956.0,
+    "t_rel_import_end_min": 17.4,
+    "lib_ready": 263,
+    "lib_in_flight": 1,
+    "lib_done_total": 104,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.132803,
+    "reserved_usd": 0.002296,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223023.0,
+    "t_rel_import_end_min": 18.5,
+    "lib_ready": 260,
+    "lib_in_flight": 1,
+    "lib_done_total": 107,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.139036,
+    "reserved_usd": 0.003822,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223089.0,
+    "t_rel_import_end_min": 19.6,
+    "lib_ready": 257,
+    "lib_in_flight": 1,
+    "lib_done_total": 110,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.145449,
+    "reserved_usd": 0.0015,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223156.0,
+    "t_rel_import_end_min": 20.7,
+    "lib_ready": 252,
+    "lib_in_flight": 1,
+    "lib_done_total": 115,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.151707,
+    "reserved_usd": 0.002282,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223225.0,
+    "t_rel_import_end_min": 21.8,
+    "lib_ready": 247,
+    "lib_in_flight": 1,
+    "lib_done_total": 120,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.158802,
+    "reserved_usd": 0.000766,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223291.0,
+    "t_rel_import_end_min": 22.9,
+    "lib_ready": 245,
+    "lib_in_flight": 1,
+    "lib_done_total": 123,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.166458,
+    "reserved_usd": 0.002719,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223358.0,
+    "t_rel_import_end_min": 24.1,
+    "lib_ready": 246,
+    "lib_in_flight": 1,
+    "lib_done_total": 126,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.176531,
+    "reserved_usd": 0.002388,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223426.0,
+    "t_rel_import_end_min": 25.2,
+    "lib_ready": 244,
+    "lib_in_flight": 1,
+    "lib_done_total": 128,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.188364,
+    "reserved_usd": 0.002087,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223493.0,
+    "t_rel_import_end_min": 26.3,
+    "lib_ready": 242,
+    "lib_in_flight": 1,
+    "lib_done_total": 130,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.19465,
+    "reserved_usd": 0.002103,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223561.0,
+    "t_rel_import_end_min": 27.4,
+    "lib_ready": 239,
+    "lib_in_flight": 1,
+    "lib_done_total": 133,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.200766,
+    "reserved_usd": 0.001488,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223630.0,
+    "t_rel_import_end_min": 28.6,
+    "lib_ready": 234,
+    "lib_in_flight": 1,
+    "lib_done_total": 138,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.207499,
+    "reserved_usd": 0.002312,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790223701.0,
+    "t_rel_import_end_min": 29.8,
+    "lib_ready": 229,
+    "lib_in_flight": 1,
+    "lib_done_total": 143,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.214676,
+    "reserved_usd": 0.002335,
+    "breaker": "closed",
+    "failed_24h": 0
+   },
+   {
+    "t": 1790227752.0,
+    "t_rel_import_end_min": 97.3,
+    "lib_ready": 0,
+    "lib_in_flight": 0,
+    "lib_done_total": 373,
+    "lib_failed": 0,
+    "embed_pending": 0,
+    "spend_today_usd": 0.50949,
+    "reserved_usd": 0.0,
+    "breaker": "idle",
+    "failed_24h": 0
+   }
+  ],
+  "audit": {
+   "proposals": 310,
+   "by_kind": {
+    "contradiction": 56,
+    "link": 251,
+    "widen_scope": 3
+   },
+   "by_relation": {
+    "contradicts": 56,
+    "duplicate": 52,
+    "refines": 202
+   },
+   "by_status": {
+    "open": 310
+   },
+   "by_tier": {
+    "question": 141,
+    "action": 169
+   },
+   "auto_class": {
+    "False": 166,
+    "True": 144
+   },
+   "by_confidence": {
+    "med": 97,
+    "high": 213
+   },
+   "proposed_actions": {
+    "link_insert": 345,
+    "version_close": 37,
+    "widen_scope": 3
+   },
+   "flags": {
+    "supersedes_against_time": 12,
+    "verifier_direction_disputed": 3,
+    "quote_unverified": 69
+   },
+   "verifier": {
+    "none": 266,
+    "False": 3,
+    "True": 41
+   },
+   "answered": 0,
+   "batches": 13,
+   "batches_by_status": {
+    "ready": 12,
+    "open": 1
+   },
+   "batches_applied": 0,
+   "questions_in_batches": 310
+  },
+  "mutation_check": {
+   "method": "hlm export of hlmemo-e2e as-of import end (2026-09-24T03:51:56Z, before any librarian job) vs after the full drain (05:30Z); plus librarian audit",
+   "items_before": 364,
+   "items_after": 381,
+   "items_added_after": "17 = operator's variant-B/C lessons (step 6), not the librarian",
+   "pre_librarian_items_byte_identical": true,
+   "links_after": 0,
+   "closed_items_after": 0,
+   "scope_changes_after": 0,
+   "audit": {
+    "proposals": 310,
+    "status_open": 310,
+    "answers": 0,
+    "batches": 13,
+    "batches_decided": 0,
+    "batches_applied": 0
+   },
+   "cross_project_note": "4 proposals pair a hlmemo-e2e item with an item of the real project `hlmemo` (device 21 holds grants on both); one is an action-tier, high-confidence, verifier-agreed version_close of a `hlmemo` item. Not applied (observer). The real project was not read or modified by the operator.",
+   "result": "0 applied librarian mutations (links 0, closes 0, scope 0)"
+  },
+  "rates": {
+   "jobs_total_librarian_write_done": 373,
+   "jobs_from_this_test": 368,
+   "jobs_failed": 0,
+   "authority_lost": 1,
+   "outcomes": {
+    "annotated": 206,
+    "proposed": 166,
+    "authority_lost": 1
+   },
+   "superseded_applied": 0,
+   "import_end_utc": "03:51:55",
+   "last_job_utc": "05:08:31",
+   "drain_wall_min": 76.6,
+   "rate_jobs_per_min": {
+    "first_2_min_burst (embeddings not yet ready)": 21.0,
+    "03:53-04:22 (under eval/probe/risk load)": 3.4,
+    "04:22-05:08 (idle server)": 4.9,
+    "overall": 4.8
+   },
+   "concurrency": "in_flight never exceeded 1 (sequential jobs, ~12-18 s each)",
+   "cost_usd": {
+    "spend_today_end": 0.50949,
+    "spend_today_start": 0.000863,
+    "per_job_idle_window_04:22-05:08": 0.00128,
+    "per_job_early_window_03:53-04:05": 0.00163,
+    "librarian_total_est": 0.465,
+    "synthesis_est_88_llm_calls": 0.026,
+    "risk_judge_est_40_calls": 0.018,
+    "note": "spend is one ledger for librarian+synthesis+risk judge; per-task split estimated from windows"
+   },
+   "breaker": "closed/idle throughout; fallback profile never used; 0 errors in librarian logs",
+   "observer_log_applied": "per-job 'applied' counts in the librarian log are version_signals placements only (the one observer write, D-058)"
+  }
+ },
+ "step5_retrieval": {
+  "runs": {
+   "nosyn-top3": {
+    "errors": 0,
+    "overall": {
+     "n": 80,
+     "n_pos": 72,
+     "hit@1": 0.236,
+     "hit@3": 0.375,
+     "hit@5": 0.5,
+     "hit@10": 0.569,
+     "mrr": 0.349,
+     "l1_key": 0.389,
+     "l2_drill_key": 0.389,
+     "l2_key": 0.5,
+     "l2_all_keys": 0.431,
+     "evidence_r5": 0.306,
+     "evidence_any5": 0.347,
+     "stale_claim_l1_top3": 0.062,
+     "deep_found": 0.944,
+     "deep_hit@20": 0.75,
+     "tokens_query_mean": 2979.1,
+     "tokens_total_mean": 4922.8
+    },
+    "by_category": {
+     "architecture": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.25,
+      "hit@3": 0.438,
+      "hit@5": 0.562,
+      "hit@10": 0.625,
+      "mrr": 0.393,
+      "l1_key": 0.25,
+      "l2_drill_key": 0.312,
+      "l2_key": 0.312,
+      "l2_all_keys": 0.312,
+      "evidence_r5": 0.312,
+      "evidence_any5": 0.312,
+      "deep_found": 1.0,
+      "deep_hit@20": 0.812,
+      "tokens_query_mean": 2978.6,
+      "tokens_total_mean": 5006.7
+     },
+     "decision_rationale": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.188,
+      "hit@3": 0.375,
+      "hit@5": 0.5,
+      "hit@10": 0.562,
+      "mrr": 0.314,
+      "l1_key": 0.312,
+      "l2_drill_key": 0.375,
+      "l2_key": 0.5,
+      "l2_all_keys": 0.375,
+      "evidence_r5": 0.375,
+      "evidence_any5": 0.375,
+      "deep_found": 0.938,
+      "deep_hit@20": 0.688,
+      "tokens_query_mean": 2979.2,
+      "tokens_total_mean": 4937.5
+     },
+     "gotcha": {
+      "n": 12,
+      "n_pos": 12,
+      "hit@1": 0.25,
+      "hit@3": 0.417,
+      "hit@5": 0.5,
+      "hit@10": 0.667,
+      "mrr": 0.369,
+      "l1_key": 0.417,
+      "l2_drill_key": 0.5,
+      "l2_key": 0.667,
+      "l2_all_keys": 0.5,
+      "evidence_r5": 0.417,
+      "evidence_any5": 0.417,
+      "deep_found": 1.0,
+      "deep_hit@20": 0.75,
+      "tokens_query_mean": 2983.5,
+      "tokens_total_mean": 5033.2
+     },
+     "identifier_config": {
+      "n": 12,
+      "n_pos": 12,
+      "hit@1": 0.333,
+      "hit@3": 0.333,
+      "hit@5": 0.417,
+      "hit@10": 0.5,
+      "mrr": 0.368,
+      "l1_key": 0.667,
+      "l2_drill_key": 0.5,
+      "l2_key": 0.667,
+      "l2_all_keys": 0.583,
+      "evidence_r5": 0.25,
+      "evidence_any5": 0.25,
+      "deep_found": 0.917,
+      "deep_hit@20": 0.75,
+      "tokens_query_mean": 2978.3,
+      "tokens_total_mean": 4824.5
+     },
+     "negative": {
+      "n": 8,
+      "n_pos": 0
+     },
+     "temporal": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.188,
+      "hit@3": 0.312,
+      "hit@5": 0.5,
+      "hit@10": 0.5,
+      "mrr": 0.31,
+      "l1_key": 0.375,
+      "l2_drill_key": 0.312,
+      "l2_key": 0.438,
+      "l2_all_keys": 0.438,
+      "evidence_r5": 0.188,
+      "evidence_any5": 0.375,
+      "stale_claim_l1_top3": 0.062,
+      "deep_found": 0.875,
+      "deep_hit@20": 0.75,
+      "tokens_query_mean": 2976.9,
+      "tokens_total_mean": 4815.3
+     }
+    },
+    "by_lang": {
+     "en": {
+      "n": 40,
+      "n_pos": 36,
+      "hit@1": 0.306,
+      "hit@3": 0.5,
+      "hit@5": 0.722,
+      "hit@10": 0.778,
+      "mrr": 0.457,
+      "l1_key": 0.528,
+      "l2_drill_key": 0.556,
+      "l2_key": 0.639,
+      "l2_all_keys": 0.583,
+      "evidence_r5": 0.431,
+      "evidence_any5": 0.5,
+      "stale_claim_l1_top3": 0.0,
+      "deep_found": 0.972,
+      "deep_hit@20": 0.889,
+      "tokens_query_mean": 2980.8,
+      "tokens_total_mean": 4809
+     },
+     "tr": {
+      "n": 40,
+      "n_pos": 36,
+      "hit@1": 0.167,
+      "hit@3": 0.25,
+      "hit@5": 0.278,
+      "hit@10": 0.361,
+      "mrr": 0.241,
+      "l1_key": 0.25,
+      "l2_drill_key": 0.222,
+      "l2_key": 0.361,
+      "l2_all_keys": 0.278,
+      "evidence_r5": 0.181,
+      "evidence_any5": 0.194,
+      "stale_claim_l1_top3": 0.125,
+      "deep_found": 0.917,
+      "deep_hit@20": 0.611,
+      "tokens_query_mean": 2977.5,
+      "tokens_total_mean": 5036.7
+     }
+    },
+    "temporal": {
+     "n": 16,
+     "l1_latest_present": 0.375,
+     "l1_stale_present": 0.562,
+     "l1_stale_first": 0.25,
+     "l1_top3_latest_present": 0.25,
+     "l1_top3_stale_present": 0.188,
+     "l1_top3_stale_first": 0.062,
+     "l2_latest_present": 0.312,
+     "l2_stale_present": 0.25,
+     "l2_stale_first": 0.125
+    },
+    "negative": {
+     "evidence": {
+      "matched": 8
+     },
+     "top1_neg": {
+      "n": 8,
+      "min": 0.023386,
+      "p50": 0.037888,
+      "max": 0.046759
+     },
+     "top1_pos": {
+      "n": 72,
+      "min": 0.027652,
+      "p50": 0.042938,
+      "max": 0.062023
+     },
+     "auc_pos_gt_neg": 0.74,
+     "best_threshold": {
+      "threshold": 0.039273,
+      "neg_rejected": 0.75,
+      "pos_kept": 0.722,
+      "balanced_acc": 0.736
+     }
+    },
+    "latency_ms": {
+     "query_p50": 232.8,
+     "query_p95": 335.0,
+     "drill_p50": 115.1,
+     "drill_p95": 193.2
+    },
+    "tokens": {
+     "query_mean": 2979.1,
+     "drill_mean": 1913.6,
+     "hits_mean": 17.3,
+     "drill_truncated": 0
+    },
+    "synthesis": null
+   },
+   "nosyn-top5": {
+    "errors": 0,
+    "overall": {
+     "n": 80,
+     "n_pos": 72,
+     "hit@1": 0.236,
+     "hit@3": 0.375,
+     "hit@5": 0.5,
+     "hit@10": 0.569,
+     "mrr": 0.349,
+     "l1_key": 0.389,
+     "l2_drill_key": 0.458,
+     "l2_key": 0.542,
+     "l2_all_keys": 0.486,
+     "evidence_r5": 0.375,
+     "evidence_any5": 0.417,
+     "stale_claim_l1_top3": 0.062,
+     "deep_found": 0.944,
+     "deep_hit@20": 0.75,
+     "tokens_query_mean": 2978.0,
+     "tokens_total_mean": 6170.3
+    },
+    "by_category": {
+     "architecture": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.25,
+      "hit@3": 0.438,
+      "hit@5": 0.562,
+      "hit@10": 0.625,
+      "mrr": 0.393,
+      "l1_key": 0.25,
+      "l2_drill_key": 0.375,
+      "l2_key": 0.375,
+      "l2_all_keys": 0.375,
+      "evidence_r5": 0.375,
+      "evidence_any5": 0.375,
+      "deep_found": 1.0,
+      "deep_hit@20": 0.812,
+      "tokens_query_mean": 2977.2,
+      "tokens_total_mean": 6309.3
+     },
+     "decision_rationale": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.188,
+      "hit@3": 0.375,
+      "hit@5": 0.5,
+      "hit@10": 0.562,
+      "mrr": 0.314,
+      "l1_key": 0.312,
+      "l2_drill_key": 0.5,
+      "l2_key": 0.625,
+      "l2_all_keys": 0.5,
+      "evidence_r5": 0.5,
+      "evidence_any5": 0.5,
+      "deep_found": 0.938,
+      "deep_hit@20": 0.688,
+      "tokens_query_mean": 2974.2,
+      "tokens_total_mean": 6195.1
+     },
+     "gotcha": {
+      "n": 12,
+      "n_pos": 12,
+      "hit@1": 0.25,
+      "hit@3": 0.417,
+      "hit@5": 0.5,
+      "hit@10": 0.667,
+      "mrr": 0.369,
+      "l1_key": 0.417,
+      "l2_drill_key": 0.5,
+      "l2_key": 0.667,
+      "l2_all_keys": 0.583,
+      "evidence_r5": 0.5,
+      "evidence_any5": 0.5,
+      "deep_found": 1.0,
+      "deep_hit@20": 0.75,
+      "tokens_query_mean": 2984.2,
+      "tokens_total_mean": 6187
+     },
+     "identifier_config": {
+      "n": 12,
+      "n_pos": 12,
+      "hit@1": 0.333,
+      "hit@3": 0.333,
+      "hit@5": 0.417,
+      "hit@10": 0.5,
+      "mrr": 0.368,
+      "l1_key": 0.667,
+      "l2_drill_key": 0.583,
+      "l2_key": 0.667,
+      "l2_all_keys": 0.583,
+      "evidence_r5": 0.333,
+      "evidence_any5": 0.333,
+      "deep_found": 0.917,
+      "deep_hit@20": 0.75,
+      "tokens_query_mean": 2978.5,
+      "tokens_total_mean": 5955.6
+     },
+     "negative": {
+      "n": 8,
+      "n_pos": 0
+     },
+     "temporal": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.188,
+      "hit@3": 0.312,
+      "hit@5": 0.5,
+      "hit@10": 0.5,
+      "mrr": 0.31,
+      "l1_key": 0.375,
+      "l2_drill_key": 0.375,
+      "l2_key": 0.438,
+      "l2_all_keys": 0.438,
+      "evidence_r5": 0.188,
+      "evidence_any5": 0.375,
+      "stale_claim_l1_top3": 0.062,
+      "deep_found": 0.875,
+      "deep_hit@20": 0.75,
+      "tokens_query_mean": 2977.3,
+      "tokens_total_mean": 6155
+     }
+    },
+    "by_lang": {
+     "en": {
+      "n": 40,
+      "n_pos": 36,
+      "hit@1": 0.306,
+      "hit@3": 0.5,
+      "hit@5": 0.722,
+      "hit@10": 0.778,
+      "mrr": 0.457,
+      "l1_key": 0.528,
+      "l2_drill_key": 0.667,
+      "l2_key": 0.694,
+      "l2_all_keys": 0.639,
+      "evidence_r5": 0.514,
+      "evidence_any5": 0.583,
+      "stale_claim_l1_top3": 0.0,
+      "deep_found": 0.972,
+      "deep_hit@20": 0.889,
+      "tokens_query_mean": 2977.8,
+      "tokens_total_mean": 6040.8
+     },
+     "tr": {
+      "n": 40,
+      "n_pos": 36,
+      "hit@1": 0.167,
+      "hit@3": 0.25,
+      "hit@5": 0.278,
+      "hit@10": 0.361,
+      "mrr": 0.241,
+      "l1_key": 0.25,
+      "l2_drill_key": 0.25,
+      "l2_key": 0.389,
+      "l2_all_keys": 0.333,
+      "evidence_r5": 0.236,
+      "evidence_any5": 0.25,
+      "stale_claim_l1_top3": 0.125,
+      "deep_found": 0.917,
+      "deep_hit@20": 0.611,
+      "tokens_query_mean": 2978.2,
+      "tokens_total_mean": 6299.8
+     }
+    },
+    "temporal": {
+     "n": 16,
+     "l1_latest_present": 0.375,
+     "l1_stale_present": 0.562,
+     "l1_stale_first": 0.25,
+     "l1_top3_latest_present": 0.25,
+     "l1_top3_stale_present": 0.188,
+     "l1_top3_stale_first": 0.062,
+     "l2_latest_present": 0.375,
+     "l2_stale_present": 0.375,
+     "l2_stale_first": 0.125
+    },
+    "negative": {
+     "evidence": {
+      "matched": 8
+     },
+     "top1_neg": {
+      "n": 8,
+      "min": 0.023386,
+      "p50": 0.037888,
+      "max": 0.046759
+     },
+     "top1_pos": {
+      "n": 72,
+      "min": 0.027652,
+      "p50": 0.042938,
+      "max": 0.062023
+     },
+     "auc_pos_gt_neg": 0.74,
+     "best_threshold": {
+      "threshold": 0.039273,
+      "neg_rejected": 0.75,
+      "pos_kept": 0.722,
+      "balanced_acc": 0.736
+     }
+    },
+    "latency_ms": {
+     "query_p50": 234.7,
+     "query_p95": 330.9,
+     "drill_p50": 125.6,
+     "drill_p95": 209.6
+    },
+    "tokens": {
+     "query_mean": 2978.0,
+     "drill_mean": 3156.2,
+     "hits_mean": 17.3,
+     "drill_truncated": 11
+    },
+    "synthesis": null
+   },
+   "syn-top3": {
+    "errors": 0,
+    "overall": {
+     "n": 80,
+     "n_pos": 72,
+     "hit@1": 0.236,
+     "hit@3": 0.375,
+     "hit@5": 0.5,
+     "hit@10": 0.569,
+     "mrr": 0.349,
+     "l1_key": 0.389,
+     "l2_drill_key": 0.389,
+     "l2_key": 0.5,
+     "l2_all_keys": 0.431,
+     "evidence_r5": 0.306,
+     "evidence_any5": 0.347,
+     "stale_claim_l1_top3": 0.062,
+     "deep_found": 0.944,
+     "deep_hit@20": 0.75,
+     "syn_key": 0.083,
+     "syn_system": 0.431,
+     "syn_answered": 0.278,
+     "syn_abstained": 0.25,
+     "syn_clues_in_hits": 1.0,
+     "tokens_query_mean": 2979.1,
+     "tokens_total_mean": 4922.8
+    },
+    "by_category": {
+     "architecture": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.25,
+      "hit@3": 0.438,
+      "hit@5": 0.562,
+      "hit@10": 0.625,
+      "mrr": 0.393,
+      "l1_key": 0.25,
+      "l2_drill_key": 0.312,
+      "l2_key": 0.312,
+      "l2_all_keys": 0.312,
+      "evidence_r5": 0.312,
+      "evidence_any5": 0.312,
+      "deep_found": 1.0,
+      "deep_hit@20": 0.812,
+      "syn_key": 0.125,
+      "syn_system": 0.312,
+      "syn_answered": 0.375,
+      "syn_abstained": 0.312,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2983.4,
+      "tokens_total_mean": 5011.5
+     },
+     "decision_rationale": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.188,
+      "hit@3": 0.375,
+      "hit@5": 0.5,
+      "hit@10": 0.562,
+      "mrr": 0.314,
+      "l1_key": 0.312,
+      "l2_drill_key": 0.375,
+      "l2_key": 0.5,
+      "l2_all_keys": 0.375,
+      "evidence_r5": 0.375,
+      "evidence_any5": 0.375,
+      "deep_found": 0.938,
+      "deep_hit@20": 0.688,
+      "syn_key": 0.062,
+      "syn_system": 0.438,
+      "syn_answered": 0.188,
+      "syn_abstained": 0.188,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2980.1,
+      "tokens_total_mean": 4938.4
+     },
+     "gotcha": {
+      "n": 12,
+      "n_pos": 12,
+      "hit@1": 0.25,
+      "hit@3": 0.417,
+      "hit@5": 0.5,
+      "hit@10": 0.667,
+      "mrr": 0.369,
+      "l1_key": 0.417,
+      "l2_drill_key": 0.5,
+      "l2_key": 0.667,
+      "l2_all_keys": 0.5,
+      "evidence_r5": 0.417,
+      "evidence_any5": 0.417,
+      "deep_found": 1.0,
+      "deep_hit@20": 0.75,
+      "syn_key": 0.083,
+      "syn_system": 0.583,
+      "syn_answered": 0.167,
+      "syn_abstained": 0.417,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2971.2,
+      "tokens_total_mean": 5021
+     },
+     "identifier_config": {
+      "n": 12,
+      "n_pos": 12,
+      "hit@1": 0.333,
+      "hit@3": 0.333,
+      "hit@5": 0.417,
+      "hit@10": 0.5,
+      "mrr": 0.368,
+      "l1_key": 0.667,
+      "l2_drill_key": 0.5,
+      "l2_key": 0.667,
+      "l2_all_keys": 0.583,
+      "evidence_r5": 0.25,
+      "evidence_any5": 0.25,
+      "deep_found": 0.917,
+      "deep_hit@20": 0.75,
+      "syn_key": 0.0,
+      "syn_system": 0.5,
+      "syn_answered": 0.25,
+      "syn_abstained": 0.083,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2982.5,
+      "tokens_total_mean": 4828.7
+     },
+     "negative": {
+      "n": 8,
+      "n_pos": 0
+     },
+     "temporal": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.188,
+      "hit@3": 0.312,
+      "hit@5": 0.5,
+      "hit@10": 0.5,
+      "mrr": 0.31,
+      "l1_key": 0.375,
+      "l2_drill_key": 0.312,
+      "l2_key": 0.438,
+      "l2_all_keys": 0.438,
+      "evidence_r5": 0.188,
+      "evidence_any5": 0.375,
+      "stale_claim_l1_top3": 0.062,
+      "deep_found": 0.875,
+      "deep_hit@20": 0.75,
+      "syn_key": 0.125,
+      "syn_system": 0.375,
+      "syn_answered": 0.375,
+      "syn_abstained": 0.25,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2977.1,
+      "tokens_total_mean": 4815.4
+     }
+    },
+    "by_lang": {
+     "en": {
+      "n": 40,
+      "n_pos": 36,
+      "hit@1": 0.306,
+      "hit@3": 0.5,
+      "hit@5": 0.722,
+      "hit@10": 0.778,
+      "mrr": 0.457,
+      "l1_key": 0.528,
+      "l2_drill_key": 0.556,
+      "l2_key": 0.639,
+      "l2_all_keys": 0.583,
+      "evidence_r5": 0.431,
+      "evidence_any5": 0.5,
+      "stale_claim_l1_top3": 0.0,
+      "deep_found": 0.972,
+      "deep_hit@20": 0.889,
+      "syn_key": 0.167,
+      "syn_system": 0.583,
+      "syn_answered": 0.333,
+      "syn_abstained": 0.139,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2977.5,
+      "tokens_total_mean": 4805.8
+     },
+     "tr": {
+      "n": 40,
+      "n_pos": 36,
+      "hit@1": 0.167,
+      "hit@3": 0.25,
+      "hit@5": 0.278,
+      "hit@10": 0.361,
+      "mrr": 0.241,
+      "l1_key": 0.25,
+      "l2_drill_key": 0.222,
+      "l2_key": 0.361,
+      "l2_all_keys": 0.278,
+      "evidence_r5": 0.181,
+      "evidence_any5": 0.194,
+      "stale_claim_l1_top3": 0.125,
+      "deep_found": 0.917,
+      "deep_hit@20": 0.611,
+      "syn_key": 0.0,
+      "syn_system": 0.278,
+      "syn_answered": 0.222,
+      "syn_abstained": 0.361,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2980.6,
+      "tokens_total_mean": 5039.8
+     }
+    },
+    "temporal": {
+     "n": 16,
+     "l1_latest_present": 0.375,
+     "l1_stale_present": 0.562,
+     "l1_stale_first": 0.25,
+     "l1_top3_latest_present": 0.25,
+     "l1_top3_stale_present": 0.188,
+     "l1_top3_stale_first": 0.062,
+     "l2_latest_present": 0.312,
+     "l2_stale_present": 0.25,
+     "l2_stale_first": 0.125
+    },
+    "negative": {
+     "evidence": {
+      "matched": 8
+     },
+     "top1_neg": {
+      "n": 8,
+      "min": 0.023386,
+      "p50": 0.037888,
+      "max": 0.046759
+     },
+     "top1_pos": {
+      "n": 72,
+      "min": 0.027652,
+      "p50": 0.042938,
+      "max": 0.062023
+     },
+     "auc_pos_gt_neg": 0.74,
+     "best_threshold": {
+      "threshold": 0.039273,
+      "neg_rejected": 0.75,
+      "pos_kept": 0.722,
+      "balanced_acc": 0.736
+     }
+    },
+    "latency_ms": {
+     "query_p50": 1328.7,
+     "query_p95": 3827.9,
+     "drill_p50": 114.9,
+     "drill_p95": 193.4
+    },
+    "tokens": {
+     "query_mean": 2978.5,
+     "drill_mean": 1913.6,
+     "hits_mean": 17.1,
+     "drill_truncated": 0
+    },
+    "synthesis": {
+     "status": {
+      "answered": 20,
+      "insufficient_evidence": 24,
+      "unavailable:strong_evidence": 36
+     },
+     "negative_false_answer": 0.0,
+     "clues_in_hits": 1.0
+    }
+   },
+   "syn-top5": {
+    "errors": 0,
+    "overall": {
+     "n": 80,
+     "n_pos": 72,
+     "hit@1": 0.236,
+     "hit@3": 0.375,
+     "hit@5": 0.5,
+     "hit@10": 0.569,
+     "mrr": 0.349,
+     "l1_key": 0.389,
+     "l2_drill_key": 0.458,
+     "l2_key": 0.542,
+     "l2_all_keys": 0.486,
+     "evidence_r5": 0.375,
+     "evidence_any5": 0.417,
+     "stale_claim_l1_top3": 0.062,
+     "deep_found": 0.944,
+     "deep_hit@20": 0.75,
+     "syn_key": 0.111,
+     "syn_system": 0.458,
+     "syn_answered": 0.333,
+     "syn_abstained": 0.194,
+     "syn_clues_in_hits": 1.0,
+     "tokens_query_mean": 2973.8,
+     "tokens_total_mean": 6166.0
+    },
+    "by_category": {
+     "architecture": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.25,
+      "hit@3": 0.438,
+      "hit@5": 0.562,
+      "hit@10": 0.625,
+      "mrr": 0.393,
+      "l1_key": 0.25,
+      "l2_drill_key": 0.375,
+      "l2_key": 0.375,
+      "l2_all_keys": 0.375,
+      "evidence_r5": 0.375,
+      "evidence_any5": 0.375,
+      "deep_found": 1.0,
+      "deep_hit@20": 0.812,
+      "syn_key": 0.125,
+      "syn_system": 0.312,
+      "syn_answered": 0.5,
+      "syn_abstained": 0.188,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2977.3,
+      "tokens_total_mean": 6309.1
+     },
+     "decision_rationale": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.188,
+      "hit@3": 0.375,
+      "hit@5": 0.5,
+      "hit@10": 0.562,
+      "mrr": 0.314,
+      "l1_key": 0.312,
+      "l2_drill_key": 0.5,
+      "l2_key": 0.625,
+      "l2_all_keys": 0.5,
+      "evidence_r5": 0.5,
+      "evidence_any5": 0.5,
+      "deep_found": 0.938,
+      "deep_hit@20": 0.688,
+      "syn_key": 0.062,
+      "syn_system": 0.5,
+      "syn_answered": 0.312,
+      "syn_abstained": 0.062,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2976.9,
+      "tokens_total_mean": 6197.8
+     },
+     "gotcha": {
+      "n": 12,
+      "n_pos": 12,
+      "hit@1": 0.25,
+      "hit@3": 0.417,
+      "hit@5": 0.5,
+      "hit@10": 0.667,
+      "mrr": 0.369,
+      "l1_key": 0.417,
+      "l2_drill_key": 0.5,
+      "l2_key": 0.667,
+      "l2_all_keys": 0.583,
+      "evidence_r5": 0.5,
+      "evidence_any5": 0.5,
+      "deep_found": 1.0,
+      "deep_hit@20": 0.75,
+      "syn_key": 0.167,
+      "syn_system": 0.583,
+      "syn_answered": 0.25,
+      "syn_abstained": 0.333,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2968.4,
+      "tokens_total_mean": 6170.8
+     },
+     "identifier_config": {
+      "n": 12,
+      "n_pos": 12,
+      "hit@1": 0.333,
+      "hit@3": 0.333,
+      "hit@5": 0.417,
+      "hit@10": 0.5,
+      "mrr": 0.368,
+      "l1_key": 0.667,
+      "l2_drill_key": 0.583,
+      "l2_key": 0.667,
+      "l2_all_keys": 0.583,
+      "evidence_r5": 0.333,
+      "evidence_any5": 0.333,
+      "deep_found": 0.917,
+      "deep_hit@20": 0.75,
+      "syn_key": 0.0,
+      "syn_system": 0.5,
+      "syn_answered": 0.167,
+      "syn_abstained": 0.167,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2972.4,
+      "tokens_total_mean": 5949.8
+     },
+     "negative": {
+      "n": 8,
+      "n_pos": 0
+     },
+     "temporal": {
+      "n": 16,
+      "n_pos": 16,
+      "hit@1": 0.188,
+      "hit@3": 0.312,
+      "hit@5": 0.5,
+      "hit@10": 0.5,
+      "mrr": 0.31,
+      "l1_key": 0.375,
+      "l2_drill_key": 0.375,
+      "l2_key": 0.438,
+      "l2_all_keys": 0.438,
+      "evidence_r5": 0.188,
+      "evidence_any5": 0.375,
+      "stale_claim_l1_top3": 0.062,
+      "deep_found": 0.875,
+      "deep_hit@20": 0.75,
+      "syn_key": 0.188,
+      "syn_system": 0.438,
+      "syn_answered": 0.375,
+      "syn_abstained": 0.25,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2972,
+      "tokens_total_mean": 6149.6
+     }
+    },
+    "by_lang": {
+     "en": {
+      "n": 40,
+      "n_pos": 36,
+      "hit@1": 0.306,
+      "hit@3": 0.5,
+      "hit@5": 0.722,
+      "hit@10": 0.778,
+      "mrr": 0.457,
+      "l1_key": 0.528,
+      "l2_drill_key": 0.667,
+      "l2_key": 0.694,
+      "l2_all_keys": 0.639,
+      "evidence_r5": 0.514,
+      "evidence_any5": 0.583,
+      "stale_claim_l1_top3": 0.0,
+      "deep_found": 0.972,
+      "deep_hit@20": 0.889,
+      "syn_key": 0.167,
+      "syn_system": 0.583,
+      "syn_answered": 0.361,
+      "syn_abstained": 0.111,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2973.3,
+      "tokens_total_mean": 6036.1
+     },
+     "tr": {
+      "n": 40,
+      "n_pos": 36,
+      "hit@1": 0.167,
+      "hit@3": 0.25,
+      "hit@5": 0.278,
+      "hit@10": 0.361,
+      "mrr": 0.241,
+      "l1_key": 0.25,
+      "l2_drill_key": 0.25,
+      "l2_key": 0.389,
+      "l2_all_keys": 0.333,
+      "evidence_r5": 0.236,
+      "evidence_any5": 0.25,
+      "stale_claim_l1_top3": 0.125,
+      "deep_found": 0.917,
+      "deep_hit@20": 0.611,
+      "syn_key": 0.056,
+      "syn_system": 0.333,
+      "syn_answered": 0.306,
+      "syn_abstained": 0.278,
+      "syn_clues_in_hits": 1.0,
+      "tokens_query_mean": 2974.2,
+      "tokens_total_mean": 6295.9
+     }
+    },
+    "temporal": {
+     "n": 16,
+     "l1_latest_present": 0.375,
+     "l1_stale_present": 0.562,
+     "l1_stale_first": 0.25,
+     "l1_top3_latest_present": 0.25,
+     "l1_top3_stale_present": 0.188,
+     "l1_top3_stale_first": 0.062,
+     "l2_latest_present": 0.375,
+     "l2_stale_present": 0.375,
+     "l2_stale_first": 0.125
+    },
+    "negative": {
+     "evidence": {
+      "matched": 8
+     },
+     "top1_neg": {
+      "n": 8,
+      "min": 0.023386,
+      "p50": 0.037888,
+      "max": 0.046759
+     },
+     "top1_pos": {
+      "n": 72,
+      "min": 0.027652,
+      "p50": 0.042938,
+      "max": 0.062023
+     },
+     "auc_pos_gt_neg": 0.74,
+     "best_threshold": {
+      "threshold": 0.039273,
+      "neg_rejected": 0.75,
+      "pos_kept": 0.722,
+      "balanced_acc": 0.736
+     }
+    },
+    "latency_ms": {
+     "query_p50": 1341.1,
+     "query_p95": 2623.5,
+     "drill_p50": 122.3,
+     "drill_p95": 197.2
+    },
+    "tokens": {
+     "query_mean": 2972.9,
+     "drill_mean": 3156.2,
+     "hits_mean": 17.0,
+     "drill_truncated": 11
+    },
+    "synthesis": {
+     "status": {
+      "answered": 24,
+      "insufficient_evidence": 20,
+      "unavailable:strong_evidence": 36
+     },
+     "negative_false_answer": 0.0,
+     "clues_in_hits": 1.0
+    }
+   }
+  },
+  "baseline_phase0": {
+   "drill_top3": {
+    "overall": {
+     "n": 80,
+     "n_pos": 72,
+     "hit@1": 0.208,
+     "hit@3": 0.486,
+     "hit@5": 0.625,
+     "hit@10": 0.806,
+     "mrr": 0.398,
+     "l1_key": 0.444,
+     "l2_drill_key": 0.389,
+     "l2_key": 0.556,
+     "l2_all_keys": 0.486,
+     "evidence_r5": 0.424,
+     "evidence_any5": 0.458,
+     "stale_claim_l1_top3": 0.25,
+     "deep_found": 0.986,
+     "deep_hit@20": 0.889,
+     "tokens_query_mean": 2965.2,
+     "tokens_total_mean": 5515.4
+    },
+    "by_category": {
+     "architecture": {
+      "hit@5": 0.75,
+      "mrr": 0.552,
+      "l1_key": 0.375,
+      "l2_key": 0.5,
+      "evidence_r5": 0.438
+     },
+     "decision_rationale": {
+      "hit@5": 0.688,
+      "mrr": 0.512,
+      "l1_key": 0.375,
+      "l2_key": 0.625,
+      "evidence_r5": 0.5
+     },
+     "gotcha": {
+      "hit@5": 0.583,
+      "mrr": 0.289,
+      "l1_key": 0.5,
+      "l2_key": 0.667,
+      "evidence_r5": 0.583
+     },
+     "identifier_config": {
+      "hit@5": 0.583,
+      "mrr": 0.371,
+      "l1_key": 0.833,
+      "l2_key": 0.833,
+      "evidence_r5": 0.5
+     },
+     "negative": {
+      "hit@5": null,
+      "mrr": null,
+      "l1_key": null,
+      "l2_key": null,
+      "evidence_r5": null
+     },
+     "temporal": {
+      "hit@5": 0.5,
+      "mrr": 0.23,
+      "l1_key": 0.25,
+      "l2_key": 0.25,
+      "evidence_r5": 0.156
+     }
+    },
+    "by_lang": {
+     "en": {
+      "hit@5": 0.778,
+      "l2_key": 0.694,
+      "evidence_r5": 0.542
+     },
+     "tr": {
+      "hit@5": 0.472,
+      "l2_key": 0.417,
+      "evidence_r5": 0.306
+     }
+    },
+    "temporal": {
+     "n": 16,
+     "l1_latest_present": 0.25,
+     "l1_stale_present": 0.562,
+     "l1_stale_first": 0.562,
+     "l1_top3_latest_present": 0.125,
+     "l1_top3_stale_present": 0.25,
+     "l1_top3_stale_first": 0.25,
+     "l2_latest_present": 0.125,
+     "l2_stale_present": 0.312,
+     "l2_stale_first": 0.312
+    },
+    "latency_ms_local": {
+     "query_p50": 56.3,
+     "query_p95": 83.2,
+     "drill_p50": 10.9,
+     "drill_p95": 14.2
+    }
+   },
+   "drill_top5": {
+    "overall": {
+     "n": 80,
+     "n_pos": 72,
+     "hit@1": 0.208,
+     "hit@3": 0.486,
+     "hit@5": 0.625,
+     "hit@10": 0.806,
+     "mrr": 0.398,
+     "l1_key": 0.444,
+     "l2_drill_key": 0.458,
+     "l2_key": 0.556,
+     "l2_all_keys": 0.528,
+     "evidence_r5": 0.451,
+     "evidence_any5": 0.486,
+     "stale_claim_l1_top3": 0.25,
+     "deep_found": 0.986,
+     "deep_hit@20": 0.889,
+     "tokens_query_mean": 2965.2,
+     "tokens_total_mean": 6713.7
+    },
+    "by_category": {
+     "architecture": {
+      "hit@5": 0.75,
+      "mrr": 0.552,
+      "l1_key": 0.375,
+      "l2_key": 0.5,
+      "evidence_r5": 0.438
+     },
+     "decision_rationale": {
+      "hit@5": 0.688,
+      "mrr": 0.512,
+      "l1_key": 0.375,
+      "l2_key": 0.625,
+      "evidence_r5": 0.5
+     },
+     "gotcha": {
+      "hit@5": 0.583,
+      "mrr": 0.289,
+      "l1_key": 0.5,
+      "l2_key": 0.667,
+      "evidence_r5": 0.583
+     },
+     "identifier_config": {
+      "hit@5": 0.583,
+      "mrr": 0.371,
+      "l1_key": 0.833,
+      "l2_key": 0.833,
+      "evidence_r5": 0.583
+     },
+     "negative": {
+      "hit@5": null,
+      "mrr": null,
+      "l1_key": null,
+      "l2_key": null,
+      "evidence_r5": null
+     },
+     "temporal": {
+      "hit@5": 0.5,
+      "mrr": 0.23,
+      "l1_key": 0.25,
+      "l2_key": 0.25,
+      "evidence_r5": 0.219
+     }
+    },
+    "by_lang": {
+     "en": {
+      "hit@5": 0.778,
+      "l2_key": 0.694,
+      "evidence_r5": 0.597
+     },
+     "tr": {
+      "hit@5": 0.472,
+      "l2_key": 0.417,
+      "evidence_r5": 0.306
+     }
+    },
+    "temporal": {
+     "n": 16,
+     "l1_latest_present": 0.25,
+     "l1_stale_present": 0.562,
+     "l1_stale_first": 0.562,
+     "l1_top3_latest_present": 0.125,
+     "l1_top3_stale_present": 0.25,
+     "l1_top3_stale_first": 0.25,
+     "l2_latest_present": 0.188,
+     "l2_stale_present": 0.438,
+     "l2_stale_first": 0.375
+    },
+    "latency_ms_local": {
+     "query_p50": 57.1,
+     "query_p95": 80.9,
+     "drill_p50": 20.7,
+     "drill_p95": 24.2
+    }
+   }
+  },
+  "analysis": {
+   "corpus_note": "corpus-B spans are pinned at 82200ae; this import is the 9ea3cad tree via `hlm import` (section-level items, 363 items vs 91 whole-file items in the phase0 baseline). Titles '<heading> · <path>' were mapped to the path for source matching (operator wrapper; run_eval.py itself only splits on ' § ').",
+   "answerability_now": {
+    "positive": 72,
+    "answer_keys_in_gold_file_now": 68,
+    "absent_now": 4,
+    "git_spans_unreachable": 5,
+    "positives_with_only_git_spans": 2
+   },
+   "hit5_vs_baseline_per_question": {
+    "both": 30,
+    "lost": 15,
+    "gained": 6,
+    "neither": 21,
+    "by_lang": {
+     "en": {
+      "both": 22,
+      "lost": 6,
+      "gained": 4,
+      "neither": 4
+     },
+     "tr": {
+      "both": 8,
+      "lost": 9,
+      "gained": 2,
+      "neither": 17
+     }
+    },
+    "lost_but_answerable_now": 14
+   },
+   "misses_deep_best_rank": {
+    "6-10": 5,
+    "11-20": 13,
+    "21-50": 10,
+    ">50": 4,
+    "not_found": 4
+   },
+   "same_source_flooding": {
+    "items_per_file_top": {
+     "DECISIONS.md": 79,
+     "PHASE2-4-ROADMAP.md": 30,
+     "00-deep-research-report.md (Turkish)": 22,
+     "PHASE0-SPEC.md": 21,
+     "RUNBOOK.md": 16
+    },
+    "tr_questions_top5_slots_on_TR_report": "74/200",
+    "tr_questions_whose_gold_is_the_report": 0,
+    "en_questions_top5_slots_on_TR_report": "1/200",
+    "mean_duplicate_source_slots_in_top5": 1.46
+   },
+   "server_latency_probe": {
+    "keepalive_single_caller_ms": "115-150 (empty project), incl ~95 ms RTT",
+    "stock_eval_client_ms": "~950 per call (new TLS + SSL context per request, and re-initialize per call because the server is stateless: 3 HTTPS round trips per tool call)"
+   }
+  },
+  "synthesis_grading": {
+   "method": "operator graded every answered synthesis against the row's gold facts (correct = primary answer right and no false claim; partial = incomplete, no false claim; false_claim = at least one statement contradicts the gold/evidence). Two runs = two independent synthesis samples of the same 80 queries (drill-top does not affect synthesis).",
+   "weak_evidence": {
+    "positives": 38,
+    "negatives": 6,
+    "strong_evidence_no_llm": 36,
+    "negatives_on_strong_path": 2,
+    "by_category_positives": {
+     "architecture": 11,
+     "temporal": 10,
+     "gotcha": 7,
+     "decision_rationale": 6,
+     "identifier_config": 4
+    }
+   },
+   "run_A_syn_top3": {
+    "answered": 20,
+    "insufficient_evidence_pos": 18,
+    "correct": 18,
+    "partial": 0,
+    "false_claim": 2
+   },
+   "run_B_syn_top5": {
+    "answered": 24,
+    "insufficient_evidence_pos": 14,
+    "correct": 18,
+    "partial": 3,
+    "false_claim": 3
+   },
+   "combined": {
+    "answered": 44,
+    "correct": 36,
+    "partial": 3,
+    "false_claim": 5,
+    "precision_correct": 0.818,
+    "false_claim_rate": 0.114
+   },
+   "stability": {
+    "answered_in_both_runs": 18,
+    "answered_only_A": 2,
+    "answered_only_B": 6
+   },
+   "weak_positive_accuracy": {
+    "fast_path_L2_keybased": {
+     "A": "16/38",
+     "B": "19/38"
+    },
+    "system_keybased_syn_system": {
+     "A": "11/38",
+     "B": "13/38"
+    },
+    "system_semantic (graded synthesis if answered, else fast-path L2)": {
+     "A": "23/38",
+     "B": "23/38"
+    },
+    "caveat": "the fast path is scored by verbatim keys only (undercounts paraphrase); the synthesis is graded semantically; the synthesis only sees retrieved text, so a careful agent reading the same hits could extract the same answers"
+   },
+   "insufficient_but_fastpath_had_key": {
+    "A": "5/18",
+    "B": "5/14"
+   },
+   "negatives_false_answer": "0/12 (both runs)",
+   "citations": {
+    "sentences": 68,
+    "uncited": 0,
+    "note": "1 two-sentence span shares one trailing citation",
+    "cited_clues_in_hits": 1.0
+   },
+   "false_claim_pattern": "3 of 5 answer the prior-value half of a temporal question with the current value (the whole-token support guard passes because that token is verbatim in the cited excerpt); 1 wrong identifier value; 1 off-topic paraphrase that does not answer the question",
+   "latency_ms": {
+    "fast_path_p50": 233,
+    "llm_path_p50": 1910,
+    "llm_path_p95": {
+     "A": 4396,
+     "B": 2683
+    },
+    "llm_path_max": 5526
+   },
+   "keybased_overall": {
+    "syn_key": {
+     "A": 0.083,
+     "B": 0.111
+    },
+    "syn_system": {
+     "A": 0.431,
+     "B": 0.458
+    },
+    "fast_L2": {
+     "A": 0.5,
+     "B": 0.542
+    }
+   }
+  }
+ },
+ "step6_risk_check": {
+  "A_as_imported": {
+   "calls": 20,
+   "catch_rate": "0/12",
+   "false_warn_rate": "0/8",
+   "timeout_rate": "0/20",
+   "judged": "0/20",
+   "errors": 0,
+   "reasons": {
+    "no_candidates": 20
+   },
+   "latency_ms": {
+    "p50": 125.3,
+    "p95": 159.6,
+    "max": 735.1
+   },
+   "judged_latency_ms": null,
+   "rows": [
+    {
+     "id": "W01",
+     "expect": "warn",
+     "task": "Run the integration tests on my Mac with `uv run pytest tests/integration -q` straight from the repo root.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 735.1
+    },
+    {
+     "id": "W02",
+     "expect": "warn",
+     "task": "Deploy the new release by streaming the script over ssh: `ssh hlm-deploy 'bash -s' < deploy/scripts/deploy.sh`.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 152.3
+    },
+    {
+     "id": "W03",
+     "expect": "warn",
+     "task": "In a bash script, loop over the hosts from a heredoc (`while read h; do ssh \"$h\" uptime; done <<EOF ... EOF`) to check every server.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 134.3
+    },
+    {
+     "id": "W04",
+     "expect": "warn",
+     "task": "On the VPS, clone the repository in the deploy user's shell (umask 077) and build the docker image from that checkout.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 125.3
+    },
+    {
+     "id": "W05",
+     "expect": "warn",
+     "task": "In my zsh terminal, put the ops call in a variable `OPS='bash deploy/scripts/hlm_ops.sh --state deploy/.local/<host>'` and run `$OPS status`.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 144.8
+    },
+    {
+     "id": "W06",
+     "expect": "warn",
+     "task": "Add an alembic migration that runs `CREATE UNIQUE INDEX` on memory_versions (without CONCURRENTLY) and apply it to the live production database.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 150.6
+    },
+    {
+     "id": "W07",
+     "expect": "warn",
+     "task": "Give the implementer agent the corpus-B hold-out question file so it can tune the retrieval thresholds against it.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 138.9
+    },
+    {
+     "id": "W08",
+     "expect": "warn",
+     "task": "Stop the stuck librarian process on the server with `ssh hlm-deploy pkill -f hlmemo`.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 122.7
+    },
+    {
+     "id": "W09",
+     "expect": "warn",
+     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9ea3cad`.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 124.4
+    },
+    {
+     "id": "W10",
+     "expect": "warn",
+     "task": "Roll production back to the R0 release 912f2d3 (before W0a) with `deploy.sh --rollback`.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 122.6
+    },
+    {
+     "id": "W11",
+     "expect": "warn",
+     "task": "Commit the .env file that holds the OpenRouter API key so my other machine gets it with git pull.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 123.0
+    },
+    {
+     "id": "W12",
+     "expect": "warn",
+     "task": "Truncate all tables in the hlm_retr test database to get a clean state before the next pytest run.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 121.8
+    },
+    {
+     "id": "N01",
+     "expect": "neutral",
+     "task": "Rename a local variable in src/hlmemo/core/budget.py to make the token arithmetic easier to read.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 129.0
+    },
+    {
+     "id": "N02",
+     "expect": "neutral",
+     "task": "Add a docstring to the function that splits markdown into heading sections in the importer.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 131.9
+    },
+    {
+     "id": "N03",
+     "expect": "neutral",
+     "task": "Fix a spelling mistake in the README quickstart paragraph.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 122.4
+    },
+    {
+     "id": "N04",
+     "expect": "neutral",
+     "task": "Write a unit test for the project slug validation regex.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 116.7
+    },
+    {
+     "id": "N05",
+     "expect": "neutral",
+     "task": "Reformat the command table in docs/USAGE.md so the columns line up.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 125.9
+    },
+    {
+     "id": "N06",
+     "expect": "neutral",
+     "task": "Add type hints to the small helper functions in eval/realdata/run_eval.py.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 159.6
+    },
+    {
+     "id": "N07",
+     "expect": "neutral",
+     "task": "Read eval/results/LEADERBOARD.md and summarise the model ranking for the owner.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 124.2
+    },
+    {
+     "id": "N08",
+     "expect": "neutral",
+     "task": "Add a --verbose flag to `hlm doctor` that prints each check's duration.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "no_candidates",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 0,
+     "latency_ms": 119.5
+    }
+   ]
+  },
+  "B_plus_3_feedback_files_as_lessons": {
+   "calls": 20,
+   "catch_rate": "1/12",
+   "false_warn_rate": "0/8",
+   "timeout_rate": "1/20",
+   "judged": "19/20",
+   "errors": 0,
+   "reasons": {
+    "None": 19,
+    "timeout": 1
+   },
+   "latency_ms": {
+    "p50": 1870.8,
+    "p95": 3061.9,
+    "max": 4183.1
+   },
+   "judged_latency_ms": {
+    "p50": 1870.8,
+    "p95": 3061.9
+   },
+   "rows": [
+    {
+     "id": "W01",
+     "expect": "warn",
+     "task": "Run the integration tests on my Mac with `uv run pytest tests/integration -q` straight from the repo root.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 3057.0
+    },
+    {
+     "id": "W02",
+     "expect": "warn",
+     "task": "Deploy the new release by streaming the script over ssh: `ssh hlm-deploy 'bash -s' < deploy/scripts/deploy.sh`.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1339.5
+    },
+    {
+     "id": "W03",
+     "expect": "warn",
+     "task": "In a bash script, loop over the hosts from a heredoc (`while read h; do ssh \"$h\" uptime; done <<EOF ... EOF`) to check every server.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1664.0
+    },
+    {
+     "id": "W04",
+     "expect": "warn",
+     "task": "On the VPS, clone the repository in the deploy user's shell (umask 077) and build the docker image from that checkout.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 2435.2
+    },
+    {
+     "id": "W05",
+     "expect": "warn",
+     "task": "In my zsh terminal, put the ops call in a variable `OPS='bash deploy/scripts/hlm_ops.sh --state deploy/.local/<host>'` and run `$OPS status`.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 2554.2
+    },
+    {
+     "id": "W06",
+     "expect": "warn",
+     "task": "Add an alembic migration that runs `CREATE UNIQUE INDEX` on memory_versions (without CONCURRENTLY) and apply it to the live production database.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1389.6
+    },
+    {
+     "id": "W07",
+     "expect": "warn",
+     "task": "Give the implementer agent the corpus-B hold-out question file so it can tune the retrieval thresholds against it.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 3061.9
+    },
+    {
+     "id": "W08",
+     "expect": "warn",
+     "task": "Stop the stuck librarian process on the server with `ssh hlm-deploy pkill -f hlmemo`.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1643.8
+    },
+    {
+     "id": "W09",
+     "expect": "warn",
+     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9ea3cad`.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1916.4
+    },
+    {
+     "id": "W10",
+     "expect": "warn",
+     "task": "Roll production back to the R0 release 912f2d3 (before W0a) with `deploy.sh --rollback`.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 2110.5
+    },
+    {
+     "id": "W11",
+     "expect": "warn",
+     "task": "Commit the .env file that holds the OpenRouter API key so my other machine gets it with git pull.",
+     "verdict": "warn",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 1,
+     "warn_titles": [
+      "github-account-and-publishing · github-account-and-publishing.md (lesson, e2e variant B)"
+     ],
+     "candidates_considered": 3,
+     "latency_ms": 1520.9
+    },
+    {
+     "id": "W12",
+     "expect": "warn",
+     "task": "Truncate all tables in the hlm_retr test database to get a clean state before the next pytest run.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "timeout",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 4183.1
+    },
+    {
+     "id": "N01",
+     "expect": "neutral",
+     "task": "Rename a local variable in src/hlmemo/core/budget.py to make the token arithmetic easier to read.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1997.9
+    },
+    {
+     "id": "N02",
+     "expect": "neutral",
+     "task": "Add a docstring to the function that splits markdown into heading sections in the importer.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 2191.9
+    },
+    {
+     "id": "N03",
+     "expect": "neutral",
+     "task": "Fix a spelling mistake in the README quickstart paragraph.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1638.8
+    },
+    {
+     "id": "N04",
+     "expect": "neutral",
+     "task": "Write a unit test for the project slug validation regex.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1477.9
+    },
+    {
+     "id": "N05",
+     "expect": "neutral",
+     "task": "Reformat the command table in docs/USAGE.md so the columns line up.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1467.3
+    },
+    {
+     "id": "N06",
+     "expect": "neutral",
+     "task": "Add type hints to the small helper functions in eval/realdata/run_eval.py.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 2094.9
+    },
+    {
+     "id": "N07",
+     "expect": "neutral",
+     "task": "Read eval/results/LEADERBOARD.md and summarise the model ranking for the owner.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1870.8
+    },
+    {
+     "id": "N08",
+     "expect": "neutral",
+     "task": "Add a --verbose flag to `hlm doctor` that prints each check's duration.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 3,
+     "latency_ms": 1289.6
+    }
+   ]
+  },
+  "C_plus_14_atomic_bullet_lessons": {
+   "calls": 20,
+   "catch_rate": "4/12",
+   "false_warn_rate": "0/8",
+   "timeout_rate": "1/20",
+   "judged": "19/20",
+   "errors": 0,
+   "reasons": {
+    "None": 19,
+    "timeout": 1
+   },
+   "latency_ms": {
+    "p50": 1944.2,
+    "p95": 3934.4,
+    "max": 4192.8
+   },
+   "judged_latency_ms": {
+    "p50": 1944.2,
+    "p95": 3934.4
+   },
+   "rows": [
+    {
+     "id": "W01",
+     "expect": "warn",
+     "task": "Run the integration tests on my Mac with `uv run pytest tests/integration -q` straight from the repo root.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 3934.4
+    },
+    {
+     "id": "W02",
+     "expect": "warn",
+     "task": "Deploy the new release by streaming the script over ssh: `ssh hlm-deploy 'bash -s' < deploy/scripts/deploy.sh`.",
+     "verdict": "no_matching_evidence",
+     "judged": false,
+     "judge": "retrieval_only",
+     "reason": "timeout",
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 4192.8
+    },
+    {
+     "id": "W03",
+     "expect": "warn",
+     "task": "In a bash script, loop over the hosts from a heredoc (`while read h; do ssh \"$h\" uptime; done <<EOF ... EOF`) to check every server.",
+     "verdict": "warn",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 1,
+     "warn_titles": [
+      "SSH from scripts: in a heredoc or piped script, always use `ssh -n`, or ssh swallows the rest of the script (hit again 2 · parallel-agent-footguns.md"
+     ],
+     "candidates_considered": 10,
+     "latency_ms": 3145.4
+    },
+    {
+     "id": "W04",
+     "expect": "warn",
+     "task": "On the VPS, clone the repository in the deploy user's shell (umask 077) and build the docker image from that checkout.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 2872.8
+    },
+    {
+     "id": "W05",
+     "expect": "warn",
+     "task": "In my zsh terminal, put the ops call in a variable `OPS='bash deploy/scripts/hlm_ops.sh --state deploy/.local/<host>'` and run `$OPS status`.",
+     "verdict": "warn",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 1,
+     "warn_titles": [
+      "SSH from scripts: in a heredoc or piped script, always use `ssh -n`, or ssh swallows the rest of the script (hit again 2 · parallel-agent-footguns.md"
+     ],
+     "candidates_considered": 10,
+     "latency_ms": 1944.2
+    },
+    {
+     "id": "W06",
+     "expect": "warn",
+     "task": "Add an alembic migration that runs `CREATE UNIQUE INDEX` on memory_versions (without CONCURRENTLY) and apply it to the live production database.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 2588.6
+    },
+    {
+     "id": "W07",
+     "expect": "warn",
+     "task": "Give the implementer agent the corpus-B hold-out question file so it can tune the retrieval thresholds against it.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 2743.2
+    },
+    {
+     "id": "W08",
+     "expect": "warn",
+     "task": "Stop the stuck librarian process on the server with `ssh hlm-deploy pkill -f hlmemo`.",
+     "verdict": "warn",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 1,
+     "warn_titles": [
+      "SSH from scripts: in a heredoc or piped script, always use `ssh -n`, or ssh swallows the rest of the script (hit again 2 · parallel-agent-footguns.md"
+     ],
+     "candidates_considered": 10,
+     "latency_ms": 1581.2
+    },
+    {
+     "id": "W09",
+     "expect": "warn",
+     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9ea3cad`.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1264.0
+    },
+    {
+     "id": "W10",
+     "expect": "warn",
+     "task": "Roll production back to the R0 release 912f2d3 (before W0a) with `deploy.sh --rollback`.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1458.1
+    },
+    {
+     "id": "W11",
+     "expect": "warn",
+     "task": "Commit the .env file that holds the OpenRouter API key so my other machine gets it with git pull.",
+     "verdict": "warn",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 1,
+     "warn_titles": [
+      "github-account-and-publishing · github-account-and-publishing.md (lesson, e2e variant B)"
+     ],
+     "candidates_considered": 10,
+     "latency_ms": 3373.0
+    },
+    {
+     "id": "W12",
+     "expect": "warn",
+     "task": "Truncate all tables in the hlm_retr test database to get a clean state before the next pytest run.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 2824.8
+    },
+    {
+     "id": "N01",
+     "expect": "neutral",
+     "task": "Rename a local variable in src/hlmemo/core/budget.py to make the token arithmetic easier to read.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1952.6
+    },
+    {
+     "id": "N02",
+     "expect": "neutral",
+     "task": "Add a docstring to the function that splits markdown into heading sections in the importer.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1298.9
+    },
+    {
+     "id": "N03",
+     "expect": "neutral",
+     "task": "Fix a spelling mistake in the README quickstart paragraph.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1522.1
+    },
+    {
+     "id": "N04",
+     "expect": "neutral",
+     "task": "Write a unit test for the project slug validation regex.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1313.5
+    },
+    {
+     "id": "N05",
+     "expect": "neutral",
+     "task": "Reformat the command table in docs/USAGE.md so the columns line up.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1641.9
+    },
+    {
+     "id": "N06",
+     "expect": "neutral",
+     "task": "Add type hints to the small helper functions in eval/realdata/run_eval.py.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1816.1
+    },
+    {
+     "id": "N07",
+     "expect": "neutral",
+     "task": "Read eval/results/LEADERBOARD.md and summarise the model ranking for the owner.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 2867.2
+    },
+    {
+     "id": "N08",
+     "expect": "neutral",
+     "task": "Add a --verbose flag to `hlm doctor` that prints each check's duration.",
+     "verdict": "no_matching_evidence",
+     "judged": true,
+     "judge": "ok",
+     "reason": null,
+     "n_warnings": 0,
+     "warn_titles": [],
+     "candidates_considered": 10,
+     "latency_ms": 1541.1
+    }
+   ]
+  }
+ },
+ "step7_agent_smoke": [
+  {
+   "id": "S1",
+   "question": "which model is the default librarian and why",
+   "top3_titles": [
+    "D-019 · ACCEPTED: Default librarian (our deployment + shipped default profile): deepseek/deepseek-v4.1-flash via OpenRouter with reasoning:{enabled:f… · docs/decisions/DECISIONS.md",
+    "D-066 · ACCEPTED (owner): Librarian model tiers after bench v2 (bench/results/20260923-19/20-v2.md): default profile = openai/gpt-6-luna (94.2%, best… · docs/decisions/DECISIONS.md",
+    "D-065 · ACCEPTED (orchestrator): W0a is a one-way door (after Sol 39 found a Critical: the rollback guard trusted HLM_REGISTRATION_MODE=closed, which… · docs/decisions/DECISIONS.md"
+   ],
+   "evidence": "matched",
+   "top3_groups": [
+    true,
+    true
+   ],
+   "all_hits_groups": [
+    true,
+    true
+   ],
+   "drill_top3_groups": [
+    true,
+    true
+   ],
+   "synthesis_status": "answered",
+   "synthesis_groups": [
+    true,
+    true
+   ],
+   "synthesis_tier": "primary",
+   "query_ms": 1033.3,
+   "drill_ms": 142.6,
+   "synth_query_ms": 1967.6
+  },
+  {
+   "id": "S2",
+   "question": "how do I add a new device in production",
+   "top3_titles": [
+    "Production operations › Adding a device (operator + owner over SSH) · deploy/RUNBOOK.md",
+    "Production operations · deploy/RUNBOOK.md",
+    "Production operations › First deploy and admin bootstrap · deploy/RUNBOOK.md"
+   ],
+   "evidence": "matched",
+   "top3_groups": [
+    false,
+    false
+   ],
+   "all_hits_groups": [
+    false,
+    false
+   ],
+   "drill_top3_groups": [
+    true,
+    true
+   ],
+   "synthesis_status": "unavailable:strong_evidence",
+   "synthesis_groups": [
+    false,
+    false
+   ],
+   "synthesis_tier": null,
+   "query_ms": 380.8,
+   "drill_ms": 118.5,
+   "synth_query_ms": 312.4
+  },
+  {
+   "id": "S3",
+   "question": "why is the librarian observer-only",
+   "top3_titles": [
+    "D-076 · ACCEPTED (orchestrator): Hold-out librarian gates FAIL → R2 ships the librarian in OBSERVER only (as planned), the apply path stays gated. On… · docs/decisions/DECISIONS.md",
+    "D-077 · ACCEPTED (orchestrator): R2 GO in OBSERVER mode despite Sol 50 NO-GO, with the reasoning recorded. Sol 50 confirms that the cross-project app… · docs/decisions/DECISIONS.md",
+    "sol prompt d074 · docs/consults/49-sol-prompt-d074.md"
+   ],
+   "evidence": "matched",
+   "top3_groups": [
+    true,
+    true
+   ],
+   "all_hits_groups": [
+    true,
+    true
+   ],
+   "drill_top3_groups": [
+    true,
+    true
+   ],
+   "synthesis_status": "answered",
+   "synthesis_groups": [
+    true,
+    true
+   ],
+   "synthesis_tier": "primary",
+   "query_ms": 286.9,
+   "drill_ms": 127.6,
+   "synth_query_ms": 1991.7
+  },
+  {
+   "id": "S4",
+   "question": "what failed in the hold-out eval",
+   "top3_titles": [
+    "HLMemo — Phase 2–5 Roadmap (planning spec, D-051, D-058) › W-E: Real-data evaluation (new; Opus 1+2; runs early) · docs/decisions/PHASE2-4-ROADMAP.md",
+    "D-076 · ACCEPTED (orchestrator): Hold-out librarian gates FAIL → R2 ships the librarian in OBSERVER only (as planned), the apply path stays gated. On… · docs/decisions/DECISIONS.md",
+    "HLMemo — `hlm` usage › What `hlm claude|codex|agy` does · docs/USAGE.md"
+   ],
+   "evidence": "matched",
+   "top3_groups": [
+    true,
+    true
+   ],
+   "all_hits_groups": [
+    true,
+    true
+   ],
+   "drill_top3_groups": [
+    true,
+    true
+   ],
+   "synthesis_status": "unavailable:strong_evidence",
+   "synthesis_groups": [
+    false,
+    false
+   ],
+   "synthesis_tier": null,
+   "query_ms": 203.2,
+   "drill_ms": 113.1,
+   "synth_query_ms": 293.9
+  },
+  {
+   "id": "S5",
+   "question": "what is the one-way door",
+   "top3_titles": [
+    "D-065 · ACCEPTED (orchestrator): W0a is a one-way door (after Sol 39 found a Critical: the rollback guard trusted HLM_REGISTRATION_MODE=closed, which… · docs/decisions/DECISIONS.md",
+    "Production operations › W0a is a one-way door (D-065) · deploy/RUNBOOK.md",
+    "HLMemo — `hlm` usage › What `hlm claude|codex|agy` does · docs/USAGE.md"
+   ],
+   "evidence": "matched",
+   "top3_groups": [
+    true,
+    true
+   ],
+   "all_hits_groups": [
+    true,
+    true
+   ],
+   "drill_top3_groups": [
+    true,
+    true
+   ],
+   "synthesis_status": "unavailable:strong_evidence",
+   "synthesis_groups": [
+    false,
+    false
+   ],
+   "synthesis_tier": null,
+   "query_ms": 218.4,
+   "drill_ms": 205.0,
+   "synth_query_ms": 319.9
+  }
+ ],
+ "step8_end_state": {
+  "at": "2026-09-24T05:32:51Z",
+  "ready_public": {
+   "http": 200,
+   "body": {
+    "status": "ready"
+   }
+  },
+  "ops_status": {
+   "ready": "ready",
+   "migration": [
+    "0008_librarian_tasks"
+   ],
+   "devices": {
+    "revoked": 18,
+    "trusted": 4
+   },
+   "worker_ready_jobs": 0,
+   "librarian": {
+    "breaker_source": "ledger",
+    "breaker_state": "idle",
+    "failed_24h": 0,
+    "in_flight": 0,
+    "oldest_ready_age_s": null,
+    "ready": 0,
+    "reserved_usd": 0.0,
+    "role": "observer",
+    "spend_hour_usd": 0.045636,
+    "spend_today_usd": 0.50949
+   },
+   "jobs": [
+    {
+     "count": 407,
+     "kind": "embed",
+     "status": "done"
+    },
+    {
+     "count": 373,
+     "kind": "librarian_write",
+     "status": "done"
+    }
+   ]
+  },
+  "librarian_heartbeat": {
+   "enabled": true,
+   "role": "observer",
+   "breaker_state": "closed",
+   "jobs_done": 373,
+   "age_s": 0
+  },
+  "docker_mem": {
+   "worker": {
+    "mem": "984.3MiB / 1.5GiB",
+    "mem_pct": "64.08%"
+   },
+   "api": {
+    "mem": "1.228GiB / 2.5GiB",
+    "mem_pct": "49.11%"
+   },
+   "librarian": {
+    "mem": "125.7MiB / 512MiB",
+    "mem_pct": "24.55%"
+   },
+   "caddy": {
+    "mem": "12.1MiB / 256MiB",
+    "mem_pct": "4.73%"
+   },
+   "db": {
+    "mem": "96.22MiB / 2GiB",
+    "mem_pct": "4.70%"
+   }
+  },
+  "host": {
+   "mem_available_mib": 4732,
+   "load1": 0.16
+  },
+  "spend_today_usd": 0.50949,
+  "test_project": "hlmemo-e2e kept (381 current items: 363 imported + skeleton card + 17 operator lessons from step 6)",
+  "reader_device": "e2e-reader (id 27, ci, hlmemo-e2e:read) left to expire at 2026-09-24T11:45Z"
+ },
+ "docker_mem_peak_during_test": {
+  "worker": {
+   "peak_mib": 985.3,
+   "limit": "1.5GiB"
+  },
+  "api": {
+   "peak_mib": 1266.7,
+   "limit": "2.5GiB"
+  },
+  "librarian": {
+   "peak_mib": 125.5,
+   "limit": "512MiB"
+  },
+  "caddy": {
+   "peak_mib": 15.3,
+   "limit": "256MiB"
+  },
+  "db": {
+   "peak_mib": 112.3,
+   "limit": "2GiB"
+  }
+ }
+}
