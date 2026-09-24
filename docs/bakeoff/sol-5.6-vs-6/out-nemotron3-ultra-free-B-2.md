@@ -1,0 +1,16 @@
+## Verdict: MERGE-WITH-FIXES
+
+## Findings:
+
+| Severity | File:Line | Defect | Concrete Trigger | Fix |
+|----------|-----------|--------|------------------|-----|
+| HIGH | synthesis_service.py:285-288 | Transaction held during LLM call when `detach()` returns False but `reconnect` is None | Direct caller (tests, CLI) passes idle conn without `detach`/`reconnect`; `conn.info.transaction_status` is IDLE but synthesis runs without releasing a transaction | Add explicit check: if not released and reconnect is None, return `no_detach` — never call LLM inside any transaction |
+| HIGH | synthesis_service.py:293-298 | Re-check uses stale `ctx` after device revocation during synthesis | Device revoked during LLM call; `_recheck` uses `ctx` from before the call (captures old grants/token_generation) | Pass fresh `AuthContext` to `_recheck` or re-resolve device inside `_recheck` using current DB state |
+| MEDIUM | synthesis_service.py:171-182 | `_fit` drops tail hits to fit budget markers, but `omitted` counts original hits + dropped | `base_omitted = int(env["omitted"]) + len(hits)` then `env["omitted"] = base_omitted - len(hits)` — double-counts when hits were already omitted | Track `original_hits_len` separately; `omitted = original_omitted + (original_hits_len - len(hits))` |
+| MEDIUM | synthesis.py:349-351 | Privacy gate `precheck` runs before every attempt but uses `sent` from first gate | Excerpts denied by gate between attempts (grant revoked) still in `sent`; precheck passes but prompt contains denied items | Recompute `sent = [e.version_id for e in allowed]` inside `precheck` after `privacy.gate` |
+| MEDIUM | preflight.py:178-184 | `wants_synthesis` treats any task ending in `?` as question, including trailing whitespace | `"why?  "` → True, but `"why?"` in middle of sentence → False | Use `str(task).rstrip().endswith("?")` |
+| LOW | synthesis.py:209-212 | `_consistency` allows `status:"answered"` with empty `sentences: []` | Model returns `{"status":"answered","sentences":[]}` — passes schema, treated as answered with no text | Require `len(sentences) > 0` when `status == "answered"` |
+| LOW | query.py:35-40 | `synthesize_flag` mutates `args` dict (pop) but handler may reuse it | `handlers.memory_query` called with same `args` dict in retry path; second call lacks `synthesize` | Copy `args` before pop or document that caller must not reuse |
+| LOW | synthesis_service.py:79-86 | `weak()` returns `None` for near-misses (`evidence != "matched"`) even with strong top score | Top hit RRF=0.9, evidence="none" → triggers synthesis (correct per design) but docs say "strong or empty → no LLM" | Update docstring: near-misses always synthesize regardless of score |
+| LOW | cli/hlm.py:993-994 | `SYNTH_TIMEOUT_S` (8s) used for client timeout but server cap is 6s | Client waits 8s, server kills at 6s → client sees timeout, not `synthesis_unavailable` | Set client timeout = server cap + small margin (e.g., 6.5s) |
+| INFO | synthesis.py:68 | `TAU_S` hardcoded in synthesis_service but calibrated in test fixture | `TAU_S = 0.0434` in service; calibration test asserts equality — drift requires coordinated change | Keep as is; calibration test is the gate |

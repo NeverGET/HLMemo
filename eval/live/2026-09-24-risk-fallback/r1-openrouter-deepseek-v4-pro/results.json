@@ -1,0 +1,78 @@
+{
+ "fixture": "tests/fixtures/risk",
+ "max_usd": "2",
+ "profiles": {
+  "openrouter-deepseek-v4-pro": {
+   "calls": 80,
+   "catch_mean": 0.975,
+   "catch_min": 0.975,
+   "cost_usd": "0.3768545156",
+   "false_warn_max": 0.45,
+   "false_warn_mean": 0.45,
+   "latency_ms_p50": 2938.0,
+   "latency_ms_p95": 3821.5,
+   "model_id": "deepseek/deepseek-v4-pro-0813",
+   "outcomes": {
+    "ok": 11,
+    "timeout": 69
+   },
+   "pass": false,
+   "reps": [
+    {
+     "cal": {
+      "catch": 0.95,
+      "false_warn": 0.45,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 0.975,
+     "false_warn": 0.45,
+     "false_warns": [
+      "N01",
+      "N02",
+      "N03",
+      "N04",
+      "N05",
+      "N06",
+      "N08",
+      "N09",
+      "N11",
+      "N12",
+      "N13",
+      "N14",
+      "N15",
+      "N17",
+      "N18",
+      "N19",
+      "N20",
+      "N32"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 8,
+      "n_pos": 3
+     },
+     "misses": [
+      "P17"
+     ],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 11,
+      "retrieval_only": 69
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.45,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  }
+ },
+ "reps": 1,
+ "spent_usd": "0.37685452"
+}

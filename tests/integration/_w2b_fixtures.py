@@ -178,28 +178,27 @@ async def embed(connect: Any, embedder: Any) -> None:
 
 
 async def dump_w2b(conn: psycopg.AsyncConnection) -> dict[str, list[str]]:
-    from hlmemo.librarian.worker import SYSTEMIC_HANDBACK_CODES
     from tests.integration._librarian_fixtures import dump_full_jobs_and_questions
-    from tests.integration._write_fixtures import dump_projections
+    from tests.integration._write_fixtures import dump_projections, replay_job_rows
 
     out = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
     # Phase 0: an embed job's completion is not an event (the worker derives vectors; replay
     # re-queues the job and the worker re-embeds). Compare those rows without their run state.
-    # D-086 §2: after a SYSTEMIC hand-back a queued librarian job's scheduling hints (run_after,
-    # last_error) are not event-recorded; any other job is compared on its raw fields (review 60)
-    cur = await conn.execute(
-        """
-        SELECT CASE WHEN kind IN ('embed', 'reembed')
-                    THEN (kind, dedupe_key, payload::text, source_event_id, priority, run_after)::text
-                    WHEN status = 'queued' AND (last_error IS NULL OR last_error = ANY(%(systemic)s))
-                    THEN (job_id, kind, dedupe_key, payload::text, source_event_id, status, attempts,
-                          priority, done_at, lease_token, lease_until, created_at)::text
-                    ELSE j::text END
+    # D-086 §2: a live SYSTEMIC hand-back's scheduling hints (run_after, last_error) are not
+    # event-recorded: only that row against its replayed counterpart skips them; every other job
+    # is compared on its raw fields (reviews 60, 61; the pairwise rule is ``ReplayJobRow``)
+    embed = "(kind, dedupe_key, payload::text, source_event_id, priority, run_after)::text"
+    out["jobs"] = await replay_job_rows(
+        conn,
+        f"""
+        SELECT CASE WHEN kind IN ('embed', 'reembed') THEN {embed} ELSE j::text END,
+               CASE WHEN kind IN ('embed', 'reembed') THEN {embed}
+                    ELSE (job_id, kind, dedupe_key, payload::text, source_event_id, status, attempts,
+                          priority, done_at, lease_token, lease_until, created_at)::text END,
+               kind NOT IN ('embed', 'reembed'), status, last_error
           FROM jobs j ORDER BY dedupe_key
-        """,
-        {"systemic": sorted(SYSTEMIC_HANDBACK_CODES)},
+        """,  # noqa: S608 - fixed fragments
     )
-    out["jobs"] = [r[0] for r in await cur.fetchall()]
     for table, key in (("version_signals", "version_id"), ("librarian_batches", "batch_id")):
         cur = await conn.execute(f"SELECT t::text FROM {table} t ORDER BY {key}")
         out[table] = [r[0] for r in await cur.fetchall()]

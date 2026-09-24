@@ -68,7 +68,7 @@ from hlmemo.librarian.errors import (
     ProviderUnavailable,
     RoleNotAuthorized,
 )
-from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event
+from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event, lock_event_refs
 from hlmemo.librarian.jobs import LIBRARIAN_JOB_KINDS, assign_job_ids, insert_recorded_jobs
 from hlmemo.librarian.profiles import check_chains, describe_chains
 from hlmemo.librarian.provider import Provider, lineage_scope
@@ -133,6 +133,8 @@ SYSTEMIC_HANDBACK_CODES = frozenset(
 #: question statuses an ``apply_batch`` job applies: batch approvals and owner accepts recorded
 #: under observer (D-074)
 APPLICABLE = ("approved", "accepted_pending")
+#: the ``request`` audit lists ``_apply_approved`` records (reset when a batch is re-planned, D-095)
+_APPLY_AUDIT_KEYS = ("rebased", "already_satisfied", "replanned", "replan_refused")
 
 
 @dataclass(slots=True)
@@ -806,8 +808,11 @@ class LibrarianWorker:
         list[dict[str, Any]], list[dict[str, Any]], int, list[datetime], datetime, list[dict[str, Any]]
     ]:
         """``apply_batch``: each approved question under its own proposing job's capabilities.
-        After the item-lock wait the TTL is checked again against a FRESH clock (Sol 48), which
-        becomes the job's ``T``.
+        After the item-lock wait the TTL is checked again against a FRESH clock (Sol 48), then the
+        cross-project policy of every question (its project rows ``FOR SHARE``), then the TTL once
+        more against a FRESH clock after that last policy lock (review 61: a question that expired
+        while the policy read waited is ``expired``, nothing of it applied); that clock becomes the
+        job's ``T``.
 
         D-076 approve-all staleness chains: the questions are applied in DEPENDENCY order —
         link-only proposals first (they never change a head), then by their earliest close cut,
@@ -858,8 +863,26 @@ class LibrarianWorker:
 
         todo.sort(key=order)
         await q.lock_logical_ids(conn, [lid for _a, actions in todo for lid in _logical_ids(actions)])
-        T = max(T, await q.clock_now(conn))  # the last lock wait is over: the TTL against NOW
+        T = max(T, await q.clock_now(conn))  # the item-lock wait is over: the TTL against NOW
+        policed: list[tuple[_Approved, list[dict[str, Any]]]] = []
         for a, actions in todo:
+            if a.expires_at is not None and a.expires_at <= T:
+                changes.append({"question_id": a.question_id, "status": "expired"})
+            elif await actor.policy_blocked(conn, actions, a.projects):  # the policy NOW (Sol 54 #2)
+                changes.append(
+                    {
+                        "question_id": a.question_id,
+                        "status": "authority_lost",
+                        "reason": actor.POLICY_EXCLUDED,
+                    }
+                )
+            else:
+                policed.append((a, actions))
+        # review 61: the policy rows are read FOR SHARE above, and that wait can outlast a TTL. The
+        # LAST policy lock is held now: the TTL once more against a FRESH clock, before any
+        # staleness verdict, rebase or event id (lock order: items → policy → TTL → staleness)
+        T = max(T, await q.clock_now(conn))
+        for a, actions in policed:
             qid, proposal = a.question_id, a.proposal
             if a.expires_at is not None and a.expires_at <= T:
                 changes.append({"question_id": qid, "status": "expired"})
@@ -867,11 +890,6 @@ class LibrarianWorker:
             assessed: dict[str, int] = {}
             for x in actions:
                 assessed.update(x.get("assessed") or {})
-            if await actor.policy_blocked(conn, actions, a.projects):  # the policy NOW (Sol 54 #2)
-                changes.append(
-                    {"question_id": qid, "status": "authority_lost", "reason": actor.POLICY_EXCLUDED}
-                )
-                continue
             # an EXTERNAL revision since the proposal (G-Q3); a subject closed earlier in THIS batch
             # is rebased below (D-076 staleness chains), not superseded
             if await actor.is_stale(conn, {"assessed": assessed}):
@@ -1062,15 +1080,47 @@ class LibrarianWorker:
                 ]
                 if deferred:
                     plan.request_extra["role_deferred"] = [a.question_id for a in deferred]
-                if ready:
-                    applied, changes, superseded, recorded, T, replans = await self._apply_approved(
-                        conn, job, plan, ready, T
+                base, had_ready = status_changes, bool(ready)
+                late: list[dict[str, Any]] = []
+                while True:
+                    for k in _APPLY_AUDIT_KEYS:  # re-planned from scratch below
+                        plan.request_extra.pop(k, None)
+                    applied, changes, superseded, recorded, replans = [], [], 0, [], []
+                    if ready:
+                        applied, changes, superseded, recorded, T, replans = await self._apply_approved(
+                            conn, job, plan, ready, T
+                        )
+                    status_changes = [*base, *late, *changes]
+                    batch_changes = await self._batch_after_apply(
+                        conn, job.payload["batch_id"], status_changes
                     )
-                    status_changes += changes
+                    await lock_event_refs(conn, project_id, ids.librarian_device_id)
+                    # D-095: the TTL is judged at the linearization point: EVERY lock this decision
+                    # needs is held now (items, policy rows, question and batch rows, the event's FK
+                    # rows), so this fresh clock is the last one that matters. A question that
+                    # expired during any wait (the batch row lock included) is `expired` and the
+                    # batch is planned again without it; that re-plan takes only locks already held
+                    # (a subset of the same items/policy rows), so it cannot wait either.
+                    now = await q.clock_now(conn)
+                    T = max(T, now)
+                    gone = {c["question_id"] for c in changes if c["status"] == "expired"}
+                    due = {
+                        a.question_id
+                        for a in ready
+                        if a.question_id not in gone and a.expires_at is not None and a.expires_at <= now
+                    }
+                    if not due:
+                        break
+                    late += [{"question_id": qid, "status": "expired"} for qid in sorted(due)]
+                    ready = [a for a in ready if a.question_id not in due]
+                if had_ready:
                     outcome = "applied" if applied else "superseded" if superseded else "no_change"
                 else:
                     outcome = "role_denied" if deferred else "no_change"
-                batch_changes = await self._batch_after_apply(conn, job.payload["batch_id"], status_changes)
+                # NO lock wait from the D-095 check above to the event insert below: the event and
+                # job ids are sequence values, the run_after read is a plain read and the insert's
+                # FK rows are locked. Only a concurrent duplicate of this same job (a lost lease) can
+                # make the insert wait on its unique key, and then this job records nothing.
             elif (plan.proposals or plan.signals) and outcome in ("proposed", "approved"):
                 try:
                     ctx = await actor.recheck(conn, caps, CLIENT)

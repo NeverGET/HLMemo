@@ -26,3 +26,6 @@ Decision: gpt-5.6-sol becomes the coworker/reviewer model (D-084). Caveat: n = 1
 | Wall time | 477 s | 315 s | **166 s** |
 | Tokens used | 224,955 | 139,945 | **66,702** |
 astra's per-token price is ~5× sol's (OpenRouter list $10/$50 vs $2/$10), so its effective cost is in the same band as sol xhigh/max, with higher quality and ~3× the speed. It missed the llm.env→api mount and the token-generation pin (both found by 5.6-sol). The blind spots differ, so the union of astra-low and 5.6-sol covers 10/12.
+
+## Addendum 2: nvidia/nemotron-3-ultra-550b-a55b:free (OpenRouter free tier), same task, tree and key (2026-09-24)
+Score 0–1/12 over 4 runs. Mode A (codex agentic, wire_api=responses, custom permission profile): 0 and 1 (half of K2), 18–22 min per run, 2.2–4.2M input tokens, many NVIDIA 503s. Mode B (a single 784k-token prompt): 0 and 0, 51–166 s, ~300 reasoning tokens even at effort high. Every run said MERGE-WITH-FIXES on a known DO-NOT-MERGE change, and runs made 0–7 claims that the code contradicts. Only trivial valid extras. Verdict: not useful as a second reviewer (D-092). Details: NEMOTRON-SCORING.md.

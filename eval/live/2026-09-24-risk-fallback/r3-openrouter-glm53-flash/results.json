@@ -1,0 +1,131 @@
+{
+ "fixture": "tests/fixtures/risk",
+ "max_usd": "2",
+ "profiles": {
+  "openrouter-glm53-flash": {
+   "calls": 239,
+   "catch_mean": 1.0,
+   "catch_min": 1.0,
+   "cost_usd": "0.0837973426",
+   "false_warn_max": 0.1,
+   "false_warn_mean": 0.075,
+   "latency_ms_p50": 1521.0,
+   "latency_ms_p95": 3447.9,
+   "model_id": "z-ai/glm-5.3-flash",
+   "outcomes": {
+    "ok": 215,
+    "timeout": 24
+   },
+   "pass": true,
+   "reps": [
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.2,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.1,
+     "false_warns": [
+      "N05",
+      "N13",
+      "N15",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.05555555555555555,
+      "n_neg": 36,
+      "n_pos": 38
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 74,
+      "retrieval_only": 6
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    },
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.05,
+     "false_warns": [
+      "N12",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.02702702702702703,
+      "n_neg": 37,
+      "n_pos": 31
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 1,
+     "statuses": {
+      "ok": 68,
+      "retrieval_only": 12
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    },
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.1,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.075,
+     "false_warns": [
+      "N03",
+      "N14",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.02631578947368421,
+      "n_neg": 38,
+      "n_pos": 35
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 2,
+     "statuses": {
+      "ok": 73,
+      "retrieval_only": 7
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  }
+ },
+ "reps": 3,
+ "spent_usd": "0.08406231"
+}
