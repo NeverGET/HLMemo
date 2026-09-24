@@ -1,5 +1,5 @@
 """W2d independent validation of the deterministic constants (Sol 41 #6): the public bench v2 T9
-pack (``bench/v2/tasks/t9_risk_check.json``: 30 lessons and 25 tasks, authored separately from the
+pack (``src/hlmemo/bench/tasks/v2/t9_risk_check.json``: 30 lessons and 25 tasks, authored separately from the
 W2d fixture), mapped to lessons and run through the deterministic stage of ``memory.risk_check``.
 
 Mapping: each library entry becomes one ``lesson`` item in project ``t9-main`` (title = its first
@@ -29,7 +29,7 @@ from tests.integration._risk_fixtures import rates, score_case
 pytestmark = pytest.mark.integration
 
 ROOT = Path(__file__).resolve().parents[2]
-PACK = ROOT / "bench" / "v2" / "tasks" / "t9_risk_check.json"
+PACK = ROOT / "src" / "hlmemo" / "bench" / "tasks" / "v2" / "t9_risk_check.json"
 PROJECT = "t9-main"
 TAG = "t9:"
 

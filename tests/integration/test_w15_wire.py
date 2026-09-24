@@ -37,6 +37,8 @@ async def test_export_tool_is_unlisted_but_callable_and_the_cli_session_imports(
                 "memory.drilldown",
                 "memory.query",
                 "memory.raw",
+                "memory.register_lesson",
+                "memory.risk_check",
                 "memory.write",
             ]
         http = httpx.AsyncClient(
