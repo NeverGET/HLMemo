@@ -18,6 +18,8 @@ Updated 2026-09-23. Source of each item in parentheses.
 - **FIXED 2026-09-24 (owner reset it: DROP + CREATE, verified empty; `hlm` untouched at 0004)** — shared test DB `hlm_test` was stranded at 0009_language_pivot (found 2026-09-24 by L; unknown migrator, likely a pytest run without HLM_TEST_DSN on the slice-2 branch). Code at main head cannot migrate it. Nobody should use it (every agent uses its own DB), but a bare pytest will fail. Fix: `DROP DATABASE hlm_test; CREATE DATABASE hlm_test OWNER hlm;` (the orchestrator's attempt was blocked by auto mode, so the owner runs it or grants permission). Consider extending the conftest guard to refuse any DB whose alembic head is unknown to the code.
 - **Slice 2 (renditions) blockers before HLM_RENDITIONS can ship (D-090):** (1) G-L3 at 100% rendition coverage is still >500 ms p95 even with lower budgets (486–529) or no rendition vector leg (464–534); query p95 405–421 vs 265–313 ms without renditions. (2) After a bulk rendition insert, the DF stats load (~0.3 s idle, 2 s budget) timed out and queries ran without term filtering for the 60 s retry window (G3 0.920 in one stress run). Translate reliability itself is fixed (prompt/schema v2: 34/34 and 33/34 accepted, 0/36 schema failures).
 
+- **Recurring footgun: pytest without HLM_TEST_DSN** (3 agents on 2026-09-24 fell back to the shared `hlm_test`). Make tests/conftest.py REQUIRE an explicit HLM_TEST_DSN (fail fast with a clear message) instead of falling back to `hlm_test`.
+
 ## Correctness / ops
 - Marker write failure after cutover leaves current-ref behind → later deploys refuse (consults/20, D5 Low).
 - Card survivor-link load still grows with links overlapping the interval (N5 residual, consults/20).
