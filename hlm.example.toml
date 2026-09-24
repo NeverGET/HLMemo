@@ -30,7 +30,7 @@ HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
 HLM_LLM_MODEL     = "deepseek/deepseek-v4.1-flash"
 HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
 HLM_LLM_REASONING = '{"enabled":false}'
-extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny" } }
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny", require_parameters = true } }
 
 [profiles.openai]
 HLM_LLM_BASE_URL = "https://api.openai.com/v1"
