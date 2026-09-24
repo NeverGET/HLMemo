@@ -603,8 +603,10 @@ the api's risk-judge chain, and per profile whether its key is set and whether i
 With `llm.env` present it validates the R2 configuration strictly (Sol 48) and fails the deployment
 (the new stack stays running, no database rollback) unless the api settings, the librarian settings
 **and** the heartbeat all say `enabled=true` and role `observer`, both settings say
-`HLM_LLM_MODE=live`, the api's risk-judge chain loads and is non-empty, and every profile key is
-set. An unreachable provider is **reported only** (`UNREACHABLE ...; reported only`): jobs wait
+`HLM_LLM_MODE=live`, the heartbeat is fresh (Sol 49: at most 3 heartbeat intervals old, 30 s by
+default; a missing or stale one is re-read for up to 45 s after cutover), the api's risk-judge
+chain loads and is non-empty, and every profile key is set. The heartbeat is written between jobs,
+so one job running longer than that window also fails the check: see `stack.sh logs librarian`. An unreachable provider is **reported only** (`UNREACHABLE ...; reported only`): jobs wait
 with backoff and risk_check answers retrieval-only until it returns. Without `llm.env` (R1-style)
 the check passes only while everything idles.
 

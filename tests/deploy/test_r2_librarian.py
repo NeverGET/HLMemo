@@ -8,10 +8,13 @@
 * check_librarian.py observer-gate (remote_gates.sh --librarian) on crafted job/audit reports.
 """
 
+import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -47,12 +50,17 @@ def report(service, *, enabled=True, role="observer", mode="live", hb_enabled=Tr
             "enabled": hb_enabled,
             "role": hb_role,
             "breaker_state": "closed",
-            "age_s": 3.2,
+            "age_s": kw.get("hb_age", 3.2),
             "ready": 0,
             "spend_hour_usd": 0.0,
             "spend_today_usd": 0.01,
             "reserved_usd": 0.0,
         }
+        if kw.get("hb_missing"):
+            out["heartbeat"] = {"error": "FileNotFoundError"}
+        out.update(
+            heartbeat_interval_s=10.0, heartbeat_max_age_s=30.0, heartbeat_waited_s=kw.get("waited", 0.0)
+        )
     else:
         out["risk_judge"] = kw.get("risk_judge", ["openrouter-gpt6-luna"])
         if "risk_judge_error" in kw:
@@ -88,6 +96,8 @@ class R2DeployCheckTest(unittest.TestCase):
             [("librarian", True), ("api", False)],
             [(r[r.index("--service") + 1], "--probe" in r) for r in collects],
         )
+        # Sol 49: the librarian report re-reads a missing/stale heartbeat for up to 45 s.
+        self.assertEqual("45", collects[0][collects[0].index("--wait-heartbeat") + 1])
         cutover = next(i for i, r in enumerate(rows) if "up" in r and "api" in r)
         self.assertTrue(all(rows.index(r) > cutover for r in collects), "checked after cutover")
         self.assertIn("Deployment ready", output)
@@ -174,6 +184,25 @@ class R2DeployCheckTest(unittest.TestCase):
             with self.subTest(name):
                 self.assert_fails_after_cutover(True, lib, api, *messages)
 
+    def test_heartbeat_freshness(self):
+        """Sol 49: with llm.env present a fresh heartbeat passes; one older than 3 intervals (30 s)
+        or none at all after the post-cutover wait fails the R2 check."""
+        _, result, output, _ = self.run_r2(True, report("librarian", hb_age=29.9), report("api"))
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("age_s=29.9 ready=0 (max age 30s, waited 0.0s)", output)
+        self.assert_fails_after_cutover(
+            True,
+            report("librarian", hb_age=95.0, waited=45.0),
+            report("api"),
+            "heartbeat stale: 95.0s old > 30s (3 x the 10s interval; waited 45.0s after cutover)",
+        )
+        self.assert_fails_after_cutover(
+            True,
+            report("librarian", hb_missing=True, waited=45.0),
+            report("api"),
+            "no librarian heartbeat (FileNotFoundError; waited 45.0s after cutover)",
+        )
+
     def test_api_librarian_mismatch_fails(self):
         cases = {
             "api off": (report("api", enabled=False), "api settings: HLM_LIBRARIAN_ENABLED=False (R2: true)"),
@@ -216,6 +245,67 @@ class R2DeployCheckTest(unittest.TestCase):
         _, result, output, _ = self.run_r2(True, "", report("api"))
         self.assertNotEqual(0, result.returncode, output)
         self.assertIn("RESULT librarian FAIL no usable report from librarian", output)
+
+
+class HeartbeatWaitTest(unittest.TestCase):
+    """check_librarian.wait_for_heartbeat (collect --wait-heartbeat): the first heartbeat after
+    cutover may arrive during the wait; a stale one is re-read until the wait runs out."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("check_librarian", CHECK)
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)  # module level imports nothing from hlmemo
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "hb.json"
+
+    def write(self, age_s, delay_s=0.0):
+        def run():
+            time.sleep(delay_s)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"enabled": True, "role": "observer", "ts": time.time() - age_s}))
+            tmp.replace(self.path)
+
+        if not delay_s:
+            return run()
+        thread = threading.Thread(target=run)
+        thread.start()
+        self.addCleanup(thread.join)
+
+    def test_fresh_heartbeat_returns_at_once(self):
+        self.write(age_s=2)
+        hb, waited = self.mod.wait_for_heartbeat(self.path, 30.0, 45.0)
+        self.assertLess(hb["age_s"], 30)
+        self.assertEqual((True, "observer"), (hb["enabled"], hb["role"]))
+        self.assertLess(waited, 1.0)
+
+    def test_first_heartbeat_arrives_within_the_wait(self):
+        self.write(age_s=0, delay_s=1.5)  # no file yet: the librarian has not written one
+        hb, waited = self.mod.wait_for_heartbeat(self.path, 30.0, 10.0)
+        self.assertNotIn("error", hb)
+        self.assertLess(hb["age_s"], 30)
+        self.assertGreaterEqual(waited, 1.0)
+        self.assertLess(waited, 5.0)
+
+    def test_stale_heartbeat_refreshed_within_the_wait(self):
+        self.write(age_s=120)
+        self.write(age_s=0, delay_s=1.5)
+        hb, waited = self.mod.wait_for_heartbeat(self.path, 30.0, 10.0)
+        self.assertLess(hb["age_s"], 30)
+        self.assertLess(waited, 5.0)
+
+    def test_stale_or_missing_after_the_wait_is_reported_as_is(self):
+        hb, waited = self.mod.wait_for_heartbeat(self.path, 30.0, 1.2)
+        self.assertEqual({"error": "FileNotFoundError"}, hb)
+        self.assertGreaterEqual(waited, 1.2)
+        self.write(age_s=100)
+        hb, waited = self.mod.wait_for_heartbeat(self.path, 30.0, 1.2)
+        self.assertGreater(hb["age_s"], 30)
+        self.assertGreaterEqual(waited, 1.2)
+        self.assertLess(waited, 3.0)
 
 
 class ObserverGateTest(unittest.TestCase):
