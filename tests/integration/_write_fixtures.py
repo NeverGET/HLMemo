@@ -116,17 +116,21 @@ async def head_at(
 async def dump_projections(conn: psycopg.AsyncConnection) -> dict[str, list[str]]:
     """Primary-key-ordered text dumps of the four projection tables (pg_dump-free).
 
-    D-086 §2: the ``run_after`` of a librarian job that is still QUEUED is a non-authoritative
-    scheduling hint (a systemic hand-back moves it without an event), so it is not compared; every
-    other job and column is."""
+    D-086 §2: the ``run_after`` of a librarian job still QUEUED after a SYSTEMIC hand-back
+    (``last_error`` in ``worker.SYSTEMIC_HANDBACK_CODES``) is a non-authoritative scheduling hint
+    (moved without an event), so it is not compared; every other job and column is (review 60)."""
+    from hlmemo.librarian.worker import SYSTEMIC_HANDBACK_CODES
+
     out: dict[str, list[str]] = {}
     for table, pk in (("memory_versions", "version_id"), ("chunks", "chunk_id"), ("links", "link_id")):
         cur = await conn.execute(f"SELECT t::text FROM {table} t ORDER BY {pk}")
         out[table] = [r[0] for r in await cur.fetchall()]
     cur = await conn.execute(
         "SELECT (kind, dedupe_key, payload::text, source_event_id, status,"
-        " CASE WHEN kind = 'librarian_write' AND status = 'queued' THEN NULL ELSE run_after END)::text"
-        " FROM jobs ORDER BY dedupe_key"
+        " CASE WHEN kind = 'librarian_write' AND status = 'queued'"
+        " AND (last_error IS NULL OR last_error = ANY(%(systemic)s)) THEN NULL ELSE run_after END)::text"
+        " FROM jobs ORDER BY dedupe_key",
+        {"systemic": sorted(SYSTEMIC_HANDBACK_CODES)},
     )
     out["jobs"] = [r[0] for r in await cur.fetchall()]
     cur = await conn.execute("SELECT t::text FROM code_refs t ORDER BY version_id, path")  # W1.5

@@ -10,22 +10,22 @@ Two deterministic rules, applied after RRF fusion and the §4.9 dedupe:
    fused score that are near-duplicates (same normalized title) and have different
    ``valid_from``, the newer one is ranked first. No other order changes, so G3 is untouched
    unless a fixture has exact-score, same-title pairs.
-3. **Fact-level supersession** (``demote_partially_superseded``, D-076, Sol 56 #3, review 57): a
-   live ``supersedes`` link with ``props.scope = part`` says that ONE statement of the older item
+3. **Fact-level supersession** (``demote_partially_superseded``; D-076, D-087, reviews 56/57/60):
+   a live ``supersedes`` link with ``props.scope = part`` says that ONE statement of the older item
    (the link's quoted span) is outdated while its other statements stay valid, so the item is never
-   hidden. It is demoted below the item that replaced the statement ONLY when BOTH hold (D-087:
-   the read side must never be worse than the measured-neutral 6a96ba1 rule, so this rule can
-   only demote LESS than it): (i) the 6a96ba1 statement rule — the matched chunk contains the
-   quoted span and the chunk statement(s) sharing the most query terms overlap the span; (ii) the
-   review-57 clause rule — every query term found in the chunk lies INSIDE the span (a mixed or
-   same-sentence-but-other-clause match is not demoted). With no query term in the chunk at all
-   (a semantic match), only when the span is most of the chunk (as in 6a96ba1). Runs on the
-   fetched head only (after ``n_fetch``), so no hit leaves the fetched set. Several constraints
-   (chains A←B←C) form ONE stable topological order (smallest original rank first); an edge that
-   would close a cycle is ignored (edges taken in a deterministic order), so a cycle never pushes
-   its members below unrelated hits. A demoted hit's displayed score is capped at its
-   predecessor's (scores stay non-increasing). Without such links (every database before the
-   librarian applies one) the order is unchanged.
+   hidden. An ordering constraint "after the item that replaced the statement" exists ONLY when
+   (i) the 6a96ba1 statement rule holds (the matched chunk contains the span and its statement(s)
+   sharing the most query terms overlap it; no shared term at all: only if the span is most of the
+   chunk) AND (ii) every query term found in the chunk occurs inside the span and NOT outside it (a
+   term that also matches the valid part — "port" in "API uses port 8080 and backups use port
+   9090" — means no demotion). Constraints inside a cyclic component are all ignored (the original
+   interleaving stays). The hits are then placed so that every constraint holds and EVERY hit ranks
+   no worse than max(its baseline rank, its 6a96ba1 rank) (D-087: never worse than the
+   measured-neutral read side): each hit gets that deadline and Lawler's backward rule (place last,
+   among the hits whose constraints allow it, the one with the latest deadline; ties: the later
+   baseline rank) meets every deadline, because the 6a96ba1 order itself does. Runs on the fetched
+   head only (after ``n_fetch``). A demoted hit's displayed score is capped at its predecessor's.
+   Without such links (every database before the librarian applies one) the order is unchanged.
 """
 
 from __future__ import annotations
@@ -92,74 +92,152 @@ def _statement_rule(chunk_text: str, span: str, chunk: str, query_terms: set[str
     return all(span in st or st in span for score, st in scored if score == best and st)
 
 
-def matched_in_span(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
-    """Did the query match the OUTDATED span (``quote``) of this chunk, and nothing else of it?
-    Rule 3: the 6a96ba1 statement rule AND the review-57 clause rule, so it never demotes a hit
-    the 6a96ba1 rule would keep. ``query_terms``: the query's normalized terms (``extract_terms``)."""
+def _old_rule(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
+    """The complete 6a96ba1 predicate (measured neutral on the hold-out, D-087)."""
     span = _flat(quote)
     chunk = _flat(chunk_text)
     if len(span.split()) < 2 or span not in chunk:
         return False  # the matched chunk does not hold the outdated statement
-    if not _statement_rule(chunk_text, span, chunk, query_terms):
+    return _statement_rule(chunk_text, span, chunk, query_terms)
+
+
+def matched_in_span(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
+    """Did the query match the OUTDATED span (``quote``) of this chunk, and nothing else of it?
+    Rule 3 (i) AND (ii), so it never demotes a hit the 6a96ba1 rule would keep. ``query_terms``:
+    the query's normalized terms (``extract_terms``)."""
+    if not _old_rule(chunk_text, quote, query_terms):
         return False
-    span_terms = set(extract_terms(span))
-    rest_terms = set(extract_terms(chunk.replace(span, " | "))) - span_terms
-    inside = query_terms & span_terms
-    outside = query_terms & rest_terms
+    span = _flat(quote)
+    chunk = _flat(chunk_text)
+    inside = query_terms & set(extract_terms(span))
+    outside = query_terms & set(extract_terms(chunk.replace(span, " | ")))  # the rest of the chunk
     if not inside and not outside:  # a semantic match: the statement rule decided (span = most of it)
         return True
-    return bool(inside) and not outside  # all the evidence inside the span; mixed = ambiguous
+    return bool(inside) and not outside  # any evidence outside the span (mixed) = no demotion
 
 
-def _reaches(succ: dict[int, list[int]], start: int, goal: int) -> bool:
-    todo, seen = [start], {start}
-    while todo:
-        node = todo.pop()
-        if node == goal:
-            return True
-        for nxt in succ.get(node, []):
-            if nxt not in seen:
+def _edges(
+    hits: list[Any], links: list[tuple[int, int, str]], terms: set[str], rule: Any
+) -> list[tuple[int, int]]:
+    """``(before, after)`` hit-index pairs of the links whose partly outdated hit ``rule`` accepts
+    (links taken in sorted order, one per pair)."""
+    pos = {f.logical_id: i for i, f in enumerate(hits)}
+    out: list[tuple[int, int]] = []
+    for src, dst, quote in sorted(links):
+        if src not in pos or dst not in pos or src == dst or (pos[src], pos[dst]) in out:
+            continue
+        row = hits[pos[dst]].row
+        if row is not None and rule(row.text, quote, terms):
+            out.append((pos[src], pos[dst]))
+    return out
+
+
+def _kahn(n: int, edges: list[tuple[int, int]]) -> tuple[list[int], set[int]]:
+    """Smallest-original-rank-first topological order; nodes on or behind a cycle are left out
+    (returned as the second value)."""
+    succ: dict[int, list[int]] = {}
+    indeg = [0] * n
+    for u, v in edges:
+        succ.setdefault(u, []).append(v)
+        indeg[v] += 1
+    ready = [i for i in range(n) if indeg[i] == 0]
+    heapq.heapify(ready)
+    order: list[int] = []
+    while ready:
+        i = heapq.heappop(ready)
+        order.append(i)
+        for v in succ.get(i, []):
+            indeg[v] -= 1
+            if indeg[v] == 0:
+                heapq.heappush(ready, v)
+    return order, set(range(n)) - set(order)
+
+
+def order_6a96ba1(hits: list[Any], links: list[tuple[int, int, str]], terms: set[str]) -> list[int]:
+    """The hit order the 6a96ba1 read side produced (hit indexes): its predicate, smallest-rank
+    Kahn, the members of a cycle appended in their original order. The deadline source of rule 3."""
+    order, left = _kahn(len(hits), _edges(hits, links, terms, _old_rule))
+    return order + sorted(left)
+
+
+def _cyclic_components(n: int, edges: list[tuple[int, int]]) -> dict[int, int]:
+    """Node -> component id for the nodes of every strongly connected component with a cycle."""
+    succ: dict[int, list[int]] = {}
+    pred: dict[int, list[int]] = {}
+    for u, v in edges:
+        succ.setdefault(u, []).append(v)
+        pred.setdefault(v, []).append(u)
+    seen: set[int] = set()
+    finish: list[int] = []
+    for start in range(n):  # Kosaraju, iterative
+        if start in seen:
+            continue
+        stack = [(start, iter(succ.get(start, [])))]
+        seen.add(start)
+        while stack:
+            node, it = stack[-1]
+            nxt = next((x for x in it if x not in seen), None)
+            if nxt is None:
+                stack.pop()
+                finish.append(node)
+            else:
                 seen.add(nxt)
-                todo.append(nxt)
-    return False
+                stack.append((nxt, iter(succ.get(nxt, []))))
+    comp: dict[int, int] = {}
+    assigned: set[int] = set()
+    for root in reversed(finish):
+        if root in assigned:
+            continue
+        members, todo = [root], [root]
+        assigned.add(root)
+        while todo:
+            for x in pred.get(todo.pop(), []):
+                if x not in assigned:
+                    assigned.add(x)
+                    members.append(x)
+                    todo.append(x)
+        if len(members) > 1 or root in succ.get(root, []):
+            comp.update(dict.fromkeys(members, root))
+    return comp
 
 
 def demote_partially_superseded(
     hits: list[Any], links: list[tuple[int, int, str]], query_terms: list[str] | set[str]
 ) -> list[Any]:
     """Rule 3 on the fetched head: ``links`` = ``(superseding, partly superseded, quoted span)``
-    logical-id pairs of live scope=part ``supersedes`` links."""
-    pos = {f.logical_id: i for i, f in enumerate(hits)}
+    logical-id pairs of live scope=part ``supersedes`` links. See the module doc."""
     terms = set(query_terms)
-    succ: dict[int, list[int]] = {}
-    indeg = dict.fromkeys(pos, 0)
-    for src, dst, quote in sorted(links):
-        if src not in pos or dst not in pos or src == dst or dst in succ.get(src, []):
-            continue
-        row = hits[pos[dst]].row
-        if row is None or not matched_in_span(row.text, quote, terms):
-            continue
-        if _reaches(succ, dst, src):
-            continue  # this edge would close a cycle: ignored (the earlier edges stand)
-        succ.setdefault(src, []).append(dst)
-        indeg[dst] += 1
-    if not succ:
+    n = len(hits)
+    edges = _edges(hits, links, terms, matched_in_span)
+    comp = _cyclic_components(n, edges)
+    edges = [(u, v) for u, v in edges if not (u in comp and comp.get(v) == comp[u])]  # cycles: ignored
+    if not edges:
         return list(hits)
-    ready = [pos[lid] for lid, n in indeg.items() if n == 0]
-    heapq.heapify(ready)
-    order: list[int] = []
-    while ready:
-        i = heapq.heappop(ready)
-        order.append(i)
-        for dst in succ.get(hits[i].logical_id, []):
-            indeg[dst] -= 1
-            if indeg[dst] == 0:
-                heapq.heappush(ready, pos[dst])
-    out = [hits[i] for i in order]  # a DAG: every hit is emitted
+    old = order_6a96ba1(hits, links, terms)
+    old_rank = {i: r for r, i in enumerate(old)}
+    _order, old_left = _kahn(n, _edges(hits, links, terms, _old_rule))
+    edges = [(u, v) for u, v in edges if not (u in old_left and v in old_left)]  # keeps 6a96ba1 feasible
+    if not edges:
+        return list(hits)
+    deadline = [max(i, old_rank[i]) for i in range(n)]
+    succ_left = [0] * n  # constraints "i before v" whose v is not placed yet
+    preds: dict[int, list[int]] = {}
+    for u, v in edges:
+        succ_left[u] += 1
+        preds.setdefault(v, []).append(u)
+    remaining = set(range(n))
+    backwards: list[int] = []
+    while remaining:  # Lawler: place last the free hit with the latest deadline (ties: later rank)
+        i = max((j for j in remaining if succ_left[j] == 0), key=lambda j: (deadline[j], j))
+        backwards.append(i)
+        remaining.discard(i)
+        for u in preds.get(i, []):
+            succ_left[u] -= 1
+    out = [hits[i] for i in reversed(backwards)]
     for k in range(1, len(out)):
         if out[k].score > out[k - 1].score:
             out[k].score = out[k - 1].score
     return out
 
 
-__all__ = ["demote_partially_superseded", "matched_in_span", "newer_first_on_ties"]
+__all__ = ["demote_partially_superseded", "matched_in_span", "newer_first_on_ties", "order_6a96ba1"]

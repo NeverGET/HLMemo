@@ -160,7 +160,7 @@ async def test_partial_supersession_links_the_fact_never_closes_the_item(
         ttl = await query(
             conn,
             world.ctx_a,
-            {"project": MAIN, "query": "API cache TTL seconds", "token_budget": 3000},
+            {"project": MAIN, "query": "TTL seconds", "token_budget": 3000},
             deps=read_deps,
         )
         redis = await query(conn, world.ctx_a, redis_q, deps=read_deps)
