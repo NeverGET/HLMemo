@@ -25,6 +25,8 @@ Owner framing: the librarian's gradual supervised learning (observe → apply) h
 - 02:06 W2f MERGED (f239fcc, D-070) after Sol 40 fixes; main unit 424 passed.
 - 02:5x W2d done (Sol 41 → fixing; D-071 risk fallback = retrieval-only). W1.5 done (G-I4 0.794 open, D-072) → Sol 42 reviewing. B (W2b/W2c) still running.
 - W1.5 MERGED (0c0c013, D-073), main unit 447 passed, head 0007_import.
+- W2d MERGED locally (efc2f4e + post-merge fix 4a0b7e2; conflicts in write_service/mcp_server/tools resolved; librarian_priority unified). Sol 43 on W1.5 delta = FIX-NEEDED (forged origin, dup keys in 0007, close links, section remap, mass-close) → A fixing on branch w15-fix2.
+- R2 integration TODO: mount llm.env into the api service too (risk_judge and W2e synthesis run in the api; today only the librarian gets it); remove the HLM_LIBRARIAN_ENABLED pin; wire W2b enqueue to batch.librarian_priority (2 lessons, 6 imports, else 3) and record the job in resolved.jobs; relink 0008 → 0007; HLM_PROFILE=openrouter-gpt6-luna in prod llm.env.
 - Next: Sol review + neutral verify per branch (max 2 fix rounds) → wave 2 W2e → integrate (0008→0007 relink) → full gates + G-L3 on the VM with the librarian ON → R2 rehearsal on the VM → R2 prod (llm.env, observer) → HLMemo test import → e2e (corpus B dev) → docs/status/E2E-PROD-REPORT.md.
 
 ## GOAL (D-051/D-058) — active
