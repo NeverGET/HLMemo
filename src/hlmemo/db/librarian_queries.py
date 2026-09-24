@@ -282,6 +282,23 @@ async def readable_projects(
     return True, str(device_class), [int(r[0]) for r in await cur.fetchall()]
 
 
+#: ``projects.policy`` key isolating a disposable/test project from cross-project librarian work
+CROSS_PROJECT_POLICY = "librarian_cross_project"
+CROSS_PROJECT_VALUES = ("include", "exclude")
+
+
+async def cross_project_excluded(conn: AsyncConnection, project_ids: list[int]) -> set[int]:
+    """The projects among ``project_ids`` whose ``policy.librarian_cross_project`` is ``exclude``
+    (e2e 2026-09-24 #2; unset or ``include`` = the default, cross-project work allowed)."""
+    if not project_ids:
+        return set()
+    cur = await conn.execute(
+        "SELECT project_id FROM projects WHERE project_id = ANY(%s) AND policy->>%s = 'exclude'",
+        (sorted(set(project_ids)), CROSS_PROJECT_POLICY),
+    )
+    return {int(r[0]) for r in await cur.fetchall()}
+
+
 async def superseded_among(
     conn: AsyncConnection,
     logical_ids: list[int],
@@ -325,10 +342,13 @@ async def project_slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[i
 
 
 __all__ = [
+    "CROSS_PROJECT_POLICY",
+    "CROSS_PROJECT_VALUES",
     "PREPROC_VERSION",
     "CandRow",
     "SubjectRow",
     "cosines",
+    "cross_project_excluded",
     "embedding_state",
     "lexical_list",
     "load_candidates",

@@ -8,6 +8,11 @@ Per subject V (a new version under review), with the triggering device's CURRENT
 * cross-project list: current ``lesson``/``experience``/``fact`` items NOT in V's home project,
   from projects the device can read, top ``CROSS_TOP`` = 5.
 
+**Isolation** (``isolated_scope``; e2e 2026-09-24 #2): a project whose
+``policy.librarian_cross_project`` is ``exclude`` (a disposable/test project) is never a candidate
+source for another project's subject, and its own subjects draw candidates from itself only, so
+no proposal (link, contradiction, close, ``widen_scope``) ever pairs it with another project.
+
 Each list fuses a vector list (V's stored chunk embeddings, max cosine per candidate version) and
 a lexical list (``tsquery`` OR of V's terms) with RRF (``K_RRF`` = 60, equal weights, ties by
 version id). **Drop rule** (roadmap W2b): a pair whose cosine is below ``COS_MIN`` = 0.80 AND that
@@ -41,6 +46,14 @@ COMPATIBLE: dict[str, tuple[str, ...]] = {
 }
 #: subject kinds that get placement only (no relation check)
 PLACEMENT_ONLY = frozenset({"project_card", "session_note", "doc_chunk"})
+
+
+def isolated_scope(home: int, allowed: Iterable[int], excluded: set[int]) -> list[int]:
+    """The projects a subject (or a risk_check) of ``home`` may draw candidates from: an excluded
+    home keeps only itself; any other home loses every excluded project (both directions)."""
+    if home in excluded:
+        return [p for p in allowed if p == home]
+    return [p for p in allowed if p not in excluded]
 
 
 def subject_terms(title: str, body: str, limit: int = 64) -> list[str]:
@@ -117,6 +130,7 @@ __all__ = [
     "Scored",
     "content_terms",
     "fuse",
+    "isolated_scope",
     "mark_lexical_hits",
     "select",
     "subject_terms",

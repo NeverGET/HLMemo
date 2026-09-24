@@ -121,7 +121,9 @@ async def test_ops_status_reports_the_librarian_heartbeat_fields(connect, tmp_pa
         st = await ops.status(conn)
         lib = await ops.librarian_status(conn, settings)
         assert set(st["librarian"]) >= fields | {"reserved_usd", "role", "breaker_state", "breaker_source"}
-        assert (lib["role"], lib["breaker_state"], lib["breaker_source"]) == ("observer", "idle", "ledger")
+        # no call in the window: closed, as the librarian's heartbeat says (e2e #10: was "idle")
+        assert (lib["role"], lib["breaker_state"], lib["breaker_source"]) == ("observer", "closed", "ledger")
+        assert lib["llm_calls_15m"] == 0
         await conn.execute(
             "INSERT INTO llm_calls (call_id, task, profile, model_id, prompt_version, schema_version, mode,"
             " outcome) VALUES (gen_random_uuid(), 'pair_check', 'p', 'm', 'v1', 'v1', 'live', 'breaker_open')"
@@ -130,7 +132,7 @@ async def test_ops_status_reports_the_librarian_heartbeat_fields(connect, tmp_pa
             "INSERT INTO jobs (kind, dedupe_key, payload) VALUES ('librarian_write', 'lw:1', '{}')"
         )
         lib = await ops.librarian_status(conn, settings)
-        assert lib["breaker_state"] == "open" and lib["ready"] == 1
+        assert lib["breaker_state"] == "open" and lib["ready"] == 1 and lib["llm_calls_15m"] == 1
         hb = tmp_path / "hb.json"
         hb.write_text(json.dumps({"ts": time.time(), "breaker_state": "degraded", "enabled": True}))
         lib = await ops.librarian_status(
