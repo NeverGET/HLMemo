@@ -148,6 +148,10 @@ async def test_partial_supersession_links_the_fact_never_closes_the_item(
         res["librarian"]["notices"][0]["text"]
         == f"contradiction: {n} vs {o}; proposed: {n} supersedes part of {o}"
     )
+    redis_q = {"project": MAIN, "query": "cache stored in Redis on the api host", "token_budget": 3000}
+    async with await connect() as conn:  # D-087: the ranking BEFORE the partial link exists
+        redis_before = await query(conn, world.ctx_a, redis_q, deps=read_deps)
+        await conn.commit()
     await _approve_all(db_dsn, connect, world)
     async with await connect() as conn:
         cur = await conn.execute("SELECT rel, props->>'scope' FROM links ORDER BY link_id")
@@ -159,19 +163,16 @@ async def test_partial_supersession_links_the_fact_never_closes_the_item(
             {"project": MAIN, "query": "API cache TTL seconds", "token_budget": 3000},
             deps=read_deps,
         )
-        redis = await query(
-            conn,
-            world.ctx_a,
-            {"project": MAIN, "query": "cache stored in Redis on the api host", "token_budget": 3000},
-            deps=read_deps,
-        )
+        redis = await query(conn, world.ctx_a, redis_q, deps=read_deps)
         await conn.commit()
     titles = [h["title"] for h in ttl["hits"]]
     # the query matched the OUTDATED statement: the item stays visible, ranked after its superseder
     assert TTL[0] in titles and MULTI[0] in titles and titles.index(TTL[0]) < titles.index(MULTI[0])
     titles = [h["title"] for h in redis["hits"]]
-    # the query matched a still-valid statement of the same item: it is not demoted
+    # D-087 regression: the query matched a still-valid statement of the multi-fact item, which
+    # keeps EXACTLY its rank (and the whole order) once the partial link is applied
     assert titles[0] == MULTI[0]
+    assert [h["title"] for h in redis_before["hits"]] == titles
     await _replay_identical(connect)
 
 
