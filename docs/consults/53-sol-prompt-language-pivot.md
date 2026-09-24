@@ -1,0 +1,8 @@
+You are the co-architect on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Read docs/status/E2E-PROD-REPORT.md (esp. §5 retrieval: Turkish hit@5 .278 in prod; one Turkish report floods the top-5), DECISIONS D-054 (the TR↔EN finding: translating the missed TR questions fixed 7→14 of 24), D-055, D-062, D-063, D-067, D-081 (PROPOSED: the English retrieval pivot with the original preserved), and the code in src/hlmemo/core/{retrieval.py,read_service.py,normalize.py,term_stats.py,embedder.py}, src/hlmemo/librarian/**, alembic/versions/*.
+The owner's original idea: store every memory in English (translated at write) and always query in English. The orchestrator's variant (D-081): keep the original authoritative; add async English index renditions for non-English items; rewrite non-English queries server-side (plus instruct agents to query in English); cap per-source top-5 slots.
+Give a DESIGN REVIEW (≤ 700 words):
+## Verdict on D-081 vs the owner's pure-English idea (which one, and why)
+## Concrete design: the data model (derived chunks? a column? a separate table?), how renditions enter lexical/trigram/vector/DF/title indexes without double-counting, versioning when the source is revised, previews/drilldown/raw semantics, replay determinism, privacy (renditions of device-scoped items), cost control, and the query-side language detection + rewrite (where, timeout, fallback, caching)
+## Risks and how to gate them (translation corruption, identifier drift, latency, G2 budget, G3/G4)
+## The minimal first slice to ship and measure on the hold-out, and the metric thresholds
+## Anything we are missing (e.g. is the e5-small embedder the real bottleneck; would a multilingual reranker be better)
