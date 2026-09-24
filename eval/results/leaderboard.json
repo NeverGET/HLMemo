@@ -356,9 +356,286 @@
      "confirmation": false,
      "complete": true,
      "source": "cand-w2b-librarian-v2-approveall-rounds2.json"
+    },
+    {
+     "id": 7,
+     "corpus": "corpus_a",
+     "label": "L@d3ce0ac pivot flags off (prod-rule import, source populated)",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {},
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)"
+     },
+     "config_hash": "4f1c79a64af4",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l1_key": 0.533,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "tokens_query_mean": 2950.3,
+      "query_p50_ms": 73.7,
+      "query_p95_ms": 95.9,
+      "hit@5_tr": 0.733,
+      "hit@5_en": 0.851
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c1-base.json"
+    },
+    {
+     "id": 8,
+     "corpus": "corpus_a",
+     "label": "L@d3ce0ac per-source top-5 cap (HLM_RETRIEVAL_SOURCE_CAP)",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {
+       "HLM_RETRIEVAL_SOURCE_CAP": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)"
+     },
+     "config_hash": "a2bc92b87343",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l1_key": 0.533,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "tokens_query_mean": 2950.3,
+      "query_p50_ms": 72.0,
+      "query_p95_ms": 92.2,
+      "hit@5_tr": 0.733,
+      "hit@5_en": 0.851
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c2-cap.json"
+    },
+    {
+     "id": 9,
+     "corpus": "corpus_a",
+     "label": "L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE)",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {
+       "HLM_QUERY_REWRITE": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)",
+      "rewrite_profile": "openrouter-gpt6-luna",
+      "rewrite_fallback": "openrouter",
+      "prewarm": true
+     },
+     "config_hash": "016c33e768f0",
+     "prompt_versions": {
+      "query_rewrite": "v1"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 3.94e-05,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.859,
+     "secondary": {
+      "mrr": 0.68,
+      "l2_key": 0.87,
+      "l1_key": 0.554,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_key": 0.6,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.813,
+      "tokens_query_mean": 2949.7,
+      "query_p50_ms": 84.4,
+      "query_p95_ms": 126.5,
+      "hit@5_tr": 0.867,
+      "hit@5_en": 0.851,
+      "prewarm": {
+       "states": {
+        "None": 51,
+        "applied": 48,
+        "unavailable": 1
+       },
+       "wait_seconds": 60.8,
+       "cold_query_ms_p50": 70.7,
+       "cold_query_ms_p95": 93.4
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c3-rewrite.json"
+    },
+    {
+     "id": 10,
+     "corpus": "corpus_a",
+     "label": "L@d3ce0ac cap + query rewrite, prewarmed",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {
+       "HLM_RETRIEVAL_SOURCE_CAP": true,
+       "HLM_QUERY_REWRITE": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)",
+      "rewrite_profile": "openrouter-gpt6-luna",
+      "rewrite_fallback": "openrouter",
+      "prewarm": true
+     },
+     "config_hash": "d2bdff50cc53",
+     "prompt_versions": {
+      "query_rewrite": "v1"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 3.78e-05,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.859,
+     "secondary": {
+      "mrr": 0.694,
+      "l2_key": 0.87,
+      "l1_key": 0.554,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_key": 0.6,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.819,
+      "tokens_query_mean": 2948.4,
+      "query_p50_ms": 86.7,
+      "query_p95_ms": 129.9,
+      "hit@5_tr": 0.867,
+      "hit@5_en": 0.851,
+      "prewarm": {
+       "states": {
+        "None": 51,
+        "applied": 48,
+        "unavailable": 1
+       },
+       "wait_seconds": 57.7,
+       "cold_query_ms_p50": 73.6,
+       "cold_query_ms_p95": 92.4
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c4-combined.json"
+    },
+    {
+     "id": 11,
+     "corpus": "corpus_a",
+     "label": "L@d3ce0ac cap + query rewrite + renditions (0% rendition coverage: all rejected/failed)",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {
+       "HLM_RETRIEVAL_SOURCE_CAP": true,
+       "HLM_QUERY_REWRITE": true,
+       "HLM_RENDITIONS": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)",
+      "rewrite_profile": "openrouter-gpt6-luna",
+      "rewrite_fallback": "openrouter",
+      "prewarm": true
+     },
+     "config_hash": "cf240adadd26",
+     "prompt_versions": {
+      "query_rewrite": "v1",
+      "translate": "v1"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0005228,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.859,
+     "secondary": {
+      "mrr": 0.695,
+      "l2_key": 0.87,
+      "l1_key": 0.554,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_key": 0.6,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.817,
+      "tokens_query_mean": 2948.2,
+      "query_p50_ms": 87.6,
+      "query_p95_ms": 125.0,
+      "hit@5_tr": 0.867,
+      "hit@5_en": 0.851,
+      "prewarm": {
+       "states": {
+        "None": 51,
+        "applied": 48,
+        "unavailable": 1
+       },
+       "wait_seconds": 59.3,
+       "cold_query_ms_p50": 75.1,
+       "cold_query_ms_p95": 100.7
+      },
+      "rendition_coverage": 0.0,
+      "renditions_needed_accepted": [
+       9,
+       0
+      ]
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c5-renditions.json"
     }
    ],
-   "best": 1
+   "best": 9
   },
   "corpus_b_dev": {
    "primary": "evidence Recall@5",
@@ -659,9 +936,286 @@
      "confirmation": false,
      "complete": true,
      "source": "cand-w2b-librarian-v2-approveall-rounds2.json"
+    },
+    {
+     "id": 7,
+     "corpus": "corpus_b_dev",
+     "label": "L@d3ce0ac pivot flags off (prod-rule import, source populated)",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {},
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)"
+     },
+     "config_hash": "4f1c79a64af4",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_evidence_r5": 0.219,
+      "temporal_l2_stale_first": 0.375,
+      "negative_auc": 0.76,
+      "tokens_query_mean": 2942.5,
+      "query_p50_ms": 71.5,
+      "query_p95_ms": 111.6,
+      "hit@5_tr": 0.472,
+      "hit@5_en": 0.778
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c1-base.json"
+    },
+    {
+     "id": 8,
+     "corpus": "corpus_b_dev",
+     "label": "L@d3ce0ac per-source top-5 cap (HLM_RETRIEVAL_SOURCE_CAP)",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {
+       "HLM_RETRIEVAL_SOURCE_CAP": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)"
+     },
+     "config_hash": "a2bc92b87343",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_evidence_r5": 0.219,
+      "temporal_l2_stale_first": 0.375,
+      "negative_auc": 0.76,
+      "tokens_query_mean": 2942.5,
+      "query_p50_ms": 71.3,
+      "query_p95_ms": 111.8,
+      "hit@5_tr": 0.472,
+      "hit@5_en": 0.778
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c2-cap.json"
+    },
+    {
+     "id": 9,
+     "corpus": "corpus_b_dev",
+     "label": "L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE)",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {
+       "HLM_QUERY_REWRITE": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)",
+      "rewrite_profile": "openrouter-gpt6-luna",
+      "rewrite_fallback": "openrouter",
+      "prewarm": true
+     },
+     "config_hash": "016c33e768f0",
+     "prompt_versions": {
+      "query_rewrite": "v1"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 3.94e-05,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.556,
+     "secondary": {
+      "hit@5": 0.75,
+      "mrr": 0.506,
+      "l2_key": 0.667,
+      "stale_claim_l1_top3": 0.188,
+      "temporal_evidence_r5": 0.25,
+      "temporal_l2_stale_first": 0.375,
+      "negative_auc": 0.772,
+      "tokens_query_mean": 2948.7,
+      "query_p50_ms": 79.8,
+      "query_p95_ms": 120.6,
+      "hit@5_tr": 0.722,
+      "hit@5_en": 0.778,
+      "prewarm": {
+       "states": {
+        "None": 41,
+        "applied": 38,
+        "unavailable": 1
+       },
+       "wait_seconds": 45.7,
+       "cold_query_ms_p50": 69.1,
+       "cold_query_ms_p95": 114.0
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c3-rewrite.json"
+    },
+    {
+     "id": 10,
+     "corpus": "corpus_b_dev",
+     "label": "L@d3ce0ac cap + query rewrite, prewarmed",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {
+       "HLM_RETRIEVAL_SOURCE_CAP": true,
+       "HLM_QUERY_REWRITE": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)",
+      "rewrite_profile": "openrouter-gpt6-luna",
+      "rewrite_fallback": "openrouter",
+      "prewarm": true
+     },
+     "config_hash": "d2bdff50cc53",
+     "prompt_versions": {
+      "query_rewrite": "v1"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 3.78e-05,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.542,
+     "secondary": {
+      "hit@5": 0.75,
+      "mrr": 0.5,
+      "l2_key": 0.653,
+      "stale_claim_l1_top3": 0.188,
+      "temporal_evidence_r5": 0.25,
+      "temporal_l2_stale_first": 0.375,
+      "negative_auc": 0.773,
+      "tokens_query_mean": 2949.0,
+      "query_p50_ms": 81.1,
+      "query_p95_ms": 112.3,
+      "hit@5_tr": 0.722,
+      "hit@5_en": 0.778,
+      "prewarm": {
+       "states": {
+        "None": 41,
+        "applied": 38,
+        "unavailable": 1
+       },
+       "wait_seconds": 48.2,
+       "cold_query_ms_p50": 68.8,
+       "cold_query_ms_p95": 111.9
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c4-combined.json"
+    },
+    {
+     "id": 11,
+     "corpus": "corpus_b_dev",
+     "label": "L@d3ce0ac cap + query rewrite + renditions (0% rendition coverage: all rejected/failed)",
+     "date": "2026-09-24",
+     "commit": "d3ce0ac",
+     "config": {
+      "system": "D-081/D-082 English retrieval pivot, slices 1+2",
+      "flags": {
+       "HLM_RETRIEVAL_SOURCE_CAP": true,
+       "HLM_QUERY_REWRITE": true,
+       "HLM_RENDITIONS": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "eval/realdata/import_corpus.py --temporal-rule prod (source populated on non-git items)",
+      "db": "fresh disposable DBs hlm_eval_l1/l2 at 0009 (pinned git-archive tree of d3ce0ac)",
+      "rewrite_profile": "openrouter-gpt6-luna",
+      "rewrite_fallback": "openrouter",
+      "prewarm": true
+     },
+     "config_hash": "cf240adadd26",
+     "prompt_versions": {
+      "query_rewrite": "v1",
+      "translate": "v1"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0005228,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.549,
+     "secondary": {
+      "hit@5": 0.764,
+      "mrr": 0.502,
+      "l2_key": 0.653,
+      "stale_claim_l1_top3": 0.188,
+      "temporal_evidence_r5": 0.281,
+      "temporal_l2_stale_first": 0.438,
+      "negative_auc": 0.772,
+      "tokens_query_mean": 2949.5,
+      "query_p50_ms": 84.8,
+      "query_p95_ms": 122.6,
+      "hit@5_tr": 0.75,
+      "hit@5_en": 0.778,
+      "prewarm": {
+       "states": {
+        "None": 41,
+        "applied": 38,
+        "unavailable": 1
+       },
+       "wait_seconds": 47.2,
+       "cold_query_ms_p50": 75.5,
+       "cold_query_ms_p95": 120.8
+      },
+      "rendition_coverage": 0.0,
+      "renditions_needed_accepted": [
+       14,
+       0
+      ]
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-pivot-l-c5-renditions.json"
     }
    ],
-   "best": 1
+   "best": 9
   },
   "corpus_b_sealed": {
    "primary": "evidence Recall@5",
