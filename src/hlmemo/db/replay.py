@@ -1,7 +1,8 @@
 """Rebuild the projections from ``events`` (PHASE0-SPEC §1.1 *Replay*, G6).
 
 Truncates ``memory_versions``, ``chunks``, ``embeddings``, ``links``, ``jobs`` (``events``,
-``devices``, ``projects``, ``device_project_grants`` are kept) and re-applies every event in
+``devices``, ``projects``, ``device_project_grants`` are kept; the event-set project policy keys,
+``librarian_queries.REPLAYED_POLICY_KEYS``, are reset and rebuilt) and re-applies every event in
 ``event_id`` order using **only** ``payload.resolved`` — recorded ids, ``recorded_at`` = T,
 chunk offsets, resolved link targets — plus validated items in ``payload.resolved.write.items``
 (falling back to ``payload.request.items`` for older write events), with bodies sliced by the
@@ -68,6 +69,12 @@ async def rebuild_projections(conn: AsyncConnection) -> RebuildStats:
     stats = RebuildStats()
     async with conn.transaction():
         await conn.execute(f"TRUNCATE TABLE {', '.join(PROJECTION_TABLES)}")
+        from hlmemo.db.librarian_queries import REPLAYED_POLICY_KEYS
+
+        await conn.execute(
+            "UPDATE projects SET policy = policy - %s::text[] WHERE policy ?| %s::text[]",
+            (list(REPLAYED_POLICY_KEYS), list(REPLAYED_POLICY_KEYS)),
+        )
         cur = await conn.execute(
             "SELECT event_id, project_id, kind, payload, projection_version FROM events ORDER BY event_id"
         )
@@ -86,7 +93,7 @@ async def rebuild_projections(conn: AsyncConnection) -> RebuildStats:
                 # write-shaped batches (W1.5 / W3d record the write resolution)
                 await _replay_write(conn, stats, event_id, project_id, payload)
             elif kind in SYSTEM_EVENT_KINDS:
-                await _replay_system(conn, stats, event_id, payload)
+                await _replay_system(conn, stats, event_id, payload, project_id)
             # device/project/grant/device_minted events have no projection rows
         await _reset_sequences(conn)
     return stats
@@ -261,8 +268,33 @@ SYSTEM_EVENT_KINDS = frozenset(
 )
 
 
+def project_policy_change(payload: dict[str, Any], project_id: int | None) -> dict[str, Any] | None:
+    """The policy change a ``librarian`` event records, in either shape (Sol 55): the current
+    ``resolved.project_policy {project_id, key, value}``, or the LEGACY shape written before it
+    (4169ea6: only ``request {op: set_project_policy, key, value}`` on the event's project). Only
+    the replayed keys and their allowed values are ever applied (a malformed row changes nothing)."""
+    from hlmemo.db.librarian_queries import CROSS_PROJECT_VALUES, REPLAYED_POLICY_KEYS
+
+    res = payload.get("resolved") or {}
+    change = res.get("project_policy")
+    if change is None:
+        req = payload.get("request") or {}
+        if req.get("op") != "set_project_policy" or project_id is None:
+            return None
+        change = {"project_id": project_id, "key": req.get("key"), "value": req.get("value")}
+    if not isinstance(change, dict) or change.get("key") not in REPLAYED_POLICY_KEYS:
+        return None
+    if change.get("value") not in CROSS_PROJECT_VALUES or change.get("project_id") is None:
+        return None
+    return change
+
+
 async def _replay_system(
-    conn: AsyncConnection, stats: RebuildStats, event_id: int, payload: dict[str, Any]
+    conn: AsyncConnection,
+    stats: RebuildStats,
+    event_id: int,
+    payload: dict[str, Any],
+    project_id: int | None = None,
 ) -> None:
     """System-actor events: ``resolved.mutations`` (ids recorded), ``resolved.questions`` (question
         rows) and ``resolved.question_status`` (decisions, supersession), ``resolved.jobs`` (full
@@ -290,6 +322,13 @@ async def _replay_system(
     await apply_batch_changes(conn, list(res.get("batches") or []), event_id, T)
     await insert_questions(conn, list(res.get("questions") or []), event_id, T)
     await set_question_status(conn, list(res.get("question_status") or []), T)
+    policy = project_policy_change(payload, project_id)
+    if policy is not None:  # ops project policy set (Sol 54 #5): the key/value, in event order
+        await conn.execute(
+            "UPDATE projects SET policy = policy || jsonb_build_object(%s::text, %s::text)"
+            " WHERE project_id = %s",
+            (policy["key"], policy["value"], int(policy["project_id"])),
+        )
     jobs = list(res.get("jobs") or [])
     stats.jobs += await insert_recorded_jobs(conn, jobs, event_id, T)
     if res.get("deferred"):  # a handed-back / backed-off / failed job (Sol 38 #6)

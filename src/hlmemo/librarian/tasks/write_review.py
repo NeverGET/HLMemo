@@ -12,7 +12,9 @@ enqueue). Plan (reads in short committed transactions; provider calls outside an
 3. **Candidates** (``librarian/candidates.py``): the triggering device's CURRENT read grants ∩ the
    enqueue-time ``question`` capability, its visible scopes, never ``device:*``: same-project
    top-8 of compatible kinds + cross-project top-5 lesson/experience/fact, after the
-   cosine/lexical drop rule. The candidate set is recorded in the audit payload.
+   cosine/lexical drop rule; a project with ``policy.librarian_cross_project = exclude`` is
+   isolated in both directions (``candidates.isolated_scope``). The candidate set is recorded in
+   the audit payload.
 4. **Placement** (``place/v1``, one call for all subjects): importance / stability for the fields
    the client left unset, a topic hint, ≤ 5 tags → ``version_signals`` (``signal_upsert``).
    Session notes and project cards get placement only; a document chunk gets the relation review
@@ -278,7 +280,12 @@ class WriteReview:
                 await conn.commit()
                 return Plan(OP, "authority_lost", caps, request_extra=extra)
             scopes = ["all", f"class:{device_class}"]
-            pairs, cand_audit, dropped = await self._candidates(conn, full, allowed, scopes)
+            excluded = await lq.cross_project_excluded(
+                conn, [*allowed, *(p for s in full for p in s.project_ids)]
+            )
+            if excluded:
+                extra["cross_project_excluded"] = sorted(excluded)
+            pairs, cand_audit, dropped = await self._candidates(conn, full, allowed, scopes, excluded)
             rules = await load_rules(
                 conn,
                 max_rules=w.settings.librarian_memory_rules,
@@ -335,7 +342,12 @@ class WriteReview:
 
     # ------------------------------------------------------------------ candidates
     async def _candidates(
-        self, conn: Any, full: list[lq.SubjectRow], allowed: list[int], scopes: list[str]
+        self,
+        conn: Any,
+        full: list[lq.SubjectRow],
+        allowed: list[int],
+        scopes: list[str],
+        excluded: set[int] | None = None,
     ) -> tuple[list[_Pair], list[dict[str, Any]], int]:
         pairs: list[_Pair] = []
         audit: list[dict[str, Any]] = []
@@ -361,7 +373,7 @@ class WriteReview:
                 args = {
                     "cross": cross,
                     "home": s.project_id,
-                    "allowed": allowed,
+                    "allowed": cands.isolated_scope(s.project_ids, allowed, excluded or set()),
                     "scopes": scopes,
                     "kinds": list(kinds),
                     "self_lid": s.logical_id,

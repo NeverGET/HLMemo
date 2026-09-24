@@ -20,6 +20,14 @@ Items this source imported earlier under the run's paths that are no longer prod
 :func:`remap` pairs them with ``new`` records by body similarity (a renamed heading or a moved file
 keeps its logical item: one revision that also moves the source key, Sol 42 #6); the rest are closed
 (``close``: validity ends now) unless their file was skipped for a read reason (kept, reported).
+A file's bare item whose file is still imported but now ONLY as sections (a lesson file split into
+one lesson per rule, ``importers.lessons``) is ``replaced_by_split``: an intended replacement, not
+a vanished source, so it is closed in the same import outside the mass-close guard and never
+re-mapped (Sol 54 #3) — but only when EVERY section of that file is admitted: a rejected section
+(future evidence date, a refused export record) is no replacement, so the bare item stays open and
+the report says why (``replacement-incomplete``); the runner closes it only after verifying that
+every replacement section is actually stored (Sol 55). Lessons are re-mapped on their rule text
+(the shared ``## Context`` is cut), so rules of one file that share a context never look alike.
 
 ``request_id = uuid5(NS_IMPORT, project ‖ source_key ‖ sha256 ‖ expected_version_id ‖ action)``:
 re-sending the same step is a replay, and an A→B→A cycle never reuses an id (Sol 42 #4).
@@ -75,6 +83,8 @@ class Plan:
     ambiguous: list[dict[str, Any]] = field(default_factory=list)  # {from, candidates}: no re-map
     rejected: list[Reject] = field(default_factory=list)
     in_scope: int = 0  # open items of this source under the run's paths (the mass-close base)
+    replaced: list[dict[str, Any]] = field(default_factory=list)  # {key, by}: replaced_by_split
+    replaced_items: list[dict[str, Any]] = field(default_factory=list)  # their manifest items
 
 
 def request_id(project: str, key: str, sha: str, expected: int | None = None, action: str = "write") -> str:
@@ -185,6 +195,16 @@ def classify(
 
     # Items this source imported earlier under the run's paths that the run no longer produces
     produced = {r.key for r in parsed.records} | {r.key for r in parsed.rejected}
+    sections_of: dict[str, list[str]] = {}  # bare file key -> the ADMITTED section keys for it
+    for key in sorted(e.record.key for e in plan.entries):
+        base, sep, _anchor = key.partition("#")
+        if sep:
+            sections_of.setdefault(base, []).append(key)
+    refused: dict[str, list[str]] = {}  # bare file key -> its sections that will NOT be written
+    for key in sorted({r.key for r in (*parsed.rejected, *plan.rejected)}):
+        base, sep, _anchor = key.partition("#")
+        if sep:
+            refused.setdefault(base, []).append(key)
     keep_files = {s.path: s.reason for s in parsed.skipped if s.reason.split(":", 1)[0] in KEEP_REASONS}
     for k, it in sorted(by_key.items()):
         src = it.get("source") or {}
@@ -195,6 +215,13 @@ def classify(
             continue
         plan.in_scope += 1
         if k in produced:
+            continue
+        if "#" not in path and k in refused:  # a section is refused: no full replacement (Sol 55)
+            plan.kept.append({"key": k, "reason": "replacement-incomplete:" + ",".join(refused[k])})
+            continue
+        if "#" not in path and k in sections_of:  # the file now yields sections only (Sol 54 #3)
+            plan.replaced.append({"key": k, "by": sections_of[k]})
+            plan.replaced_items.append(it)
             continue
         reason = keep_files.get(path.split("#", 1)[0])
         if reason is not None:
@@ -217,7 +244,11 @@ def _classify_one(
         target = by_key.get(rec.key)
         if target is None:
             return Entry(rec, "new")
-        same = (target.get("source") or {}).get("sha256") == rec.sha256
+        # a kind change alone is a revision too (e2e 2026-09-24 #1: feedback files imported as facts
+        # become lessons on the next run)
+        same = (target.get("source") or {}).get("sha256") == rec.sha256 and target.get(
+            "kind", rec.kind_guess
+        ) == rec.kind_guess
         return Entry(
             rec,
             "unchanged" if same else "changed",
@@ -268,6 +299,15 @@ def _tokens(body: str) -> list[str]:
     return _WORD.findall(_HEADING_LINE.sub("", body, count=1).casefold())
 
 
+_LESSON_CONTEXT = re.compile(r"\n## Context\n.*\Z", re.S)
+
+
+def _remap_text(body: str, kind: str | None) -> str:
+    """The text a re-map compares: a lesson without its ``## Context`` section (split rules of one
+    file share that context; it must not make two different rules look alike)."""
+    return _LESSON_CONTEXT.sub("", body) if kind == "lesson" else body
+
+
 def body_similarity(a: str, b: str) -> float:
     """Word 3-shingle Jaccard of two bodies without their heading line (token-set Jaccard for
     bodies shorter than 3 words)."""
@@ -295,13 +335,15 @@ def remap(plan: Plan, old_items: list[dict[str, Any]], *, confirm_close: bool = 
     by_old: dict[int, list[tuple[float, int]]] = {}
     by_new: dict[int, list[int]] = {}
     for lid, old in olds.items():
-        if len(_tokens(old.get("body") or "")) < MIN_REMAP_WORDS:
+        old_text = _remap_text(old.get("body") or "", old.get("kind"))
+        if len(_tokens(old_text)) < MIN_REMAP_WORDS:
             continue
         old_file = str((old.get("source") or {}).get("path", "")).split("#", 1)[0]
         for n, e in enumerate(news):
-            if len(_tokens(e.record.body)) < MIN_REMAP_WORDS:
+            new_text = _remap_text(e.record.body, e.record.kind_guess)
+            if len(_tokens(new_text)) < MIN_REMAP_WORDS:
                 continue
-            sim = body_similarity(old.get("body") or "", e.record.body)
+            sim = body_similarity(old_text, new_text)
             need = REMAP_SAME_FILE if e.record.file == old_file else REMAP_OTHER_FILE
             if sim >= need:
                 by_old.setdefault(lid, []).append((sim, n))
@@ -379,6 +421,7 @@ def report(plan: Plan, *, dry_run: bool) -> dict[str, Any]:
         "remap_ambiguous": sorted(plan.ambiguous, key=lambda r: r["from"]),
         "closed": sorted(source_key(it.get("source")) or "" for it in plan.closes),
         "missing": sorted(plan.kept, key=lambda k: str(k["key"])),
+        "replaced_by_split": sorted(plan.replaced, key=lambda r: str(r["key"])),
         "token_estimate": {
             "items": counts["new"] + counts["changed"],
             "tokens": sum(e.tokens for e in plan.entries),

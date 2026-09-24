@@ -129,13 +129,7 @@ class _Approved:
     home: int | None = None  # the question's home project
 
 
-def _logical_ids(actions: list[dict[str, Any]]) -> list[int]:
-    """Every logical item an action set touches (assessed subjects, link endpoints, closes)."""
-    out: set[int] = set()
-    for a in actions:
-        out.update(int(k) for k in a.get("assessed") or {})
-        out.update(int(a[f]) for f in ("src_logical_id", "dst_logical_id", "logical_id") if a.get(f))
-    return sorted(out)
+_logical_ids = actor.action_logical_ids
 
 
 def audit_request(plan: Plan, job: LeasedJob) -> dict[str, Any]:
@@ -667,6 +661,11 @@ class LibrarianWorker:
         # check below atomic: a concurrent job proposing the same pair waits here, then sees the row.
         await q.lock_logical_ids(conn, [int(k) for prop in plan.proposals for k in prop.assessed])
         for i, prop in enumerate(plan.proposals):
+            if await actor.policy_blocked(conn, prop.actions, prop.project_ids):
+                # the cross-project policy changed since the plan (Sol 54 #2): neither applied nor asked
+                excluded = plan.request_extra.setdefault(actor.POLICY_EXCLUDED, [])
+                excluded.append(list(prop.subject_clues))
+                continue
             stale = await actor.is_stale(conn, {"assessed": prop.assessed})
             superseded += int(stale)
             if (
@@ -852,7 +851,14 @@ class LibrarianWorker:
             assessed: dict[str, int] = {}
             for x in actions:
                 assessed.update(x.get("assessed") or {})
-            if await actor.is_stale(conn, {"assessed": assessed}):  # an external revision (G-Q3)
+            if await actor.policy_blocked(conn, actions, a.projects):  # the policy NOW (Sol 54 #2)
+                changes.append(
+                    {"question_id": qid, "status": "authority_lost", "reason": actor.POLICY_EXCLUDED}
+                )
+                continue
+            # an EXTERNAL revision since the proposal (G-Q3); a subject closed earlier in THIS batch
+            # is rebased below (D-076 staleness chains), not superseded
+            if await actor.is_stale(conn, {"assessed": assessed}):
                 changes.append({"question_id": qid, "status": "superseded", "reason": "stale"})
                 superseded += 1
                 continue

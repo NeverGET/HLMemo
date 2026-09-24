@@ -122,6 +122,31 @@ class ScriptedLLM:
         return len(self.requests)
 
 
+def timeout_honouring(
+    route: Callable[[str, dict[str, Any]], Any], seen: list[tuple[str, float]] | None = None
+) -> httpx.MockTransport:
+    """A transport that HONOURS each request's read timeout like a real socket (``MockTransport``
+    alone ignores it). ``route(host, body)`` returns ``"stall"`` (wait out the timeout, then
+    ``ReadTimeout``), an int HTTP status, or an answer (a JSON dict/str, or a full ``chat()``)."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        read = float(request.extensions["timeout"]["read"])
+        if seen is not None:
+            seen.append((request.url.host, read))
+        entry = route(request.url.host, body)
+        if entry == "stall":
+            await asyncio.sleep(read)
+            raise httpx.ReadTimeout("stalled provider", request=request)
+        if isinstance(entry, int):
+            return httpx.Response(entry, json={"error": {"code": entry, "message": "scripted"}})
+        if isinstance(entry, dict) and "choices" in entry:
+            return httpx.Response(200, json=entry)
+        return httpx.Response(200, json=chat(entry))
+
+    return httpx.MockTransport(handler)
+
+
 class FakeClock(Clock):
     def __init__(self) -> None:
         self.t = 1000.0

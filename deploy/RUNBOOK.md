@@ -639,8 +639,10 @@ rollback to R1 (`deploy.sh --rollback`) runs R1's model: librarian pinned off, a
 the file on the host is ignored.
 
 **Spend monitoring:** `hlm_ops.sh --state "$STATE" status` prints the `librarian` line: `ready`,
-`in_flight`, `role`, `breaker` (`open` = provider outage, `budget` = a cap tripped; `(ledger)` means
-inferred from the llm_calls ledger because the api cannot see the librarian's heartbeat file),
+`in_flight`, `role`, `breaker` (`open` = provider outage, `budget` = a cap tripped, `closed`
+otherwise, as in the librarian's own heartbeat; `(ledger, N calls/15m)` means inferred from the
+llm_calls ledger because the api cannot see the librarian's heartbeat file, and `0 calls/15m`
+means nothing was called in the window),
 `failed_24h`, `spend_today_usd`, `spend_hour_usd`, `reserved_usd`; `status --json` has the same
 fields under `librarian`. The caps in `llm.env` are a runaway guard with the D-058 development
 defaults, not a budget: `HLM_LLM_BUDGET_HOUR_USD=3`, `HLM_LLM_BUDGET_DAY_USD=10`,

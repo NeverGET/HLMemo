@@ -22,9 +22,13 @@ Same guards as the librarian worker:
   it was shown; any other id is DROPPED and counted. Abstention (``"none"``) is first-class.
 * **Qualification** (D-017): a profile whose file lists ``disabled_tasks = ["risk_judge"]`` is left
   out of the judge's chain (a model that fails the risk gate never judges; see D-066/G-LIVE-C).
-* A judge-level circuit breaker (3 consecutive timeouts/outages → skip the LLM for 30 s, doubling
-  to 15 min) keeps a stalled provider from costing every call the full cap, and at most
-  ``MAX_IN_FLIGHT`` judged calls run at once (the rest answer retrieval-only, ``busy``).
+* The ``latency`` attempt policy (``Provider.complete(attempt_policy="latency")``): one bounded
+  attempt per profile, no backoff, so a stalled primary ends in retrieval-only inside the cap
+  (the judge chain has no fallback: deepseek is disqualified, D-071).
+* Circuit breakers PER PROFILE (3 consecutive failed attempts → skip that profile for 30 s,
+  doubling to 15 min; the provider counts them, ``self.breaker`` is a ``ChainBreakers`` view)
+  keep a stalled provider from costing every call the full cap, and at most ``MAX_IN_FLIGHT``
+  judged calls run at once (the rest answer retrieval-only, ``busy``).
 * A model ``warn`` whose matches ALL cite ids it was not shown is a judge failure (``guard``):
   the result falls back to retrieval-only, it never turns into a judged "no matching evidence".
 """
@@ -35,6 +39,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -62,7 +67,7 @@ from hlmemo.librarian.errors import (
 from hlmemo.librarian.ledger import DbLedger
 from hlmemo.librarian.profiles import LlmProfile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
-from hlmemo.librarian.provider import Breaker, Clock, Provider
+from hlmemo.librarian.provider import ChainBreakers, Clock, Provider
 from hlmemo.librarian.redact import Redactor
 
 log = logging.getLogger("hlmemo.librarian.risk_judge")
@@ -74,7 +79,7 @@ JUDGE_TIMEOUT_S = 4.0
 #: its ledger row (instead of being cancelled mid-flight and swept later as worst case)
 HTTP_TIMEOUT_S = 3.5
 MAX_CANDIDATES = 10
-LESSON_TEXT_CHARS = 1200
+LESSON_TEXT_CHARS = 1200  # per lesson in the prompt (title + best-matching window when longer)
 WHY_MAX = 300
 MAX_MATCHES = 3
 #: judged calls in flight per process (a provider-load bound; the API request's connection is
@@ -109,6 +114,10 @@ ConnectFactory = Callable[[], Any]  # () -> awaitable AsyncConnection (``async w
 class JudgeItem:
     version_id: int
     project: str  # slug shown to the model next to the lesson text
+    #: ``(char_start, char_end)`` in the body of the chunks that matched the task in the
+    #: deterministic stage, best first: a lesson longer than the cap is sent as its title plus
+    #: the best-matching window of these (``lesson_text``), not its first characters
+    spans: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(slots=True)
@@ -169,11 +178,109 @@ def direct_connector(dsn: str, settings: Any) -> tuple[ConnectFactory, Callable[
     return connect, ctx
 
 
-def _text(title: str, body: str) -> str:
-    """Title + body; a register_lesson title is the mistake's first line, so it is not repeated."""
+_TERM_RE = re.compile(r"[\w][\w./-]{2,}", re.UNICODE)
+_GAP = "\n…\n"
+
+
+def _terms(task: str) -> set[str]:
+    return {t.strip("./-") for t in _TERM_RE.findall(task.casefold()) if len(t.strip("./-")) >= 3}
+
+
+def _folded(text: str) -> tuple[str, list[int]]:
+    """``text.casefold()`` with, per folded character, the index of the original character it
+    came from: casefolding changes lengths (``ß`` → ``ss``, ``İ`` → ``i̇``), so a match in the
+    folded text is mapped back to ORIGINAL positions through this list (Sol 54 #5)."""
+    out: list[str] = []
+    origin: list[int] = []
+    for i, ch in enumerate(text):
+        folded = ch.casefold()
+        out.append(folded)
+        origin.extend([i] * len(folded))
+    return "".join(out), origin
+
+
+def _best_start(body: str, a: int, b: int, width: int, terms: set[str]) -> int:
+    """Start of the ``width``-character window of ``body[a:b]`` holding the most distinct task
+    terms (then the most occurrences), at a line or sentence start; among equal windows the LATEST
+    start, i.e. the boundary right before the first matched term, so the matched sentence is sent
+    from its beginning and the room goes to what follows it. Without a match: the chunk start."""
+    if b - a <= width:
+        return a
+    hits: list[tuple[int, int, str]] = []  # (start, end) in the ORIGINAL body, term
+    low, origin = _folded(body[a:b])
+    for term in terms:
+        for m in re.finditer(re.escape(term), low):
+            hits.append((a + origin[m.start()], a + origin[m.end() - 1] + 1, term))
+    starts = {a, b - width}
+    starts.update(a + m.end() for m in re.finditer(r"\n+|(?<=[.!?;:])\s+", body[a : b - width]))
+    if not hits:
+        return a
+    best, best_key = a, (-1, -1, 0)
+    for s in sorted(starts):
+        inside = [t for p, e, t in hits if s <= p and e <= s + width]
+        key = (len(set(inside)), len(inside), s)
+        if key > best_key:
+            best, best_key = s, key
+    return best
+
+
+def _merge(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for s, e in sorted(windows):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
+def lesson_text(
+    title: str,
+    body: str,
+    spans: tuple[tuple[int, int], ...] | list[tuple[int, int]] = (),
+    task: str = "",
+    cap: int = LESSON_TEXT_CHARS,
+) -> str:
+    """The lesson as the judge sees it, at most ``cap`` characters (e2e 2026-09-24 #6).
+
+    A lesson that fits is sent whole (title + body; a register_lesson title is the mistake's first
+    line, so it is not repeated). A longer one is sent as its title plus the best-matching window:
+    the chunks that matched the task in the deterministic stage (``spans``, best first), whole
+    while they fit, the rest of the room from the next chunk's densest part in task terms; the
+    pieces keep their order in the body and gaps are marked ``…``. Without spans: the first
+    ``cap`` characters (the pre-fix behaviour)."""
     head = title.rstrip("…").strip()
-    t = body.strip() if head and head in body else f"{title}\n{body}".strip()
-    return t if len(t) <= LESSON_TEXT_CHARS else t[:LESSON_TEXT_CHARS] + " …"
+    full = body.strip() if head and head in body else f"{title}\n{body}".strip()
+    if len(full) <= cap:
+        return full
+    valid = [(max(0, a), min(len(body), b)) for a, b in spans if min(len(body), b) > max(0, a)]
+    if not valid:
+        return full[:cap] + " …"
+    prefix = f"{title.strip()}\n"
+    terms = _terms(task)
+    windows: list[tuple[int, int]] = []
+    for a, b in valid:
+        merged = _merge(windows)
+        used = sum(e - s for s, e in merged) + len(_GAP) * len(merged)  # a gap before each new piece
+        room = cap - len(prefix) - 4 - used  # 4: the leading/trailing "… " markers
+        if room < 80:  # a sliver is noise, not evidence
+            break
+        covered = [(max(s, a), min(e, b)) for s, e in merged if min(e, b) > max(s, a)]
+        if sum(e - s for s, e in covered) >= b - a:  # an earlier window holds it already
+            continue
+        if b - a <= room:
+            windows.append((a, b))
+            continue
+        start = _best_start(body, a, b, room, terms)
+        windows.append((start, start + room))
+        break
+    pieces = _merge(windows)
+    text = _GAP.join(body[s:e].strip() for s, e in pieces)
+    if pieces[0][0] > 0:
+        text = "… " + text
+    if pieces[-1][1] < len(body.rstrip()):
+        text += " …"
+    return (prefix + text)[: cap + 2]
 
 
 def user_message(task: str, lessons: list[dict[str, str]]) -> str:
@@ -205,9 +312,9 @@ class RiskJudge:
         self.timeout_s = timeout_s
         self.in_flight = 0
         self.clock = clock or Clock()
-        self.breaker = Breaker(
-            self.clock, threshold=BREAKER_THRESHOLD, base_s=BREAKER_OPEN_S, max_s=BREAKER_MAX_OPEN_S
-        )
+        self.provider: Provider | None = None
+        #: the provider's per-profile breakers (a failing profile never suppresses the others)
+        self.breaker = ChainBreakers(lambda: self.provider)
         default_connect, conn_ctx = direct_connector(settings.db_dsn, settings)
         self.connect = connect or default_connect
         if provider is not None:
@@ -248,9 +355,9 @@ class RiskJudge:
             clock=self.clock,
             redactor=Redactor.from_settings(s),
             timeout_s=min(float(s.llm_timeout_s), HTTP_TIMEOUT_S),
-            breaker_threshold=s.llm_breaker_threshold,
-            breaker_open_s=s.llm_breaker_open_s,
-            breaker_max_open_s=s.llm_breaker_max_open_s,
+            breaker_threshold=BREAKER_THRESHOLD,  # the API judge's own per-profile breakers
+            breaker_open_s=BREAKER_OPEN_S,
+            breaker_max_open_s=BREAKER_MAX_OPEN_S,
             job_call_cap=s.llm_job_call_cap,
             budget_disabled=s.llm_budget_disabled,
         )
@@ -296,17 +403,14 @@ class RiskJudge:
         try:
             async with asyncio.timeout_at(deadline):
                 result = await self._judge(task, items, capabilities, deadline)
-        except (TimeoutError, DeadlineExceeded):
-            self.breaker.failure()
+        except (TimeoutError, DeadlineExceeded):  # the provider counted per-profile failures
             result = JudgeResult(TIMEOUT)
         except (ProviderUnavailable, httpx.HTTPError, OSError) as exc:
             log.warning("risk judge unavailable: %s", type(exc).__name__)
-            self.breaker.failure()
             result = JudgeResult(UNAVAILABLE)
         except BudgetDeferred:
             result = JudgeResult(BUDGET)
-        except SchemaFail:
-            self.breaker.success()  # the provider answered; the model output was the problem
+        except SchemaFail:  # the provider answered (its breaker closed); the model output was wrong
             result = JudgeResult(SCHEMA_FAIL)
         except (PrivacyDenied, AuthorityLost):
             result = JudgeResult(PRIVACY)
@@ -341,7 +445,7 @@ class RiskJudge:
             {
                 "id": lid,
                 "project": it.project,
-                "text": _text(loaded[it.version_id].title, loaded[it.version_id].body),
+                "text": lesson_text(loaded[it.version_id].title, loaded[it.version_id].body, it.spans, task),
             }
             for lid, it in local.items()
         ]
@@ -360,8 +464,8 @@ class RiskJudge:
             validate=_consistency,
             precheck=precheck,
             deadline=deadline,
+            attempt_policy="latency",  # one bounded attempt per profile inside the 4 s cap
         )
-        self.breaker.success()
         matches: list[tuple[int, str]] = []
         dropped = 0
         seen: set[int] = set()
@@ -413,5 +517,6 @@ __all__ = [
     "direct_connector",
     "disabled_tasks",
     "judge_chain",
+    "lesson_text",
     "user_message",
 ]

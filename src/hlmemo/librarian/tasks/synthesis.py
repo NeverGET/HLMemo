@@ -24,8 +24,14 @@ privacy denial or model failure comes back as a status and the query answers wit
   ``insufficient_evidence`` is a successful, judged outcome.
 * **Qualification** (D-017, D-071): a profile whose file lists ``disabled_tasks = ["synthesis"]``
   is left out of the chain; a result from a qualified fallback profile is labelled ``fallback``.
-* A task-level circuit breaker (3 consecutive timeouts/outages → skip for 30 s, doubling to 15 min)
-  and at most ``MAX_IN_FLIGHT`` concurrent syntheses per process (the rest answer ``busy``).
+* The ``latency`` attempt policy (``Provider.complete(attempt_policy="latency")``): one bounded
+  primary attempt (≤ 55 % of the remaining deadline), then straight to the qualified fallback
+  with the rest, no backoff sleeps: a stalled or failing primary still yields a ``fallback`` answer
+  inside the cap (BACKLOG, D-084 bake-off).
+* Circuit breakers PER PROFILE (3 consecutive failed attempts → skip that profile for 30 s,
+  doubling to 15 min; counted by the provider, ``self.breaker`` is a ``ChainBreakers`` view: a
+  failing primary never suppresses the fallback) and at most ``MAX_IN_FLIGHT`` concurrent
+  syntheses per process (the rest answer ``busy``).
 """
 
 from __future__ import annotations
@@ -61,7 +67,7 @@ from hlmemo.librarian.errors import (
 from hlmemo.librarian.ledger import DbLedger
 from hlmemo.librarian.profiles import LlmProfile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
-from hlmemo.librarian.provider import Breaker, Clock, Provider
+from hlmemo.librarian.provider import ChainBreakers, Clock, Provider
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.risk_judge import ConnectFactory, direct_connector, disabled_tasks
 
@@ -283,9 +289,9 @@ class Synthesizer:
         self.timeout_s = timeout_s
         self.in_flight = 0
         self.clock = clock or Clock()
-        self.breaker = Breaker(
-            self.clock, threshold=BREAKER_THRESHOLD, base_s=BREAKER_OPEN_S, max_s=BREAKER_MAX_OPEN_S
-        )
+        self.provider: Provider | None = None
+        #: the provider's per-profile breakers (a failing primary never suppresses the fallback)
+        self.breaker = ChainBreakers(lambda: self.provider)
         default_connect, conn_ctx = direct_connector(settings.db_dsn, settings)
         self.connect = connect or default_connect
         if provider is not None:
@@ -326,9 +332,9 @@ class Synthesizer:
             clock=self.clock,
             redactor=Redactor.from_settings(s),
             timeout_s=min(float(s.llm_timeout_s), HTTP_TIMEOUT_S),
-            breaker_threshold=s.llm_breaker_threshold,
-            breaker_open_s=s.llm_breaker_open_s,
-            breaker_max_open_s=s.llm_breaker_max_open_s,
+            breaker_threshold=BREAKER_THRESHOLD,  # the API synthesizer's own per-profile breakers
+            breaker_open_s=BREAKER_OPEN_S,
+            breaker_max_open_s=BREAKER_MAX_OPEN_S,
             job_call_cap=s.llm_job_call_cap,
             budget_disabled=s.llm_budget_disabled,
         )
@@ -381,17 +387,14 @@ class Synthesizer:
             deadline = asyncio.get_running_loop().time() + cap
             async with asyncio.timeout_at(deadline):
                 result = await self._synthesize(question, excerpts, capabilities, deadline)
-        except (TimeoutError, DeadlineExceeded):
-            self.breaker.failure()
+        except (TimeoutError, DeadlineExceeded):  # the provider counted per-profile failures
             result = SynthResult(TIMEOUT)
         except (ProviderUnavailable, httpx.HTTPError, OSError) as exc:
             log.warning("synthesis unavailable: %s", type(exc).__name__)
-            self.breaker.failure()
             result = SynthResult(UNAVAILABLE)
         except BudgetDeferred:
             result = SynthResult(BUDGET)
-        except SchemaFail:
-            self.breaker.success()  # the provider answered; the model output was the problem
+        except SchemaFail:  # the provider answered (its breaker closed); the model output was wrong
             result = SynthResult(SCHEMA_FAIL)
         except (PrivacyDenied, AuthorityLost):
             result = SynthResult(PRIVACY)
@@ -445,8 +448,8 @@ class Synthesizer:
             validate=_consistency,
             precheck=precheck,
             deadline=deadline,
+            attempt_policy="latency",  # one bounded primary attempt, then the fallback in the cap
         )
-        self.breaker.success()
         status = OK if res.profile == self.chain[0].name else OK_FALLBACK
         if res.output.get("status") == INSUFFICIENT:
             return SynthResult(status, answer=INSUFFICIENT, denied=denied, profile=res.profile)

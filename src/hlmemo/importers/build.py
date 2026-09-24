@@ -4,7 +4,8 @@
 secret → skipped), ``@import`` stubs (resolved when the target is imported too, else skipped),
 content-hash dedupe of identical copies (the shallowest path is kept, inventory §3), the export
 format (``hlm_export: 1`` frontmatter → ``exportfmt``), sectioning (decision-log rows, dated
-headings, size split at headings) and the temporal rule (explicit evidence only; > now + 5 min
+headings, one lesson per independent rule of a lesson file (``importers.lessons``), size split at
+headings) and the temporal rule (explicit evidence only; > now + 5 min
 rejects the item). Name-duplicates (same normalised name, different content, inventory §2/§4)
 are reported, never merged. Output order is sorted by source key: the dry-run report is golden.
 """
@@ -18,7 +19,7 @@ from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import Any
 
-from hlmemo.importers import exportfmt
+from hlmemo.importers import exportfmt, lessons
 from hlmemo.importers.common import (
     SECTION_CHARS,
     GitInfo,
@@ -170,6 +171,8 @@ def build(
         kind_default = kind_fn(rel, meta, text)
         tags = _tags(system, rel, meta)
         doc_title = derive_title(meta, text, rel).rsplit(" · ", 1)[0]
+        if kind_default == "lesson" and sections == [Section(None, text)]:
+            sections = lessons.split(after, meta, doc_title) or sections  # one lesson per rule
         used: set[str] = set()
         for sec in [p for s in sections for p in section_split(s, section_chars, doc_title)]:
             path = rel if sec.anchor is None else f"{rel}#{sec.anchor}"
