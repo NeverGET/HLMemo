@@ -1,0 +1,96 @@
+# 2026-09-24T03:00:04Z reboot (4f): 5 writes (priority-3 librarian jobs queued), then a guest reboot
+write reboot-probe-1 v655 event None 9ms
+write reboot-probe-2 v656 event None 8ms
+write reboot-probe-3 v657 event None 7ms
+write reboot-probe-4 v658 event None 8ms
+write reboot-probe-5 v659 event None 9ms
+                   coalesce                    
+-----------------------------------------------
+ embed/p5:queued=1 librarian_write/p3:queued=5
+(1 row)
+
+reboot issued epoch 1790218805.277
+ssh rc=0
+/ready 200 at epoch 1790219009.448
+hlm-2604    Running    127.0.0.1:2223    vz        aarch64    2       8GiB      60GiB    ~/.lima/hlm-2604
+-- host key after the guest reboot (compare scan vs guest file via lima's channel):
+scan=SHA256:eRx+Z7s5wrm9c2VMNQbZ0eJzdHAHXEJbQKDOP4cpjCg guest=SHA256:eRx+Z7s5wrm9c2VMNQbZ0eJzdHAHXEJbQKDOP4cpjCg
+pinned key still valid (rc ok)
+-- boot timeline (guest)
+boot: 2026-09-24 03:00:08  now: 03:03:40
+ -1 ecfb25ea196d45c0a5918bca25ad8a2d Thu 2026-09-24 01:29:04 UTC Thu 2026-09-24 03:00:06 UTC
+  0 34cff1dd593d4ae6b4157e8d34e66921 Thu 2026-09-24 03:00:09 UTC Thu 2026-09-24 03:03:40 UTC
+previous boot last log:
+2026-09-24T03:00:06+00:00 lima-hlm-2604 systemd-udevd[947]: Failed to remove file descriptor "config-serialization" from the store, ignoring: Connection refused
+2026-09-24T03:00:06+00:00 lima-hlm-2604 systemd-journald[891]: Received SIGTERM from PID 1 (systemd-shutdow).
+2026-09-24T03:00:06+00:00 lima-hlm-2604 systemd-journald[891]: Journal stopped
+Startup finished in 173ms (kernel) + 1.328s (initrd) + 3.018s (userspace) = 4.520s 
+graphical.target reached after 2.835s in userspace.
+/hlmemo-prod-api-1 started=2026-09-24T03:00:13.237833525Z health=healthy restarts=0
+/hlmemo-prod-librarian-1 started=2026-09-24T03:00:13.238268528Z health=healthy restarts=0
+/hlmemo-prod-worker-1 started=2026-09-24T03:00:13.240212871Z health=healthy restarts=0
+/hlmemo-prod-caddy-1 started=2026-09-24T03:00:13.236122974Z health=healthy restarts=0
+/hlmemo-prod-migrate-1 started=2026-09-23T18:35:30.761002866Z health= restarts=0
+/hlmemo-prod-db-1 started=2026-09-24T03:00:13.271149704Z health=healthy restarts=0
+hlmemo-prod-api-1 hlmemo:3535bcc9bf66 Up 3 minutes (healthy)
+hlmemo-prod-librarian-1 hlmemo:3535bcc9bf66 Up 3 minutes (healthy)
+hlmemo-prod-worker-1 hlmemo:3535bcc9bf66 Up 3 minutes (healthy)
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 3 minutes (healthy)
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 3 minutes (healthy)
+-- in-guest readiness after the reboot (docker log timestamps): first api 'startup complete' and first /ready 200 via caddy; librarian first heartbeat
+2026-09-24T02:57:43.561201298Z INFO:     Application startup complete.
+2026-09-24T02:57:44.122006514Z INFO:     172.30.39.3:43496 - "GET /ready HTTP/1.1" 200 OK
+2026-09-24T02:57:42.585573216Z 2026-09-24 02:57:42,584 INFO hlmemo.librarian librarian: host=db port=5432 dbname=hlm user=hlm, role=observer, mode=liv
+2026-09-24T02:57:43.106672860Z 2026-09-24 02:57:43,106 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_2
+2026-09-24T02:57:53.217180509Z 2026-09-24 02:57:53,217 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_2
+NOTE: guest up 03:00:08-09 (systemd: 4.5 s), containers started 03:00:13; host-side /ready via lima's SSH static port forward only returned at 03:03:29 (lima plain mode re-establishes its ssh -L forward after a guest reboot: a rehearsal artifact, not the stack).
+-- same, restricted to --since 03:00:07 (after the reboot)
+2026-09-24T03:00:16.280266877Z INFO:     Application startup complete.
+2026-09-24T03:00:19.090305983Z INFO:     127.0.0.1:45382 - "GET /ready HTTP/1.1" 200 OK
+2026-09-24T03:00:28.232500860Z INFO:     127.0.0.1:54714 - "GET /ready HTTP/1.1" 200 OK
+2026-09-24T03:00:14.625477048Z 2026-09-24 03:00:14,625 INFO hlmemo.librarian librarian: host=db port=5432 dbname=hlm user=hlm, role=observer, mode=live, profile=openroute
+2026-09-24T03:00:21.181378256Z 2026-09-24 03:00:21,180 INFO hlmemo.librarian job 1126 (write_review): annotated, 1 applied, 0 questions, 0 superseded
+2026-09-24T03:00:21.187426279Z 2026-09-24 03:00:21,187 INFO hlmemo.librarian librarian heartbeat: ready=4 in_flight=0 oldest_ready_age_s=13.588 failed_24h=0 spend_today_u
+2026-09-24T03:00:27.481168340Z 2026-09-24 03:00:27,481 INFO hlmemo.librarian job 1128 (write_review): annotated, 1 applied, 0 questions, 0 superseded
+-- queued-before-reboot jobs
+     title      |      kind       | status | attempts |   done   
+----------------+-----------------+--------+----------+----------
+ reboot-probe-1 | embed           | done   |        1 | 03:00:04
+ reboot-probe-1 | librarian_write | done   |        1 | 03:00:21
+ reboot-probe-2 | embed           | done   |        1 | 03:00:04
+ reboot-probe-2 | librarian_write | done   |        1 | 03:00:27
+ reboot-probe-3 | embed           | done   |        1 | 03:00:04
+ reboot-probe-3 | librarian_write | done   |        1 | 03:00:33
+ reboot-probe-4 | embed           | done   |        1 | 03:00:04
+ reboot-probe-4 | librarian_write | done   |        1 | 03:00:40
+ reboot-probe-5 | embed           | done   |        1 | 03:00:15
+ reboot-probe-5 | librarian_write | done   |        1 | 03:00:49
+(10 rows)
+
+-- orphaned risk-judge reservation (expires 03:05:06) after the sweep:
+ open_reservations 
+-------------------
+                 1
+(1 row)
+
+ period_kind | reserved |  spent   
+-------------+----------+----------
+ hour        | 0.000000 | 0.002455
+ hour        | 0.000655 | 0.410464
+ hour        | 0.000000 | 0.221511
+(3 rows)
+
+-- 2026-09-24T03:04:54Z host-side 19443 refuses connections after the guest reboot: lima plain-mode static forwards run over its ssh ControlMaster, which the guest reboot broke (remote_gates at 03:04:20 FAILED on connect only; see 11b). Rehearsal artifact. Second test: limactl stop/start (cold restart), which re-creates the forwards.
+limactl stop issued epoch 1790219094.779
+time="2026-09-24T06:04:57+03:00" level=info msg="The instance hlm-2604 has shut down"
+time="2026-09-24T06:05:06+03:00" level=info msg="READY. Run `ssh -F `/Users/cemalkurt/.lima/hlm-2604/ssh.config` lima-hlm-2604` to open the shell."
+limactl start returned epoch 1790219106.339
+host /ready 200 at epoch 1790219106.759
+host key: scan=SHA256:7SZ1MxpJCxy2ZfSDcc/ZhI6yEjubfX4mAv5Hc2RDzCk guest(lima channel)=SHA256:7SZ1MxpJCxy2ZfSDcc/ZhI6yEjubfX4mAv5Hc2RDzCk
+re-pinned (key changed across stop/start, verified via lima's channel)
+2026-09-24 03:04:58
+hlmemo-prod-api-1 Up 4 seconds (health: starting)
+hlmemo-prod-librarian-1 Up 4 seconds (health: starting)
+hlmemo-prod-worker-1 Up 4 seconds (health: starting)
+hlmemo-prod-caddy-1 Up 4 seconds (health: starting)
+hlmemo-prod-db-1 Up 4 seconds (health: starting)

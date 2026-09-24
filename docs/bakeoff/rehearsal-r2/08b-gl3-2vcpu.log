@@ -1,0 +1,151 @@
+# G-L3 on the 2 vCPU / 8 GiB VM (hlm-2604), R2 3535bcc9bf66 with the librarian LIVE (observer, gpt-6-luna), 2026-09-24
+# From the Mac through Caddy (https://localhost:19443, CA-verified): warm-up 20 queries, quiet reference 60 queries (3 callers, no writes),
+# then 3 query callers timed DURING 100 sequential acknowledged memory.write calls (~6 kB bodies; each enqueues a librarian_write job, priority 3).
+# Project r2-load pre-seeded with 160 items (4 x 40, drained before). Script: gl3_vm.py (scratch); VM sampler every ~3 s: /proc/stat, loadavg, docker stats, job backlog.
+## run 1: neutral bodies (mixed prose, the G-L3 test's _body)
+{"run": "gl3n", "body": "neutral", "writes_acked": 100, "writes": 100, "body_bytes": 5869, "t_start": 1790214626.75, "t_end": 1790214648.128, "window_s": 21.4, "queries_during": 377, "q_p50": 162.4, "q_p95": 268.0, "q_max": 402.6, "write_p50": 205.0, "write_p95": 305.3, "write_max": 470.1, "quiet_n": 60, "quiet_p50": 94.1, "quiet_p95": 140.8, "errors": 0, "error_samples": []}
+## run 2: identifier bodies (worst case for the trigram list, the G-L3 test's _identifier_body)
+{"run": "gl3i", "body": "identifier", "writes_acked": 100, "writes": 100, "body_bytes": 7539, "t_start": 1790215231.423, "t_end": 1790215249.751, "window_s": 18.3, "queries_during": 294, "q_p50": 160.6, "q_p95": 375.2, "q_max": 1011.3, "write_p50": 184.5, "write_p95": 277.0, "write_max": 410.3, "quiet_n": 60, "quiet_p50": 93.0, "quiet_p95": 163.4, "errors": 0, "error_samples": []}
+## resources (sampler analysis; write window = first write .. last ack)
+neutral:
+{
+ "samples_total": 191,
+ "samples_in_write_window": 8,
+ "write_window": {
+  "cpu_busy_mean": 92,
+  "cpu_busy_max": 99,
+  "load1_max": 1.34
+ },
+ "whole_run": {
+  "cpu_busy_max": 99,
+  "load1_max": 1.34
+ },
+ "mem_peak_mib": {
+  "db": {
+   "peak": 101,
+   "limit": 2048
+  },
+  "api": {
+   "peak": 1235,
+   "limit": 2560
+  },
+  "worker": {
+   "peak": 1003,
+   "limit": 1536
+  },
+  "librarian": {
+   "peak": 125,
+   "limit": 512
+  },
+  "caddy": {
+   "peak": 14,
+   "limit": 256
+  }
+ },
+ "cpu_pct_peak": {
+  "db": 31.91,
+  "api": 99.85,
+  "worker": 103.65,
+  "librarian": 11.61,
+  "caddy": 1.31
+ },
+ "backlog_peak": {
+  "embed/p5:queued": 86,
+  "embed/p5:running": 1,
+  "librarian_write/p3:queued": 96,
+  "librarian_write/p3:running": 1
+ },
+ "embed_drained_s_after_last_write": 96.1,
+ "librarian_write_drained_s_after_last_write": 537.2
+}
+identifier:
+{
+ "samples_total": 336,
+ "samples_in_write_window": 7,
+ "write_window": {
+  "cpu_busy_mean": 91,
+  "cpu_busy_max": 100,
+  "load1_max": 2.02
+ },
+ "whole_run": {
+  "cpu_busy_max": 100,
+  "load1_max": 2.15
+ },
+ "mem_peak_mib": {
+  "db": {
+   "peak": 119,
+   "limit": 2048
+  },
+  "api": {
+   "peak": 1239,
+   "limit": 2560
+  },
+  "worker": {
+   "peak": 1011,
+   "limit": 1536
+  },
+  "librarian": {
+   "peak": 133,
+   "limit": 512
+  },
+  "caddy": {
+   "peak": 14,
+   "limit": 256
+  }
+ },
+ "cpu_pct_peak": {
+  "db": 56.31,
+  "api": 100.33,
+  "worker": 102.85,
+  "librarian": 15.32,
+  "caddy": 1.35
+ },
+ "backlog_peak": {
+  "embed/p5:queued": 94,
+  "librarian_write/p3:queued": 98,
+  "embed/p5:running": 1,
+  "librarian_write/p3:running": 1
+ },
+ "embed_drained_s_after_last_write": 669.9,
+ "librarian_write_drained_s_after_last_write": 993.9
+}
+## drain (from the jobs table: jobs created inside each write window)
+     label      |      kind       | jobs | drained_s_after_last_write | avg_wait_s | max_wait_s 
+----------------+-----------------+------+----------------------------+------------+------------
+ gl3-identifier | embed           |  100 |                      202.7 |      105.0 |      203.1
+ gl3-identifier | librarian_write |  100 |                      992.2 |      511.1 |     1004.5
+ gl3-neutral    | embed           |  100 |                       95.4 |       51.7 |       95.7
+ gl3-neutral    | librarian_write |  100 |                      537.5 |      276.3 |      537.7
+(4 rows)
+
+## host memory after the runs (free -m), nproc
+               total        used        free      shared  buff/cache   available
+Mem:            7913        3268         615          69        4305        4645
+Swap:              0           0           0
+2
+## raw sampler lines around the neutral write window
+1790214622.059569453 load=0.02 0.15 0.25 busy=3% iowait=0% | worker=943.6MiB/1.5GiB|0.17% librarian=122.4MiB/512MiB|0.35% api=1.19GiB/2.5GiB|16.22% caddy=10.97MiB/256MiB|0.35% db=74.96MiB/2GiB|2.70% | backlog: none
+1790214625.174370256 load=0.18 0.18 0.26 busy=26% iowait=0% | worker=943.6MiB/1.5GiB|0.17% librarian=122.4MiB/512MiB|0.34% api=1.191GiB/2.5GiB|99.85% caddy=12.02MiB/256MiB|1.26% db=82.39MiB/2GiB|12.44% | backlog: embed/p5:queued=2 embed/p5:running=1 librarian_write/p3:queued=3
+1790214628.298028478 load=0.18 0.18 0.26 busy=73% iowait=0% | worker=990MiB/1.5GiB|93.31% librarian=122.4MiB/512MiB|0.35% api=1.192GiB/2.5GiB|74.44% caddy=12.21MiB/256MiB|0.72% db=89.78MiB/2GiB|19.13% | backlog: embed/p5:queued=16 embed/p5:running=1 librarian_write/p3:queued=17 librarian_write/p3:running=1
+1790214631.465328329 load=0.49 0.24 0.28 busy=99% iowait=0% | worker=990.2MiB/1.5GiB|97.35% librarian=122.1MiB/512MiB|0.48% api=1.193GiB/2.5GiB|80.15% caddy=12.93MiB/256MiB|0.79% db=90.84MiB/2GiB|18.87% | backlog: embed/p5:queued=29 embed/p5:running=1 librarian_write/p3:queued=32 librarian_write/p3:running=1
+1790214634.627703657 load=0.49 0.24 0.28 busy=99% iowait=0% | worker=990.3MiB/1.5GiB|98.07% librarian=122.4MiB/512MiB|0.08% api=1.193GiB/2.5GiB|76.66% caddy=12.93MiB/256MiB|0.68% db=92.74MiB/2GiB|19.78% | backlog: embed/p5:queued=43 embed/p5:running=1 librarian_write/p3:queued=47 librarian_write/p3:running=1
+1790214637.738805775 load=0.77 0.30 0.30 busy=98% iowait=0% | worker=990.2MiB/1.5GiB|97.99% librarian=122.4MiB/512MiB|1.34% api=1.206GiB/2.5GiB|82.91% caddy=13.28MiB/256MiB|0.69% db=93.48MiB/2GiB|15.88% | backlog: embed/p5:queued=56 embed/p5:running=1 librarian_write/p3:queued=62 librarian_write/p3:running=1
+1790214640.899069176 load=1.11 0.38 0.33 busy=99% iowait=0% | worker=990.2MiB/1.5GiB|89.69% librarian=122.5MiB/512MiB|1.57% api=1.194GiB/2.5GiB|82.41% caddy=13.34MiB/256MiB|0.67% db=93.57MiB/2GiB|23.66% | backlog: embed/p5:queued=70 embed/p5:running=1 librarian_write/p3:queued=77 librarian_write/p3:running=1
+1790214644.147235547 load=1.11 0.38 0.33 busy=99% iowait=0% | worker=990MiB/1.5GiB|97.14% librarian=122.6MiB/512MiB|5.03% api=1.194GiB/2.5GiB|74.88% caddy=13.59MiB/256MiB|0.58% db=93.7MiB/2GiB|31.91% | backlog: embed/p5:queued=81 embed/p5:running=1 librarian_write/p3:queued=89 librarian_write/p3:running=1
+1790214647.315850489 load=1.34 0.44 0.35 busy=99% iowait=0% | worker=990.2MiB/1.5GiB|98.57% librarian=122.5MiB/512MiB|2.23% api=1.194GiB/2.5GiB|0.09% caddy=13.26MiB/256MiB|0.00% db=94.61MiB/2GiB|0.40% | backlog: embed/p5:queued=86 embed/p5:running=1 librarian_write/p3:queued=96 librarian_write/p3:running=1
+1790214650.481756208 load=1.23 0.43 0.34 busy=67% iowait=0% | worker=990.3MiB/1.5GiB|99.99% librarian=122.6MiB/512MiB|6.12% api=1.194GiB/2.5GiB|0.14% caddy=13.4MiB/256MiB|1.24% db=94.36MiB/2GiB|7.52% | backlog: embed/p5:queued=84 embed/p5:running=1 librarian_write/p3:queued=95 librarian_write/p3:running=1
+1790214653.615030019 load=1.23 0.43 0.34 busy=55% iowait=0% | worker=990.3MiB/1.5GiB|100.96% librarian=122.8MiB/512MiB|0.05% api=1.194GiB/2.5GiB|0.10% caddy=13.07MiB/256MiB|0.01% db=94.61MiB/2GiB|0.17% | backlog: embed/p5:queued=81 embed/p5:running=1 librarian_write/p3:queued=95 librarian_write/p3:running=1
+1790214656.733038504 load=1.13 0.43 0.34 busy=52% iowait=0% | worker=990.1MiB/1.5GiB|98.12% librarian=122.8MiB/512MiB|1.62% api=1.194GiB/2.5GiB|0.10% caddy=13.07MiB/256MiB|0.00% db=94.44MiB/2GiB|2.53% | backlog: embed/p5:queued=78 embed/p5:running=1 librarian_write/p3:queued=94 librarian_write/p3:running=1
+1790214659.873241348 load=1.04 0.42 0.34 busy=55% iowait=0% | worker=990.2MiB/1.5GiB|99.52% librarian=122.8MiB/512MiB|1.21% api=1.194GiB/2.5GiB|0.10% caddy=13.09MiB/256MiB|0.89% db=94.73MiB/2GiB|0.46% | backlog: embed/p5:queued=75 embed/p5:running=1 librarian_write/p3:queued=94 librarian_write/p3:running=1
+1790214662.987736108 load=1.04 0.42 0.34 busy=57% iowait=0% | worker=990.2MiB/1.5GiB|98.58% librarian=122.8MiB/512MiB|5.31% api=1.194GiB/2.5GiB|0.09% caddy=13.09MiB/256MiB|0.01% db=94.77MiB/2GiB|0.15% | backlog: embed/p5:queued=72 embed/p5:running=1 librarian_write/p3:queued=93 librarian_write/p3:running=1
+1790214666.112052667 load=0.96 0.41 0.34 busy=54% iowait=0% | worker=990.6MiB/1.5GiB|99.69% librarian=122.6MiB/512MiB|0.00% api=1.194GiB/2.5GiB|0.09% caddy=13.09MiB/256MiB|0.00% db=94.73MiB/2GiB|2.49% | backlog: embed/p5:queued=69 embed/p5:running=1 librarian_write/p3:queued=93 librarian_write/p3:running=1
+1790214669.223178702 load=0.96 0.41 0.34 busy=55% iowait=0% | worker=990.2MiB/1.5GiB|99.00% librarian=122.8MiB/512MiB|1.21% api=1.194GiB/2.5GiB|16.66% caddy=13.34MiB/256MiB|0.83% db=94.8MiB/2GiB|0.35% | backlog: embed/p5:queued=66 embed/p5:running=1 librarian_write/p3:queued=92 librarian_write/p3:running=1
+1790214672.379116539 load=0.88 0.41 0.34 busy=56% iowait=0% | worker=990.5MiB/1.5GiB|99.51% librarian=122.8MiB/512MiB|0.00% api=1.194GiB/2.5GiB|0.09% caddy=13.09MiB/256MiB|0.00% db=94.86MiB/2GiB|6.88% | backlog: embed/p5:queued=63 embed/p5:running=1 librarian_write/p3:queued=91 librarian_write/p3:running=1
+1790214675.519680177 load=0.81 0.40 0.33 busy=54% iowait=0% | worker=990.4MiB/1.5GiB|102.02% librarian=122.7MiB/512MiB|5.95% api=1.194GiB/2.5GiB|0.09% caddy=13.09MiB/256MiB|0.00% db=95.04MiB/2GiB|0.24% | backlog: embed/p5:queued=61 embed/p5:running=1 librarian_write/p3:queued=91 librarian_write/p3:running=1
+1790214678.627099777 load=0.81 0.40 0.33 busy=54% iowait=0% | worker=990.3MiB/1.5GiB|101.61% librarian=122.7MiB/512MiB|0.00% api=1.203GiB/2.5GiB|8.26% caddy=13.09MiB/256MiB|0.00% db=94.85MiB/2GiB|0.22% | backlog: embed/p5:queued=58 embed/p5:running=1 librarian_write/p3:queued=91 librarian_write/p3:running=1
+1790214681.743135337 load=0.75 0.39 0.33 busy=57% iowait=0% | worker=990.4MiB/1.5GiB|99.49% librarian=122.4MiB/512MiB|0.00% api=1.194GiB/2.5GiB|0.10% caddy=13.09MiB/256MiB|0.00% db=94.89MiB/2GiB|2.48% | backlog: embed/p5:queued=55 embed/p5:running=1 librarian_write/p3:queued=90 librarian_write/p3:running=1
+1790214684.877696612 load=0.68 0.39 0.33 busy=53% iowait=0% | worker=990.3MiB/1.5GiB|99.51% librarian=122.6MiB/512MiB|0.00% api=1.194GiB/2.5GiB|0.10% caddy=13.09MiB/256MiB|0.00% db=94.93MiB/2GiB|0.24% | backlog: embed/p5:queued=52 embed/p5:running=1 librarian_write/p3:queued=90 librarian_write/p3:running=1
+1790214687.999663575 load=0.68 0.39 0.33 busy=55% iowait=0% | worker=990.2MiB/1.5GiB|99.39% librarian=123MiB/512MiB|0.00% api=1.194GiB/2.5GiB|0.09% caddy=13.09MiB/256MiB|0.00% db=94.95MiB/2GiB|0.22% | backlog: embed/p5:queued=49 embed/p5:running=1 librarian_write/p3:queued=89 librarian_write/p3:running=1
+1790214691.111848699 load=0.63 0.38 0.33 busy=55% iowait=0% | worker=990.5MiB/1.5GiB|100.72% librarian=122.8MiB/512MiB|0.00% api=1.194GiB/2.5GiB|0.10% caddy=13.1MiB/256MiB|0.00% db=94.95MiB/2GiB|2.62% | backlog: embed/p5:queued=46 embed/p5:running=1 librarian_write/p3:queued=89 librarian_write/p3:running=1
+1790214694.225984916 load=0.63 0.38 0.33 busy=54% iowait=0% | worker=990.4MiB/1.5GiB|100.64% librarian=122.9MiB/512MiB|0.00% api=1.194GiB/2.5GiB|0.09% caddy=13.09MiB/256MiB|0.00% db=95.04MiB/2GiB|0.26% | backlog: embed/p5:queued=43 embed/p5:running=1 librarian_write/p3:queued=88 librarian_write/p3:running=1
+1790214697.333232974 load=0.58 0.37 0.33 busy=52% iowait=0% | worker=990.3MiB/1.5GiB|103.65% librarian=122.9MiB/512MiB|0.00% api=1.194GiB/2.5GiB|0.09% caddy=13.09MiB/256MiB|0.00% db=95.08MiB/2GiB|0.21% | backlog: embed/p5:queued=40 embed/p5:running=1 librarian_write/p3:queued=87 librarian_write/p3:running=1

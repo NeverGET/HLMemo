@@ -1,0 +1,47 @@
+# 2026-09-24T01:36:46Z DB snapshot BEFORE the observer-provocation writes (after gates + drill)
+              at               |       alembic        
+-------------------------------+----------------------
+ 2026-09-24 01:36:46.808183+00 | 0008_librarian_tasks
+
+ links_total | links_superseded | links_valid_closed 
+-------------+------------------+--------------------
+           0 |                0 |                  0
+
+ versions_total | versions_superseded | versions_valid_closed 
+----------------+---------------------+-----------------------
+             66 |                   0 |                     0
+
+       kind        | count 
+-------------------+-------
+ call_the_day      |     3
+ device_approved   |     5
+ device_minted     |    14
+ device_registered |     6
+ device_revoked    |    14
+ grant_added       |    17
+ grant_revoked     |     6
+ librarian         |     4
+ project_created   |     6
+ write             |    63
+
+    job_kind     | status | priority | count 
+-----------------+--------+----------+-------
+ embed           | done   |        5 |    66
+ librarian_write | done   |        2 |     1
+ librarian_write | done   |        3 |     3
+
+ version_signals 
+-----------------
+               3
+
+ status | kind | count 
+--------+------+-------
+
+ batches | batches_applied 
+---------+-----------------
+       0 |               0
+
+ llm_calls | cost_usd 
+-----------+----------
+         6 |   0.0008
+

@@ -1,0 +1,70 @@
+# 2026-09-24T02:56:51Z kill switch (4e), RUNBOOK 'Switch it off quickly' command verbatim (false), then back on (true)
+OFF start epoch 1790218611.689
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreated 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-librarian-1 Starting 
+ Container hlmemo-prod-api-1 Started 
+ Container hlmemo-prod-librarian-1 Started 
+/usr/bin/ssh -F "$STATE/ssh_config" hlm-deploy  < /dev/null  0.01s user 0.00s system 0% cpu 1.527 total
+rc=0
+OFF cmd end epoch 1790218613.241
+api /ready 200 again at epoch 1790218626.010
+## OFF: downtime of the api recreate (host poller)
+samples=66 codes={200: 55, 502: 11}
+longest outage: first-non200=1790218612.34 next200=1790218615.19 -> 2.8s (upper bound 3.1s, 11 non-200 samples)
+## OFF: librarian logs + heartbeat, api view (check_librarian.py collect)
+librarian-1  | 2026-09-24 02:56:54,175 INFO hlmemo.librarian librarian: host=db port=5432 dbname=hlm user=hlm, role=observer, mode=live, profile=openrouter-gpt6-luna, fallback=openrouter
+librarian-1  | 2026-09-24 02:56:54,175 WARNING hlmemo.librarian librarian: HLM_LIBRARIAN_ENABLED is false; idling (no job is leased, no provider is called)
+librarian-1  | 2026-09-24 02:56:54,233 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_24h=0 spend_today_usd=0.631387 spend_hour_usd=0.409876 reserved_usd=0.000655 role=obser
+librarian-1  | 2026-09-24 02:57:04,257 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_24h=0 spend_today_usd=0.631387 spend_hour_usd=0.409876 reserved_usd=0.000655 role=obser
+{"enabled": false, "fallback": "openrouter", "heartbeat": {"age_s": 2.9, "breaker_state": "disabled", "enabled": false, "failed_24h": 0, "in_flight": 0, "ready": 0, "reserved_usd": 0.000655, "role": "observer", "spend_hour_usd": 0.409876, "spend_today_usd": 0.631387}, "llm_mode": "live", "profile": "openrouter-gpt6-luna", "profiles": [{"base_url": "https://openrouter.ai/api/v1", "key_set": true, "name": "openrouter-gpt6-luna"}, {"base_url": "https://openrouter.ai/api/v1", "key_set": true, "name": "openrouter"}], "role": "observer", "service": "librarian"}
+{"enabled": false, "fallback": "openrouter", "llm_mode": "live", "profile": "openrouter-gpt6-luna", "profiles": [{"base_url": "https://openrouter.ai/api/v1", "key_set": true, "name": "openrouter-gpt6-luna"}, {"base_url": "https://openrouter.ai/api/v1", "key_set": true, "name": "openrouter"}], "risk_judge": ["openrouter-gpt6-luna"], "role": "observer", "service": "api"}
+## OFF: risk_check + a write (the api must not enqueue a librarian_write job)
+risk_check err=False verdict=warn judged=false judge=retrieval_only reason=disabled warnings=2 145ms
+risk_check err=False verdict=warn judged=false judge=retrieval_only reason=disabled warnings=2 135ms
+write kill-off-probe v653 event None 448ms
+ kind  | status | priority | version_id 
+-------+--------+----------+------------
+ embed | done   |        5 |        653
+(1 row)
+
+migration   0008_librarian_tasks
+librarian   ready=0 in_flight=0 role=observer breaker=closed (ledger) failed_24h=0 spend_today_usd=0.631387 spend_hour_usd=0.409876 reserved_usd=0.000655
+jobs        embed          done     653
+jobs        librarian_write done     470
+# 2026-09-24T02:57:40Z back ON: the same RUNBOOK command with true
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreated 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-librarian-1 Starting 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-librarian-1 Started 
+ Container hlmemo-prod-api-1 Started 
+/usr/bin/ssh -F "$STATE/ssh_config" hlm-deploy  < /dev/null  0.01s user 0.00s system 0% cpu 1.492 total
+rc=0
+## ON: downtime of the api recreate
+samples=94 codes={200: 83, 502: 11}
+longest outage: first-non200=1790218660.81 next200=1790218663.65 -> 2.8s (upper bound 3.1s, 11 non-200 samples)
+HLM_LIBRARIAN_ENABLED=true
+HLM_LIBRARIAN_ROLE=observer
+HLM_LLM_BUDGET_DAY_USD=2
+600 hlmdeploy
+librarian-1  | 2026-09-24 02:57:42,584 INFO hlmemo.librarian librarian: host=db port=5432 dbname=hlm user=hlm, role=observer, mode=live, profile=openrouter-gpt6-luna, fallback=openrouter
+librarian-1  | 2026-09-24 02:57:43,106 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_24h=0 spend_today_usd=0.631387 spend_hour_usd=0.409876 reserved_usd
+librarian-1  | 2026-09-24 02:57:53,217 INFO hlmemo.librarian librarian heartbeat: ready=0 in_flight=0 oldest_ready_age_s=None failed_24h=0 spend_today_usd=0.631387 spend_hour_usd=0.409876 reserved_usd
+{'enabled': True, 'role': 'observer'} {'age_s': 9.7, 'breaker_state': 'closed', 'enabled': True, 'failed_24h': 0, 'in_flight': 0, 'ready': 0, 'reserved_usd': 0.000655, 'role': 'observer', 'spend_hour_usd': 0.409876, 'spend_today_usd': 0.631387}
+## ON: risk_check x3 + a write (a librarian_write job must be enqueued and processed in observer)
+risk_check err=False verdict=warn judged=true judge=ok reason=- warnings=1 1834ms
+risk_check err=False verdict=warn judged=true judge=ok reason=- warnings=1 1751ms
+risk_check err=False verdict=warn judged=true judge=ok reason=- warnings=1 2455ms
+write kill-on-probe v654 event None 348ms
+      kind       | status | priority | attempts | version_id | signals 
+-----------------+--------+----------+----------+------------+---------
+ embed           | done   |        5 |        1 |        654 |       1
+ librarian_write | done   |        3 |        1 |        654 |       1
+(2 rows)
+

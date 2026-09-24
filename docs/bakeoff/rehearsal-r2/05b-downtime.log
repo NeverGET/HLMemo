@@ -1,0 +1,10 @@
+# R2 cutover downtime: host poller on https://localhost:19443/ready every ~0.25 s (CA-verified)
+deploy start epoch 1790213625.308
+deploy end epoch 1790213706.503
+samples=442 codes={200: 395, 0: 47}
+longest outage: first-non200=1790213683.53 next200=1790213695.51 -> 12.0s (upper bound 12.3s, 47 non-200 samples)
+1790213683.534 0
+1790213683.802 0
+1790213684.059 0
+1790213695.004 0
+1790213695.257 0

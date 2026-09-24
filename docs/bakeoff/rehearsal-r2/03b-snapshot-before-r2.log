@@ -1,0 +1,25 @@
+# 2026-09-24T01:32:57Z DB snapshot on R1 after seed (before llm.env / R2)
+              at               |    alembic     
+-------------------------------+----------------
+ 2026-09-24 01:32:57.955621+00 | 0006_librarian
+
+ links_total | links_superseded | links_valid_closed 
+-------------+------------------+--------------------
+           0 |                0 |                  0
+
+ versions_total | versions_superseded | versions_valid_closed 
+----------------+---------------------+-----------------------
+             56 |                   0 |                     0
+
+       kind        | count 
+-------------------+-------
+ call_the_day      |     2
+ device_approved   |     5
+ device_minted     |     9
+ device_registered |     6
+ device_revoked    |     9
+ grant_added       |    15
+ grant_revoked     |     4
+ project_created   |     6
+ write             |    54
+

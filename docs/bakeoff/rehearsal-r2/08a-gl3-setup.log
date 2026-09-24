@@ -1,0 +1,10 @@
+# 2026-09-24T01:39:58Z G-L3 setup: project r2-load, device r2-load-mac (ops mint | hlm device login), pre-seed corpus 4 writes x 40 items (~1.5 kB each)
+{"card_clue":"v73","created":true,"project":{"archived_at":null,"created_at":"2026-09-24T01:39:59.379523+00:00","id":10,"name":"R2 rehearsal G-L3 load","slug":"r2-load"}}
+logged in as device id=23 name=r2-load-mac class=personal; token stored in /private/tmp/claude-501/-Users-cemalkurt-Projects-HLMemo/07becd3e-3d09-45cc-b57f-ee0d0b6716e4/scratchpad/r2/cfg/credentials.toml
+usage: - [-h] --device DEVICE --project PROJECT [--n N] [--callers CALLERS]
+         [--body {neutral,identifier}] [--run RUN] [--offset OFFSET]
+-: error: the following arguments are required: --device, --project
+pre-seed batch 0: err=False versions=40 84ms
+pre-seed batch 1: err=False versions=40 69ms
+pre-seed batch 2: err=False versions=40 68ms
+pre-seed batch 3: err=False versions=40 71ms

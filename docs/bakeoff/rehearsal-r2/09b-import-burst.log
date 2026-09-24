@@ -1,0 +1,126 @@
+# Import burst (4d) on the VM, R2 3535bcc9bf66, librarian live (observer). 2026-09-24
+# hlm import markdown <50 tracked HLMemo docs files> --project r2-import --base <repo> (device r2-import-mac, ops mint | login).
+# Concurrently (burst_load.py): 3 query callers timed for 300 s against r2-import (the project being imported),
+# plus 10 ~6 kB writes in r2-load every 20 s from t+30 s (priority-3 librarian jobs) while the priority-6 import jobs queue.
+import start 1790216298.952
+import rc=0
+import end 1790216338.212
+## import report (hlm import --json, counts)
+{"counts": {"changed": 0, "closed": 0, "missing": 0, "new": 207, "rejected": 0, "skipped": 0, "unchanged": 0}, "dry_run": false, "project": "r2-import", "source": "markdown", "token_estimate": {"items": 207, "tokenizer": "o200k_base", "tokens": 137819}, "writes": {"closed": 0, "failed": [], "link_revisions": 0, "links_dropped": 0, "replayed": 0, "revisions": 0, "written": 207}}
+## stderr of hlm import (cosmetic MCP SDK warning)
+Tool hlm.export not listed by server, cannot validate any structured content
+## timed queries + concurrent writes (burst_load.py)
+{"t_start": 1790216297.061, "t_end": 1790216597.167, "queries": 6973, "q_p50": 121.9, "q_p95": 216.6, "q_max": 576.6, "errors": 0, "writes": [{"i": 0, "t": 1790216327.063, "vid": 588}, {"i": 1, "t": 1790216347.296, "vid": 643}, {"i": 2, "t": 1790216367.528, "vid": 644}, {"i": 3, "t": 1790216387.668, "vid": 645}, {"i": 4, "t": 1790216407.835, "vid": 646}, {"i": 5, "t": 1790216428.016, "vid": 647}, {"i": 6, "t": 1790216448.185, "vid": 648}, {"i": 7, "t": 1790216468.454, "vid": 649}, {"i": 8, "t": 1790216488.653, "vid": 650}, {"i": 9, "t": 1790216508.877, "vid": 651}]}
+## resources (sampler; write window = import start..end)
+{
+ "samples_total": 695,
+ "samples_in_write_window": 13,
+ "write_window": {
+  "cpu_busy_mean": 95,
+  "cpu_busy_max": 99,
+  "load1_max": 1.9
+ },
+ "whole_run": {
+  "cpu_busy_max": 100,
+  "load1_max": 3.97
+ },
+ "mem_peak_mib": {
+  "db": {
+   "peak": 126,
+   "limit": 2048
+  },
+  "api": {
+   "peak": 1240,
+   "limit": 2560
+  },
+  "worker": {
+   "peak": 1010,
+   "limit": 1536
+  },
+  "librarian": {
+   "peak": 126,
+   "limit": 512
+  },
+  "caddy": {
+   "peak": 15,
+   "limit": 256
+  }
+ },
+ "cpu_pct_peak": {
+  "db": 26.61,
+  "api": 100.8,
+  "worker": 102.9,
+  "librarian": 10.69,
+  "caddy": 1.78
+ },
+ "backlog_peak": {
+  "embed/p5:queued": 176,
+  "embed/p5:running": 1,
+  "librarian_write/p6:queued": 203,
+  "librarian_write/p6:running": 1,
+  "librarian_write/p3:queued": 9,
+  "librarian_write/p3:running": 1
+ },
+ "embed_drained_s_after_last_write": 176.1,
+ "librarian_write_drained_s_after_last_write": 2104.5
+}
+## priority check: every p3 job vs the p6 backlog (starve.sql)
+ job_id | created  |   done   | status | wait_s | p6_done_meanwhile | p6_still_waiting_at_p3_done 
+--------+----------+----------+--------+--------+-------------------+-----------------------------
+    993 | 02:18:47 | 02:20:45 | done   |  117.9 |                13 |                         139
+   1103 | 02:19:07 | 02:22:22 | done   |  194.7 |                16 |                         187
+   1105 | 02:19:27 | 02:22:05 | done   |  157.9 |                13 |                         187
+   1107 | 02:19:47 | 02:22:50 | done   |  182.4 |                11 |                         187
+   1109 | 02:20:07 | 02:22:41 | done   |  153.5 |                 9 |                         187
+   1111 | 02:20:28 | 02:22:13 | done   |  105.8 |                 7 |                         187
+   1113 | 02:20:48 | 02:21:58 | done   |   70.0 |                 6 |                         187
+   1115 | 02:21:08 | 02:23:14 | done   |  126.3 |                 4 |                         187
+   1117 | 02:21:28 | 02:23:05 | done   |   96.7 |                 3 |                         187
+   1119 | 02:21:48 | 02:22:57 | done   |   68.2 |                 1 |                         187
+
+ priority | status | count | first_created | last_done 
+----------+--------+-------+---------------+-----------
+        3 | done   |    10 | 02:18:47      | 02:23:14
+        6 | done   |   207 | 02:18:20      | 02:54:03
+
+      kind       | priority | count | last_done | drained_s_after_import_end 
+-----------------+----------+-------+-----------+----------------------------
+ embed           |        5 |   217 | 02:21:51  |                      173.8
+ librarian_write |        3 |    10 | 02:23:14  |                      256.6
+ librarian_write |        6 |   207 | 02:54:03  |                     2105.0
+
+## why p3 jobs waited 68-195 s: E_NOT_READY deferral (the write's embedding queued FIFO behind the import's 207 embeds, all embed p5); attempts not consumed
+ERROR:  column "recorded_at" does not exist
+LINE 1: ...ian' AND payload->'resolved'->>'op' = 'defer' AND recorded_a...
+                                                             ^
+HINT:  Perhaps you meant to reference the column "events.received_at".
+ job_id | priority | attempts | created  | run_after |   done   
+--------+----------+----------+----------+-----------+----------
+    993 |        3 |        1 | 02:18:47 | 02:20:23  | 02:20:45
+   1103 |        3 |        1 | 02:19:07 | 02:21:48  | 02:22:22
+   1105 |        3 |        1 | 02:19:27 | 02:21:48  | 02:22:05
+   1107 |        3 |        1 | 02:19:47 | 02:21:48  | 02:22:50
+   1109 |        3 |        1 | 02:20:07 | 02:21:48  | 02:22:41
+   1111 |        3 |        1 | 02:20:28 | 02:21:48  | 02:22:13
+   1113 |        3 |        1 | 02:20:48 | 02:21:48  | 02:21:58
+   1115 |        3 |        1 | 02:21:08 | 02:22:01  | 02:23:14
+   1117 |        3 |        1 | 02:21:28 | 02:21:55  | 02:23:05
+   1119 |        3 |        1 | 02:21:48 | 02:21:51  | 02:22:57
+(10 rows)
+
+## spend (hlm_ops.sh status --json .librarian) before -> after the burst; guard HLM_LLM_BUDGET_DAY_USD=2
+before {"breaker_source": "ledger", "breaker_state": "closed", "failed_24h": 0, "in_flight": 0, "oldest_ready_age_s": null, "ready": 0, "reserved_usd": 0.0, "role": "observer", "spend_hour_usd": 0.137927, "spend_today_usd": 0.359438}
+after {"breaker_source": "ledger", "breaker_state": "closed", "failed_24h": 0, "in_flight": 0, "oldest_ready_age_s": null, "ready": 0, "reserved_usd": 0.0, "role": "observer", "spend_hour_usd": 0.405567, "spend_today_usd": 0.627078}
+## librarian audit r2-import (summary)
+{"by_kind": {"contradiction": 32, "link": 165}, "by_relation": {"contradicts": 32, "duplicate": 32, "refines": 133}, "by_status": {"open": 197}} batches [('ready', None), ('ready', None), ('ready', None), ('ready', None), ('ready', None), ('ready', None), ('ready', None), ('open', None)]
+## defer events (librarian, op=defer) during the burst, by last_error
+   reason    | op | count 
+-------------+----+-------
+ E_NOT_READY |    |    46
+(1 row)
+
+ op | count 
+----+-------
+    |   263
+(1 row)
+

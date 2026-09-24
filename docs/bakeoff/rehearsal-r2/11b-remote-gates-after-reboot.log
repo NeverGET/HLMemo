@@ -1,0 +1,215 @@
+# 2026-09-24T03:04:20Z after the reboot: remote_gates.sh --librarian --no-drill
+remote_gates: url=https://localhost:19443 tls=internal insecure=1 ssh=/Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/ssh_config log=/Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260924T030420Z.log
+FAIL health-ready           /health=000 /ready=000
+FAIL unknown-path-404       status=000
+FAIL tls-issuer             no certificate presented
+PASS postgres-closed        tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+    FAIL http/ready ConnectError: [Errno 61] Connection refused
+    FAIL http/health ConnectError: [Errno 61] Connection refused
+    FAIL http/unknown-route-404 ConnectError: [Errno 61] Connection refused
+    Traceback (most recent call last):
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+        yield
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request
+        resp = self._pool.handle_request(req)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+        raise exc from None
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+        response = connection.handle_request(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+        raise exc
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+        stream = self._connect(request)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+        stream = self._network_backend.connect_tcp(**kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+        with map_exceptions(exc_map):
+             ^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__
+        self.gen.throw(value)
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+        raise to_exc(exc) from exc
+    httpcore.ConnectError: [Errno 61] Connection refused
+    
+    The above exception was the direct cause of the following exception:
+    
+    Traceback (most recent call last):
+      File "/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py", line 403, in <module>
+        sys.exit(main())
+                 ^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py", line 386, in main
+        if p.ensure_device():
+           ^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py", line 358, in ensure_device
+        r = self.get("/devices/whoami", headers=self._dev())
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py", line 130, in get
+        return self.http.get(path, **kw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1053, in get
+        return self.request(
+               ^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 825, in request
+        return self.send(request, auth=auth, follow_redirects=follow_redirects)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 914, in send
+        response = self._send_handling_auth(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+        response = self._send_handling_redirects(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+        response = self._send_single_request(request)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request
+        response = transport.handle_request(request)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request
+        with map_httpcore_exceptions():
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__
+        self.gen.throw(value)
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+        raise mapped_exc(message) from exc
+    httpx.ConnectError: [Errno 61] Connection refused
+FAIL probe                  smoke failed
+    FAIL routes: ConnectionRefusedError: [Errno 61] Connection refused
+FAIL routes                 FAIL routes: ConnectionRefusedError: [Errno 61] Connection refused
+    $ hlm init --server https://localhost:19443/mcp --project gates-cli --device-name gates-cli-10579
+      wrote /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/gates-work.OGKFsO/hlm-cli/hlm.toml
+      server registration mode unknown (not reachable yet); pick the matching step:
+      next (production, registration closed): ask the operator to mint a token for this device:
+        deploy/scripts/hlm_ops.sh --state <dir> device mint --name gates-cli-10579 --class personal --grant <project>:write \
+          | hlm device login --name gates-cli-10579 --token-stdin
+      next (local dev, registration open): hlm device register --wait
+        then approve it from a trusted device: hlm --admin device approve gates-cli-10579 --class ...
+    $ hlm device register --name gates-cli-10579-reg (expect refusal)
+      error E_UNAVAILABLE: cannot reach https://localhost:19443: [Errno 61] Connection refused
+FAIL hlm-cli                init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-10579
+FAIL wan-latency            Traceback (most recent call last):   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions     yield   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request     resp = self._pool.handle_request(req)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request     raise exc from None   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request     response = connection.handle_request(                ^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 101, in handle_request     raise exc   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 78, in handle_request     stream = self._connect(request)              ^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 124, in _connect     stream = self._network_backend.connect_tcp(**kwargs)              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp     with map_exceptions(exc_map):          ^^^^^^^^^^^^^^^^^^^^^^^   File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions     raise to_exc(exc) from exc httpcore.ConnectError: [Errno 61] Connection refused  The above exception was the direct cause of the following exception:  Traceback (most recent call last):   File "<stdin>", line 9, in <module>   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1144, in post     return self.request(            ^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 825, in request     return self.send(request, auth=auth, follow_redirects=follow_redirects)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 914, in send     response = self._send_handling_auth(                ^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth     response = self._send_handling_redirects(                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects     response = self._send_single_request(request)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request     response = transport.handle_request(request)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request     with map_httpcore_exceptions():          ^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions     raise mapped_exc(message) from exc httpx.ConnectError: [Errno 61] Connection refused (ceiling p95<=3000ms)
+FAIL risk-check             Traceback (most recent call last):   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions     yield   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request     resp = self._pool.handle_request(req)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request     raise exc from None   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request     response = connection.handle_request(                ^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 101, in handle_request     raise exc   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 78, in handle_request     stream = self._connect(request)              ^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 124, in _connect     stream = self._network_backend.connect_tcp(**kwargs)              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp     with map_exceptions(exc_map):          ^^^^^^^^^^^^^^^^^^^^^^^   File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions     raise to_exc(exc) from exc httpcore.ConnectError: [Errno 61] Connection refused  The above exception was the direct cause of the following exception:  Traceback (most recent call last):   File "<stdin>", line 10, in <module>   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1144, in post     return self.request(            ^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 825, in request     return self.send(request, auth=auth, follow_redirects=follow_redirects)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 914, in send     response = self._send_handling_auth(                ^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth     response = self._send_handling_redirects(                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects     response = self._send_single_request(request)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request     response = transport.handle_request(request)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request     with map_httpcore_exceptions():          ^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions     raise mapped_exc(message) from exc httpx.ConnectError: [Errno 61] Connection refused
+    Traceback (most recent call last):
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+        yield
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request
+        resp = self._pool.handle_request(req)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+        raise exc from None
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+        response = connection.handle_request(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+        raise exc
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+        stream = self._connect(request)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+        stream = self._network_backend.connect_tcp(**kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+        with map_exceptions(exc_map):
+             ^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__
+        self.gen.throw(value)
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+        raise to_exc(exc) from exc
+    httpcore.ConnectError: [Errno 61] Connection refused
+    
+    The above exception was the direct cause of the following exception:
+    
+    Traceback (most recent call last):
+      File "/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py", line 403, in <module>
+        sys.exit(main())
+                 ^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py", line 393, in main
+        if p.ensure_device() and p.mcp_initialize():
+           ^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py", line 358, in ensure_device
+        r = self.get("/devices/whoami", headers=self._dev())
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/docs/bakeoff/r2/judge/probe.py", line 130, in get
+        return self.http.get(path, **kw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1053, in get
+        return self.request(
+               ^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 825, in request
+        return self.send(request, auth=auth, follow_redirects=follow_redirects)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 914, in send
+        response = self._send_handling_auth(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+        response = self._send_handling_redirects(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+        response = self._send_single_request(request)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request
+        response = transport.handle_request(request)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request
+        with map_httpcore_exceptions():
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__
+        self.gen.throw(value)
+      File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+        raise mapped_exc(message) from exc
+    httpx.ConnectError: [Errno 61] Connection refused
+FAIL librarian              marker write gates-lib-20260924T030420Z-13479 failed
+SKIP backup-restore         --no-drill
+device inventory (hlm_ops.sh device list):
+       1  admin (reserved)             server    trusted  expires=- last_seen=- grants=gates:admin,gates-cli:admin,gates-probe:admin,r1-seed:admin,r2-import:admin,r2-load:admin,r2-seed:admin,reboot:admin
+       2  judge-cffefa4a               ci        revoked  expires=- last_seen=2026-09-23T06:53:58.235379+00:00 grants=-
+       3  gates-cli-20125              ci        revoked  expires=- last_seen=2026-09-23T06:54:01.142048+00:00 grants=-
+       4  judge-25e19a58               ci        trusted  expires=- last_seen=2026-09-23T06:55:03.607698+00:00 grants=reboot:write
+       5  judge-86f7d02a               ci        trusted  expires=- last_seen=2026-09-23T06:55:54.294880+00:00 grants=reboot:write
+       6  seed-trusted-mac             personal  trusted  expires=- last_seen=2026-09-23T18:38:15.669460+00:00 grants=r1-seed:write
+       7  seed-pending-laptop          personal  pending  expires=- last_seen=- grants=-
+       8  librarian                    server    trusted  expires=- last_seen=- grants=-
+       9  routes-check-56ffa3d5        ci        revoked  expires=2026-09-23T18:46:24.517606+00:00 last_seen=2026-09-23T18:36:24.550205+00:00 grants=-
+      10  deploy-routes-fa24ca5a0d87-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
+      11  gates-probe-20260923t183640z ci        revoked  expires=2026-09-23T19:06:42.628038+00:00 last_seen=2026-09-23T18:36:42.841876+00:00 grants=-
+      12  gates-routes-20260923t183640z ci        revoked  expires=2026-09-23T18:46:43.814204+00:00 last_seen=2026-09-23T18:36:43.932779+00:00 grants=-
+      13  gates-cli-30966              ci        revoked  expires=2026-09-23T19:06:46.565281+00:00 last_seen=2026-09-23T18:36:46.589456+00:00 grants=-
+      14  rehearsal-mac                personal  trusted  expires=- last_seen=2026-09-23T18:47:10.381328+00:00 grants=r1-seed:write
+      15  routes-check-b13c5d81        ci        revoked  expires=2026-09-24T01:41:21.465302+00:00 last_seen=2026-09-24T01:31:21.502087+00:00 grants=-
+      16  deploy-routes-ee6ce9c9f1d6-23116 ci        revoked  expires=2026-09-24T01:41:21.995065+00:00 last_seen=2026-09-24T01:31:22.067436+00:00 grants=-
+      17  r2-seed-mac                  personal  trusted  expires=- last_seen=2026-09-24T03:00:04.463569+00:00 grants=r2-seed:write
+      18  routes-check-6066fab3        ci        revoked  expires=2026-09-24T01:45:01.753593+00:00 last_seen=2026-09-24T01:35:01.794955+00:00 grants=-
+      19  deploy-routes-3535bcc9bf66-20275 ci        revoked  expires=2026-09-24T01:45:02.347847+00:00 last_seen=2026-09-24T01:35:02.438937+00:00 grants=-
+      20  gates-probe-20260924t013540z ci        revoked  expires=2026-09-24T02:05:41.843919+00:00 last_seen=2026-09-24T01:35:42.089586+00:00 grants=-
+      21  gates-routes-20260924t013540z ci        revoked  expires=2026-09-24T01:45:43.389600+00:00 last_seen=2026-09-24T01:35:43.518243+00:00 grants=-
+      22  gates-cli-21572              ci        revoked  expires=2026-09-24T02:05:46.071563+00:00 last_seen=2026-09-24T01:35:46.099162+00:00 grants=-
+      23  r2-load-mac                  personal  trusted  expires=- last_seen=2026-09-24T02:23:17.178138+00:00 grants=r2-import:read,r2-load:write
+      24  r2-import-mac                personal  trusted  expires=- last_seen=2026-09-24T02:18:20.680576+00:00 grants=r2-import:write
+      25  gates-probe-20260924t030420z ci        revoked  expires=2026-09-24T03:34:22.286761+00:00 last_seen=- grants=-
+      26  gates-routes-20260924t030420z ci        trusted  expires=2026-09-24T03:14:23.127148+00:00 last_seen=- grants=-
+    ready       ready failing=-
+    migration   0008_librarian_tasks
+    devices     {'pending': 1, 'revoked': 15, 'trusted': 9}
+    worker      ready=0 oldest_ready_age_s=None last_done_at=2026-09-24T03:00:49.665105+00:00 expired_leases=0
+    librarian   ready=0 in_flight=0 role=observer breaker=closed (ledger) failed_24h=0 spend_today_usd=0.63443 spend_hour_usd=0.002455 reserved_usd=0.000655
+    jobs        embed          done     659
+    jobs        librarian_write done     476
+
+GATE                   RESULT DETAIL
+health-ready           FAIL  /health=000 /ready=000
+unknown-path-404       FAIL  status=000
+tls-issuer             FAIL  no certificate presented
+postgres-closed        PASS  tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+probe                  FAIL  smoke failed
+routes                 FAIL  FAIL routes: ConnectionRefusedError: [Errno 61] Connection refused
+hlm-cli                FAIL  init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-10579
+wan-latency            FAIL  Traceback (most recent call last):   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions     yield   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request     resp = self._pool.handle_request(req)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request     raise exc from None   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request     response = connection.handle_request(                ^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 101, in handle_request     raise exc   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 78, in handle_request     stream = self._connect(request)              ^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 124, in _connect     stream = self._network_backend.connect_tcp(**kwargs)              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp     with map_exceptions(exc_map):          ^^^^^^^^^^^^^^^^^^^^^^^   File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions     raise to_exc(exc) from exc httpcore.ConnectError: [Errno 61] Connection refused  The above exception was the direct cause of the following exception:  Traceback (most recent call last):   File "<stdin>", line 9, in <module>   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1144, in post     return self.request(            ^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 825, in request     return self.send(request, auth=auth, follow_redirects=follow_redirects)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 914, in send     response = self._send_handling_auth(                ^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth     response = self._send_handling_redirects(                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects     response = self._send_single_request(request)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request     response = transport.handle_request(request)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request     with map_httpcore_exceptions():          ^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions     raise mapped_exc(message) from exc httpx.ConnectError: [Errno 61] Connection refused (ceiling p95<=3000ms)
+risk-check             FAIL  Traceback (most recent call last):   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions     yield   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request     resp = self._pool.handle_request(req)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request     raise exc from None   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request     response = connection.handle_request(                ^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 101, in handle_request     raise exc   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 78, in handle_request     stream = self._connect(request)              ^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 124, in _connect     stream = self._network_backend.connect_tcp(**kwargs)              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp     with map_exceptions(exc_map):          ^^^^^^^^^^^^^^^^^^^^^^^   File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions     raise to_exc(exc) from exc httpcore.ConnectError: [Errno 61] Connection refused  The above exception was the direct cause of the following exception:  Traceback (most recent call last):   File "<stdin>", line 10, in <module>   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1144, in post     return self.request(            ^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 825, in request     return self.send(request, auth=auth, follow_redirects=follow_redirects)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 914, in send     response = self._send_handling_auth(                ^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth     response = self._send_handling_redirects(                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects     response = self._send_single_request(request)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request     response = transport.handle_request(request)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request     with map_httpcore_exceptions():          ^^^^^^^^^^^^^^^^^^^^^^^^^   File "/Applications/Data/Assets/Python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   File "/Users/cemalkurt/Projects/HLMemo/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions     raise mapped_exc(message) from exc httpx.ConnectError: [Errno 61] Connection refused
+librarian              FAIL  marker write gates-lib-20260924T030420Z-13479 failed
+backup-restore         SKIP  --no-drill
+total 9s (gates 9s); log: /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260924T030420Z.log
+RESULT FAIL
+rc=1

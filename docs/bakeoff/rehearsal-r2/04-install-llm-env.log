@@ -1,0 +1,47 @@
+# 2026-09-24T01:32:57Z bash deploy/scripts/install_llm_env.sh --state deploy/.local/127.0.0.1-2223   (key from ./.env over ssh stdin)
+install_llm_env: /etc/hlmemo/llm.env on hlm-deploy (deploy/.local/127.0.0.1-2223/ssh_config): profile=openrouter-gpt6-luna fallback=openrouter role=observer enabled=true
+installed /etc/hlmemo/llm.env (0600 hlmdeploy)
+  HLM_LIBRARIAN_ENABLED=true
+  HLM_LIBRARIAN_ROLE=observer
+  HLM_PROFILE=openrouter-gpt6-luna
+  HLM_FALLBACK_PROFILE=openrouter
+  OPENROUTER_API_KEY=<set>
+  HLM_LLM_MODE=live
+  HLM_LLM_TIMEOUT_S=60
+  HLM_LLM_BUDGET_HOUR_USD=3
+  HLM_LLM_BUDGET_DAY_USD=10
+  HLM_LLM_BUDGET_MONTH_USD=60
+  HLM_LLM_JOB_CALL_CAP=20
+  HLM_LLM_BUDGET_DISABLED=false
+  HLM_LLM_REDACT_EMAIL=false
+  HLM_LLM_REDACT_PHONE=false
+Next: deploy the R2 release (--accept-compose-change), or on a running R2 release: stack.sh up -d --no-deps librarian api (RUNBOOK "R2 release").
+rc=0
+# guard for the rehearsal: HLM_LLM_BUDGET_DAY_USD=2 (install_llm_env.sh has no cap flag: edited on the host, RUNBOOK 'change a cap in llm.env')
+600 hlmdeploy /etc/hlmemo/llm.env
+HLM_LIBRARIAN_ENABLED=true
+HLM_LIBRARIAN_ROLE=observer
+HLM_PROFILE=openrouter-gpt6-luna
+HLM_FALLBACK_PROFILE=openrouter
+HLM_LLM_MODE=live
+HLM_LLM_TIMEOUT_S=60
+HLM_LLM_BUDGET_HOUR_USD=3
+HLM_LLM_BUDGET_DAY_USD=2
+HLM_LLM_BUDGET_MONTH_USD=60
+HLM_LLM_JOB_CALL_CAP=20
+HLM_LLM_BUDGET_DISABLED=false
+HLM_LLM_REDACT_EMAIL=false
+HLM_LLM_REDACT_PHONE=false
+OPENROUTER_API_KEY lines with a value: 1
+total 40
+drwxr-x---   2 hlmdeploy hlmdeploy 4096 Sep 24 01:32 .
+drwxr-xr-x 113 root      root      4096 Sep 24 01:29 ..
+-rw-------   1 hlmdeploy hlmdeploy  351 Sep 23 18:36 api.env
+-rw-------   1 hlmdeploy hlmdeploy  521 Sep 23 06:50 api.env.pre-w0-20260923T183410Z
+-rw-------   1 hlmdeploy hlmdeploy  616 Sep 23 06:50 app.env
+-rw-------   1 hlmdeploy hlmdeploy  458 Sep 23 06:50 backup.env
+-rw-r--r--   1 root      root         4 Sep 23 06:54 bootstrap-ssh-cidr
+-rw-------   1 hlmdeploy hlmdeploy  239 Sep 23 06:50 db.env
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 24 01:32 llm.env
+-rw-------   1 hlmdeploy hlmdeploy  877 Sep 24 01:31 prod.env
+# idempotence: re-run (the file now differs from the template by the cap -> a backup + rewrite would reset it; NOT re-run, see note)
