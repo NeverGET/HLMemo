@@ -319,6 +319,7 @@ async def risk_check(
             called = True
             caps = {
                 "trigger_device_id": ctx.device_id,
+                "token_generation": ctx.token_generation,  # a rotated bearer loses authority (D-062)
                 "question": sorted({p for c in cands for p in c.project_ids if ctx.has(p, Role.READ)}),
             }
             items = [rj.JudgeItem(c.version_id, c.project) for c in cands]
