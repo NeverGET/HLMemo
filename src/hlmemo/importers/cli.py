@@ -67,6 +67,7 @@ async def import_async(
     meter: Any = None,
     progress: bool = False,
     close: bool = True,
+    confirm_close: bool = False,
 ) -> dict[str, Any]:
     """Classify against the server manifest (empty when ``call`` is None: ``--offline``), re-map or
     close the items no longer produced (``close=False``: report them only), and write."""
@@ -79,7 +80,7 @@ async def import_async(
         manifest, _as_of = await fetch_items(call, project)
     plan = classify(project, source, parsed, manifest, meter)
     if call is not None:
-        await resolve_missing(call, plan)
+        await resolve_missing(call, plan, confirm_close=confirm_close)
         if not close:
             plan.kept += [
                 {"key": f"{it['source']['system']}:{it['source']['path']}", "reason": "keep-missing"}
@@ -111,6 +112,8 @@ def human_summary(rep: dict[str, Any]) -> str:
         lines.append(f"  remapped {r['from']} -> {r['to']} (similarity {r['score']})")
     for k in rep["closed"]:
         lines.append(f"  close (no longer in the source; validity ends now): {k}")
+    for a in rep["remap_ambiguous"]:
+        lines.append(f"  not re-mapped (ambiguous): {a['from']} ~ {', '.join(a['candidates'])}")
     for m in rep["missing"]:
         lines.append(f"  missing, kept open ({m['reason']}): {m['key']}")
     w = rep.get("writes")
@@ -139,6 +142,7 @@ def run_import_command(
     tz: str | None = None,
     section_chars: int = SECTION_CHARS,
     close: bool = True,
+    confirm_close: bool = False,
 ) -> dict[str, Any]:
     parsed = parse_source(
         source,
@@ -162,6 +166,7 @@ def run_import_command(
                 dry_run=dry_run,
                 progress=progress,
                 close=close,
+                confirm_close=confirm_close,
             )
 
     return asyncio.run(go())
