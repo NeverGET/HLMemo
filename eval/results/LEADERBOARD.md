@@ -14,8 +14,8 @@ Rendered from `eval/results/leaderboard.json` by `hlm bench leaderboard` (append
 
 | corpus | primary | best | iteration | config | commit | embedder | $/query | fixture | secondary |
 |---|---|---|---|---|---|---|---|---|---|
-| corpus_a | hit@5 | 0.793 | #1 Phase 0 baseline (D-057) | 30f79015c14e | 16abaf7 | intfloat/multilingual-e5-small@614241f622f5 | 0.0 | 7a24ad29d981 | mrr=0.662; l2_key=0.772; l1_key=0.533; temporal_l2_stale_first=0.533; negative_auc=0.792; tokens_query_mean=2940.2 |
-| corpus_b_dev | evidence Recall@5 | 0.451 | #1 Phase 0 baseline (D-057) | 30f79015c14e | 16abaf7 | intfloat/multilingual-e5-small@614241f622f5 | 0.0 | 5825dedbb693 | hit@5=0.625; mrr=0.398; l2_key=0.556; stale_claim_l1_top3=0.25; tokens_query_mean=2965.2 |
+| corpus_a | hit@5 | 0.859 | #9 L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE) | 016c33e768f0 | d3ce0ac | intfloat/multilingual-e5-small@614241f622f5 | 3.94e-05 | 7a24ad29d981 | mrr=0.68; l2_key=0.87; l1_key=0.554; temporal_l2_stale_first=0.533; temporal_l2_key=0.6; stale_claim_l1_top3=0.2; negative_auc=0.813; tokens_query_mean=2949.7; query_p50_ms=84.4; query_p95_ms=126.5; hit@5_tr=0.867; hit@5_en=0.851; prewarm={'states': {'None': 51, 'applied': 48, 'unavailable': 1}, 'wait_seconds': 60.8, 'cold_query_ms_p50': 70.7, 'cold_query_ms_p95': 93.4} |
+| corpus_b_dev | evidence Recall@5 | 0.556 | #9 L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE) | 016c33e768f0 | d3ce0ac | intfloat/multilingual-e5-small@614241f622f5 | 3.94e-05 | 5825dedbb693 | hit@5=0.75; mrr=0.506; l2_key=0.667; stale_claim_l1_top3=0.188; temporal_evidence_r5=0.25; temporal_l2_stale_first=0.375; negative_auc=0.772; tokens_query_mean=2948.7; query_p50_ms=79.8; query_p95_ms=120.6; hit@5_tr=0.722; hit@5_en=0.778; prewarm={'states': {'None': 41, 'applied': 38, 'unavailable': 1}, 'wait_seconds': 45.7, 'cold_query_ms_p50': 69.1, 'cold_query_ms_p95': 114.0} |
 | corpus_b_sealed | evidence Recall@5 | sealed | - | - | - | - | - | b08a49dfc67e | confirmation only (rule 4): scored once, in aggregate, at the final acceptance |
 
 History (append-only):
@@ -28,12 +28,22 @@ History (append-only):
 | corpus_a | 4 | 2026-09-24 | J@a65a8f5 (librarian judgement v2 branch), no librarian: the before on the same eval copy | a65a8f5 | f34647b3f244 | 0.793 | 0.0 | - | False | True |
 | corpus_a | 5 | 2026-09-24 | Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy) | a65a8f5 | 0652a76c53a8 | 0.761 | 0.002622 | - | False | True |
 | corpus_a | 6 | 2026-09-24 | Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy) | a65a8f5 | 6a9428d10322 | 0.739 | 0.001374 | - | False | True |
+| corpus_a | 7 | 2026-09-24 | L@d3ce0ac pivot flags off (prod-rule import, source populated) | d3ce0ac | 4f1c79a64af4 | 0.793 | 0.0 | - | False | True |
+| corpus_a | 8 | 2026-09-24 | L@d3ce0ac per-source top-5 cap (HLM_RETRIEVAL_SOURCE_CAP) | d3ce0ac | a2bc92b87343 | 0.793 | 0.0 | - | False | True |
+| corpus_a | 9 | 2026-09-24 | L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE) | d3ce0ac | 016c33e768f0 | 0.859 | 3.94e-05 | - | False | True |
+| corpus_a | 10 | 2026-09-24 | L@d3ce0ac cap + query rewrite, prewarmed | d3ce0ac | d2bdff50cc53 | 0.859 | 3.78e-05 | - | False | True |
+| corpus_a | 11 | 2026-09-24 | L@d3ce0ac cap + query rewrite + renditions (0% rendition coverage: all rejected/failed) | d3ce0ac | cf240adadd26 | 0.859 | 0.0005228 | - | False | True |
 | corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
 | corpus_b_dev | 4 | 2026-09-24 | J@a65a8f5 (librarian judgement v2 branch), no librarian: the before on the same eval copy | a65a8f5 | f34647b3f244 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 5 | 2026-09-24 | Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy) | a65a8f5 | 0652a76c53a8 | 0.431 | 0.002622 | - | False | True |
 | corpus_b_dev | 6 | 2026-09-24 | Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy) | a65a8f5 | 6a9428d10322 | 0.410 | 0.001374 | - | False | True |
+| corpus_b_dev | 7 | 2026-09-24 | L@d3ce0ac pivot flags off (prod-rule import, source populated) | d3ce0ac | 4f1c79a64af4 | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 8 | 2026-09-24 | L@d3ce0ac per-source top-5 cap (HLM_RETRIEVAL_SOURCE_CAP) | d3ce0ac | a2bc92b87343 | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 9 | 2026-09-24 | L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE) | d3ce0ac | 016c33e768f0 | 0.556 | 3.94e-05 | - | False | True |
+| corpus_b_dev | 10 | 2026-09-24 | L@d3ce0ac cap + query rewrite, prewarmed | d3ce0ac | d2bdff50cc53 | 0.542 | 3.78e-05 | - | False | True |
+| corpus_b_dev | 11 | 2026-09-24 | L@d3ce0ac cap + query rewrite + renditions (0% rendition coverage: all rejected/failed) | d3ce0ac | cf240adadd26 | 0.549 | 0.0005228 | - | False | True |
 
 ## Librarian: bench_v2 (score = macro mean of per-task mean scores, %)
 
