@@ -31,6 +31,7 @@ from hlmemo.db.replay import rebuild_projections
 from hlmemo.ops import service as ops
 from hlmemo.server.app import UnsafeConfigError, create_app, route_table
 from hlmemo.server.middleware import route_closed
+from tests._heads import main_head
 from tests.integration._write_fixtures import dump_projections
 
 pytestmark = pytest.mark.integration
@@ -414,7 +415,7 @@ async def test_ops_cli_prints_only_the_token(db_dsn, connect) -> None:
     assert run("device", "mint", "--name", "w0-cli-dev", "--class", "ci").returncode == 2  # name taken
     assert run("device", "revoke", "w0-cli-dev").returncode == 0
     status = json.loads(run("status", "--json").stdout)
-    assert status["devices"] == {"revoked": 1} and status["migration"] == ["0007_import"]
+    assert status["devices"] == {"revoked": 1} and status["migration"] == [main_head()]
     assert status["ready"]["status"] == "unreachable"  # no API on the loopback port in this test
 
 
@@ -633,7 +634,7 @@ async def test_check_edge_routes_against_a_real_listener(db_dsn, connect) -> Non
     # Sol 34 #6: the public route saw status only; operators get the details via hlmemo.ops.
     assert status.returncode == 0, status.stderr
     ready = json.loads(status.stdout)["ready"]
-    assert ready["status"] == "ready" and ready["checks"]["migration"]["expected"] == "0007_import"
+    assert ready["status"] == "ready" and ready["checks"]["migration"]["expected"] == main_head()
     assert "RESULT routes PASS" in proc.stdout
     assert "hlm_" not in proc.stdout + proc.stderr, "a token was printed"
     # The checker's device revoked itself through the public self-revoke route.
@@ -685,7 +686,7 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
         assert version() == [(start,)]
         up = alembic("upgrade", "main@head")
         assert up.returncode == 0, up.stderr
-        assert version() == [("0007_import",)]
+        assert version() == [(main_head(),)]
         with psycopg.connect(dsn) as conn:
             assert conn.execute(
                 "SELECT 1 FROM information_schema.columns"
@@ -694,7 +695,7 @@ def test_alembic_main_head_from_0001_and_0004() -> None:
     down = alembic("downgrade", "0004_title_norm_fold")
     assert down.returncode == 0, down.stderr
     assert alembic("upgrade", "phase0@head").returncode == 0  # the old label resolves the same head
-    assert version() == [("0007_import",)]
+    assert version() == [(main_head(),)]
     # device_minted events are authoritative: the downgrade refuses instead of rewriting them.
     with psycopg.connect(dsn) as conn:
         conn.execute(

@@ -108,6 +108,14 @@ class _StubHandler(BaseHTTPRequestHandler):
         pass
 
 
+#: W2b write-path jobs of this run: librarian_write:<event_id> of its write events (done, total)
+_TRIGGERED = (
+    "SELECT count(*) FILTER (WHERE j.status = 'done'), count(*) FROM jobs j"
+    " JOIN events w ON j.dedupe_key = 'librarian_write:' || w.event_id"
+    " WHERE w.kind = 'write' AND w.event_id > %(start)s"
+)
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -189,6 +197,8 @@ async def test_gl3_llm_down_core_unaffected(
     window: list[float] = []  # monotonic bounds of the timed queries
     async with await connect() as conn:
         await seed_reserved(conn)
+        cur = await conn.execute("SELECT coalesce(max(event_id), 0) FROM events")
+        (start_event,) = await cur.fetchone()
         for did, tok in ((world.loader_id, LOADER_TOKEN), (world.reader_id, READER_TOKEN)):
             await conn.execute(
                 "UPDATE devices SET token_sha256 = %s WHERE device_id = %s", (hash_token(tok), did)
@@ -210,6 +220,8 @@ async def test_gl3_llm_down_core_unaffected(
         "HLM_API_HOST": "127.0.0.1",
         "HLM_API_PORT": str(api_port),
         "HLM_CURSOR_SECRET": "gl3",
+        # W2b: every acked write also enqueues librarian_write:<event_id> in its own transaction
+        "HLM_LIBRARIAN_ENABLED": "true",
     }
     lib_env = {
         **base_env,
@@ -227,6 +239,8 @@ async def test_gl3_llm_down_core_unaffected(
         "HLM_LLM_BREAKER_MAX_OPEN_S": "2",
         "HLM_LIBRARIAN_POLL_S": "0.2",
         "HLM_LIBRARIAN_HEARTBEAT_FILE": str(tmp_path / "hb.json"),
+        # no embed worker runs here: write_review jobs go lexical-only at once (W2b)
+        "HLM_LIBRARIAN_EMBED_WAIT_S": "0",
     }
     api = _spawn("hlmemo.server.app", api_env, tmp_path, "api.log")
     lib = _spawn("hlmemo.librarian.worker", lib_env, tmp_path, "librarian.log")
@@ -333,8 +347,10 @@ async def test_gl3_llm_down_core_unaffected(
                     {"run": run},
                 )
                 n_done, total = await cur.fetchone()
+                cur = await conn.execute(_TRIGGERED, {"start": start_event})
+                t_done, t_total = await cur.fetchone()
                 await conn.commit()
-            if n_done == total == N_WRITES:
+            if n_done == total == N_WRITES and t_done == t_total == N_WRITES:
                 break
             assert lib.poll() is None, "librarian process exited"
             await asyncio.sleep(1)
@@ -380,3 +396,14 @@ async def test_gl3_llm_down_core_unaffected(
             {"run": run},
         )
         assert await cur.fetchone() == (N_WRITES, N_WRITES)  # 0 duplicate librarian events
+        # W2b: the write-path jobs (one per acked write, same transaction) all completed, once each
+        cur = await conn.execute(_TRIGGERED, {"start": start_event})
+        assert await cur.fetchone() == (N_WRITES, N_WRITES)
+        cur = await conn.execute(
+            "SELECT count(*), count(DISTINCT l.payload->'resolved'->'done'->>'dedupe_key') FROM events l"
+            " JOIN events w"
+            " ON l.payload->'resolved'->'done'->>'dedupe_key' = 'librarian_write:' || w.event_id"
+            " WHERE l.kind = 'librarian' AND w.kind = 'write' AND w.event_id > %(start)s",
+            {"start": start_event},
+        )
+        assert await cur.fetchone() == (N_WRITES, N_WRITES)

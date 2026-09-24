@@ -16,6 +16,8 @@ import psycopg
 import pytest
 from psycopg import errors
 
+from tests._heads import main_head
+
 pytestmark = pytest.mark.integration
 
 T0 = datetime(2026, 9, 1, tzinfo=UTC)
@@ -70,10 +72,11 @@ async def _insert_version(
 async def test_migration_applies_and_device1_reserved(connect) -> None:
     async with await connect() as conn:
         cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
-        # main@head is 0007_import (0005_w0_access carries the `main` label, D-061/D-062/D-069);
-        # the hnsw branch must NOT be applied.
+        # main@head is 0008_librarian_tasks (0005_w0_access carries the `main` label,
+        # D-061/D-062/D-069: 0007_import -> 0008_librarian_tasks); the hnsw branch must NOT be applied.
         heads = [r[0] for r in await cur.fetchall()]
-        assert heads == ["0007_import"], "hnsw branch must NOT be applied"
+        assert main_head() == "0008_librarian_tasks"
+        assert heads == [main_head()], "hnsw branch must NOT be applied"
         cur = await conn.execute(
             "SELECT indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
             " WHERE c.relname = 'mv_title_tsv'"
@@ -100,6 +103,7 @@ async def test_migration_applies_and_device1_reserved(connect) -> None:
             "embeddings",
             "events",
             "jobs",
+            "librarian_batches",  # 0008 (W2b/W2c)
             "librarian_questions",
             "links",
             "llm_budget",
@@ -108,6 +112,7 @@ async def test_migration_applies_and_device1_reserved(connect) -> None:
             "llm_reservations",
             "memory_versions",
             "projects",
+            "version_signals",  # 0008 (W2b)
         ]
 
         cur = await conn.execute(

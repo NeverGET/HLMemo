@@ -27,11 +27,11 @@ The lesson is written with the server-side write context ``librarian_priority=2`
 (``write_service.write(..., librarian_priority=2)`` → ``_Batch.librarian_priority``; never a client
 argument). It is persisted in the SAME event as ``payload.resolved.librarian_priority = 2`` (the key
 is absent on ordinary writes), so it is atomic with the lesson and survives replay. W2b's enqueue
-of ``librarian_write:<event_id>`` (in ``write_service._execute``, same transaction) must use
-``batch.librarian_priority`` when it is set, else its own default (3), and record the job it inserts
-in ``resolved.jobs`` like the embed jobs; any later re-enqueue reads
-``payload.resolved.librarian_priority``. On this branch no librarian enqueue exists yet: the field
-is recorded only.
+of ``librarian_write:<event_id>`` (``write_service._librarian_jobs`` → ``librarian.trigger.plan_jobs``,
+same transaction, only while ``HLM_LIBRARIAN_ENABLED``) uses ``batch.librarian_priority`` when it
+is set, else its own default (3), and records the job descriptors it inserts (priority included)
+in ``payload.resolved.librarian_jobs`` next to the embed jobs' ``resolved.jobs``; replay re-creates
+those rows from there.
 """
 
 from __future__ import annotations

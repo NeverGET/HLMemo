@@ -1,9 +1,13 @@
 """``apply_batch``: apply the owner-approved proposals of one batch (role ``assistant``+, §4b).
 
 Enqueued by the last ``answer`` event of a batch decision. No LLM call. The worker applies the
-accepted mutations only if the effective role is ``assistant`` or ``autonomous`` (in ``observer``
-the outcome is ``role_denied`` and nothing changes) and only after the CC-3 recheck of the
-original job's triggering device passes (else ``authority_lost``).
+accepted proposals only if the effective role is ``assistant`` or ``autonomous`` (in ``observer``
+the outcome is ``role_denied`` and nothing changes). Each question is applied under ITS OWN
+proposing job's capability set (W2b: one batch collects the proposals of many jobs): the CC-3
+recheck of that job's triggering device must pass (else the question becomes ``authority_lost``)
+and every assessed version must still be the head (else ``superseded``). ``widen_scope`` is never
+applied by the librarian (D-058: propose-only); an approved one waits for ``memory.answer`` by a
+device holding write on every project it touches.
 """
 
 from __future__ import annotations
@@ -22,26 +26,28 @@ class ApplyBatch:
         batch_id = str(job.payload["batch_id"])
         async with await w.connect() as conn:
             cur = await conn.execute(
-                "SELECT question_id::text, proposal FROM librarian_questions"
+                "SELECT question_id::text, kind, proposal FROM librarian_questions"
                 " WHERE batch_id = %s AND status = 'approved' ORDER BY question_id",
                 (batch_id,),
             )
             approved = await cur.fetchall()
             await conn.commit()
-        caps = (
-            job.payload.get("capabilities") or (approved[0][1].get("capabilities") if approved else {}) or {}
-        )
+        caps = job.payload.get("capabilities") or {}
         plan = Plan(
             OP,
             "approved" if approved else "not_approved",
             caps,
-            request_extra={"batch_id": batch_id, "approved": [qid for qid, _ in approved]},
+            request_extra={"batch_id": batch_id, "approved": [qid for qid, _k, _p in approved]},
         )
-        for qid, proposal in approved:
-            plan.mutations.append(proposal["mutation"])
-            plan.auto_ok.append(True)
-            plan.meta.append({"question_id": qid})
+        plan.approved = [(qid, {"kind": kind, **proposal}) for qid, kind, proposal in approved]
         return plan
 
 
-__all__ = ["OP", "ApplyBatch"]
+def proposal_actions(proposal: dict[str, Any]) -> list[dict[str, Any]]:
+    """The actions of a stored proposal (W2b ``actions``; W2a rows carried one ``mutation``)."""
+    if "actions" in proposal:
+        return list(proposal["actions"])
+    return [proposal["mutation"]] if proposal.get("mutation") else []
+
+
+__all__ = ["OP", "ApplyBatch", "proposal_actions"]
