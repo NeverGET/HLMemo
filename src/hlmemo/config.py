@@ -14,6 +14,7 @@ import json
 import os
 import re
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -28,6 +29,21 @@ ENV_PREFIX = "HLM_"
 DEFAULT_PROFILE = "openrouter"
 _ENV_REF = re.compile(r"^env:(?P<name>[A-Za-z_][A-Za-z0-9_]*)$")
 _ENV_BRACES = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}")
+#: D-094: a per-task fallback override, ``HLM_FALLBACK_PROFILE__<TASK>`` (env, task upper-cased) or
+#: ``fallback_profile__<task>`` in the ``[hlm]`` table; generic by task name (no task list here)
+TASK_FALLBACK_ENV = f"{ENV_PREFIX}FALLBACK_PROFILE__"
+_TASK_FALLBACK_KEY = re.compile(r"^(?:hlm_)?fallback_profile__(?P<task>[a-z][a-z0-9_]*)$")
+
+
+def task_fallback_overrides(raw: Mapping[str, Any]) -> dict[str, str]:
+    """``{task: profile}`` from the keys ``HLM_FALLBACK_PROFILE__<TASK>`` / ``fallback_profile__<task>``
+    of ``raw`` (case-insensitive; task names lower-cased). An empty value is no override."""
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        m = _TASK_FALLBACK_KEY.match(str(key).strip().lower())
+        if m and isinstance(value, str) and value.strip():
+            out[m.group("task")] = value.strip()
+    return out
 
 
 def expand_env(value: Any) -> Any:
@@ -113,6 +129,10 @@ class HlmTomlSource(PydanticBaseSettingsSource):
         profile = os.environ.get(f"{ENV_PREFIX}PROFILE") or merged.get("profile") or DEFAULT_PROFILE
         prof = _strip_prefix(load_profile(profile, inline_profiles.get(profile)))
         layered = {**prof, **merged, "profile": profile}
+        # D-094: per-task fallbacks come from the [hlm] table only (a profile never names another)
+        tasks = task_fallback_overrides({k: expand_env(v) for k, v in merged.items()})
+        if tasks:
+            layered["task_fallback_profiles"] = tasks
         if client.get("server_url") and "server_url" not in layered:
             layered["server_url"] = client["server_url"]
         if client:
@@ -126,6 +146,19 @@ class HlmTomlSource(PydanticBaseSettingsSource):
 
     def __call__(self) -> dict[str, Any]:
         return {k: v for k, v in self._data.items() if k in self.settings_cls.model_fields and v is not None}
+
+
+class TaskFallbackEnvSource(PydanticBaseSettingsSource):
+    """Settings source (D-094): every ``HLM_FALLBACK_PROFILE__<TASK>`` environment variable becomes
+    ``task_fallback_profiles[<task>]``, whatever the task (a task added later needs no code here)."""
+
+    def get_field_value(self, field, field_name: str) -> tuple[Any, str, bool]:  # noqa: ANN001
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        env = {k: v for k, v in os.environ.items() if k.upper().startswith(TASK_FALLBACK_ENV)}
+        found = task_fallback_overrides(env)
+        return {"task_fallback_profiles": found} if found else {}
 
 
 class Settings(BaseSettings):
@@ -150,6 +183,10 @@ class Settings(BaseSettings):
     # --- librarian LLM primary profile (D-017/D-019); the fallback is loaded by librarian.profiles ---
     profile: str = DEFAULT_PROFILE
     fallback_profile: str | None = None
+    # D-094: per-task fallback overrides, task -> profile name, from HLM_FALLBACK_PROFILE__<TASK>
+    # (TaskFallbackEnvSource) or [hlm] fallback_profile__<task>; a task without one falls back to
+    # fallback_profile. Resolved and validated by librarian.profiles (names only here, D-017).
+    task_fallback_profiles: dict[str, str] = Field(default_factory=dict)
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: SecretStr | None = None
@@ -262,6 +299,15 @@ class Settings(BaseSettings):
             return json.loads(v)
         return v
 
+    @field_validator("task_fallback_profiles", mode="before")
+    @classmethod
+    def _task_fallbacks(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v = json.loads(v) if v.strip() else {}
+        if isinstance(v, dict):  # task names are lower-case; an empty profile name is no override
+            return {str(k).strip().lower(): str(p).strip() for k, p in v.items() if p and str(p).strip()}
+        return v
+
     @field_validator("llm_api_key", "admin_token", "registration_secret", mode="before")
     @classmethod
     def _empty_secret_is_none(cls, v: Any) -> Any:
@@ -278,8 +324,9 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # env > hlm.toml > profile (both inside HlmTomlSource) > defaults
-        return (init_settings, env_settings, HlmTomlSource(settings_cls))
+        # env > hlm.toml > profile (both inside HlmTomlSource) > defaults; the per-task fallback
+        # maps of the sources are merged key by key (pydantic-settings deep-merges dicts)
+        return (init_settings, env_settings, TaskFallbackEnvSource(settings_cls), HlmTomlSource(settings_cls))
 
     @field_validator("registration_mode", "admin_http", "deployment", mode="before")
     @classmethod

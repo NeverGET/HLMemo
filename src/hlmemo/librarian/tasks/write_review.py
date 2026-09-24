@@ -81,12 +81,14 @@ def _clue(vid: int) -> str:
 
 
 def verifier_chain(w: Any, answered_profile: str) -> list[Any]:
-    """The verifier's profile chain: the OTHER profile(s) first (``cross``), the answering one as
-    the last resort; ``self`` (or a one-profile chain) = the answering profile only."""
-    chain = list(w.provider.chain)
-    same = [p for p in chain if p.name == answered_profile] or chain[:1]
+    """The verifier's profile chain, from the ``relate_verify`` task's chain (its own fallback when
+    ``HLM_FALLBACK_PROFILE__RELATE_VERIFY`` is set, D-094): the OTHER profile(s) first (``cross``),
+    the answering one as the last resort; ``self`` (or a one-profile chain) = the answering profile
+    only (the chain's primary when the answering profile is not in it)."""
+    chain = list(w.provider.chain_for("relate_verify"))
+    same = [p for p in chain if p.name == answered_profile]
     if getattr(w.settings, "librarian_verifier", "cross") == "self" or len(chain) == 1:
-        return same
+        return same or chain[:1]
     return [p for p in chain if p.name != answered_profile] + same
 
 

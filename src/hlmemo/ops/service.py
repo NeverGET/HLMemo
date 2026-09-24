@@ -516,7 +516,8 @@ LEDGER_WINDOW = "15 minutes"
 async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[str, Any]:
     """The W2a heartbeat fields for the operator (carried item, D-069): ``ready``, ``in_flight``,
     ``oldest_ready_age_s``, ``failed_24h``, spend (``spend_today_usd``, ``spend_hour_usd``,
-    ``reserved_usd``), the effective ``role`` and ``breaker_state``.
+    ``reserved_usd``), the effective ``role`` and ``breaker_state``, and ``chains``: the effective
+    primary and fallback profile per task (D-094, from this process's configuration).
 
     Everything but the breaker comes from the database (the same ``heartbeat_fields`` the
     librarian logs). The breaker lives in the librarian process, and ``ops`` runs in the api
@@ -530,10 +531,12 @@ async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[
     import time as _time
 
     from hlmemo.config import get_settings
+    from hlmemo.librarian.profiles import describe_chains
     from hlmemo.librarian.worker import heartbeat_fields
 
     settings = settings or get_settings()
     out: dict[str, Any] = dict(await heartbeat_fields(conn, settings.librarian_role))
+    out["chains"] = describe_chains(settings)
     hb = _read_heartbeat(settings.librarian_heartbeat_file)
     age = _time.time() - float(hb.get("ts", 0)) if hb is not None else None
     if hb is not None and age is not None and age <= HEARTBEAT_MAX_AGE_S:

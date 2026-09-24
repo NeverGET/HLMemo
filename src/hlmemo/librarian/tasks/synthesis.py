@@ -24,6 +24,7 @@ privacy denial or model failure comes back as a status and the query answers wit
   ``insufficient_evidence`` is a successful, judged outcome.
 * **Qualification** (D-017, D-071): a profile whose file lists ``disabled_tasks = ["synthesis"]``
   is left out of the chain; a result from a qualified fallback profile is labelled ``fallback``.
+  The fallback is ``HLM_FALLBACK_PROFILE__SYNTHESIS`` when set, else ``HLM_FALLBACK_PROFILE`` (D-094).
 * The ``latency`` attempt policy (``Provider.complete(attempt_policy="latency")``): one bounded
   primary attempt (≤ 55 % of the remaining deadline), then straight to the qualified fallback
   with the rest, no backoff sleeps: a stalled or failing primary still yields a ``fallback`` answer
@@ -69,7 +70,7 @@ from hlmemo.librarian.profiles import LlmProfile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
 from hlmemo.librarian.provider import ChainBreakers, Clock, Provider
 from hlmemo.librarian.redact import Redactor
-from hlmemo.librarian.risk_judge import ConnectFactory, direct_connector, disabled_tasks
+from hlmemo.librarian.risk_judge import ConnectFactory, direct_connector
 
 log = logging.getLogger("hlmemo.librarian.synthesis")
 
@@ -144,13 +145,14 @@ class SynthResult:
 
 
 def synthesis_chain(settings: Any) -> list[LlmProfile]:
-    """The provider chain minus the profiles not qualified for synthesis (D-071)."""
+    """The primary plus the synthesis fallback (``HLM_FALLBACK_PROFILE__SYNTHESIS`` when set, else
+    ``HLM_FALLBACK_PROFILE``; D-094) minus the profiles not qualified for synthesis (D-071)."""
     try:
-        chain = profile_chain(settings)
+        chain = profile_chain(settings, TASK)
     except LlmConfigError as exc:
         log.warning("synthesis disabled: %s", exc)
         return []
-    return [p for p in chain if TASK not in disabled_tasks(p.name)]
+    return [p for p in chain if TASK not in p.disabled_tasks]
 
 
 def user_message(question: str, excerpts: list[dict[str, str]]) -> str:
@@ -291,7 +293,7 @@ class Synthesizer:
         self.clock = clock or Clock()
         self.provider: Provider | None = None
         #: the provider's per-profile breakers (a failing primary never suppresses the fallback)
-        self.breaker = ChainBreakers(lambda: self.provider)
+        self.breaker = ChainBreakers(lambda: self.provider, task=TASK)
         default_connect, conn_ctx = direct_connector(settings.db_dsn, settings)
         self.connect = connect or default_connect
         if provider is not None:
