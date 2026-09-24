@@ -126,6 +126,16 @@ def test_claims_extraction() -> None:
         ("top-3", "the top 3 hits", True),  # hyphen-joined parts
         ("99999", "port 8765", False),
         ("docs/X.md", "docs/Y.md", False),
+        # Sol 52 #2: whole tokens only
+        ("42", "port 142 only", False),
+        ("42", "version 4.2 and 42.5", False),
+        ("42", "port 42.", True),
+        ("foo", "foobar and barfoo", False),
+        ("foo_bar", "foo_barbaz", False),
+        ("0.155.1", "codex 0.155.12", False),
+        ("HLM_IMAGE", "HLM_IMAGE_TAG only", False),
+        ("docs/USAGE.md", "see docs/USAGE.md.", True),
+        ("top-3", "the top 30 hits", False),
     ],
 )
 def test_supported(claim: str, text: str, ok: bool) -> None:

@@ -1024,3 +1024,242 @@ async def test_sol51_pool_of_two_concurrent_syntheses(db_dsn, world, weak_ids) -
     for _, out, _ in got[:6]:
         assert "synthesis" in out or out["synthesis_unavailable"] is True, out
     assert max(t for t, _, _ in got) <= ss.TOTAL_DEADLINE_S + 0.5
+
+
+# --------------------------------------------------------------------------- Sol 52 fixes
+async def _reset_direct_slots() -> None:
+    ss._direct_in_use = 0
+
+
+async def test_sol52_hit_superseded_since_the_query_is_dropped(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """#1: an item revised while the LLM runs: its (now superseded) hit is dropped, and so is the
+    sentence citing it; the other sentence and hit stay."""
+    from hlmemo.worker.main import drain
+
+    vids = await _write(
+        connect,
+        world.ctx,
+        [
+            {"kind": "fact", "title": "Ocelot codec", "body": "The ocelot gateway uses codec opal."},
+            {"kind": "fact", "title": "Ocelot mesh", "body": "The ocelot gateway uses mesh ruby."},
+        ],
+    )
+    await drain(connect, deps.embedder)
+
+    def answer(body: dict[str, Any]) -> dict[str, Any]:
+        payload = json.loads(body["messages"][1]["content"].split("INPUT: ", 1)[1])
+        by = {k: next(e["id"] for e in payload["excerpts"] if k in e["text"]) for k in ("opal", "ruby")}
+        return {
+            "status": "answered",
+            "sentences": [
+                {"text": "It uses codec opal.", "cite": [by["opal"]]},
+                {"text": "It uses mesh ruby.", "cite": [by["ruby"]]},
+            ],
+        }
+
+    async def revise(_body: dict[str, Any]) -> None:
+        async with await connect() as conn:
+            (lid,) = await (
+                await conn.execute("SELECT logical_id FROM memory_versions WHERE version_id = %s", (vids[1],))
+            ).fetchone()
+            await conn.commit()
+        await _write(
+            connect,
+            world.ctx,
+            [
+                {
+                    "kind": "fact",
+                    "title": "Ocelot mesh",
+                    "body": "The ocelot gateway uses mesh jade.",
+                    "logical_id": lid,
+                    "expected_version_id": vids[1],
+                }
+            ],
+        )
+
+    llm = ScriptedLLM(default=answer, on_request=revise)
+    synth = stub_synth(db_dsn, llm)
+    try:
+        out, _ = await run(connect, world, deps, "ocelot gateway codec mesh?", synth, tau=1.0)
+    finally:
+        await synth.aclose()
+    check_response(out)
+    clues = {h["clue"] for h in out["hits"]}
+    assert not any(c.startswith(f"v{vids[1]}.") for c in clues), clues  # the superseded hit is gone
+    assert any(c.startswith(f"v{vids[0]}.") for c in clues), clues
+    s = out["synthesis"]
+    assert s["text"].startswith("It uses codec opal. [") and "ruby" not in s["text"] and s["dropped"] == 1, s
+
+
+async def test_sol52_deadline_bounds_a_slow_recheck(connect, world, deps, weak_ids, db_dsn) -> None:  # noqa: ANN001
+    """#3: the re-check SQL itself is bounded: a device row locked by another transaction while the
+    LLM runs makes the re-check wait; the request still answers (fast path, recheck_unavailable)
+    within the deadline."""
+    from tests.integration._synthesis_fixtures import direct_connect
+
+    blocker = await direct_connect(db_dsn)
+
+    @contextlib.asynccontextmanager
+    async def pooled() -> AsyncIterator[Any]:
+        c = await direct_connect(db_dsn)
+        try:
+            yield c
+        finally:
+            await c.close()
+
+    async def lock_device(_body: dict[str, Any]) -> None:
+        await blocker.execute("SELECT 1 FROM devices WHERE device_id = %s FOR UPDATE", (world.device_id,))
+
+    llm = ScriptedLLM(default=lambda body: answer_citing(_ids(body), 1), on_request=lock_device)
+    synth = stub_synth(db_dsn, llm)
+
+    async def detach() -> bool:
+        return True
+
+    q = weak_question(weak_ids)["question"]
+    try:
+        async with await connect() as conn:
+            await conn.commit()
+            t0 = time.perf_counter()
+            out = await ss.query_synthesize(
+                conn,
+                world.ctx,
+                _args(q),
+                deps=deps,
+                synth=synth,
+                detach=detach,
+                reconnect=pooled,
+                deadline_s=2.0,
+            )
+            elapsed = time.perf_counter() - t0
+    finally:
+        await blocker.rollback()
+        await blocker.close()
+        await synth.aclose()
+    assert llm.calls == 1 and out["synthesis_reason"] == ss.NO_RECHECK and "synthesis" not in out, out
+    assert elapsed < 2.6, elapsed
+    check_response(out)
+
+
+async def test_sol52_unpooled_recheck_connections_are_capped(connect, world, deps, weak_ids, db_dsn) -> None:  # noqa: ANN001
+    """#3: with the process-wide unpooled cap reached and the pool unavailable, no extra connection
+    is opened: the fast path comes back with recheck_unavailable."""
+    from tests.integration._synthesis_fixtures import direct_connect
+
+    class Hang:
+        async def __aenter__(self) -> Any:
+            await asyncio.sleep(3600)
+
+        async def __aexit__(self, *exc: Any) -> bool:
+            return False
+
+    llm = ScriptedLLM(default=lambda body: answer_citing(_ids(body), 1))
+    synth = stub_synth(db_dsn, llm)
+    opened = 0
+
+    async def counting_connect() -> Any:
+        nonlocal opened
+        opened += 1
+        return await direct_connect(db_dsn)
+
+    synth.connect = counting_connect
+
+    async def detach() -> bool:
+        return True
+
+    q = weak_question(weak_ids)["question"]
+    ss._direct_in_use = ss.DIRECT_RECHECK_CAP  # two other requests hold the unpooled slots
+    try:
+        async with await connect() as conn:
+            await conn.commit()
+            out = await ss.query_synthesize(
+                conn,
+                world.ctx,
+                _args(q),
+                deps=deps,
+                synth=synth,
+                detach=detach,
+                reconnect=Hang,
+                deadline_s=2.0,
+            )
+    finally:
+        await _reset_direct_slots()
+        await synth.aclose()
+    assert llm.calls == 1 and out["synthesis_reason"] == ss.NO_RECHECK, out
+    assert opened == 2  # the privacy gate's two connections only: the re-check opened none
+    check_response(out)
+
+
+async def test_sol52_card_dropped_when_a_source_becomes_unreadable(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """#1: the card derived_from a class:personal item; the device turns class:work during the call:
+    the card is dropped (the control run keeps it)."""
+    from hlmemo.worker.main import drain
+
+    (src_vid,) = await _write(
+        connect,
+        world.ctx,
+        [
+            {
+                "kind": "fact",
+                "title": "Quail source",
+                "body": "The quail service runs on the personal laptop only.",
+                "device_scope": "class:personal",
+            }
+        ],
+    )
+    async with await connect() as conn:
+        (card_lid,) = await (
+            await conn.execute(
+                "SELECT card_logical_id FROM projects WHERE project_id = %s", (world.project_id,)
+            )
+        ).fetchone()
+        (card_vid,) = await (
+            await conn.execute(
+                "SELECT version_id FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'",
+                (card_lid,),
+            )
+        ).fetchone()
+        (src_lid,) = await (
+            await conn.execute("SELECT logical_id FROM memory_versions WHERE version_id = %s", (src_vid,))
+        ).fetchone()
+        await conn.commit()
+    await _write(
+        connect,
+        world.ctx,
+        [
+            {
+                "kind": "project_card",
+                "logical_id": card_lid,
+                "expected_version_id": card_vid,
+                "title": "Project card",
+                "body": "syn-docs: HLMemo's public docs (quail notes included).",
+                "links": [{"rel": "derived_from", "target": src_lid}],
+            }
+        ],
+    )
+    await drain(connect, deps.embedder)
+    llm = ScriptedLLM(default=lambda body: answer_citing(_ids(body), 1))
+    synth = stub_synth(db_dsn, llm)
+    try:
+        out, _ = await run(connect, world, deps, "quail service laptop?", synth, tau=1.0)
+        assert out["card"] is not None and "quail" in out["card"]["text"], out["card"]  # control
+
+        async def to_work(_body: dict[str, Any]) -> None:
+            async with await connect() as conn:
+                await conn.execute(
+                    "UPDATE devices SET class = 'work' WHERE device_id = %s", (world.device_id,)
+                )
+                await conn.commit()
+
+        llm.on_request = to_work
+        out, _ = await run(connect, world, deps, "quail service laptop?", synth, tau=1.0)
+        check_response(out)
+        assert out["card"] is None, out["card"]
+        assert all(h["title"] != "Quail source" for h in out["hits"]), out["hits"]
+    finally:
+        async with await connect() as conn:
+            await conn.execute(
+                "UPDATE devices SET class = 'personal' WHERE device_id = %s", (world.device_id,)
+            )
+            await conn.commit()
+        await synth.aclose()

@@ -50,6 +50,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -64,6 +66,7 @@ from hlmemo.core.budget import Meter
 from hlmemo.core.clues import InvalidClue, decode_clue
 from hlmemo.core.errors import ToolError
 from hlmemo.core.read_service import ReadDeps, _read_project
+from hlmemo.core.temporal import parse_opt_ts
 from hlmemo.db import auth_queries
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as kq
@@ -127,19 +130,39 @@ async def _excerpts(conn: AsyncConnection, hits: list[dict[str, Any]]) -> tuple[
 
 
 class _NoRecheck(Exception):
-    """No connection for the post-call re-check within the request deadline."""
+    """No re-check within the request deadline (no connection, a slow query, the unpooled cap)."""
+
+
+#: process-wide cap on unpooled re-check connections (Sol 52 #3): beyond it → fast path only
+DIRECT_RECHECK_CAP = 2
+_direct_in_use = 0
+
+
+@dataclass(slots=True)
+class Access:
+    authz: set[int]  # the device may read it now (home project + device scope): card sources
+    readable: set[int]  # authz, not tombstoned, and not superseded or closed since the query: hits, card
+    citable: set[int]  # readable, current, active, not device:*, read grant on EVERY project: sentences
 
 
 async def _recheck(
-    conn: AsyncConnection, ctx: AuthContext, slug: str, home_pid: int, version_ids: list[int]
-) -> tuple[set[int], set[int]]:
-    """D-062 (Sol 51 #1/#2): after the LLM, ONE short transaction: the device is still trusted,
-    unexpired and on the bearer's token generation (else ``E_AUTH``: the result is discarded) and
-    still reads the home project (else ``E_FORBIDDEN_PROJECT``). Returns ``(readable, citable)``:
-    the versions the device can still read as query results (home project + device scope), and the
-    subset a synthesis may still cite (current, active, not ``device:*``, visible scope, a live read
-    grant on EVERY project of the item)."""
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    slug: str,
+    home_pid: int,
+    version_ids: list[int],
+    t_query: datetime,
+    timeout_ms: int,
+) -> Access:
+    """D-062 (Sol 51 #1/#2, Sol 52 #1): after the LLM, ONE short transaction (bounded by
+    ``statement_timeout``/``lock_timeout``): the device is still trusted, unexpired and on the
+    bearer's token generation (else ``E_AUTH``: the result is discarded) and still reads the home
+    project (else ``E_FORBIDDEN_PROJECT``); then the CURRENT state of every returned version."""
     async with conn.transaction():
+        await conn.execute(
+            "SELECT set_config('statement_timeout', %s, true), set_config('lock_timeout', %s, true)",
+            (f"{timeout_ms}ms", f"{timeout_ms}ms"),
+        )
         dev = await kq.device_now(conn, ctx.device_id)
         if (
             dev is None
@@ -158,9 +181,12 @@ async def _recheck(
             client=ctx.client,
         )
         await _read_project(conn, fresh, slug)
-        rows = await sq.version_access(conn, version_ids)
+        rows = await sq.version_access(conn, version_ids, t_query)
     scopes = set(fresh.scope_values())
-    readable = {r.version_id for r in rows if home_pid in r.project_ids and r.device_scope in scopes}
+    authz = {r.version_id for r in rows if home_pid in r.project_ids and r.device_scope in scopes}
+    readable = {
+        r.version_id for r in rows if r.version_id in authz and not r.changed and r.status != "tombstone"
+    }
     citable = {
         r.version_id
         for r in rows
@@ -170,7 +196,7 @@ async def _recheck(
         and not r.device_scope.startswith("device:")
         and all(fresh.has(p, Role.READ) for p in r.project_ids)
     }
-    return readable, citable
+    return Access(authz, readable, citable)
 
 
 async def _recheck_in_time(
@@ -179,50 +205,72 @@ async def _recheck_in_time(
     slug: str,
     home_pid: int,
     version_ids: list[int],
+    t_query: datetime,
     *,
     released: bool,
     reconnect: Callable[[], AbstractAsyncContextManager[AsyncConnection]] | None,
     direct: Callable[[], Any] | None,
     remaining_s: float,
-) -> tuple[set[int], set[int]]:
-    """The re-check on the caller's idle ``conn`` (direct callers), or after a detach on a pooled
-    connection acquired within the deadline, falling back to a short unpooled one (the pool may be
-    exhausted after a long LLM call); ``_NoRecheck`` when neither is had in time."""
-    if not released:
-        return await _recheck(conn, ctx, slug, home_pid, version_ids)
+) -> Access:
+    """The whole re-check (connection AND SQL) within the request deadline (Sol 52 #3): on the
+    caller's idle ``conn`` (direct callers), or after a detach on a pooled connection acquired within
+    half the time left, else on a short unpooled one (at most ``DIRECT_RECHECK_CAP`` per process);
+    ``_NoRecheck`` when none of that completes in time."""
+    global _direct_in_use
     loop = asyncio.get_running_loop()
     end = loop.time() + max(0.2, remaining_s)
-    if reconnect is not None:
-        cm = reconnect()
-        try:
-            async with asyncio.timeout(max(0.05, min(1.0, (end - loop.time()) / 2))):
-                fresh_conn = await cm.__aenter__()
-        except (TimeoutError, PoolTimeout, pgerrors.OperationalError):
-            pass
-        else:
+
+    def left() -> float:
+        return max(0.05, end - loop.time())
+
+    def ms() -> int:
+        return max(50, int(left() * 1000))
+
+    args = (ctx, slug, home_pid, version_ids, t_query)
+    try:
+        if not released:
+            async with asyncio.timeout(left()):
+                return await _recheck(conn, *args, ms())
+        if reconnect is not None:
+            cm = reconnect()
+            fresh_conn = None
             try:
-                result = await _recheck(fresh_conn, ctx, slug, home_pid, version_ids)
-            except BaseException as exc:
-                await cm.__aexit__(type(exc), exc, exc.__traceback__)
-                raise
-            await cm.__aexit__(None, None, None)
-            return result
-    if direct is not None:
+                async with asyncio.timeout(max(0.05, min(1.0, left() / 2))):
+                    fresh_conn = await cm.__aenter__()
+            except (TimeoutError, PoolTimeout, pgerrors.OperationalError):
+                fresh_conn = None
+            if fresh_conn is not None:
+                try:
+                    async with asyncio.timeout(left()):
+                        result = await _recheck(fresh_conn, *args, ms())
+                except BaseException as exc:
+                    await cm.__aexit__(type(exc), exc, exc.__traceback__)
+                    raise
+                await cm.__aexit__(None, None, None)
+                return result
+        if direct is None or _direct_in_use >= DIRECT_RECHECK_CAP:
+            raise _NoRecheck
+        _direct_in_use += 1
         try:
-            async with asyncio.timeout(max(0.05, end - loop.time())):
+            async with asyncio.timeout(left()):
                 own = await direct()
-        except (TimeoutError, OSError, pgerrors.OperationalError):
-            raise _NoRecheck from None
-        async with own:
-            return await _recheck(own, ctx, slug, home_pid, version_ids)
-    raise _NoRecheck
+                async with own:
+                    return await _recheck(own, *args, ms())
+        finally:
+            _direct_in_use -= 1
+    except (TimeoutError, PoolTimeout, OSError, pgerrors.OperationalError) as exc:
+        raise _NoRecheck from exc
 
 
-def _filter_returned(env: dict[str, Any], readable: set[int]) -> None:
-    """Remove every hit (and the card) the device can no longer read at return time."""
-    env["hits"] = [h for h in env["hits"] if decode_clue(h["clue"]).version_id in readable]
+def _filter_returned(env: dict[str, Any], access: Access, card_sources: list[int]) -> None:
+    """Sol 52 #1: remove every hit changed or unreadable since the query, and the card when it
+    changed, became unreadable or any of its (then readable) ``derived_from`` sources did."""
+    env["hits"] = [h for h in env["hits"] if decode_clue(h["clue"]).version_id in access.readable]
     card = env.get("card")
-    if card is not None and decode_clue(card["clue"]).version_id not in readable:
+    if card is not None and (
+        decode_clue(card["clue"]).version_id not in access.readable
+        or any(s not in access.authz for s in card_sources)
+    ):
         env["card"] = None
 
 
@@ -365,6 +413,7 @@ async def query_synthesize(
     loop = asyncio.get_running_loop()
     end = loop.time() + deadline_s
     async with conn.transaction():
+        t_query = await rq.clock_now(conn)  # the query's snapshot time: changes after it are dropped
         env = await read_service.query(conn, ctx, args, deps=deps)
     meter = deps.meter
     budget = int(env["budget"]["limit"])
@@ -378,6 +427,15 @@ async def query_synthesize(
     async with conn.transaction():
         excerpts, pids = await _excerpts(conn, env["hits"])
         home = await rq.resolve_project(conn, env["project"])
+        card_sources: list[int] = []
+        if home is not None and env.get("card") is not None:  # the card's sources readable NOW
+            va = parse_opt_ts(env["as_of"]["valid_at"], field="valid_at")
+            ka = parse_opt_ts(env["as_of"]["known_at"], field="known_at")
+            assert va is not None and ka is not None
+            found = await rq.pinned_sources(
+                conn, home.card_logical_id, home.project_id, list(ctx.scope_values()), va, ka
+            )
+            card_sources = [vid for vid, _stale in found]
     if not excerpts or home is None:
         return _unavailable(meter, env, budget, syn.WITHHELD)
     released = await detach() if detach is not None else False
@@ -395,24 +453,29 @@ async def query_synthesize(
     cited = {decode_clue(c).version_id for s in res.sentences for c in s.clues}
     # time passed without a transaction: authority, and everything returned, are re-checked
     try:
-        readable, citable = await _recheck_in_time(
+        access = await _recheck_in_time(
             conn,
             ctx,
             env["project"],
             home.project_id,
-            sorted(set(_returned_versions(env)) | cited),
+            sorted(set(_returned_versions(env)) | set(card_sources) | cited),
+            t_query,
             released=released,
             reconnect=reconnect,
             direct=synth.connect,
             remaining_s=end - loop.time(),
         )
     except _NoRecheck:
+        # nothing could be re-validated: the fast-path result exactly as the caller could read it at
+        # query time, and no synthesis (Sol 52 #1)
         return _unavailable(meter, env, budget, NO_RECHECK)
-    _filter_returned(env, readable)
+    _filter_returned(env, access, card_sources)
     if not res.ok:
         return _unavailable(meter, env, budget, res.status)
     # Sol 51 #1: a sentence citing ANY item that is no longer citable is dropped as a whole
-    sentences = [s for s in res.sentences if all(decode_clue(c).version_id in citable for c in s.clues)]
+    sentences = [
+        s for s in res.sentences if all(decode_clue(c).version_id in access.citable for c in s.clues)
+    ]
     lost = len(res.sentences) - len(sentences)
     if res.answer == syn.ANSWERED and not sentences:
         return _unavailable(meter, env, budget, syn.GUARD)

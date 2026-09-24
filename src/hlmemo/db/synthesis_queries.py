@@ -51,23 +51,29 @@ class VersionAccess:
     device_scope: str
     status: str
     current: bool  # open on both time axes (not superseded, not expired)
+    changed: bool  # superseded or closed after ``since`` (the query's snapshot time)
 
 
-async def version_access(conn: AsyncConnection, version_ids: list[int]) -> list[VersionAccess]:
-    """The authorization-relevant columns of the given versions (the post-call re-check, Sol 51)."""
+async def version_access(
+    conn: AsyncConnection, version_ids: list[int], since: datetime
+) -> list[VersionAccess]:
+    """The authorization-relevant columns of the given versions and whether they were superseded
+    or closed after ``since`` (the post-call re-check, Sol 51/52)."""
     if not version_ids:
         return []
     cur = await conn.execute(
         """
         SELECT version_id, project_ids, device_scope, status,
-               superseded_at = 'infinity' AND valid_to = 'infinity'
-          FROM memory_versions WHERE version_id = ANY(%s)
+               superseded_at = 'infinity' AND valid_to = 'infinity',
+               (superseded_at <= now() AND superseded_at > %(since)s)
+                 OR (valid_to <= now() AND valid_to > %(since)s)
+          FROM memory_versions WHERE version_id = ANY(%(vids)s)
         """,
-        (list(version_ids),),
+        {"vids": list(version_ids), "since": since},
         prepare=False,
     )
     return [
-        VersionAccess(int(r[0]), [int(x) for x in r[1]], str(r[2]), str(r[3]), bool(r[4]))
+        VersionAccess(int(r[0]), [int(x) for x in r[1]], str(r[2]), str(r[3]), bool(r[4]), bool(r[5]))
         for r in await cur.fetchall()
     ]
 
