@@ -1,0 +1,1 @@
+SELECT coalesce(string_agg(kind||'/p'||priority||':'||status||'='||n, ' ' ORDER BY kind, priority, status), 'none') FROM (SELECT kind, priority, status, count(*) n FROM jobs WHERE status IN ('queued','running') GROUP BY 1,2,3) s;

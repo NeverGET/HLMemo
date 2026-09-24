@@ -1,0 +1,232 @@
+# 2026-09-24T01:37:59Z observer safety (4b): 6 provocation writes in r2-seed (a 5-vs-12 contradiction, a lock-free contradiction of seed 00, a near-duplicate pair, a lesson); librarian jobs drained
+fact Pre-upgrade retention keeps the last 5 snapshots v67 388ms
+fact Pre-upgrade retention keeps the last 12 snapshots v68 8ms
+fact Deploy lock is not needed before an upgrade v69 8ms
+fact Backup rotation keeps 7 daily and 4 weekly dumps v70 8ms
+fact Daily backups: 7 daily plus 4 weekly retained v71 7ms
+lesson Never run the migration by hand next to a live sta v72 8ms
+## ops librarian audit --project r2-seed --json
+{
+    "batches": [
+        {
+            "applied_at": null,
+            "batch_id": "bf7df265-3008-5b57-8b0d-86fddb151b21",
+            "created_at": "2026-09-24T01:37:12.227378+00:00",
+            "decided_at": null,
+            "open": 5,
+            "questions": 5,
+            "status": "open"
+        }
+    ],
+    "project": "r2-seed",
+    "proposals": [
+        {
+            "actions": [
+                {
+                    "dst_logical_id": 71,
+                    "logical_id": null,
+                    "op": "link_insert",
+                    "rel": "contradicts",
+                    "src_logical_id": 70,
+                    "valid_to": null
+                },
+                {
+                    "dst_logical_id": 70,
+                    "logical_id": null,
+                    "op": "link_insert",
+                    "rel": "supersedes",
+                    "src_logical_id": 71,
+                    "valid_to": null
+                },
+                {
+                    "dst_logical_id": null,
+                    "logical_id": 70,
+                    "op": "version_close",
+                    "rel": null,
+                    "src_logical_id": null,
+                    "valid_to": "2026-09-24T01:37:00.954145Z"
+                }
+            ],
+            "answer": null,
+            "auto_class": false,
+            "batch_id": "bf7df265-3008-5b57-8b0d-86fddb151b21",
+            "confidence": "high",
+            "created_at": "2026-09-24T01:37:12.227378+00:00",
+            "decided_at": null,
+            "expires_at": "2026-10-24T01:37:12.227378+00:00",
+            "flags": [],
+            "job": "librarian_write:139",
+            "kind": "contradiction",
+            "label": null,
+            "question_id": "f46d8e9d-4cad-5019-b7d9-9912d6491e13",
+            "reason": "Same deploy.sh pre-upgrade retention setting; values conflict, and existing item is later.",
+            "relation": "contradicts",
+            "status": "open",
+            "subjects": [
+                {
+                    "clue": "v67",
+                    "kind": "fact",
+                    "projects": [
+                        "r2-seed"
+                    ],
+                    "title": "Pre-upgrade retention keeps the last 5 snapshots"
+                },
+                {
+                    "clue": "v68",
+                    "kind": "fact",
+                    "projects": [
+                        "r2-seed"
+                    ],
+                    "title": "Pre-upgrade retention keeps the last 12 snapshots"
+                }
+            ],
+            "supersedes": "old",
+            "tier": "action",
+            "verification": {
+                "agreed": true,
+                "answer": {
+                    "conflict": true,
+                    "current": "B",
+                    "same_subject": true
+                },
+                "kind": "supersede"
+            }
+        },
+        {
+            "actions": [
+                {
+                    "dst_logical_id": 46,
+                    "logical_id": null,
+                    "op": "link_insert",
+                    "rel": "contradicts",
+                    "src_logical_id": 72,
+                    "valid_to": null
+                },
+                {
+                    "dst_logical_id": 46,
+                    "logical_id": null,
+                    "op": "link_insert",
+                    "rel": "supersedes",
+                    "src_logical_id": 72,
+                    "valid_to": null
+                },
+                {
+                    "dst_logical_id": null,
+                    "logical_id": 46,
+                    "op": "version_close",
+                    "rel": null,
+                    "src_logical_id": null,
+                    "valid_to": "2026-09-24T01:37:00.962152Z"
+                }
+            ],
+            "answer": null,
+            "auto_class": true,
+            "batch_id": "bf7df265-3008-5b57-8b0d-86fddb151b21",
+            "confidence": "high",
+            "created_at": "2026-09-24T01:37:26.173329+00:00",
+            "decided_at": null,
+            "expires_at": "2026-10-24T01:37:26.173329+00:00",
+            "flags": [],
+            "job": "librarian_write:141",
+            "kind": "contradiction",
+            "label": null,
+            "question_id": "82d41ae1-e193-58fe-bad5-f15728cbc1ec",
+            "reason": "Deploy-lock requirement before upgrades is reversed; new R2 truth is later.",
+            "relation": "contradicts",
+            "status": "open",
+            "subjects": [
+                {
+                    "clue": "v69",
+                    "kind": "fact",
+                    "projects": [
+                        "r2-seed"
+                    ],
+                    "title": "Deploy lock is not needed before an upgrade"
+                },
+                {
+                    "clue": "v37",
+                    "kind": "lesson",
+                    "projects": [
+                        "r2-seed"
+                    ],
+                    "title": "seed 10: deploy lock"
+                }
+            ],
+            "supersedes": "new",
+            "tier": "action",
+            "verification": {
+                "agreed": true,
+## ops librarian audit --project gates-probe --json (summary)
+{'batches': 0, 'project': 'gates-probe', 'proposals': 0, 'summary': {'by_kind': {}, 'by_relation': {}, 'by_status': {}}}
+statuses []
+## librarian events: role / outcome / mutation ops (all librarian events)
+ event_id |   role   |    outcome     | mutation_ops  | questions 
+----------+----------+----------------+---------------+-----------
+      132 | observer | annotated      | signal_upsert |         0
+      133 | observer | authority_lost |               |         0
+      135 | observer | annotated      | signal_upsert |         0
+      136 | observer | annotated      | signal_upsert |         0
+      145 | observer | proposed       | signal_upsert |         1
+      146 | observer | annotated      | signal_upsert |         0
+      147 | observer | proposed       | signal_upsert |         3
+      148 | observer | proposed       | signal_upsert |         1
+      149 | observer | annotated      | signal_upsert |         0
+      150 | observer | annotated      | signal_upsert |         0
+(10 rows)
+
+## DB snapshot AFTER
+              at               |       alembic        
+-------------------------------+----------------------
+ 2026-09-24 01:38:01.508113+00 | 0008_librarian_tasks
+
+ links_total | links_superseded | links_valid_closed 
+-------------+------------------+--------------------
+           0 |                0 |                  0
+
+ versions_total | versions_superseded | versions_valid_closed 
+----------------+---------------------+-----------------------
+             72 |                   0 |                     0
+
+       kind        | count 
+-------------------+-------
+ call_the_day      |     3
+ device_approved   |     5
+ device_minted     |    14
+ device_registered |     6
+ device_revoked    |    14
+ grant_added       |    17
+ grant_revoked     |     6
+ librarian         |    10
+ project_created   |     6
+ write             |    69
+
+    job_kind     | status | priority | count 
+-----------------+--------+----------+-------
+ embed           | done   |        5 |    72
+ librarian_write | done   |        2 |     1
+ librarian_write | done   |        3 |     9
+
+ version_signals 
+-----------------
+               9
+
+ status |     kind      | count 
+--------+---------------+-------
+ open   | contradiction |     4
+ open   | link          |     1
+
+ batches | batches_applied 
+---------+-----------------
+       1 |               0
+
+ llm_calls | cost_usd 
+-----------+----------
+        21 |   0.0047
+
+## audit r2-seed summary: {"by_kind": {"contradiction": 4, "link": 1}, "by_relation": {"contradicts": 4, "duplicate": 1}, "by_status": {"open": 5}}
+  contradiction contradicts status=open tier=action conf=high subjects=['v67', 'v68'] proposed_ops=[]
+  contradiction contradicts status=open tier=action conf=high subjects=['v69', 'v37'] proposed_ops=[]
+  contradiction contradicts status=open tier=action conf=high subjects=['v69', 'v47'] proposed_ops=[]
+  contradiction contradicts status=open tier=action conf=high subjects=['v69', 'v27'] proposed_ops=[]
+  link          duplicate   status=open tier=action conf=high subjects=['v70', 'v71'] proposed_ops=[]
+  batch bf7df265-3008-5b57-8b0d-86fddb151b21 status open applied_at None

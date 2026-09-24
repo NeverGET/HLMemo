@@ -1,0 +1,508 @@
+# 2026-09-24T01:33:45Z R2 cutover rehearsal: ee6ce9c (R1, like production) -> 3535bcc9bf661e05e40b27a9784a3f789231ceee (local main HEAD, pushed as temp branch r2-rehearsal)
+current-ref=ee6ce9c9f1d6355df207168e5afb4afa0c6a40f8
+# RUNBOOK step 2: git diff current-ref REF -- deploy/compose.prod.yaml
+diff --git a/deploy/compose.prod.yaml b/deploy/compose.prod.yaml
+index 11ca11b..3b8d414 100644
+--- a/deploy/compose.prod.yaml
++++ b/deploy/compose.prod.yaml
+@@ -89,11 +89,15 @@ services:
+     tmpfs:
+       - /tmp:size=64m,mode=1777
+       - /var/spool/hlmemo:size=320m,uid=10001,gid=10001,mode=0700
++    # R2: the same optional llm.env as the librarian (last, so it wins over app.env's HLM_PROFILE).
++    # The api runs the memory.risk_check judge and enqueues librarian jobs only when it enables them.
+     env_file:
+       - path: ${HLM_APP_ENV_FILE:-./app.env}
+         required: true
+       - path: ${HLM_API_ENV_FILE:-./api.env}
+         required: true
++      - path: ${HLM_LLM_ENV_FILE:-./llm.env}
++        required: false
+     command: ["python", "-m", "hlmemo.server.app"]
+     # Cold cgroup peak 1536 MiB + spool 320 MiB + /tmp 64 MiB, with 25% headroom.
+     mem_limit: 2560m
+@@ -142,9 +146,11 @@ services:
+       start_period: 90s
+ 
+   # Librarian (PHASE2-4-ROADMAP §2/§6, W2a): same image, no ONNX model, no port, no /ready role.
+-  # Off until R2 (HLM_LIBRARIAN_ENABLED=false idles with a heartbeat). The provider key lives in
+-  # llm.env only (mounted here, never into db/worker/caddy); budget/role defaults in llm.env.example.
+-  # llm.env is optional and sits next to app.env (deploy/scripts/common.sh sets HLM_LLM_ENV_FILE).
++  # R2: llm.env switches it (HLM_LIBRARIAN_ENABLED, HLM_LIBRARIAN_ROLE=observer; installed by
++  # deploy/scripts/install_llm_env.sh). Without llm.env it idles with a heartbeat (default false).
++  # The provider key lives in llm.env only, mounted here and into the api, never into
++  # db/worker/migrate/caddy. llm.env is optional and sits next to app.env (common.sh sets
++  # HLM_LLM_ENV_FILE); budget/role defaults in llm.env.example.
+   librarian:
+     <<: *app
+     env_file:
+@@ -155,9 +161,6 @@ services:
+     environment:
+       <<: *app-environment
+       HLM_LIBRARIAN_HEARTBEAT_FILE: /tmp/hlm-librarian-heartbeat.json
+-      # R1 pin: shipped with the release and wins over llm.env, so no env file can switch the
+-      # librarian on. R2 enables it by removing this line (a reviewed --accept-compose-change).
+-      HLM_LIBRARIAN_ENABLED: "false"
+     command: ["python", "-m", "hlmemo.librarian.worker"]
+     mem_limit: 512m
+     cpus: 0.5
+compose sha256=99fecbf403cf64031f339986b5bf1289d4da2a32a47ddfad3af43dc11a710a7a
+# PATH=deploy/.local/127.0.0.1-2223/bin:$PATH deploy.sh --accept-compose-change=99fecbf403cf64031f339986b5bf1289d4da2a32a47ddfad3af43dc11a710a7a hlm-deploy 3535bcc9bf661e05e40b27a9784a3f789231ceee
+deploy start 2026-09-24T01:33:45.3NZ
+deploy start epoch 1790213625.308
+Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.6Yi7fKDv/log (final exit code: /opt/hlmemo/.deploy-runs/run.6Yi7fKDv/status)
+From https://github.com/NeverGET/HLMemo
+ * branch            3535bcc9bf661e05e40b27a9784a3f789231ceee -> FETCH_HEAD
+Compose model change accepted: sha256 99fecbf403cf64031f339986b5bf1289d4da2a32a47ddfad3af43dc11a710a7a (changed=1)
+Previous HEAD position was ee6ce9c Merge R1 rehearsal fixes: retired-secret backups recorded + swept on accept, short-SHA resolution, memory table, hlm init W0a hint
+HEAD is now at 3535bcc STATUS: librarian integrated; R2 rehearsal + hold-out evals in flight
+ Image pgvector/pgvector:0.8.6-pg17 Pulling 
+ Image caddy:2.11.2-alpine Pulling 
+ Image caddy:2.11.2-alpine Pulled 
+ Image pgvector/pgvector:0.8.6-pg17 Pulled 
+ Image hlmemo:3535bcc9bf66 Building 
+ Image hlmemo:3535bcc9bf66 Building 
+ Image hlmemo:3535bcc9bf66 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.94kB done
+#1 DONE 0.0s
+
+#2 [migrate internal] load build definition from Dockerfile
+#2 transferring dockerfile: 4.06kB done
+#2 DONE 0.0s
+
+#3 [api] resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#3 DONE 0.5s
+
+#4 [api] docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#4 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 0.0s done
+#4 CACHED
+
+#5 [worker internal] load build definition from Dockerfile
+#5 transferring dockerfile: 4.06kB done
+#5 DONE 0.0s
+
+#6 [worker internal] load metadata for docker.io/library/python:3.12.14-slim-bookworm
+#6 ...
+
+#7 [api internal] load build definition from Dockerfile
+#7 transferring dockerfile: 4.06kB done
+#7 DONE 0.0s
+
+#8 [migrate internal] load build definition from Dockerfile
+#8 transferring dockerfile: 4.06kB done
+#8 DONE 0.0s
+
+#6 [migrate internal] load metadata for docker.io/library/python:3.12.14-slim-bookworm
+#6 DONE 0.6s
+
+#9 [migrate internal] load metadata for ghcr.io/astral-sh/uv:0.11
+#9 DONE 0.7s
+
+#10 [worker internal] load .dockerignore
+#10 transferring context: 350B done
+#10 DONE 0.0s
+
+#11 [api internal] load .dockerignore
+#11 transferring context: 350B done
+#11 DONE 0.0s
+
+#12 [migrate internal] load .dockerignore
+#12 transferring context: 350B done
+#12 DONE 0.0s
+
+#13 [worker builder 1/8] FROM docker.io/library/python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
+#13 resolve docker.io/library/python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
+#13 resolve docker.io/library/python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e 0.0s done
+#13 DONE 0.0s
+
+#14 [worker internal] load build context
+#14 transferring context: 1.38MB 0.0s done
+#14 DONE 0.0s
+
+#15 [api internal] load build context
+#15 transferring context: 1.38MB 0.0s done
+#15 DONE 0.0s
+
+#16 [api] FROM ghcr.io/astral-sh/uv:0.11@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7
+#16 resolve ghcr.io/astral-sh/uv:0.11@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7 0.0s done
+#16 DONE 0.0s
+
+#17 [api builder 2/8] COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+#17 CACHED
+
+#18 [api builder 4/8] COPY pyproject.toml uv.lock .python-version README.md ./
+#18 CACHED
+
+#19 [api builder 3/8] WORKDIR /app
+#19 CACHED
+
+#20 [migrate builder 5/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-install-project
+#20 CACHED
+
+#21 [migrate internal] load build context
+#21 transferring context: 1.38MB 0.0s done
+#21 DONE 0.0s
+
+#22 [worker builder 6/8] COPY src ./src
+#22 DONE 0.0s
+
+#23 [migrate builder 7/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
+#23 0.131    Building hlmemo @ file:///app
+#23 0.502       Built hlmemo @ file:///app
+#23 0.513 Prepared 1 package in 383ms
+#23 0.525 Installed 1 package in 11ms
+#23 1.008 Bytecode compiled 3360 files in 482ms
+#23 1.008  + hlmemo==0.0.1 (from file:///app)
+#23 DONE 1.1s
+
+#24 [worker builder 8/8] RUN /app/.venv/bin/python -c "from hlmemo.core.budget import Meter; Meter().count_text('ready')"
+#24 DONE 4.1s
+
+#25 [api models 1/2] COPY models.lock ./
+#25 DONE 0.0s
+
+#26 [worker runtime 3/9] WORKDIR /app
+#26 CACHED
+
+#27 [worker builder 4/8] COPY pyproject.toml uv.lock .python-version README.md ./
+#27 CACHED
+
+#28 [worker builder 6/8] COPY src ./src
+#28 CACHED
+
+#29 [worker builder 7/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
+#29 CACHED
+
+#30 [worker builder 5/8] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-install-project
+#30 CACHED
+
+#31 [worker runtime 2/9] RUN groupadd --system --gid 10001 hlm && useradd --system --uid 10001 --gid hlm --home /app --shell /usr/sbin/nologin hlm
+#31 CACHED
+
+#17 [worker builder 2/8] COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+#17 CACHED
+
+#19 [worker builder 3/8] WORKDIR /app
+#19 CACHED
+
+#32 [worker builder 8/8] RUN /app/.venv/bin/python -c "from hlmemo.core.budget import Meter; Meter().count_text('ready')"
+#32 CACHED
+
+#33 [worker runtime 4/9] COPY --from=builder --chown=hlm:hlm /app/.venv /app/.venv
+#33 CANCELED
+
+#34 [migrate models 2/2] RUN --mount=type=cache,target=/root/.cache/huggingface <<'SH' (set -eu...)
+#34 ...
+
+#31 [api runtime 2/9] RUN groupadd --system --gid 10001 hlm && useradd --system --uid 10001 --gid hlm --home /app --shell /usr/sbin/nologin hlm
+#31 CACHED
+
+#26 [api runtime 3/9] WORKDIR /app
+#26 CACHED
+
+#31 [migrate runtime 2/9] RUN groupadd --system --gid 10001 hlm && useradd --system --uid 10001 --gid hlm --home /app --shell /usr/sbin/nologin hlm
+#31 CACHED
+
+#26 [migrate runtime 3/9] WORKDIR /app
+#26 CACHED
+
+#35 [migrate runtime 4/9] COPY --from=builder --chown=hlm:hlm /app/.venv /app/.venv
+#35 DONE 1.1s
+
+#36 [worker runtime 5/9] COPY --from=builder --chown=hlm:hlm /app/tiktoken-cache /app/tiktoken-cache
+#36 DONE 0.1s
+
+#34 [migrate models 2/2] RUN --mount=type=cache,target=/root/.cache/huggingface <<'SH' (set -eu...)
+#34 0.749 Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+#34 0.984 Fetching 4 files:  25%|██▌       | 1/4 [00:00<00:00,  4.26it/s]Fetching 4 files:  75%|███████▌  | 3/4 [00:03<00:01,  1.28s/it]Fetching 4 files: 100%|██████████| 4/4 [00:23<00:00,  7.61s/it]Fetching 4 files: 100%|██████████| 4/4 [00:23<00:00,  5.78s/it]
+#34 24.08 baked /app/models/multilingual-e5-small: hashes match models.lock
+#34 DONE 24.3s
+
+#37 [migrate runtime 6/9] COPY --from=models --chown=hlm:hlm /app/models /app/models
+#37 DONE 0.6s
+
+#38 [worker runtime 7/9] COPY --chown=hlm:hlm alembic.ini models.lock hlm.example.toml ./
+#38 DONE 0.0s
+
+#39 [migrate runtime 8/9] COPY --chown=hlm:hlm alembic ./alembic
+#39 DONE 0.0s
+
+#40 [worker runtime 9/9] COPY --chown=hlm:hlm profiles ./profiles
+#40 DONE 0.0s
+
+#41 [migrate] exporting to image
+#41 exporting layers
+#41 ...
+
+#42 [worker] exporting to image
+#42 ...
+
+#43 [api] exporting to image
+#43 ...
+
+#41 [migrate] exporting to image
+#41 exporting layers 13.0s done
+#41 exporting manifest sha256:729c70e79942b978680c3d4e98cc950cf55820e388f6d1ffed25a7cf1d422b19 0.0s done
+#41 exporting config sha256:439721611186af4115668da60a5e3314f9d947aa52825c77a20d1c29ffc38e02 0.0s done
+#41 exporting attestation manifest sha256:f2e6543a939f735da51bfc29947eaa27c1cfbaba7ad76a6f29c237e215708649 0.0s done
+#41 exporting manifest list sha256:3d35cb963250f5e63f0ef2af125a1a741af715524024ed9326d8a220310bb360 0.0s done
+#41 naming to docker.io/library/hlmemo:3535bcc9bf66 done
+#41 unpacking to docker.io/library/hlmemo:3535bcc9bf66
+#41 ...
+
+#42 [worker] exporting to image
+#42 exporting layers 13.0s done
+#42 exporting manifest sha256:dd4a98e1dc4fdb23daa1805ff167532440b6ffd04ced9d4eca89cd8561145a44 0.0s done
+#42 exporting config sha256:636ee6564d3eed161ba56cd4d5d70361789a282d4396bfbba866cee984dabf01 0.0s done
+#42 exporting attestation manifest sha256:ebc50a099a8c6cfe8a03edaf637f0df74da27a85b44ab1236ae69b95ad447a30 0.0s done
+#42 exporting manifest list sha256:e1f22c62e1d4086252a56df35618cf02f35bee2aa246464e88c962feba10fe93 0.0s done
+#42 naming to docker.io/library/hlmemo:3535bcc9bf66 0.0s done
+#42 ...
+
+#41 [migrate] exporting to image
+#41 unpacking to docker.io/library/hlmemo:3535bcc9bf66 8.0s done
+#41 DONE 21.1s
+
+#43 [api] exporting to image
+#43 exporting layers 13.0s done
+#43 exporting manifest sha256:1a15adda8933124024aa9f88437bd526bba8df87003f42821bf40ff8a9e14377 0.0s done
+#43 exporting config sha256:28c0d43c74a431aca8ec72f4ee4f793daf842a3d94a842a99f2b81c4f6df7dfd 0.0s done
+#43 exporting attestation manifest sha256:a4feff35caea09cde3c4d8a70e907be7e04a4a97e16cca31d796deaa02cfb327 0.0s done
+#43 exporting manifest list sha256:65f54ce397d10bd4b62985718211172bbe3616464afb4825fe979061425351ab 0.0s done
+#43 naming to docker.io/library/hlmemo:3535bcc9bf66 done
+#43 unpacking to docker.io/library/hlmemo:3535bcc9bf66 8.0s done
+#43 DONE 21.1s
+
+#42 [worker] exporting to image
+#42 unpacking to docker.io/library/hlmemo:3535bcc9bf66 8.0s done
+#42 DONE 21.1s
+
+#44 [api] resolving provenance for metadata file
+#44 DONE 0.0s
+
+#45 [worker] resolving provenance for metadata file
+#45 DONE 0.0s
+
+#46 [migrate] resolving provenance for metadata file
+#46 DONE 0.0s
+ Image hlmemo:3535bcc9bf66 Built 
+ Image hlmemo:3535bcc9bf66 Built 
+ Image hlmemo:3535bcc9bf66 Built 
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/ee6ce9c9f1d6355df207168e5afb4afa0c6a40f8-2026-09-24T013442Z-RNGeEz.dump (retained until explicit prune)
+migrate_env_w0: prod.env: already migrated (no retired keys)
+migrate_env_w0: app.env: already migrated (no retired keys)
+migrate_env_w0: api.env: already migrated (no retired keys)
+migrate_env_w0: done (0 file(s) changed)
+ Container hlmemo-prod-caddy-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopping 
+ Container hlmemo-prod-librarian-1 Stopping 
+ Container hlmemo-prod-caddy-1 Stopped 
+ Container hlmemo-prod-api-1 Stopping 
+ Container hlmemo-prod-librarian-1 Stopped 
+ Container hlmemo-prod-worker-1 Stopped 
+ Container hlmemo-prod-api-1 Stopped 
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/ee6ce9c9f1d6355df207168e5afb4afa0c6a40f8-2026-09-24T013445Z-7Q7qCp.dump (retained until explicit prune)
+Quiesced pre-upgrade dump: /var/backups/hlmemo/pre-upgrade/ee6ce9c9f1d6355df207168e5afb4afa0c6a40f8-2026-09-24T013445Z-7Q7qCp.dump
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-migrate-run-7c10c4dcd12c Creating 
+ Container hlmemo-prod-migrate-run-7c10c4dcd12c Created 
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 0006_librarian -> 0007_import, Import provenance + code references + the D-015 skeleton-card backfill (W1.5; D-069).
+WARNI [hlmemo.skeleton_card] 0007_import: wrote 6 skeleton project card(s)
+INFO  [alembic.runtime.migration] Running upgrade 0007_import -> 0008_librarian_tasks, Librarian tasks (PHASE2-4-ROADMAP W2b + W2c; D-062, D-067, D-069).
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreate 
+ Container hlmemo-prod-worker-1 Recreate 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-librarian-1 Recreated 
+ Container hlmemo-prod-worker-1 Recreated 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-worker-1 Starting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-librarian-1 Starting 
+ Container hlmemo-prod-api-1 Started 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-worker-1 Started 
+ Container hlmemo-prod-librarian-1 Started 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-caddy-1 Starting 
+ Container hlmemo-prod-caddy-1 Started 
+ Container hlmemo-prod-caddy-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-worker-1 Waiting 
+ Container hlmemo-prod-librarian-1 Waiting 
+ Container hlmemo-prod-worker-1 Healthy 
+ Container hlmemo-prod-librarian-1 Healthy 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-caddy-1 Healthy 
+PASS routes anonymous    GET    /health                        -> 200
+PASS routes anonymous    GET    /ready                         -> 200
+PASS routes trusted      GET    /health                        -> 200
+PASS routes trusted      GET    /ready                         -> 200
+PASS routes anonymous    POST   /devices/register              -> 404
+PASS routes anonymous    POST   /devices/approve               -> 404
+PASS routes anonymous    POST   /devices/grant                 -> 404
+PASS routes anonymous    DELETE /devices/grant                 -> 404
+PASS routes anonymous    GET    /devices/list                  -> 404
+PASS routes anonymous    POST   /admin/devices/2/approve       -> 404
+PASS routes anonymous    POST   /admin/devices/2/revoke        -> 404
+PASS routes anonymous    POST   /admin/projects                -> 404
+PASS routes anonymous    GET    /admin/projects                -> 404
+PASS routes anonymous    POST   /admin/projects/proj/grants    -> 404
+PASS routes anonymous    DELETE /admin/projects/proj/grants    -> 404
+PASS routes trusted      POST   /devices/register              -> 404
+PASS routes trusted      POST   /devices/approve               -> 404
+PASS routes trusted      POST   /devices/grant                 -> 404
+PASS routes trusted      DELETE /devices/grant                 -> 404
+PASS routes trusted      GET    /devices/list                  -> 404
+PASS routes trusted      POST   /admin/devices/2/approve       -> 404
+PASS routes trusted      POST   /admin/devices/2/revoke        -> 404
+PASS routes trusted      POST   /admin/projects                -> 404
+PASS routes trusted      GET    /admin/projects                -> 404
+PASS routes trusted      POST   /admin/projects/proj/grants    -> 404
+PASS routes trusted      DELETE /admin/projects/proj/grants    -> 404
+PASS routes junk         POST   /devices/register              -> 404
+PASS routes junk         POST   /devices/approve               -> 404
+PASS routes junk         POST   /devices/grant                 -> 404
+PASS routes junk         DELETE /devices/grant                 -> 404
+PASS routes junk         GET    /devices/list                  -> 404
+PASS routes junk         POST   /admin/devices/2/approve       -> 404
+PASS routes junk         POST   /admin/devices/2/revoke        -> 404
+PASS routes junk         POST   /admin/projects                -> 404
+PASS routes junk         GET    /admin/projects                -> 404
+PASS routes junk         POST   /admin/projects/proj/grants    -> 404
+PASS routes junk         DELETE /admin/projects/proj/grants    -> 404
+PASS routes admin-shaped POST   /devices/register              -> 404
+PASS routes admin-shaped POST   /devices/approve               -> 404
+PASS routes admin-shaped POST   /devices/grant                 -> 404
+PASS routes admin-shaped DELETE /devices/grant                 -> 404
+PASS routes admin-shaped GET    /devices/list                  -> 404
+PASS routes admin-shaped POST   /admin/devices/2/approve       -> 404
+PASS routes admin-shaped POST   /admin/devices/2/revoke        -> 404
+PASS routes admin-shaped POST   /admin/projects                -> 404
+PASS routes admin-shaped GET    /admin/projects                -> 404
+PASS routes admin-shaped POST   /admin/projects/proj/grants    -> 404
+PASS routes admin-shaped DELETE /admin/projects/proj/grants    -> 404
+PASS routes anonymous    GET    /devices/whoami                -> 401
+PASS routes junk         GET    /devices/whoami                -> 401
+PASS routes admin-shaped GET    /devices/whoami                -> 401
+PASS routes anonymous    POST   /mcp                           -> 401
+PASS routes junk         POST   /mcp                           -> 401
+PASS routes anonymous    POST   /devices/revoke                -> 401
+PASS routes junk         POST   /devices/revoke                -> 401
+PASS routes trusted      GET    /devices/whoami                -> 200
+PASS routes trusted      POST   /mcp                           -> 200
+PASS routes trusted      POST   /devices/revoke                -> 404
+PASS routes trusted      POST   /devices/revoke                -> 404
+PASS routes trusted      POST   /devices/revoke                -> 200
+PASS routes revoked      GET    /devices/whoami                -> 401
+RESULT routes PASS base=http://127.0.0.1:8765 failures=0
+{"status":"ready"}
+{"grants":[],"minted":{"class":"ci","expired":false,"expires_at":"2026-09-24T01:45:02.347847+00:00","id":19,"last_seen_at":null,"name":"deploy-routes-3535bcc9bf66-20275","notes":null,"registered_at":"2026-09-24T01:35:02.347086+00:00","reserved":false,"revoked_at":null,"status":"trusted","token_generation":1}}
+PASS routes anonymous    GET    /health                        -> 200
+PASS routes anonymous    GET    /ready                         -> 200
+PASS routes trusted      GET    /health                        -> 200
+PASS routes trusted      GET    /ready                         -> 200
+PASS routes anonymous    POST   /devices/register              -> 404
+PASS routes anonymous    POST   /devices/approve               -> 404
+PASS routes anonymous    POST   /devices/grant                 -> 404
+PASS routes anonymous    DELETE /devices/grant                 -> 404
+PASS routes anonymous    GET    /devices/list                  -> 404
+PASS routes anonymous    POST   /admin/devices/2/approve       -> 404
+PASS routes anonymous    POST   /admin/devices/2/revoke        -> 404
+PASS routes anonymous    POST   /admin/projects                -> 404
+PASS routes anonymous    GET    /admin/projects                -> 404
+PASS routes anonymous    POST   /admin/projects/proj/grants    -> 404
+PASS routes anonymous    DELETE /admin/projects/proj/grants    -> 404
+PASS routes trusted      POST   /devices/register              -> 404
+PASS routes trusted      POST   /devices/approve               -> 404
+PASS routes trusted      POST   /devices/grant                 -> 404
+PASS routes trusted      DELETE /devices/grant                 -> 404
+PASS routes trusted      GET    /devices/list                  -> 404
+PASS routes trusted      POST   /admin/devices/2/approve       -> 404
+PASS routes trusted      POST   /admin/devices/2/revoke        -> 404
+PASS routes trusted      POST   /admin/projects                -> 404
+PASS routes trusted      GET    /admin/projects                -> 404
+PASS routes trusted      POST   /admin/projects/proj/grants    -> 404
+PASS routes trusted      DELETE /admin/projects/proj/grants    -> 404
+PASS routes junk         POST   /devices/register              -> 404
+PASS routes junk         POST   /devices/approve               -> 404
+PASS routes junk         POST   /devices/grant                 -> 404
+PASS routes junk         DELETE /devices/grant                 -> 404
+PASS routes junk         GET    /devices/list                  -> 404
+PASS routes junk         POST   /admin/devices/2/approve       -> 404
+PASS routes junk         POST   /admin/devices/2/revoke        -> 404
+PASS routes junk         POST   /admin/projects                -> 404
+PASS routes junk         GET    /admin/projects                -> 404
+PASS routes junk         POST   /admin/projects/proj/grants    -> 404
+PASS routes junk         DELETE /admin/projects/proj/grants    -> 404
+PASS routes admin-shaped POST   /devices/register              -> 404
+PASS routes admin-shaped POST   /devices/approve               -> 404
+PASS routes admin-shaped POST   /devices/grant                 -> 404
+PASS routes admin-shaped DELETE /devices/grant                 -> 404
+PASS routes admin-shaped GET    /devices/list                  -> 404
+PASS routes admin-shaped POST   /admin/devices/2/approve       -> 404
+PASS routes admin-shaped POST   /admin/devices/2/revoke        -> 404
+PASS routes admin-shaped POST   /admin/projects                -> 404
+PASS routes admin-shaped GET    /admin/projects                -> 404
+PASS routes admin-shaped POST   /admin/projects/proj/grants    -> 404
+PASS routes admin-shaped DELETE /admin/projects/proj/grants    -> 404
+PASS routes anonymous    GET    /devices/whoami                -> 401
+PASS routes junk         GET    /devices/whoami                -> 401
+PASS routes admin-shaped GET    /devices/whoami                -> 401
+PASS routes anonymous    POST   /mcp                           -> 401
+PASS routes junk         POST   /mcp                           -> 401
+PASS routes anonymous    POST   /devices/revoke                -> 401
+PASS routes junk         POST   /devices/revoke                -> 401
+PASS routes trusted      GET    /devices/whoami                -> 200
+PASS routes trusted      POST   /mcp                           -> 200
+PASS routes trusted      POST   /devices/revoke                -> 404
+PASS routes trusted      POST   /devices/revoke                -> 404
+PASS routes trusted      POST   /devices/revoke                -> 200
+PASS routes revoked      GET    /devices/whoami                -> 401
+RESULT routes PASS base=https://localhost failures=0
+Device inventory after cutover (python -m hlmemo.ops device list):
+   1  admin (reserved)             server    trusted  expires=- last_seen=- grants=gates:admin,gates-cli:admin,gates-probe:admin,r1-seed:admin,r2-seed:admin,reboot:admin
+   2  judge-cffefa4a               ci        revoked  expires=- last_seen=2026-09-23T06:53:58.235379+00:00 grants=-
+   3  gates-cli-20125              ci        revoked  expires=- last_seen=2026-09-23T06:54:01.142048+00:00 grants=-
+   4  judge-25e19a58               ci        trusted  expires=- last_seen=2026-09-23T06:55:03.607698+00:00 grants=reboot:write
+   5  judge-86f7d02a               ci        trusted  expires=- last_seen=2026-09-23T06:55:54.294880+00:00 grants=reboot:write
+   6  seed-trusted-mac             personal  trusted  expires=- last_seen=2026-09-23T18:38:15.669460+00:00 grants=r1-seed:write
+   7  seed-pending-laptop          personal  pending  expires=- last_seen=- grants=-
+   8  librarian                    server    trusted  expires=- last_seen=- grants=-
+   9  routes-check-56ffa3d5        ci        revoked  expires=2026-09-23T18:46:24.517606+00:00 last_seen=2026-09-23T18:36:24.550205+00:00 grants=-
+  10  deploy-routes-fa24ca5a0d87-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
+  11  gates-probe-20260923t183640z ci        revoked  expires=2026-09-23T19:06:42.628038+00:00 last_seen=2026-09-23T18:36:42.841876+00:00 grants=-
+  12  gates-routes-20260923t183640z ci        revoked  expires=2026-09-23T18:46:43.814204+00:00 last_seen=2026-09-23T18:36:43.932779+00:00 grants=-
+  13  gates-cli-30966              ci        revoked  expires=2026-09-23T19:06:46.565281+00:00 last_seen=2026-09-23T18:36:46.589456+00:00 grants=-
+  14  rehearsal-mac                personal  trusted  expires=- last_seen=2026-09-23T18:47:10.381328+00:00 grants=r1-seed:write
+  15  routes-check-b13c5d81        ci        revoked  expires=2026-09-24T01:41:21.465302+00:00 last_seen=2026-09-24T01:31:21.502087+00:00 grants=-
+  16  deploy-routes-ee6ce9c9f1d6-23116 ci        revoked  expires=2026-09-24T01:41:21.995065+00:00 last_seen=2026-09-24T01:31:22.067436+00:00 grants=-
+  17  r2-seed-mac                  personal  trusted  expires=- last_seen=2026-09-24T01:32:25.038935+00:00 grants=r2-seed:write
+  18  routes-check-6066fab3        ci        revoked  expires=2026-09-24T01:45:01.753593+00:00 last_seen=2026-09-24T01:35:01.794955+00:00 grants=-
+  19  deploy-routes-3535bcc9bf66-20275 ci        revoked  expires=2026-09-24T01:45:02.347847+00:00 last_seen=2026-09-24T01:35:02.438937+00:00 grants=-
+librarian: llm.env=present enabled=true role=observer mode=live profile=openrouter-gpt6-luna fallback=openrouter
+librarian heartbeat: enabled=True role=observer breaker_state=closed age_s=3.8 ready=0
+librarian spend: spend_hour_usd=0.0 spend_today_usd=0.0 reserved_usd=0.0
+api: enabled=true mode=live risk_judge=openrouter-gpt6-luna (empty: risk_check answers retrieval-only)
+provider openrouter-gpt6-luna https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+RESULT librarian PASS llm.env=present enabled=true role=observer
+Pre-upgrade prune completed: removed 1; keeping latest 5
+Deployment ready: 3535bcc9bf661e05e40b27a9784a3f789231ceee (localhost)
+
+PATH="$PWD/$S/bin:$PATH" bash deploy/scripts/deploy.sh  hlm-deploy "$REF"  2.93s user 1.44s system 5% cpu 1:21.17 total
+rc=0
+deploy end epoch 1790213706.503

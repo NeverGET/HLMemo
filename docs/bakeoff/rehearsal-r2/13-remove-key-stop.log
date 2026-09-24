@@ -1,0 +1,39 @@
+# 2026-09-24T03:06:49Z cleanup: install_llm_env.sh --remove, recreate librarian+api (container configs drop the key), prove no key on the VM, stop the VM
+removed /etc/hlmemo/llm.env
+removed 1 file(s)
+Running containers keep the key until recreated: stack.sh up -d --no-deps librarian api (RUNBOOK).
+rc=0
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreated 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-librarian-1 Starting 
+ Container hlmemo-prod-api-1 Started 
+ Container hlmemo-prod-librarian-1 Started 
+rc=0
+-- /etc/hlmemo after --remove:
+drwxr-x---   2 hlmdeploy hlmdeploy 4096 Sep 24 03:06 .
+drwxr-xr-x 113 root      root      4096 Sep 24 03:05 ..
+-rw-------   1 hlmdeploy hlmdeploy  351 Sep 23 18:36 api.env
+-rw-------   1 hlmdeploy hlmdeploy  521 Sep 23 06:50 api.env.pre-w0-20260923T183410Z
+-rw-------   1 hlmdeploy hlmdeploy  616 Sep 23 06:50 app.env
+-rw-------   1 hlmdeploy hlmdeploy  458 Sep 23 06:50 backup.env
+-rw-r--r--   1 root      root         4 Sep 23 06:54 bootstrap-ssh-cidr
+-rw-------   1 hlmdeploy hlmdeploy  239 Sep 23 06:50 db.env
+-rw-------   1 hlmdeploy hlmdeploy  877 Sep 24 01:35 prod.env
+/hlmemo-prod-librarian-1 env OPENROUTER_API_KEY entries: 0
+/hlmemo-prod-api-1 env OPENROUTER_API_KEY entries: 0
+/hlmemo-prod-worker-1 env OPENROUTER_API_KEY entries: 0
+/hlmemo-prod-caddy-1 env OPENROUTER_API_KEY entries: 0
+/hlmemo-prod-migrate-1 env OPENROUTER_API_KEY entries: 0
+/hlmemo-prod-db-1 env OPENROUTER_API_KEY entries: 0
+-- search the VM for the key value (value sent on ssh stdin, never argv/printed): files listed only
+grep exit=1 (1 = no match anywhere)
+-- librarian idles, api has no key (check_librarian collect):
+librarian-1  | 2026-09-24 03:06:51,373 WARNING hlmemo.librarian librarian: HLM_LIBRARIAN_ENABLED is false; idling (no job is leased, no provider is called)
+{"enabled": false, "fallback": null, "llm_mode": "live", "profile": "openrouter", "profiles": [{"base_url": "https://openrouter.ai/api/v1", "key_set": false, "name": "openrouter"}], "risk_judge": [], "role": "observer", "service": "api"}
+-- positive controls: pattern = 1 line of 73 chars; it matches the local .env (1); on the VM the same pattern self-matches its temp file (1, then shredded) and the sweep of /etc/hlmemo /opt/hlmemo /var/lib/docker/containers /home/hlmdeploy /root /var/tmp /var/backups/hlmemo finds nothing (grep exit=1)
+limactl stop issued epoch 1790219246.033
+time="2026-09-24T06:07:28+03:00" level=info msg="The instance hlm-2604 has shut down"
+hlm-2604    Stopped    127.0.0.1:2223    vz        aarch64    2       8GiB      60GiB    ~/.lima/hlm-2604
