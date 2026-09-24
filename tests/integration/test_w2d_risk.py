@@ -41,6 +41,7 @@ from hlmemo.core.errors import ToolError
 from hlmemo.core.read_service import default_read_deps
 from hlmemo.librarian import risk_judge as rj
 from hlmemo.librarian.profiles import named_profile
+from hlmemo.librarian.provider import LATENCY_PRIMARY_SHARE
 from hlmemo.server.app import create_app
 from tests.integration._librarian_fixtures import (
     ScriptedLLM,
@@ -664,4 +665,106 @@ async def test_stalled_primary_is_retrieval_only_inside_the_cap_without_the_fall
         await judge.aclose()
     assert out["judged"] is False and out["judge"] == rj.RETRIEVAL_ONLY and out["reason"] == rj.TIMEOUT, out
     assert [h for h, _ in seen] == ["judge-primary.invalid"]  # one attempt; the fallback never called
+    assert ms < rj.JUDGE_TIMEOUT_S * 1000 + P95_DET_MS, ms
+
+
+# --------------------------------------------------------------------------- D-094 task fallback
+def _judge_profiles(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
+    """judge-primary, judge-deepseek (disqualified for the judge) and judge-qwen (qualified)."""
+    for key in list(os.environ):
+        if key.upper().startswith("HLM_FALLBACK_PROFILE"):
+            monkeypatch.delenv(key)
+    for name, extra in (
+        ("judge-primary", ""),
+        ("judge-deepseek", 'disabled_tasks = ["risk_judge"]\n'),
+        ("judge-qwen", ""),
+    ):
+        (tmp_path / f"{name}.toml").write_text(
+            f'HLM_LLM_BASE_URL = "http://{name}.invalid/v1"\nHLM_LLM_MODEL = "stub/{name}"\n{extra}'
+        )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    return {
+        "profile": "judge-primary",
+        "llm_base_url": "http://judge-primary.invalid/v1",
+        "llm_model": "stub/judge-primary",
+    }
+
+
+def _stalled_primary(host: str, _body: dict[str, Any]) -> Any:
+    return "stall" if host == "judge-primary.invalid" else {"verdict": "none", "matches": []}
+
+
+async def test_qualified_task_fallback_judges_inside_the_cap_when_the_primary_stalls(
+    connect, world, deps, db_dsn, tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    """D-094 (amends D-071): ``HLM_FALLBACK_PROFILE__RISK_JUDGE`` names a QUALIFIED profile, so a
+    stalled primary (one bounded attempt, at most 55 % of the 4 s cap) hands the rest of the cap to
+    it and the result is judged, labelled ``ok_fallback``; the default fallback (disqualified by
+    ``disabled_tasks``) is never called."""
+    primary = _judge_profiles(tmp_path, monkeypatch)
+    monkeypatch.setenv("HLM_FALLBACK_PROFILE__RISK_JUDGE", "judge-qwen")
+    settings = judge_settings(db_dsn, fallback_profile="judge-deepseek", **primary)
+    seen: list[tuple[str, float]] = []
+    judge = rj.RiskJudge(settings, transport=timeout_honouring(_stalled_primary, seen))
+    assert [p.name for p in judge.chain] == ["judge-primary", "judge-qwen"]
+    try:
+        out, _lessons, ms = await run_case(connect, world, deps, load_cases()[0]["task"], judge=judge)
+    finally:
+        await judge.aclose()
+    assert out["judged"] is True and out["judge"] == rj.OK_FALLBACK, out
+    (p_host, p_read), (f_host, f_read) = seen
+    assert (p_host, f_host) == ("judge-primary.invalid", "judge-qwen.invalid")
+    assert p_read <= rj.JUDGE_TIMEOUT_S * LATENCY_PRIMARY_SHARE + 0.01
+    assert f_read > 1.0  # the task fallback got the rest of the cap, not a sliver
+    assert ms < rj.JUDGE_TIMEOUT_S * 1000 + P95_DET_MS, ms
+
+
+async def test_open_primary_breaker_sends_the_judge_straight_to_its_own_fallback(
+    connect, world, deps, db_dsn, tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    """Per-profile breakers with a task fallback: after BREAKER_THRESHOLD stalled primary attempts
+    the primary's breaker opens; the judge stays available (degraded) and the next call goes to the
+    task fallback alone, with the whole cap."""
+    primary = _judge_profiles(tmp_path, monkeypatch)
+    monkeypatch.setenv("HLM_FALLBACK_PROFILE__RISK_JUDGE", "judge-qwen")
+    settings = judge_settings(db_dsn, fallback_profile="judge-deepseek", **primary)
+    seen: list[tuple[str, float]] = []
+    judge = rj.RiskJudge(settings, transport=timeout_honouring(_stalled_primary, seen), timeout_s=2.0)
+    task = load_cases()[0]["task"]
+    try:
+        for _ in range(rj.BREAKER_THRESHOLD):
+            out, _l, _ms = await run_case(connect, world, deps, task, judge=judge)
+            assert out["judge"] == rj.OK_FALLBACK, out
+        assert judge.provider is not None
+        assert judge.provider.breaker("judge-primary").state == "open"
+        assert judge.provider.breaker("judge-qwen").state == "closed"
+        assert "judge-deepseek" not in judge.provider._breakers  # never part of the judge's chain
+        assert judge.unavailable() is None and judge.breaker.state == "degraded"
+        seen.clear()
+        out, _l, _ms = await run_case(connect, world, deps, task, judge=judge)
+    finally:
+        await judge.aclose()
+    assert out["judge"] == rj.OK_FALLBACK, out
+    ((host, read),) = seen
+    assert host == "judge-qwen.invalid" and read > 2.0 * LATENCY_PRIMARY_SHARE  # the whole cap
+
+
+async def test_unqualified_task_fallback_keeps_retrieval_only(
+    connect, world, deps, db_dsn, tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    """D-071 kept: when the configured risk fallback lists risk_judge in disabled_tasks, the judge
+    has no fallback (even though the DEFAULT fallback would be qualified), so a stalled primary
+    ends in retrieval-only inside the cap and the disqualified profile is never called."""
+    primary = _judge_profiles(tmp_path, monkeypatch)
+    monkeypatch.setenv("HLM_FALLBACK_PROFILE__RISK_JUDGE", "judge-deepseek")
+    settings = judge_settings(db_dsn, fallback_profile="judge-qwen", **primary)
+    seen: list[tuple[str, float]] = []
+    judge = rj.RiskJudge(settings, transport=timeout_honouring(_stalled_primary, seen))
+    assert [p.name for p in judge.chain] == ["judge-primary"]
+    try:
+        out, _lessons, ms = await run_case(connect, world, deps, load_cases()[0]["task"], judge=judge)
+    finally:
+        await judge.aclose()
+    assert out["judged"] is False and out["judge"] == rj.RETRIEVAL_ONLY and out["reason"] == rj.TIMEOUT, out
+    assert [h for h, _ in seen] == ["judge-primary.invalid"]
     assert ms < rj.JUDGE_TIMEOUT_S * 1000 + P95_DET_MS, ms

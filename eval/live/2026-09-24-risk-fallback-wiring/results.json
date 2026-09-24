@@ -1,0 +1,131 @@
+{
+ "catch_mean": 1.0,
+ "catch_min": 1.0,
+ "fallback_latency_ms_p50": 1633.0,
+ "fallback_latency_ms_p95": 3237.4,
+ "false_warn_max": 0.075,
+ "false_warn_mean": 0.04375,
+ "fixture": "tests/fixtures/risk",
+ "guard_accounted_usd": "0.39918257",
+ "judged": "299/320",
+ "ledger_outcomes": {
+  "openrouter-gpt6-luna": {
+   "http_error": 320
+  },
+  "openrouter-qwen38-27b-fast": {
+   "ok": 299,
+   "timeout": 21
+  }
+ },
+ "max_usd": 2.0,
+ "pass": true,
+ "provider_cost_usd": "0.17528417",
+ "reps": [
+  {
+   "catch": 1.0,
+   "false_warn": 0.025,
+   "false_warns": [
+    "N19"
+   ],
+   "judged_only": {
+    "catch": 1.0,
+    "false_warn": 0.025,
+    "n_neg": 40,
+    "n_pos": 36
+   },
+   "misses": [],
+   "n_neg": 40,
+   "n_pos": 40,
+   "rep": 0,
+   "statuses": {
+    "ok_fallback": 76,
+    "retrieval_only:timeout": 3,
+    "retrieval_only:unavailable": 1
+   }
+  },
+  {
+   "catch": 1.0,
+   "false_warn": 0.075,
+   "false_warns": [
+    "N02",
+    "N04",
+    "N19"
+   ],
+   "judged_only": {
+    "catch": 1.0,
+    "false_warn": 0.02702702702702703,
+    "n_neg": 37,
+    "n_pos": 39
+   },
+   "misses": [],
+   "n_neg": 40,
+   "n_pos": 40,
+   "rep": 1,
+   "statuses": {
+    "ok_fallback": 76,
+    "retrieval_only:timeout": 2,
+    "retrieval_only:unavailable": 2
+   }
+  },
+  {
+   "catch": 1.0,
+   "false_warn": 0.025,
+   "false_warns": [
+    "N19"
+   ],
+   "judged_only": {
+    "catch": 1.0,
+    "false_warn": 0.02564102564102564,
+    "n_neg": 39,
+    "n_pos": 33
+   },
+   "misses": [],
+   "n_neg": 40,
+   "n_pos": 40,
+   "rep": 2,
+   "statuses": {
+    "ok_fallback": 72,
+    "retrieval_only:timeout": 7,
+    "retrieval_only:unavailable": 1
+   }
+  },
+  {
+   "catch": 1.0,
+   "false_warn": 0.05,
+   "false_warns": [
+    "N19",
+    "N20"
+   ],
+   "judged_only": {
+    "catch": 1.0,
+    "false_warn": 0.02564102564102564,
+    "n_neg": 39,
+    "n_pos": 36
+   },
+   "misses": [],
+   "n_neg": 40,
+   "n_pos": 40,
+   "rep": 3,
+   "statuses": {
+    "ok_fallback": 75,
+    "retrieval_only:timeout": 4,
+    "retrieval_only:unavailable": 1
+   }
+  }
+ ],
+ "wiring": {
+  "fallback_model": "qwen/qwen3.8-27b",
+  "judge_chain": [
+   "openrouter-gpt6-luna",
+   "openrouter-qwen38-27b-fast"
+  ],
+  "mapping": {
+   "HLM_FALLBACK_PROFILE": "openrouter-glm53-flash",
+   "HLM_FALLBACK_PROFILE__QUERY_REWRITE": "openrouter",
+   "HLM_FALLBACK_PROFILE__RISK_JUDGE": "openrouter-qwen38-27b-fast",
+   "HLM_FALLBACK_PROFILE__SYNTHESIS": "openrouter",
+   "HLM_PROFILE": "openrouter-gpt6-luna"
+  },
+  "primary_forced_unavailable": "http://127.0.0.1:9/v1"
+ }
+}

@@ -5,6 +5,8 @@
 [hlm]
 profile          = "openrouter"            # profiles/<name>.toml or [profiles.<name>] below
 fallback_profile = "openrouter-luna"       # D-019 fallback via OpenRouter (or "openai" direct)
+# fallback_profile__risk_judge = "openrouter-qwen38-27b-fast"  # D-094 per-task fallback (env:
+#                                            # HLM_FALLBACK_PROFILE__RISK_JUDGE); any task name works
 HLM_DB_DSN       = "env:HLM_DB_DSN"        # e.g. postgresql://hlm:hlm@127.0.0.1:5432/hlm
 HLM_EMBED_MODEL  = "intfloat/multilingual-e5-small"
 HLM_EMBED_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"   # mirrored in models.lock
@@ -28,7 +30,7 @@ HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
 HLM_LLM_MODEL     = "deepseek/deepseek-v4.1-flash"
 HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
 HLM_LLM_REASONING = '{"enabled":false}'
-extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny" } }
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny", require_parameters = true } }
 
 [profiles.openai]
 HLM_LLM_BASE_URL = "https://api.openai.com/v1"

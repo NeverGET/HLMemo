@@ -4,7 +4,7 @@ profile `openrouter` · mode replay · reps 1 · gold v1 · packs v1 fixtures
 
 prompt placement v1, contradiction v1, summary v1, risk v1 · schema placement v1, contradiction v1, summary v1, risk v1 · redaction redact/1 · max-usd 1.0
 
-budget: replay (no reservation) · config cbbba7dbd24d
+budget: replay (no reservation) · config c0dcefb70ea7
 
 ## Overview
 

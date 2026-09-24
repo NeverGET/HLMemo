@@ -22,9 +22,13 @@ Same guards as the librarian worker:
   it was shown; any other id is DROPPED and counted. Abstention (``"none"``) is first-class.
 * **Qualification** (D-017): a profile whose file lists ``disabled_tasks = ["risk_judge"]`` is left
   out of the judge's chain (a model that fails the risk gate never judges; see D-066/G-LIVE-C).
+* **The judge's fallback** (D-094): ``HLM_FALLBACK_PROFILE__RISK_JUDGE`` when set, else
+  ``HLM_FALLBACK_PROFILE``; used only while its profile is qualified (above). Without a qualified
+  fallback the chain is the primary alone and a primary outage answers retrieval-only (D-071).
 * The ``latency`` attempt policy (``Provider.complete(attempt_policy="latency")``): one bounded
-  attempt per profile, no backoff, so a stalled primary ends in retrieval-only inside the cap
-  (the judge chain has no fallback: deepseek is disqualified, D-071).
+  attempt per profile, no backoff: the primary gets at most 55 % of the remaining cap while the
+  fallback is available, the fallback the rest; a stalled primary without a qualified fallback
+  ends in retrieval-only inside the cap.
 * Circuit breakers PER PROFILE (3 consecutive failed attempts → skip that profile for 30 s,
   doubling to 15 min; the provider counts them, ``self.breaker`` is a ``ChainBreakers`` view)
   keep a stalled provider from costing every call the full cap, and at most ``MAX_IN_FLIGHT``
@@ -49,7 +53,6 @@ from typing import Any
 import httpx
 from psycopg import AsyncConnection
 
-from hlmemo.config import load_profile
 from hlmemo.librarian import privacy
 from hlmemo.librarian.budget import Caps, DbBudget, NoBudget
 from hlmemo.librarian.cassette import CassetteStore
@@ -65,7 +68,7 @@ from hlmemo.librarian.errors import (
     SchemaFail,
 )
 from hlmemo.librarian.ledger import DbLedger
-from hlmemo.librarian.profiles import LlmProfile, profile_chain
+from hlmemo.librarian.profiles import LlmProfile, profile_chain, profile_disabled_tasks
 from hlmemo.librarian.prompts import TaskSpec, load_task
 from hlmemo.librarian.provider import ChainBreakers, Clock, Provider
 from hlmemo.librarian.redact import Redactor
@@ -136,21 +139,20 @@ class JudgeResult:
 
 def disabled_tasks(profile_name: str) -> set[str]:
     """``disabled_tasks`` of a profile FILE (qualification is configuration, D-017)."""
-    raw = load_profile(profile_name)
-    value = raw.get("disabled_tasks") or raw.get("DISABLED_TASKS") or []
-    if isinstance(value, str):
-        value = [v.strip() for v in value.split(",") if v.strip()]
-    return {str(v) for v in value}
+    return set(profile_disabled_tasks(profile_name))
 
 
 def judge_chain(settings: Any) -> list[LlmProfile]:
-    """The provider chain minus the profiles not qualified for the risk judge."""
+    """The risk judge's chain: the primary plus the judge's fallback — ``HLM_FALLBACK_PROFILE__RISK_JUDGE``
+    when set, else ``HLM_FALLBACK_PROFILE`` (D-094) — minus every profile not qualified for the
+    judge (``disabled_tasks``): with no qualified fallback, a primary outage answers retrieval-only
+    (D-071)."""
     try:
-        chain = profile_chain(settings)
+        chain = profile_chain(settings, TASK)
     except LlmConfigError as exc:
         log.warning("risk judge disabled: %s", exc)
         return []
-    return [p for p in chain if TASK not in disabled_tasks(p.name)]
+    return [p for p in chain if TASK not in p.disabled_tasks]
 
 
 def direct_connector(dsn: str, settings: Any) -> tuple[ConnectFactory, Callable[[], Any]]:
@@ -314,7 +316,7 @@ class RiskJudge:
         self.clock = clock or Clock()
         self.provider: Provider | None = None
         #: the provider's per-profile breakers (a failing profile never suppresses the others)
-        self.breaker = ChainBreakers(lambda: self.provider)
+        self.breaker = ChainBreakers(lambda: self.provider, task=TASK)
         default_connect, conn_ctx = direct_connector(settings.db_dsn, settings)
         self.connect = connect or default_connect
         if provider is not None:
