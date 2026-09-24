@@ -1,0 +1,126 @@
+{
+ "fixture": "tests/fixtures/risk",
+ "max_usd": "2",
+ "profiles": {
+  "openrouter-qwen38-27b-fast": {
+   "calls": 240,
+   "catch_mean": 1.0,
+   "catch_min": 1.0,
+   "cost_usd": "0.1063036970",
+   "false_warn_max": 0.05,
+   "false_warn_mean": 0.03333333333333333,
+   "latency_ms_p50": 1459.0,
+   "latency_ms_p95": 3168.45,
+   "model_id": "qwen/qwen3.8-27b",
+   "outcomes": {
+    "ok": 232,
+    "timeout": 8
+   },
+   "pass": true,
+   "reps": [
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.1,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.05,
+     "false_warns": [
+      "N07",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.02564102564102564,
+      "n_neg": 39,
+      "n_pos": 38
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 77,
+      "retrieval_only": 3
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    },
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.025,
+     "false_warns": [
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.025,
+      "n_neg": 40,
+      "n_pos": 37
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 1,
+     "statuses": {
+      "ok": 77,
+      "retrieval_only": 3
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    },
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.025,
+     "false_warns": [
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.02564102564102564,
+      "n_neg": 39,
+      "n_pos": 39
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 2,
+     "statuses": {
+      "ok": 78,
+      "retrieval_only": 2
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.0,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  }
+ },
+ "reps": 3,
+ "spent_usd": "0.10630371"
+}
