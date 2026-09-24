@@ -343,9 +343,11 @@ def test_kind_change_alone_is_a_revision() -> None:
 
 
 def test_split_sections_are_lesson_sections() -> None:
-    parts = lessons.split("- One rule has at least five words.\n- Another rule has five words too.\n", {}, "")
+    parts = lessons.split(
+        "- Never run the suite against production data.\n- Always pin a base image by digest.\n", {}, ""
+    )
     assert parts is not None and all(isinstance(p, Section) and p.kind == "lesson" for p in parts)
-    assert parts[0].lead == "One rule has at least five words."  # no document title: the rule alone
+    assert parts[0].lead == "Never run the suite against production data."  # no document title
 
 
 def test_two_renamed_labels_remap_one_to_one_despite_shared_context(tmp_path: Path) -> None:
@@ -369,3 +371,71 @@ def test_two_renamed_labels_remap_one_to_one_despite_shared_context(tmp_path: Pa
 
     whole = plan_mod.body_similarity(old[0].body, new[1].body)  # stash vs db-ports, context included
     assert whole >= plan_mod.REMAP_SAME_FILE  # the reason the rule text alone is compared
+
+
+# --------------------------------------------------------------------------- Sol 55
+def test_unmarked_short_sequential_steps_are_one_procedure() -> None:
+    """Plain instructions without any rule marker are the steps of ONE procedure: not split."""
+    steps = "- stop the api container on the host\n- restore the dump into a fresh volume\n"
+    assert lessons.split(steps, {}, "T") is None
+    tr = "- api konteynerini sunucuda durdur\n- dökümü yeni bir birime geri yükle\n"
+    assert lessons.split(tr, {}, "T") is None
+    # the same length with rule markers (never / because / a ':' explanation) are rules
+    rules = (
+        "- Never restart the database during a migration run\n"
+        "- Pin base images by digest because floating tags move\n"
+        "- Heredocs over ssh: pass -n to every call\n"
+    )
+    parts = lessons.split(rules, {}, "T")
+    assert parts is not None and [p.anchor for p in parts] == ["rule-1", "rule-2", "rule-3"]
+    # long unmarked items are no step list: they read as independent rules
+    long_items = (
+        "- the importer writes fifty items per batch and retries each failed batch three times in a row\n"
+        "- the librarian reviews every import at priority six after the embeddings of the batch are done\n"
+    )
+    assert lessons.split(long_items, {}, "T") is not None
+
+
+def test_rejected_section_is_no_replacement() -> None:
+    """Sol 55: a section that will not be written (here: rejected for a future evidence date) does
+    not replace the bare item: it stays open and the dry run says why."""
+    ok = _rec("automemory:f.md#rule-1", "Never do the first thing ever again.\n", "lesson")
+    parsed = common.ParseResult(
+        records=[ok],
+        rejected=[common.Reject("automemory:f.md#rule-2", "future_evidence_date", "2099-01-01T00:00:00Z")],
+        scopes=[""],
+    )
+    old = {
+        "logical_id": 5,
+        "version_id": 50,
+        "kind": "fact",
+        "source": {"system": "automemory", "path": "f.md", "sha256": "0" * 64},
+    }
+    plan = classify("p", "automemory", parsed, [old], Meter())
+    assert plan.replaced == [] and plan.replaced_items == [] and plan.missing == []
+    rep = report(plan, dry_run=True)
+    assert rep["missing"] == [
+        {"key": "automemory:f.md", "reason": "replacement-incomplete:automemory:f.md#rule-2"}
+    ]
+    assert rep["closed"] == [] and rep["replaced_by_split"] == []
+
+
+def test_legacy_policy_event_shape_is_mapped() -> None:
+    """Sol 55: events written before resolved.project_policy existed still replay."""
+    from hlmemo.db.replay import project_policy_change
+
+    key = "librarian_cross_project"
+    legacy = {
+        "request": {"actor": "hlm-ops/0", "op": "set_project_policy", "key": key, "value": "exclude"},
+        "resolved": {"recorded_at": "2026-09-24T08:00:00Z"},
+    }
+    assert project_policy_change(legacy, 7) == {"project_id": 7, "key": key, "value": "exclude"}
+    current = {"resolved": {"project_policy": {"project_id": 3, "key": key, "value": "include"}}}
+    assert project_policy_change(current, 9) == {"project_id": 3, "key": key, "value": "include"}
+    bad = [
+        {"request": {"op": "set_project_policy", "key": "reserved", "value": "true"}, "resolved": {}},
+        {"request": {"op": "set_project_policy", "key": key, "value": "maybe"}},
+        {"request": {"op": "set_role", "role": "assistant"}, "resolved": {}},
+    ]
+    assert [project_policy_change(p, 7) for p in bad] == [None, None, None]
+    assert project_policy_change(legacy, None) is None  # no project: nothing to change

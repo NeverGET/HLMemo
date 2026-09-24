@@ -222,9 +222,21 @@ async def run_import(
     progress: bool = False,
     close: bool = True,
 ) -> dict[str, Any]:
-    """Write every new/changed record and close the removed ones; returns write statistics."""
+    """Write every new/changed record and close the removed ones; returns write statistics.
+
+    A ``replaced_by_split`` item is closed only AFTER every one of its replacement sections is
+    verified stored: the manifest is re-read once all writes are done and each section key must be
+    an open item. A section that failed (or was never written) keeps the old item open, reported in
+    ``kept_open`` with the absent section keys, so no content is ever lost (Sol 55)."""
     project = plan.project
-    stats: dict[str, Any] = {"written": 0, "replayed": 0, "revisions": 0, "closed": 0, "link_revisions": 0}
+    stats: dict[str, Any] = {
+        "written": 0,
+        "replayed": 0,
+        "revisions": 0,
+        "closed": 0,
+        "link_revisions": 0,
+        "kept_open": [],
+    }
     failures: list[dict[str, Any]] = []
     link_dropped = 0
     known_lids = {it["logical_id"] for it in manifest}
@@ -293,8 +305,22 @@ async def run_import(
         if ack is not None and not ack.get("unchanged"):
             stats["link_revisions"] += 1
     if close:
+        replaced_by = {
+            int(it["logical_id"]): set(r["by"])
+            for r, it in zip(plan.replaced, plan.replaced_items, strict=True)
+        }
+        stored: set[str] = set()
+        if any(int(old["logical_id"]) in replaced_by for old in plan.closes):
+            fresh, _as_of = await fetch_items(call, project)  # verify, do not trust the acks alone
+            stored = {
+                k for it in fresh if it.get("valid_to") is None for k in [source_key(it.get("source"))] if k
+            }
         for old in plan.closes:
             key = source_key(old.get("source")) or f"lid:{old['logical_id']}"
+            absent = sorted(replaced_by.get(int(old["logical_id"]), set()) - stored)
+            if absent:  # a replacement section is not stored: the old item keeps the content
+                stats["kept_open"].append({"key": key, "reason": "replacement-incomplete", "absent": absent})
+                continue
             res = await send(key, old["body_sha256"], _close_item(project, old), old["version_id"], "close")
             if isinstance(res, ToolCallError):
                 failures.append({"key": key, "code": res.code, "message": res.message[:300]})

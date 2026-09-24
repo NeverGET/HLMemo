@@ -112,6 +112,16 @@ async def action_projects(conn: AsyncConnection, actions: list[dict[str, Any]]) 
     return out
 
 
+def action_logical_ids(actions: list[dict[str, Any]]) -> list[int]:
+    """Every logical item an action set touches (assessed subjects, link endpoints, closes, the
+    widened item), sorted: the per-item locks every apply path takes before its rechecks."""
+    out: set[int] = set()
+    for a in actions:
+        out.update(int(k) for k in a.get("assessed") or {})
+        out.update(int(a[f]) for f in ("src_logical_id", "dst_logical_id", "logical_id") if a.get(f))
+    return sorted(out)
+
+
 #: the question status reason of a proposal the CURRENT cross-project policy forbids (Sol 54 #2)
 POLICY_EXCLUDED = "policy_excluded"
 
