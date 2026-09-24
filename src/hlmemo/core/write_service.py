@@ -1233,7 +1233,7 @@ async def _librarian_jobs(
                 "project_ids": list(p.project_ids),
             }
         )
-    return await plan_jobs(
+    jobs = await plan_jobs(
         conn,
         ctx,
         enabled=True,
@@ -1244,6 +1244,23 @@ async def _librarian_jobs(
         delay_s=deps.librarian_delay_s,
         priority=batch.librarian_priority,
     )
+    # Sol 56 #1: a revision that changes an item's projects can make an accepted_pending answer
+    # applicable (or stale): re-evaluate the answers naming it (no LLM; recorded like any job)
+    rescoped = sorted(
+        {
+            int(p.logical_id)  # type: ignore[arg-type]
+            for p in plans
+            if p.is_revision
+            and p.old_rows
+            and set(p.project_ids) != {pid for r in p.old_rows for pid in r.project_ids}
+        }
+    )
+    if rescoped:
+        from hlmemo.librarian.jobs import assign_job_ids
+        from hlmemo.librarian.tasks.release_pending import release_job
+
+        jobs += await assign_job_ids(conn, [release_job(event_id, batch.project.project_id, rescoped)])
+    return jobs
 
 
 @lru_cache(maxsize=1)

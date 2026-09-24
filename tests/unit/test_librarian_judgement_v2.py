@@ -231,18 +231,74 @@ def test_confirm_for_duplicate_and_refines_uses_adds_detail() -> None:
 
 # --------------------------------------------------------------------------- read side, notices, legacy
 @dataclass
+class _Row:
+    text: str
+
+
+@dataclass
 class _Hit:
     logical_id: int
     score: float
+    row: _Row | None = None
 
 
-def test_partially_superseded_hits_are_demoted_not_hidden() -> None:
-    hits = [_Hit(1, 0.9), _Hit(2, 0.8), _Hit(3, 0.7)]
-    out = demote_partially_superseded(hits, [(3, 1)])  # 3 replaced one statement of 1
+MULTI_CHUNK = (
+    "The API cache TTL is 60 seconds.\nThe cache is stored in Redis 7 on the api host.\n"
+    "Cache keys are prefixed with the tenant id."
+)
+SPAN = "The API cache TTL is 60 seconds"
+
+
+def _terms(q: str) -> list[str]:
+    from hlmemo.core.normalize import extract_terms
+
+    return extract_terms(q)
+
+
+def test_partial_demotion_only_when_the_query_matched_the_outdated_statement() -> None:
+    from hlmemo.core.supersession import matched_in_span
+
+    assert matched_in_span(MULTI_CHUNK, SPAN, set(_terms("API cache TTL seconds")))
+    assert not matched_in_span(MULTI_CHUNK, SPAN, set(_terms("where is the cache stored, Redis host")))
+    assert not matched_in_span("Keys carry the tenant id.", SPAN, set(_terms("cache TTL")))  # span elsewhere
+    assert not matched_in_span(MULTI_CHUNK, SPAN, set(_terms("unrelated words")))  # span is a third
+    assert matched_in_span("The API cache TTL is 60 seconds.", SPAN, set(_terms("unrelated words")))
+
+    def hits() -> list[_Hit]:
+        return [_Hit(1, 0.9, _Row(MULTI_CHUNK)), _Hit(2, 0.8, _Row("x")), _Hit(3, 0.7, _Row("y"))]
+
+    link = [(3, 1, SPAN)]  # 3 replaced one statement of 1
+    out = demote_partially_superseded(hits(), link, _terms("API cache TTL"))
     assert [h.logical_id for h in out] == [2, 3, 1] and out[2].score == 0.7
-    fresh = [_Hit(1, 0.9), _Hit(2, 0.8), _Hit(3, 0.7)]
-    assert demote_partially_superseded(fresh, [(1, 3)]) == fresh  # already below its superseder
-    assert demote_partially_superseded(hits, [(9, 1)]) == hits  # the superseding item is no hit
+    out = demote_partially_superseded(hits(), link, _terms("Redis host of the cache"))
+    assert [h.logical_id for h in out] == [1, 2, 3]  # a still-valid statement matched: no demotion
+    fresh = hits()
+    assert [
+        h.logical_id for h in demote_partially_superseded(fresh, [(1, 3, SPAN)], _terms("cache TTL"))
+    ] == [
+        1,
+        2,
+        3,
+    ]  # already below its superseder
+    assert demote_partially_superseded(fresh, [(9, 1, SPAN)], _terms("cache TTL")) == fresh  # no hit 9
+
+
+def test_partial_demotion_resolves_chains_in_one_stable_order() -> None:
+    a = "The API cache TTL is 60 seconds."
+    b = "The API cache TTL is 120 seconds."
+    hits = [
+        _Hit(1, 0.9, _Row(a)),  # A (oldest value)
+        _Hit(2, 0.85, _Row("unrelated note")),
+        _Hit(3, 0.8, _Row(b)),  # B replaced A's TTL, C replaced B's
+        _Hit(4, 0.7, _Row("The API cache TTL is 300 seconds.")),
+    ]
+    links = [(3, 1, "API cache TTL is 60 seconds"), (4, 3, "API cache TTL is 120 seconds")]
+    out = demote_partially_superseded(hits, links, _terms("API cache TTL"))
+    assert [h.logical_id for h in out] == [2, 4, 3, 1]  # C before B before A, the rest stable
+    assert [h.score for h in out] == [0.85, 0.7, 0.7, 0.7]  # non-increasing
+    cyc = [_Hit(1, 0.9, _Row(a)), _Hit(3, 0.8, _Row(b))]
+    both = [(3, 1, "API cache TTL is 60 seconds"), (1, 3, "API cache TTL is 120 seconds")]
+    assert [h.logical_id for h in demote_partially_superseded(cyc, both, _terms("cache TTL"))] == [1, 3]
 
 
 def test_notice_and_legacy_close() -> None:

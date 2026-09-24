@@ -235,9 +235,11 @@ async def dump_full_jobs_and_questions(conn: psycopg.AsyncConnection) -> dict[st
 
     Librarian-era jobs are compared on EVERY column (``SELECT j.*``: job_id, lease columns,
     last_error, attempts, run_after, done_at, created_at …): their ids, completion time, attempts
-    and final run_after are recorded in events. Phase-0 embed jobs are written by the pre-existing
-    write path, which records neither ids nor creation time, so for those rows ``job_id`` and
-    ``created_at`` are masked (unchanged Phase-0 behaviour; not a W2a projection).
+    and final run_after are recorded in events — except the two scheduling hints of a job that is
+    still QUEUED (``run_after``, ``last_error``): a systemic hand-back changes only those and
+    writes no event (Sol 56 #4; the attempts are compared). Phase-0 embed jobs are written by the
+    pre-existing write path, which records neither ids nor creation time, so for those rows
+    ``job_id`` and ``created_at`` are masked (unchanged Phase-0 behaviour; not a W2a projection).
     """
     cur = await conn.execute(
         """
@@ -245,6 +247,10 @@ async def dump_full_jobs_and_questions(conn: psycopg.AsyncConnection) -> dict[st
                     THEN (NULL::bigint, kind, dedupe_key, payload::text, source_event_id, status, attempts,
                           priority, run_after, done_at, lease_token, lease_until, last_error,
                           NULL::timestamptz)::text
+                    WHEN status = 'queued'
+                    THEN (job_id, kind, dedupe_key, payload::text, source_event_id, status, attempts,
+                          priority, NULL::timestamptz, done_at, lease_token, lease_until, NULL::text,
+                          created_at)::text
                     ELSE j::text END
           FROM jobs j ORDER BY dedupe_key
         """

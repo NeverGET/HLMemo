@@ -188,6 +188,7 @@ async def answer(
             answer_rec["note"] = note
         records: list[dict[str, Any]] = []
         jobs: list[dict[str, Any]] = []
+        refused: str | None = None
         recorded: list[datetime] = []
         applied: dict[str, Any] = {"links": 0, "closed": [], "widened": []}
         write_events: list[int] = []
@@ -209,7 +210,9 @@ async def answer(
                 # D-076: a whole-item close without the v2 evidence is never applied; the
                 # subjects are re-reviewed under the fact-level rule instead (Sol 54j #2)
                 new_status = "superseded"
-                jobs = await _replan_job(conn, ctx, pid, qid, [int(v) for v in subject_vids], None)
+                jobs, refused = await _replan_job(
+                    conn, ctx, pid, qid, [int(v) for v in subject_vids], None, union
+                )
             else:
                 from hlmemo.librarian.errors import AuthorityLost
                 from hlmemo.librarian.trigger import capabilities_from_ctx
@@ -237,7 +240,9 @@ async def answer(
                 ]
                 jobs = actor.close_embed_jobs(records)
         elif request.decision == "custom":
-            jobs = await _replan_job(conn, ctx, pid, qid, [int(v) for v in subject_vids], note)
+            jobs, refused = await _replan_job(
+                conn, ctx, pid, qid, [int(v) for v in subject_vids], note, union
+            )
         rule_vid = await _rule(
             conn, kind, proposal, request.decision, note, list(clues), qid, request.request_id
         )
@@ -267,6 +272,8 @@ async def answer(
             "batch_id": batch_id,
             "role": role,
         }
+        if refused:
+            resolved["replan_refused"] = refused
         await conn.execute(
             """
             INSERT INTO events (event_id, project_id, device_id, client, request_id, kind, schema_version,
@@ -354,23 +361,35 @@ async def _replan_job(
     question_id: str,
     subject_vids: list[int],
     note: str | None,
-) -> list[dict[str, Any]]:
-    """``custom``: re-plan = a ``write_review`` of the subjects that are still current, under the
-    ANSWERING device's capabilities; the owner's (redacted) note travels in this job's payload
-    only and is shown to the model as a rule of this one job."""
+    projects: set[int] | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """``custom`` (and a legacy close): re-plan = a ``write_review`` of the subjects that are still
+    current, under the ANSWERING device's capabilities; the owner's (redacted) note travels in
+    this job's payload only and is shown to the model as a rule of this one job.
+
+    Sol 56 #6: the capabilities cover EVERY project of the current subjects (and the question's
+    touched ``projects``): an admin/ops device's capability set is exactly the list it is given,
+    so a home-only set would lose a foreign subject at the privacy gate. If the answering device
+    cannot read a subject's project, nothing is enqueued and the reason is returned (recorded in
+    the answer event as ``replan_refused``). Returns ``(jobs, refused reason | None)``."""
     from hlmemo.librarian.tasks.write_review import MAX_VERSIONS, OP
     from hlmemo.librarian.trigger import capabilities_from_ctx, librarian_on
 
     if not await librarian_on(conn, project_id):
-        return []
+        return [], None
     cur = await conn.execute(
-        "SELECT version_id, kind FROM memory_versions WHERE version_id = ANY(%s)"
+        "SELECT version_id, kind, project_ids FROM memory_versions WHERE version_id = ANY(%s)"
         " AND superseded_at = 'infinity' AND valid_to = 'infinity' AND status = 'active' ORDER BY version_id",
         (list(subject_vids),),
     )
     current = await cur.fetchall()
     if not current:
-        return []
+        return [], None
+    subject_projects = {int(p) for _v, _k, pids in current for p in pids}
+    unreadable = sorted(p for p in subject_projects if not ctx.has(p, Role.READ))
+    if unreadable:
+        return [], f"no read grant on subject project(s) {unreadable}"
+    caps = capabilities_from_ctx(ctx, sorted({project_id, *(projects or set()), *subject_projects}))
     key = f"librarian_replan:{question_id}"
     return [
         job_spec(
@@ -383,15 +402,15 @@ async def _replan_job(
                 "replan_of": question_id,
                 "versions": [
                     {"version_id": int(v), "kind": k, "client_importance": None, "client_stability": True}
-                    for v, k in current[:MAX_VERSIONS]
+                    for v, k, _pids in current[:MAX_VERSIONS]
                 ],
                 "project_id": project_id,
-                "capabilities": capabilities_from_ctx(ctx, [project_id]),
+                "capabilities": caps,
                 "lineage": str(uuid.uuid5(NS_LIBRARIAN, "lineage:" + key)),
                 **({"owner_note": note[:500]} if note else {}),
             },
         )
-    ]
+    ], None
 
 
 def rule_text(kind: str, proposal: dict[str, Any], decision: str, clues: list[str]) -> str:

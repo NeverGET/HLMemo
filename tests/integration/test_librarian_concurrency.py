@@ -9,6 +9,12 @@
 * Spend guard: with an hour cap that fits only a few worst-case reservations, three concurrent jobs
   never push ``spent + reserved`` over the cap (the reservation is one atomic statement); the
   refused job is handed back (``E_BUDGET_DEFERRED``, no attempt consumed) and the librarian pauses.
+* Sol 56 #2, a deterministic interleaving: the FIRST-leased job is held just before its batch step
+  until the second job has committed a new batch of the same project; the first then fills that
+  batch (ready) and opens the next. Its event id is allocated after its locks, so it replays AFTER
+  the second job: the rebuild succeeds (no second open batch) and every projection is identical.
+* Sol 56 #5, the connection envelope: the worker never holds more of its own connections than
+  ``HLM_LIBRARIAN_DB_CONNECTIONS`` minus the pool; a configuration that cannot fit is refused.
 """
 
 # ruff: noqa: F811 - pytest fixtures are imported into the module and requested by parameter name
@@ -159,3 +165,112 @@ async def test_concurrent_jobs_never_exceed_the_spend_cap(db_dsn, connect, embed
             " AND last_error = 'E_BUDGET_DEFERRED' AND attempts = 0"
         )
         assert (await cur.fetchone())[0] >= 1  # handed back, no attempt consumed
+
+
+async def test_sol56_concurrent_jobs_racing_on_one_batch_replay_identically(
+    db_dsn, connect, embedder, monkeypatch
+) -> None:  # noqa: ANN001
+    import asyncio
+
+    from hlmemo.librarian import actor
+
+    monkeypatch.setattr(actor, "BATCH_MAX", 1)  # the second question of a project opens a new batch
+    slug = "conc-race"
+    ctx = await _project(connect, slug)
+    olds = [
+        ("TTL alpha", "The alpha cache TTL is 60 seconds."),
+        ("TTL beta", "The beta cache TTL is 60 seconds."),
+    ]
+    news = [
+        ("TTL alpha raised", "Since June the alpha cache TTL is 300 seconds."),
+        ("TTL beta raised", "Since June the beta cache TTL is 300 seconds."),
+    ]
+    from hlmemo.core.write_service import default_deps
+
+    quiet = default_deps()  # the old items: no review job (the librarian trigger is off)
+    for title, body in olds:
+        await write_items(
+            connect,
+            ctx,
+            slug,
+            [{"kind": "fact", "title": title, "body": body, "valid_from": "2026-01-01T00:00:00Z"}],
+            deps=quiet,
+        )
+    for title, body in news:
+        await write_items(
+            connect,
+            ctx,
+            slug,
+            [{"kind": "fact", "title": title, "body": body, "valid_from": "2026-06-01T00:00:00Z"}],
+        )
+    await embed(connect, embedder)
+    rel = {(n[0], o[0]): ("contradicts", "new", "high") for n, o in zip(news, olds, strict=True)}
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle(relations=rel)), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_concurrency=2), provider, connect)
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT job_id FROM jobs WHERE kind = 'librarian_write' AND status = 'queued' ORDER BY job_id"
+        )
+        first, second = [r[0] for r in await cur.fetchall()]
+    second_done = asyncio.Event()
+    process, assign = worker.process, worker._assign_batches
+
+    async def traced_process(job):  # noqa: ANN001, ANN202
+        try:
+            await process(job)
+        finally:
+            if job.job_id == second:
+                second_done.set()
+
+    async def held_assign(conn, job, questions):  # noqa: ANN001, ANN202
+        if job.job_id == first:  # the first job waits here, locks on its own items held
+            await asyncio.wait_for(second_done.wait(), 30)
+        return await assign(conn, job, questions)
+
+    worker.process = traced_process  # type: ignore[method-assign]
+    worker._assign_batches = held_assign  # type: ignore[method-assign]
+    assert await worker.drain() == 2
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->'done'->>'dedupe_key', event_id FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'write_review' ORDER BY event_id"
+        )
+        order = [key for key, _eid in await cur.fetchall()]
+        cur = await conn.execute(
+            "SELECT dedupe_key FROM jobs WHERE job_id = ANY(%s) ORDER BY job_id", ([first, second],)
+        )
+        first_key, second_key = [r[0] for r in await cur.fetchall()]
+        cur = await conn.execute("SELECT status, count(*) FROM librarian_batches GROUP BY 1 ORDER BY 1")
+        assert await cur.fetchall() == [("open", 1), ("ready", 1)]
+        before = await dump_w2b(conn)
+        await rebuild_projections(conn)  # used to fail: two open batches of one project (unique index)
+        await conn.commit()
+        after = await dump_w2b(conn)
+    assert order == [second_key, first_key]  # the event ids follow the batch lock (commit) order
+    for table in before:
+        assert sorted(set(before[table]) ^ set(after[table])) == [], table
+    assert after == before
+
+
+async def test_sol56_connection_envelope(db_dsn, connect, embedder) -> None:  # noqa: ANN001
+    from hlmemo.librarian.worker import LibrarianConfigError, check_connection_envelope
+
+    check_connection_envelope(lib_settings(db_dsn, librarian_concurrency=3, librarian_db_connections=8))
+    with pytest.raises(LibrarianConfigError, match="E_CONFIG"):
+        check_connection_envelope(lib_settings(db_dsn, librarian_concurrency=4, librarian_db_connections=8))
+    ctx = await _project(connect, "conc-env")
+    for title, body in FACTS:
+        await write_items(connect, ctx, "conc-env", [{"kind": "fact", "title": title, "body": body}])
+    await embed(connect, embedder)
+    provider = make_provider(db_dsn, ScriptedLLM(default=_slow(Oracle())), budget_disabled=True)
+    settings = lib_settings(
+        db_dsn, librarian_concurrency=3, librarian_db_connections=8, librarian_lease_renew_s=0.5
+    )
+    worker = make_worker(settings, provider, connect)
+    assert await worker.drain() == len(FACTS)
+    await provider.aclose()
+    bounded = worker.connect
+    # 3 jobs + the shared lease renewer + the loop's lease: within 8 - 3 (the pool's share)
+    assert worker.db_slots == 5 and bounded.limit == 5
+    assert 3 <= bounded.peak <= 5 and bounded.open == 0

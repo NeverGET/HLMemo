@@ -153,16 +153,25 @@ async def test_partial_supersession_links_the_fact_never_closes_the_item(
         cur = await conn.execute("SELECT rel, props->>'scope' FROM links ORDER BY link_id")
         assert await cur.fetchall() == [("contradicts", None), ("supersedes", "part")]
         assert await count(conn, "memory_versions", "superseded_at <> 'infinity'") == 0  # nothing closed
-        res = await query(
+        ttl = await query(
             conn,
             world.ctx_a,
-            {"project": MAIN, "query": "cache TTL Redis", "token_budget": 3000},
+            {"project": MAIN, "query": "API cache TTL seconds", "token_budget": 3000},
+            deps=read_deps,
+        )
+        redis = await query(
+            conn,
+            world.ctx_a,
+            {"project": MAIN, "query": "cache stored in Redis on the api host", "token_budget": 3000},
             deps=read_deps,
         )
         await conn.commit()
-    titles = [h["title"] for h in res["hits"]]
-    # the multi-fact item stays visible (its other facts are valid), ranked after its superseder
+    titles = [h["title"] for h in ttl["hits"]]
+    # the query matched the OUTDATED statement: the item stays visible, ranked after its superseder
     assert TTL[0] in titles and MULTI[0] in titles and titles.index(TTL[0]) < titles.index(MULTI[0])
+    titles = [h["title"] for h in redis["hits"]]
+    # the query matched a still-valid statement of the same item: it is not demoted
+    assert titles[0] == MULTI[0]
     await _replay_identical(connect)
 
 
@@ -386,8 +395,10 @@ async def test_inverse_supersession_and_legacy_close_are_replanned(
         ],
     }
     legacy = {k: v for k, v in prop.items() if k != "close_ok"}  # a v1 question: a close without evidence
+    blind = {**legacy, "capabilities": {**prop["capabilities"], "question": []}}  # cannot re-plan
     inv_id = await _clone_question(connect, qid, inverse)
     leg_id = await _clone_question(connect, qid, legacy)
+    blind_id = await _clone_question(connect, qid, blind)
     await _approve_all(db_dsn, connect, world)
     async with await connect() as conn:
         cur = await conn.execute("SELECT question_id::text, status FROM librarian_questions")
@@ -399,10 +410,13 @@ async def test_inverse_supersession_and_legacy_close_are_replanned(
         [(jobs,)] = await cur.fetchall()
     # the link-only inverse applies first (dependency order); the real proposal then conflicts
     assert got[inv_id] == "applied" and got[qid] == "superseded" and got[leg_id] == "superseded"
+    assert got[blind_id] == "superseded"
     replans = [j for j in jobs if j["dedupe_key"].startswith("librarian_replan:")]
     assert sorted(j["payload"]["replan_of"] for j in replans) == sorted([qid, leg_id])
     assert all(j["payload"]["op"] == "write_review" and j["payload"]["lineage"] for j in replans)
-    assert sorted((await _audit(connect, "replanned", "apply_batch"))[0]) == sorted([qid, leg_id])
+    assert sorted((await _audit(connect, "replanned", "apply_batch"))[0]) == sorted([qid, leg_id, blind_id])
+    [refused] = await _audit(connect, "replan_refused", "apply_batch")  # refused with its reason
+    assert len(refused) == 1 and refused[0].startswith(f"{blind_id}: capabilities do not cover")
     async with await connect() as conn:
         assert await count(conn, "memory_versions", "valid_to <> 'infinity'") == 0  # no close at all
     await _replay_identical(connect)

@@ -252,14 +252,14 @@ async def query_parts(
         )
         if hidden:
             ordered = [f for f in ordered if f.logical_id not in hidden]
-        if partial:
-            ordered = demote_partially_superseded(ordered, partial)
         n_fetch = min(len(ordered), budget // MIN_HIT_TOKENS + 3)
         head = ordered[:n_fetch]
         rows = await q.hit_rows(conn, [f.chunk_id for f in head])
         for f in head:
             f.row = rows[f.chunk_id]
         head = newer_first_on_ties(head)  # D-057: exact RRF tie, same title -> newer first
+        if partial:  # D-076 fact-level supersession, only for a query that matched the outdated span
+            head = demote_partially_superseded(head, partial, terms.terms)
         librarian = await pending_block(conn, ctx, project.project_id, now)
 
         card: CardInput | None = None
