@@ -8,6 +8,14 @@ Per subject V (a new version under review), with the triggering device's CURRENT
 * cross-project list: current ``lesson``/``experience``/``fact`` items NOT in V's home project,
   from projects the device can read, top ``CROSS_TOP`` = 5.
 
+**Isolation** (e2e 2026-09-24 #2, Sol 54): a project whose ``policy.librarian_cross_project`` is
+``exclude`` (a disposable/test project) never takes part in a relation with anything outside it.
+ONE rule (``relation_allowed``) covers every pairing — candidates, risk_check, and the apply-time
+recheck of every proposal: the union of the projects both sides touch contains no excluded project,
+or it is exactly one project. So an item that touches an excluded project T (also a multi-project
+item [A, T]) is a candidate only for a subject that lies entirely in T; a subject in T sees only
+items that lie entirely in T; a subject that spans T and another project gets no candidate at all.
+
 Each list fuses a vector list (V's stored chunk embeddings, max cosine per candidate version) and
 a lexical list (``tsquery`` OR of V's terms) with RRF (``K_RRF`` = 60, equal weights, ties by
 version id). **Drop rule** (roadmap W2b): a pair whose cosine is below ``COS_MIN`` = 0.80 AND that
@@ -41,6 +49,24 @@ COMPATIBLE: dict[str, tuple[str, ...]] = {
 }
 #: subject kinds that get placement only (no relation check)
 PLACEMENT_ONLY = frozenset({"project_card", "session_note", "doc_chunk"})
+
+
+def relation_allowed(projects: Iterable[int], excluded: set[int]) -> bool:
+    """May two sides that together touch ``projects`` be related (candidate, proposal, apply)?
+    Yes unless they touch an excluded project AND anything else."""
+    touched = set(projects)
+    return not (touched & excluded) or len(touched) == 1
+
+
+def isolated_scope(subject_projects: Iterable[int], allowed: Iterable[int], excluded: set[int]) -> list[int]:
+    """The projects a candidate of a subject touching ``subject_projects`` may lie in (candidates
+    must satisfy ``project_ids ⊆ result``), under ``relation_allowed``: a subject in exactly one
+    excluded project keeps that project; a subject touching an excluded project and another one
+    gets none; any other subject loses every excluded project."""
+    own = set(subject_projects)
+    if own & excluded:
+        return [p for p in allowed if p in own] if len(own) == 1 else []
+    return [p for p in allowed if p not in excluded]
 
 
 def subject_terms(title: str, body: str, limit: int = 64) -> list[str]:
@@ -117,6 +143,8 @@ __all__ = [
     "Scored",
     "content_terms",
     "fuse",
+    "isolated_scope",
+    "relation_allowed",
     "mark_lexical_hits",
     "select",
     "subject_terms",
