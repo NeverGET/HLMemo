@@ -42,7 +42,13 @@ from hlmemo.core.read_service import default_read_deps
 from hlmemo.librarian import risk_judge as rj
 from hlmemo.librarian.profiles import named_profile
 from hlmemo.server.app import create_app
-from tests.integration._librarian_fixtures import ScriptedLLM, chat, stub_chain, stub_profile
+from tests.integration._librarian_fixtures import (
+    ScriptedLLM,
+    chat,
+    stub_chain,
+    stub_profile,
+    timeout_honouring,
+)
 from tests.integration._mcp_fixtures import (
     ADMIN_TOKEN,
     bearer,
@@ -322,8 +328,8 @@ async def test_budget_stop_and_disabled_and_deterministic(connect, world, deps, 
 async def test_breaker_and_in_flight_cap(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
     llm = ScriptedLLM(default=("stall", 30.0, {"verdict": "none", "matches": []}))
     judge = rj.RiskJudge(
-        judge_settings(db_dsn), chain=stub_chain(fallback=False), transport=llm.transport, timeout_s=0.3
-    )
+        judge_settings(db_dsn), chain=stub_chain(fallback=False), transport=llm.transport, timeout_s=1.0
+    )  # room for an attempt: breaker failures are counted per profile by the provider now
     task = load_cases()[0]["task"]
     try:
         statuses = [(await run_case(connect, world, deps, task, judge=judge))[0]["reason"] for _ in range(4)]
@@ -621,3 +627,41 @@ def test_fallback_profile_is_not_qualified_for_the_risk_judge(monkeypatch) -> No
 def test_stub_chat_helper_shape() -> None:
     assert chat({"verdict": "none", "matches": []})["choices"][0]["message"]["content"]
     assert stub_profile("x").priced
+
+
+# --------------------------------------------------------------------------- latency policy (BACKLOG)
+async def test_stalled_primary_is_retrieval_only_inside_the_cap_without_the_fallback(
+    connect, world, deps, db_dsn, tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    """D-071 + the latency policy: the judge chain has no fallback (the deepseek-like profile is
+    disqualified by ``disabled_tasks``), so a stalled primary ends in retrieval-only within the 4 s
+    cap: one bounded attempt, no backoff, and never a call to the disqualified profile."""
+    (tmp_path / "judge-primary.toml").write_text(
+        'HLM_LLM_BASE_URL = "http://judge-primary.invalid/v1"\nHLM_LLM_MODEL = "stub/judge-primary"\n'
+    )
+    (tmp_path / "judge-deepseek.toml").write_text(
+        'HLM_LLM_BASE_URL = "http://judge-deepseek.invalid/v1"\nHLM_LLM_MODEL = "stub/judge-deepseek"\n'
+        'disabled_tasks = ["risk_judge"]\n'
+    )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    settings = judge_settings(
+        db_dsn,
+        profile="judge-primary",
+        fallback_profile="judge-deepseek",
+        llm_base_url="http://judge-primary.invalid/v1",
+        llm_model="stub/judge-primary",
+    )
+    seen: list[tuple[str, float]] = []
+
+    def route(host: str, _body: dict[str, Any]) -> Any:
+        return "stall" if host == "judge-primary.invalid" else {"verdict": "none", "matches": []}
+
+    judge = rj.RiskJudge(settings, transport=timeout_honouring(route, seen))
+    assert [p.name for p in judge.chain] == ["judge-primary"]
+    try:
+        out, _lessons, ms = await run_case(connect, world, deps, load_cases()[0]["task"], judge=judge)
+    finally:
+        await judge.aclose()
+    assert out["judged"] is False and out["judge"] == rj.RETRIEVAL_ONLY and out["reason"] == rj.TIMEOUT, out
+    assert [h for h, _ in seen] == ["judge-primary.invalid"]  # one attempt; the fallback never called
+    assert ms < rj.JUDGE_TIMEOUT_S * 1000 + P95_DET_MS, ms
