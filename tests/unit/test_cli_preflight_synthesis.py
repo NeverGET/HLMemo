@@ -57,21 +57,20 @@ def server(result: dict[str, Any]) -> tuple[MCPServer, list[dict[str, Any]]]:
 @pytest.mark.parametrize(
     ("mode", "task", "ask", "want"),
     [
-        # default: off until the hold-out W-E gate decides; --ask still works
+        # default off (Sol 51): only --ask synthesizes, a question alone does not
         (None, "why does the deploy stop after the backup?", False, False),
         (None, "why does the deploy stop after the backup?", True, True),
+        (None, "fix the deploy", False, False),
         (None, "fix the deploy", True, True),
         (None, None, False, False),
         (None, None, True, True),
+        ("off", "why?", False, False),
+        ("off", "why?", True, True),
         ("auto", "why does the deploy stop after the backup?", False, True),
         ("auto", "why does the deploy stop after the backup?  ", False, True),
         ("auto", "fix the deploy", False, False),
         ("auto", "fix the deploy", True, True),
         ("auto", None, False, False),
-        ("ask", "why?", False, False),
-        ("ask", "why?", True, True),
-        ("off", "why?", False, False),
-        ("off", "why?", True, True),
         ("bogus", "why?", False, False),
         ("bogus", "why?", True, True),
     ],
@@ -110,7 +109,7 @@ def test_question_task_sets_synthesize_and_block_stays_escaped(tmp_path: Path, m
         task="why does the deploy stop?",
         root=tmp_path,
         risk=False,
-        synthesize=wants_synthesis("why does the deploy stop?"),
+        synthesize=wants_synthesis("why does the deploy stop?", ask=True),
     )
     assert out.ok and calls == [{"query": "why does the deploy stop?", "synthesize": True}]
     p = out.prompt or ""

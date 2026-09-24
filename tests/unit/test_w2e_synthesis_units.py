@@ -60,9 +60,9 @@ def test_user_message_is_data() -> None:
 
 
 # --------------------------------------------------------------------------- citation validator
-def _local(n: int) -> dict[str, syn.Excerpt]:
+def _local(n: int, text: str = "x") -> dict[str, syn.Excerpt]:
     return {
-        f"C{i}": syn.Excerpt(100 + i, f"v{100 + i}.0", f"t{i}", "2026-09-23", "x") for i in range(1, n + 1)
+        f"C{i}": syn.Excerpt(100 + i, f"v{100 + i}.0", f"t{i}", "2026-09-23", text) for i in range(1, n + 1)
     }
 
 
@@ -75,23 +75,86 @@ def test_validator_drops_uncited_and_counts_foreign_ids() -> None:
         {"text": "   ", "cite": ["C1"]},  # no text
         "not an object",
     ]
-    kept, dropped, bad = syn.validate_sentences(raw, _local(2), lambda s: s)
+    kept, dropped, bad, unsupported = syn.validate_sentences(raw, _local(2), lambda s: s)
     assert [(s.text, s.clues) for s in kept] == [
         ("Cited once.", ["v101.0"]),
         ("Two, one repeated.", ["v102.0", "v101.0"]),
     ]
-    assert dropped == 4 and bad == 3
+    assert dropped == 4 and bad == 3 and unsupported == 0
 
 
 def test_validator_redacts_and_caps_sentences() -> None:
     secret = "hlm_" + "S" * 43
     raw = [{"text": f"The token is {secret}   and   more " + "y" * 900, "cite": ["C1"]}]
-    kept, _, _ = syn.validate_sentences(raw, _local(1), Redactor().text)
+    kept, _, _, _ = syn.validate_sentences(raw, _local(1, f"a token {secret} here"), Redactor().text)
     assert secret not in kept[0].text and "REDACTED" in kept[0].text
     assert len(kept[0].text) <= syn.SENTENCE_CHARS and "  " not in kept[0].text
-    many = [{"text": f"s{i}.", "cite": ["C1"]} for i in range(9)]
-    kept, dropped, _ = syn.validate_sentences(many, _local(1), lambda s: s)
+    many = [{"text": f"s{'abcdefghi'[i]}.", "cite": ["C1"]} for i in range(9)]
+    kept, dropped, _, _ = syn.validate_sentences(many, _local(1), lambda s: s)
     assert len(kept) == syn.MAX_SENTENCES and dropped == 9 - syn.MAX_SENTENCES
+
+
+# --------------------------------------------------------------------------- support guard (Sol 51 #3)
+def test_claims_extraction() -> None:
+    got = syn.claims(
+        "Run `docker compose exec -T db` with --no-preflight; the port is 8765, see docs/USAGE.md and "
+        'HLM_IMAGE_TAG=abc, "quoted value", plain words, e.g. not a claim, €33.91 and 20%.'
+    )
+    for c in (
+        "docker compose exec -T db",
+        "--no-preflight",
+        "8765",
+        "docs/USAGE.md",
+        "HLM_IMAGE_TAG=abc",
+        "quoted value",
+        "33.91",
+        "20",
+    ):
+        assert c in got, (c, got)
+    assert not {"plain", "words", "e.g", "not", "claim"} & set(got)
+
+
+@pytest.mark.parametrize(
+    ("claim", "text", "ok"),
+    [
+        ("8765", "listens on :8765 now", True),
+        ("0.155.1", "codex 0.155.1", True),
+        ("0.155.2", "codex 0.155.1", False),
+        ("HLM_IMAGE", "the hlm_image variable", True),  # case-insensitive
+        ("1,427", "1427 chunks", True),  # thousands separators
+        ("10s", "a 10 s timeout", True),  # number glued to its unit
+        ("top-3", "the top 3 hits", True),  # hyphen-joined parts
+        ("99999", "port 8765", False),
+        ("docs/X.md", "docs/Y.md", False),
+        # Sol 52 #2: whole tokens only
+        ("42", "port 142 only", False),
+        ("42", "version 4.2 and 42.5", False),
+        ("42", "port 42.", True),
+        ("foo", "foobar and barfoo", False),
+        ("foo_bar", "foo_barbaz", False),
+        ("0.155.1", "codex 0.155.12", False),
+        ("HLM_IMAGE", "HLM_IMAGE_TAG only", False),
+        ("docs/USAGE.md", "see docs/USAGE.md.", True),
+        ("top-3", "the top 30 hits", False),
+    ],
+)
+def test_supported(claim: str, text: str, ok: bool) -> None:
+    assert syn.supported(claim, syn._norm(text)) is ok
+
+
+def test_unsupported_sentences_are_dropped() -> None:
+    local = _local(2, "The relay listens on port 8765 and runs `hlm serve --fast`.")
+    raw = [
+        {"text": "It listens on port 8765.", "cite": ["C1"]},
+        {"text": "It listens on port 9999.", "cite": ["C1"]},  # a number no cited excerpt states
+        {"text": "Start it with `hlm serve --slow`.", "cite": ["C2"]},  # a command it does not state
+        {"text": "Start it with `hlm serve --fast`.", "cite": ["C2"]},
+    ]
+    kept, dropped, bad, unsupported = syn.validate_sentences(raw, local, lambda s: s)
+    assert [s.text for s in kept] == ["It listens on port 8765.", "Start it with `hlm serve --fast`."]
+    assert dropped == 2 and unsupported == 2 and bad == 0
+    kept, _, _, unsupported = syn.validate_sentences(raw[1:3], local, lambda s: s)
+    assert kept == [] and unsupported == 2  # the synthesizer then abstains
 
 
 # --------------------------------------------------------------------------- weak evidence
