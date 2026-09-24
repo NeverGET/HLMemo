@@ -1,0 +1,107 @@
+{
+ "version": 2,
+ "about": "W2b relation fixture, v2 extension (D-076 hold-out failure modes; self-authored, G-LIVE-B only). Same format as relations.json; gold uses the v2 labels: relation none | duplicate (near-identical text only) | relates (the same claim restated: a paraphrase or translation) | refines (+ gold refiner: the item that adds the detail) | contradicts (+ supersedes, + gold scope: whole = every statement of the replaced item is outdated, part = only one of several statements). Pairs with a doc_chunk raise contradictions only. class: contra_part | contra_whole_multi | contra_whole | dup_strict | relates | refines_old | refines_new | doc_contra | doc_same | near_miss | none.",
+ "groups": [
+  {
+   "id": "e01",
+   "new": {"kind": "fact", "lang": "en", "title": "Cache TTL raised", "text": "Since June the API cache TTL is 300 seconds.", "t": "2026-06-01"},
+   "existing": [
+    {"id": "e01a", "kind": "fact", "lang": "en", "project": "same", "title": "Cache setup", "text": "The API cache TTL is 60 seconds.\nThe cache is stored in Redis 7 on the api host.\nCache keys are prefixed with the tenant id.", "t": "2026-01-10", "gold": ["contradicts", "new"], "scope": "part", "class": "contra_part"},
+    {"id": "e01b", "kind": "fact", "lang": "en", "project": "same", "title": "CDN cache", "text": "The CDN caches static images for 7 days.", "t": "2026-02-01", "gold": ["none", "none"], "class": "near_miss"},
+    {"id": "e01c", "kind": "fact", "lang": "en", "project": "same", "title": "Session store", "text": "Sessions are kept in Redis for 30 minutes.", "t": "2026-02-01", "gold": ["none", "none"], "class": "near_miss"}
+   ]
+  },
+  {
+   "id": "e02",
+   "new": {"kind": "fact", "lang": "tr", "title": "Yedek saklama süresi", "text": "Ağustos'tan beri veritabanı yedekleri yalnızca 14 gün saklanıyor.", "t": "2026-08-01"},
+   "existing": [
+    {"id": "e02a", "kind": "fact", "lang": "tr", "project": "same", "title": "Yedekleme düzeni", "text": "Veritabanı her gece 03:30'da yedeklenir.\nYedekler 30 gün saklanır.\nYedekler şifrelenerek Hetzner Storage Box'a yüklenir.", "t": "2026-02-01", "gold": ["contradicts", "new"], "scope": "part", "class": "contra_part"},
+    {"id": "e02b", "kind": "fact", "lang": "tr", "project": "same", "title": "Log saklama", "text": "Uygulama logları 7 gün saklanır.", "t": "2026-03-01", "gold": ["none", "none"], "class": "near_miss"},
+    {"id": "e02c", "kind": "fact", "lang": "en", "project": "same", "title": "Restore drill", "text": "A restore drill runs once a month on a scratch database.", "t": "2026-03-01", "gold": ["none", "none"], "class": "none"}
+   ]
+  },
+  {
+   "id": "e03",
+   "new": {"kind": "fact", "lang": "de", "title": "Worker-Threads erhöht", "text": "Seit September nutzt der Embedding-Worker 4 Threads.", "t": "2026-09-01"},
+   "existing": [
+    {"id": "e03a", "kind": "fact", "lang": "de", "project": "same", "title": "Embedding-Worker", "text": "Der Embedding-Worker nutzt 2 Threads.\nEr läuft im Container hlmemo-worker.\nSeine Logs gehen nach journald.", "t": "2026-04-01", "gold": ["contradicts", "new"], "scope": "part", "class": "contra_part"},
+    {"id": "e03b", "kind": "fact", "lang": "de", "project": "same", "title": "API-Worker", "text": "Die API läuft mit 2 uvicorn-Workern.", "t": "2026-04-01", "gold": ["none", "none"], "class": "near_miss"}
+   ]
+  },
+  {
+   "id": "e04",
+   "new": {"kind": "fact", "lang": "en", "title": "Staging moved", "text": "Staging moved: it is now a Hostinger KVM 2 in Vilnius running Ubuntu 26.04, and the Hetzner CX22 was deleted.", "t": "2026-09-01"},
+   "existing": [
+    {"id": "e04a", "kind": "fact", "lang": "en", "project": "same", "title": "Staging server", "text": "The staging server is a Hetzner CX22 in Nuremberg.\nIt runs Ubuntu 22.04.", "t": "2026-03-01", "gold": ["contradicts", "new"], "scope": "whole", "class": "contra_whole_multi"},
+    {"id": "e04b", "kind": "fact", "lang": "en", "project": "same", "title": "Production server", "text": "Production runs on a Hostinger KVM 4 in Vilnius.", "t": "2026-08-01", "gold": ["none", "none"], "class": "near_miss"}
+   ]
+  },
+  {
+   "id": "e05",
+   "new": {"kind": "fact", "lang": "en", "title": "Lint before commit", "text": "Run make lint before every commit.", "t": "2026-09-10"},
+   "existing": [
+    {"id": "e05a", "kind": "fact", "lang": "en", "project": "same", "title": "Lint before commit (imported)", "text": "Run make lint before every commit.", "t": "2026-09-01", "gold": ["duplicate", "none"], "class": "dup_strict"},
+    {"id": "e05b", "kind": "fact", "lang": "en", "project": "same", "title": "Linting rule", "text": "Before committing, always lint the code with the make target.", "t": "2026-08-01", "gold": ["relates", "none"], "class": "relates"},
+    {"id": "e05c", "kind": "fact", "lang": "en", "project": "same", "title": "Tests before release", "text": "Run make test before every release.", "t": "2026-08-01", "gold": ["none", "none"], "class": "near_miss"}
+   ]
+  },
+  {
+   "id": "e06",
+   "new": {"kind": "lesson", "lang": "en", "title": "Dedicated test database", "text": "HLM_TEST_DSN must point to a dedicated database: the test suite truncates every table.", "t": "2026-09-23"},
+   "existing": [
+    {"id": "e06a", "kind": "lesson", "lang": "en", "project": "same", "title": "Test DSN", "text": "HLM_TEST_DSN must point to a dedicated database; the test suite truncates every table!", "t": "2026-09-20", "gold": ["duplicate", "none"], "class": "dup_strict"},
+    {"id": "e06b", "kind": "lesson", "lang": "tr", "project": "same", "title": "Test veritabanı", "text": "HLM_TEST_DSN ayrı bir veritabanını göstermeli, çünkü test paketi tüm tabloları boşaltır.", "t": "2026-09-21", "gold": ["relates", "none"], "class": "relates"},
+    {"id": "e06c", "kind": "lesson", "lang": "en", "project": "same", "title": "Protected databases", "text": "Never run the suite against the hlm or hlm_verify databases.", "t": "2026-09-21", "gold": ["none", "none"], "class": "near_miss"}
+   ]
+  },
+  {
+   "id": "e07",
+   "new": {"kind": "fact", "lang": "en", "title": "Nightly backup", "text": "The database is backed up every night.", "t": "2026-09-01"},
+   "existing": [
+    {"id": "e07a", "kind": "fact", "lang": "en", "project": "same", "title": "Backup schedule", "text": "The database is backed up every night at 03:30 Europe/Vilnius, and each backup is kept for 14 days.", "t": "2026-03-01", "gold": ["refines", "none"], "refiner": "old", "class": "refines_old"},
+    {"id": "e07b", "kind": "fact", "lang": "en", "project": "same", "title": "WAL archiving", "text": "WAL segments are archived every 5 minutes.", "t": "2026-03-01", "gold": ["none", "none"], "class": "near_miss"}
+   ]
+  },
+  {
+   "id": "e08",
+   "new": {"kind": "lesson", "lang": "en", "title": "Pin model downloads", "text": "Pin the embedding model download.", "t": "2026-09-20"},
+   "existing": [
+    {"id": "e08a", "kind": "lesson", "lang": "en", "project": "same", "title": "Pinned model revision", "text": "Pin the embedding model download by its commit revision 614241f, so the vectors never change silently.", "t": "2026-05-01", "gold": ["refines", "none"], "refiner": "old", "class": "refines_old"},
+    {"id": "e08b", "kind": "lesson", "lang": "en", "project": "same", "title": "Lock files", "text": "Install Python dependencies only from uv.lock.", "t": "2026-05-01", "gold": ["none", "none"], "class": "near_miss"}
+   ]
+  },
+  {
+   "id": "e09",
+   "new": {"kind": "fact", "lang": "de", "title": "Tageslimit", "text": "Während der Entwicklung gilt eine LLM-Obergrenze von 10 $ pro Tag und 3 $ pro Stunde.", "t": "2026-09-23"},
+   "existing": [
+    {"id": "e09a", "kind": "fact", "lang": "de", "project": "same", "title": "LLM-Limit", "text": "Während der Entwicklung gilt eine LLM-Obergrenze von 10 $ pro Tag.", "t": "2026-09-20", "gold": ["refines", "none"], "refiner": "new", "class": "refines_new"},
+    {"id": "e09b", "kind": "fact", "lang": "en", "project": "same", "title": "Wallet", "text": "The OpenRouter wallet holds about 23 dollars.", "t": "2026-09-20", "gold": ["none", "none"], "class": "none"}
+   ]
+  },
+  {
+   "id": "e10",
+   "new": {"kind": "fact", "lang": "en", "title": "Default librarian model", "text": "The default librarian model is openai/gpt-6-luna since D-066; deepseek is only the fallback.", "t": "2026-09-23"},
+   "existing": [
+    {"id": "e10a", "kind": "doc_chunk", "lang": "en", "project": "same", "title": "Librarian profile", "text": "The default librarian model is deepseek/deepseek-v4.1-flash (D-019).", "t": "2026-09-19", "gold": ["contradicts", "new"], "scope": "whole", "class": "doc_contra"},
+    {"id": "e10b", "kind": "doc_chunk", "lang": "en", "project": "same", "title": "Librarian container", "text": "The librarian runs in its own container with 512 MiB of memory.", "t": "2026-09-19", "gold": ["none", "none"], "class": "near_miss"},
+    {"id": "e10c", "kind": "doc_chunk", "lang": "en", "project": "same", "title": "Model choice", "text": "Since D-066 the librarian defaults to openai/gpt-6-luna, with deepseek only as the fallback.", "t": "2026-09-23", "gold": ["none", "none"], "class": "doc_same"}
+   ]
+  },
+  {
+   "id": "e11",
+   "new": {"kind": "doc_chunk", "lang": "en", "title": "Deploy log", "text": "2026-09-20: the production deploy target moved from Hetzner to the Hostinger KVM 4 (D-068).", "t": "2026-09-20"},
+   "existing": [
+    {"id": "e11a", "kind": "fact", "lang": "en", "project": "same", "title": "Deploy target", "text": "Production is deployed to the Hetzner CX33 server.", "t": "2026-03-01", "gold": ["contradicts", "new"], "scope": "whole", "class": "doc_contra"},
+    {"id": "e11b", "kind": "fact", "lang": "en", "project": "same", "title": "Deploy script", "text": "deploy.sh builds the images on the server itself.", "t": "2026-03-01", "gold": ["none", "none"], "class": "none"}
+   ]
+  },
+  {
+   "id": "e12",
+   "new": {"kind": "fact", "lang": "en", "title": "Question expiry", "text": "Unanswered librarian questions expire after 30 days.", "t": "2026-09-24"},
+   "existing": [
+    {"id": "e12a", "kind": "fact", "lang": "en", "project": "same", "title": "Librarian questions", "text": "Unanswered librarian questions expire after 14 days.\nAn expired question is never applied.\nThe owner can answer accept, reject or custom.", "t": "2026-09-20", "gold": ["contradicts", "new"], "scope": "part", "class": "contra_part"},
+    {"id": "e12b", "kind": "fact", "lang": "en", "project": "same", "title": "Batch size", "text": "An approval batch holds at most 25 open questions.", "t": "2026-09-20", "gold": ["none", "none"], "class": "near_miss"}
+   ]
+  }
+ ]
+}

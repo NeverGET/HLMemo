@@ -241,6 +241,8 @@ async def test_gl3_llm_down_core_unaffected(
         "HLM_LIBRARIAN_HEARTBEAT_FILE": str(tmp_path / "hb.json"),
         # no embed worker runs here: write_review jobs go lexical-only at once (W2b)
         "HLM_LIBRARIAN_EMBED_WAIT_S": "0",
+        # e2e #7: the production default, three jobs in flight while the queries are timed
+        "HLM_LIBRARIAN_CONCURRENCY": "3",
     }
     api = _spawn("hlmemo.server.app", api_env, tmp_path, "api.log")
     lib = _spawn("hlmemo.librarian.worker", lib_env, tmp_path, "librarian.log")

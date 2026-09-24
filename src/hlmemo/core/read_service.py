@@ -46,7 +46,7 @@ from hlmemo.core.retrieval import (
     rrf_fuse,
     split_terms,
 )
-from hlmemo.core.supersession import newer_first_on_ties
+from hlmemo.core.supersession import demote_partially_superseded, newer_first_on_ties
 from hlmemo.core.temporal import fmt_ts, parse_opt_ts
 from hlmemo.core.term_stats import StatsCache
 from hlmemo.db import import_queries as iq
@@ -240,8 +240,9 @@ async def query_parts(
         pending = await q.indexing_pending(conn, project.project_id)
 
         ordered = dedupe_and_order(rrf_fuse(lexical, trigram, vector, title))
-        # D-057 (query/2): an applied `supersedes` link between two hits hides the superseded one
-        hidden = await lq.superseded_among(
+        # D-057 (query/2): an applied `supersedes` link between two hits hides the superseded one;
+        # a fact-level (scope=part, D-076) link only ranks the partly outdated item after it
+        hidden, partial = await lq.supersession_among(
             conn,
             [f.logical_id for f in ordered],
             pid=project.project_id,
@@ -251,6 +252,8 @@ async def query_parts(
         )
         if hidden:
             ordered = [f for f in ordered if f.logical_id not in hidden]
+        if partial:
+            ordered = demote_partially_superseded(ordered, partial)
         n_fetch = min(len(ordered), budget // MIN_HIT_TOKENS + 3)
         head = ordered[:n_fetch]
         rows = await q.hit_rows(conn, [f.chunk_id for f in head])

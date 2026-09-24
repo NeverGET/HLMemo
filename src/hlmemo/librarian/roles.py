@@ -116,15 +116,24 @@ async def _role_after(conn: AsyncConnection, role: str, decision_project: int | 
 async def pending_apply_jobs(
     conn: AsyncConnection, role: str, decision_project: int | None, event_id: int
 ) -> list[dict[str, Any]]:
-    """D-074 promotion (Sol 49 #2): the ``accepted_pending`` answers this decision can release.
+    """D-074 promotion (Sol 49 #2, Sol 50): the ``accepted_pending`` answers this decision can
+    release.
 
-    A question qualifies if the decided project is its home OR any project it touches (a project
-    decision), or any question at all (a deployment decision), AND every project it touches (home,
-    ``project_ids``, its actions' projects on the current rows) is assistant+ after the decision;
-    otherwise the promotion of its last observer project releases it later. One ``apply_batch`` job
-    per batch, keyed by this ``set_role`` event (``librarian_apply:<batch>:promo<event_id>``),
-    unless an apply job of that batch is already queued or running (that job picks them up; an
-    observer worker never leases it, D-074). The job re-checks everything under its own locks."""
+    The touched set of a question is computed NOW: its home, its recorded ``project_ids`` AND every
+    project its actions touch on the CURRENT rows (``action_projects``: an item widened into
+    project C since the answer makes the action touch C). A question qualifies if the decided
+    project is in that CURRENT touched set (a project decision), or always (a deployment
+    decision), AND every touched project is assistant+ after the decision; otherwise the promotion
+    of its last observer project releases it later. The recorded projects are NOT a filter any
+    more (Sol 50: an answer whose action later touched C was stranded when C was promoted). One
+    ``apply_batch`` job per batch, keyed by this ``set_role`` event
+    (``librarian_apply:<batch>:promo<event_id>``), unless an apply job of that batch is still
+    QUEUED (it has not planned yet, so it will read this answer; an observer worker never leases
+    it, D-074). A RUNNING one does not count (Sol 54j #1): it may have read its question snapshot
+    before this answer existed, so a new job is enqueued; two apply jobs of one batch serialize
+    on the question row locks and the second finds applied rows no longer applicable. The job
+    re-checks everything under its own locks. The released jobs are recorded in the event's
+    ``resolved.jobs`` (replayed as-is, never recomputed)."""
     from hlmemo.librarian.tasks.apply_batch import proposal_actions
 
     if role == "observer":
@@ -134,14 +143,12 @@ async def pending_apply_jobs(
         SELECT lq.batch_id::text, lq.project_id, lq.project_ids, lq.proposal
           FROM librarian_questions lq
          WHERE lq.status = 'accepted_pending' AND lq.batch_id IS NOT NULL
-           AND (%(p)s::bigint IS NULL OR lq.project_id = %(p)s OR %(p)s = ANY(lq.project_ids))
            AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'librarian_write'
                             AND j.payload->>'op' = 'apply_batch'
                             AND j.payload->>'batch_id' = lq.batch_id::text
-                            AND j.status IN ('queued', 'running'))
+                            AND j.status = 'queued')
          ORDER BY lq.batch_id, lq.question_id
-        """,
-        {"p": decision_project},
+        """
     )
     released: dict[str, tuple[int, dict[str, Any]]] = {}
     for batch_id, home, pids, proposal in await cur.fetchall():
@@ -150,6 +157,8 @@ async def pending_apply_jobs(
         touched = {int(home), *(int(x) for x in pids)} | await action_projects(
             conn, proposal_actions(proposal)
         )
+        if decision_project is not None and int(decision_project) not in touched:
+            continue  # this decision changes no role the question depends on
         after = [await _role_after(conn, role, decision_project, p) for p in sorted(touched)]
         if "observer" not in after:
             released[batch_id] = (int(home), proposal.get("capabilities") or {})

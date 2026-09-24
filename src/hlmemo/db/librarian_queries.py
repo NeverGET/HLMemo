@@ -64,6 +64,7 @@ class CandRow:
     body: str
     pinned: bool
     valid_from: datetime
+    recorded_at: datetime | None = None  # v2 refine direction (valid_from tie -> recorded_at)
 
 
 async def load_subjects(conn: AsyncConnection, version_ids: list[int]) -> dict[int, SubjectRow]:
@@ -87,7 +88,7 @@ async def load_candidates(conn: AsyncConnection, version_ids: list[int]) -> dict
     cur = await conn.execute(
         """
         SELECT version_id, logical_id, project_id, project_ids, device_scope, kind, title, body, pinned,
-               valid_from
+               valid_from, recorded_at
           FROM memory_versions WHERE version_id = ANY(%s)
         """,
         (list(version_ids),),
@@ -282,7 +283,7 @@ async def readable_projects(
     return True, str(device_class), [int(r[0]) for r in await cur.fetchall()]
 
 
-async def superseded_among(
+async def supersession_among(
     conn: AsyncConnection,
     logical_ids: list[int],
     *,
@@ -290,17 +291,23 @@ async def superseded_among(
     scopes: list[str],
     valid_at: datetime,
     known_at: datetime,
-) -> set[int]:
-    """D-057 read side: the logical ids in ``logical_ids`` that another id in ``logical_ids``
-    supersedes through a live ``supersedes`` link (the link row passes authz (a) and is live at
-    ``(valid_at, known_at)``). Links exist only once applied (a proposal is a question row)."""
+) -> tuple[set[int], list[tuple[int, int]]]:
+    """D-057 read side, ONE query: ``(hidden, partial)`` over the live ``supersedes`` links between
+    two ids of ``logical_ids`` (the link row passes authz (a) and is live at ``(valid_at,
+    known_at)``; links exist only once applied — a proposal is a question row).
+
+    ``hidden``: the superseded ids of whole-item links (no ``props.scope``, or ``whole``).
+    ``partial``: ``(superseding, superseded)`` pairs of fact-level links (``props.scope = part``,
+    D-076): the superseded item still holds valid statements, so it is never hidden, only ranked
+    after the item that replaced one of its statements (``core/supersession``)."""
     from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L
 
     if len(logical_ids) < 2:
-        return set()
+        return set(), []
     cur = await conn.execute(
         f"""
-        SELECT DISTINCT l.dst_logical_id FROM links l
+        SELECT DISTINCT l.src_logical_id, l.dst_logical_id, COALESCE(l.props->>'scope', 'whole') = 'part'
+          FROM links l
          WHERE l.rel = 'supersedes' AND l.src_logical_id = ANY(%(lids)s) AND l.dst_logical_id = ANY(%(lids)s)
            AND l.src_logical_id <> l.dst_logical_id AND {AUTHZ_L} AND {TEMPORAL_L}
         """,  # noqa: S608 - fixed fragments
@@ -312,7 +319,30 @@ async def superseded_among(
             "known_at": known_at,
         },
     )
-    return {int(r[0]) for r in await cur.fetchall()}
+    hidden: set[int] = set()
+    partial: set[tuple[int, int]] = set()
+    for src, dst, is_part in await cur.fetchall():
+        if is_part:
+            partial.add((int(src), int(dst)))
+        else:
+            hidden.add(int(dst))
+    return hidden, sorted(partial)
+
+
+async def superseded_among(
+    conn: AsyncConnection,
+    logical_ids: list[int],
+    *,
+    pid: int,
+    scopes: list[str],
+    valid_at: datetime,
+    known_at: datetime,
+) -> set[int]:
+    """The hidden ids of ``supersession_among`` (whole-item supersession only)."""
+    hidden, _partial = await supersession_among(
+        conn, logical_ids, pid=pid, scopes=scopes, valid_at=valid_at, known_at=known_at
+    )
+    return hidden
 
 
 async def project_slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[int, str]:
@@ -337,5 +367,6 @@ __all__ = [
     "readable_projects",
     "subject_vectors",
     "superseded_among",
+    "supersession_among",
     "vector_list",
 ]

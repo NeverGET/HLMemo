@@ -359,6 +359,116 @@ async def test_sol49_promotion_job_survives_an_observer_worker(
     await _replay_identical(connect)
 
 
+async def test_sol50_promotion_selects_by_the_actions_current_projects(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Sol 50 / D-077 prerequisite: an accepted_pending answer whose action LATER touches project C
+    (the old item is widened into C after the answer; C carries an observer override) is not
+    released by the deployment promotion (C is observer), and it IS re-queued when C itself is
+    promoted — the recorded question projects ({MAIN}) no longer filter the selection. The apply's
+    recheck then finds the widened (revised) subject and supersedes it: never stranded. A project
+    decision on a project the action does not touch releases nothing. Replay identical."""
+    from hlmemo.librarian.roles import record_role_decision
+
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
+    async with await connect() as conn:  # project C (+ an unrelated D), dev-a may write in C
+        cur = await conn.execute(
+            "INSERT INTO projects (slug, name) VALUES ('g6-third', 'Third'), ('g6-fourth', 'Fourth')"
+            " RETURNING project_id"
+        )
+        c_id, d_id = [r[0] for r in await cur.fetchall()]
+        await conn.execute(
+            "INSERT INTO device_project_grants (device_id, project_id, role, granted_by_device_id)"
+            " VALUES (%s, %s, 'write', 1)",
+            (world.dev_a, c_id),
+        )
+        await record_role_decision(
+            conn, role="observer", decided_by=world.ctx_admin, decision="D-c", project_id=c_id
+        )
+        await conn.commit()
+    ctx_a = AuthContext(
+        world.dev_a, "personal", False, 1, {**world.ctx_a.grants, c_id: Role.WRITE}, "pytest/0"
+    )
+    await write_items(  # the action's old item now also lives in C (current rows)
+        connect,
+        ctx_a,
+        MAIN,
+        [
+            item(
+                *OLD,
+                valid_from=D_OLD,
+                logical_id=old.logical_id,
+                expected_version_id=old.version_id,
+                project_ids=[MAIN, "g6-third"],
+            )
+        ],
+    )
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT project_ids FROM librarian_questions WHERE question_id = %s", (qid,))
+        assert (await cur.fetchone())[0] == [world.main_id]  # the RECORDED projects never saw C
+    released = await _promote(connect, world)  # deployment assistant: C is still observer
+    assert "jobs" not in released
+    async with await connect() as conn:  # an unrelated project's promotion releases nothing
+        event_id = await record_role_decision(
+            conn, role="assistant", decided_by=world.ctx_admin, decision="D-d", project_id=d_id
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT payload->'resolved' ? 'jobs' FROM events WHERE event_id = %s", (event_id,)
+        )
+        assert (await cur.fetchone())[0] is False
+        event_id = await record_role_decision(  # promoting C re-queues it (the old SQL filter missed it)
+            conn, role="assistant", decided_by=world.ctx_admin, decision="D-c2", project_id=c_id
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->'jobs' FROM events WHERE event_id = %s", (event_id,)
+        )
+        (jobs,) = await cur.fetchone()
+        assert [j["payload"]["op"] for j in jobs] == ["apply_batch"]
+        assert jobs[0]["dedupe_key"].endswith(f":promo{event_id}")
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    assert await worker.drain() >= 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions WHERE question_id = %s", (qid,))
+        assert await cur.fetchone() == ("superseded",)  # released and rechecked, not stranded
+        assert await count(conn, "links") == 0
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_sol54j_a_running_apply_job_does_not_absorb_a_release(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """A RUNNING apply job of the batch may have planned before the answer existed: a promotion
+    still enqueues its own apply job (only a QUEUED one, which has not planned yet, absorbs it)."""
+    from hlmemo.librarian.jobs import enqueue
+    from hlmemo.librarian.roles import apply_job
+
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT batch_id::text FROM librarian_questions WHERE question_id = %s", (qid,)
+        )
+        (batch,) = await cur.fetchone()
+        spec = apply_job(batch, world.main_id, {}, ":inflight")
+        await enqueue(conn, project_id=world.main_id, trigger_device_id=world.dev_a, specs=[spec])
+        await conn.execute(  # an apply job mid-flight (leased elsewhere, lease still valid)
+            "UPDATE jobs SET status = 'running', lease_token = gen_random_uuid(),"
+            " lease_until = now() + interval '1 hour'"
+            " WHERE dedupe_key = %s",
+            (spec["dedupe_key"],),
+        )
+        await conn.commit()
+    released = await _promote(connect, world)
+    assert [j["payload"]["op"] for j in released["jobs"]] == ["apply_batch"]
+    assert released["jobs"][0]["dedupe_key"] != spec["dedupe_key"]
+
+
 async def test_gq1_accept_applies_directly_in_assistant(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
     """Promoted (decision + configured assistant): memory.answer applies as the answering device."""
     old, new, [(qid, _kind)] = await _propose(db_dsn, connect, world, embedder)
@@ -609,8 +719,11 @@ async def test_sol44_approved_widen_expires_too(db_dsn, connect, world: World, e
 
 
 async def test_sol44_conflicting_batch_questions(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
-    """Two approved proposals both close the same item: the first applies, the second is
-    superseded, the job completes (it used to fail at apply and roll the whole batch back)."""
+    """Two approved proposals both close the same item (NEW at June, s2 at July): the job
+    completes (it used to fail at apply and roll the whole batch back, Sol 44). D-076 staleness
+    chains: the dependency order applies the EARLIEST cut first, and the second question is
+    rebased instead of dropped — its redundant close is skipped, its links apply; OLD is closed
+    exactly once, at June."""
     from hlmemo.librarian.roles import record_batch_decision, record_role_decision
 
     s2 = ("Deploy host moved again", "Production later moved to a second Hostinger VPS in Vilnius.")
@@ -638,13 +751,21 @@ async def test_sol44_conflicting_batch_questions(db_dsn, connect, world: World, 
     await provider.aclose()
     async with await connect() as conn:
         cur = await conn.execute("SELECT status, count(*) FROM librarian_questions GROUP BY 1 ORDER BY 1")
-        assert await cur.fetchall() == [("applied", 1), ("superseded", 1)]
+        assert await cur.fetchall() == [("applied", 2)]
         cur = await conn.execute(
-            "SELECT count(*) FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'"
+            "SELECT valid_to FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'"
             " AND valid_to <> 'infinity'",
             (old.logical_id,),
         )
-        assert await cur.fetchone() == (1,)  # closed exactly once
+        assert await cur.fetchall() == [(datetime(2026, 6, 1, tzinfo=UTC),)]  # once, at the EARLIEST cut
+        cur = await conn.execute("SELECT rel, count(*) FROM links GROUP BY 1 ORDER BY 1")
+        assert await cur.fetchall() == [("contradicts", 2), ("supersedes", 2)]
+        cur = await conn.execute(
+            "SELECT payload->'request'->'rebased' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+        )
+        (rebased,) = await cur.fetchone()
+        assert len(rebased) == 1  # the July proposal, rebased on the June close
         assert await count(conn, "jobs", "kind = 'librarian_write' AND status <> 'done'") == 0
     await embed(connect, embedder)
     await _replay_identical(connect)

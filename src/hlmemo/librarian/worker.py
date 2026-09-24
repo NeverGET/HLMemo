@@ -1,8 +1,9 @@
 """The librarian service: ``python -m hlmemo.librarian.worker`` (PHASE2-4-ROADMAP §2, W2a).
 
-Loop: lease one ready ``librarian_write`` job (``worker/lease.py``: ``(priority, run_after)``,
-lease renewed every 30 s), let its handler plan it (reads committed, provider calls outside any
-transaction), then apply the plan in ONE transaction:
+Loop: keep up to ``HLM_LIBRARIAN_CONCURRENCY`` (default 3) jobs in flight; a free slot leases one
+ready ``librarian_write`` job (``worker/lease.py``: ``(priority, run_after)``, lease renewed every
+30 s). Each job, independently of the others, lets its handler plan it (reads committed, provider
+calls outside any transaction), then applies the plan in ONE transaction:
 
 1. ``T = clock_timestamp()``; the effective role (§4b ladder) for the job's project;
 2. CC-3 recheck of the triggering device (``FOR SHARE``) when the plan has mutations — failure is
@@ -108,6 +109,7 @@ class _Approved:
     status: str
     expires_at: datetime | None
     projects: frozenset[int] = frozenset()  # the question's home + project_ids
+    home: int | None = None  # the question's home project
 
 
 def _logical_ids(actions: list[dict[str, Any]]) -> list[int]:
@@ -210,9 +212,14 @@ class LibrarianWorker:
         return self.provider.breaker_state()
 
     # ------------------------------------------------------------------ loop
-    async def run_once(self) -> int:
+    @property
+    def concurrency(self) -> int:
+        return max(1, int(getattr(self.settings, "librarian_concurrency", 1) or 1))
+
+    async def lease_one(self) -> LeasedJob | None:
+        """Lease the next ready job (priority order), or None (paused / nothing ready)."""
         if self.paused:
-            return 0
+            return None
         async with await self.connect() as conn:
             jobs = await lease_jobs(
                 conn,
@@ -223,18 +230,66 @@ class LibrarianWorker:
                 # even lease an apply job: it stays queued (no attempt, no event) for a promoted worker
                 exclude_ops=("apply_batch",) if self.settings.librarian_role == "observer" else (),
             )
-        for job in jobs:
-            await self.process(job)
-        return len(jobs)
+        return jobs[0] if jobs else None
 
-    async def drain(self, *, max_jobs: int | None = None) -> int:
-        """Process ready jobs until none is left (tests)."""
-        n = 0
-        while max_jobs is None or n < max_jobs:
-            if await self.run_once() == 0:
-                break
-            n += 1
-        return n
+    async def run_once(self) -> int:
+        """Lease and process ONE job, sequentially (tests; the service uses ``run_slots``)."""
+        job = await self.lease_one()
+        if job is None:
+            return 0
+        await self.process(job)
+        return 1
+
+    async def _guarded(self, job: LeasedJob) -> None:
+        """``process`` as a slot task: a connection failure before the job's own handling (which
+        catches everything job-specific) must not take the loop down; the lease then expires and
+        the job is re-leased (G-L6)."""
+        try:
+            await self.process(job)
+        except Exception as exc:  # noqa: BLE001
+            log.error("librarian job %s: %s: %s", job.job_id, type(exc).__name__, exc)
+
+    async def run_slots(
+        self,
+        *,
+        max_jobs: int | None = None,
+        stop: asyncio.Event | None = None,
+        concurrency: int | None = None,
+    ) -> int:
+        """Keep up to ``concurrency`` (``HLM_LIBRARIAN_CONCURRENCY``) jobs in flight until nothing
+        is ready and nothing is in flight (or ``stop``/``max_jobs``). A free slot leases ONE job,
+        so the priority order is kept job by job. Each job is fully independent: its own
+        connection, lease keeper, lineage/precheck context (asyncio task-local), plan, apply
+        transaction and fenced ``done`` — exactly the sequential path, N at a time. The spend guard
+        (atomic reservations) and the per-lineage call ceiling are enforced in the database, so they
+        hold across concurrent jobs. A budget pause stops leasing; jobs in flight finish or defer.
+        Returns the number of jobs processed."""
+        n_max = self.concurrency if concurrency is None else max(1, concurrency)
+        in_flight: set[asyncio.Task[None]] = set()
+        started = 0
+        try:
+            while True:
+                while (
+                    len(in_flight) < n_max
+                    and (max_jobs is None or started < max_jobs)
+                    and not (stop is not None and stop.is_set())
+                ):
+                    job = await self.lease_one()
+                    if job is None:
+                        break
+                    in_flight.add(asyncio.create_task(self._guarded(job), name=f"librarian-{job.job_id}"))
+                    started += 1
+                if not in_flight:
+                    return started
+                _done, in_flight = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            if in_flight:  # stop/cancel: let jobs in flight end their own way (lease-fenced)
+                await asyncio.gather(*in_flight, return_exceptions=True)
+
+    async def drain(self, *, max_jobs: int | None = None, concurrency: int | None = None) -> int:
+        """Process ready jobs until none is left (tests, eval), ``HLM_LIBRARIAN_CONCURRENCY`` at a
+        time (``concurrency=1``: strictly one after the other)."""
+        return await self.run_slots(max_jobs=max_jobs, concurrency=concurrency)
 
     async def process(self, job: LeasedJob) -> None:
         handler = self.handlers.get(str(job.payload.get("op")))
@@ -448,6 +503,14 @@ class LibrarianWorker:
             return []
         project_id = int(job.payload["project_id"])
         changes: list[dict[str, Any]] = []
+        # concurrent jobs of one project (HLM_LIBRARIAN_CONCURRENCY): serialize the "one open batch
+        # per project" step, else two jobs that both see no open batch both create one (unique
+        # index). Taken after the item locks, like the batch row lock it precedes (no cycle); held to
+        # commit, so it covers open_batch through the insert. Key: namespace 5 + hashtext of the
+        # bigint id (a collision only serializes two projects' batch steps).
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(5, hashtext(%s))", (f"librarian_batch:{project_id}",)
+        )
         batch, n = await actor.open_batch(conn, project_id)
         k = 0
         for qn in questions:
@@ -489,33 +552,56 @@ class LibrarianWorker:
             ([qid for qid, _p in plan.approved],),
         )
         rows = {
-            qid: (status, expires, frozenset({int(home), *(int(x) for x in pids)}))
+            qid: (status, expires, frozenset({int(home), *(int(x) for x in pids)}), int(home))
             for qid, status, expires, home, pids in await cur.fetchall()
         }
         now = max(T, await q.clock_now(conn))
         live: list[_Approved] = []
         changes: list[dict[str, Any]] = []
         for qid, proposal in plan.approved:
-            status, expires, projects = rows.get(qid, (None, None, frozenset()))
+            status, expires, projects, home = rows.get(qid, (None, None, frozenset(), None))
             if status not in APPLICABLE:
                 continue
             if expires is not None and expires <= now:
                 changes.append({"question_id": qid, "status": "expired"})
                 continue
-            live.append(_Approved(qid, proposal, status, expires, projects))
+            live.append(_Approved(qid, proposal, status, expires, projects, home))
         return live, changes, now
 
     async def _apply_approved(
-        self, conn: AsyncConnection, plan: Plan, approved: list[_Approved], T: datetime
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, list[datetime], datetime]:
+        self, conn: AsyncConnection, job: LeasedJob, plan: Plan, approved: list[_Approved], T: datetime
+    ) -> tuple[
+        list[dict[str, Any]], list[dict[str, Any]], int, list[datetime], datetime, list[dict[str, Any]]
+    ]:
         """``apply_batch``: each approved question under its own proposing job's capabilities.
         After the item-lock wait the TTL is checked again against a FRESH clock (Sol 48), which
-        becomes the job's ``T``."""
+        becomes the job's ``T``.
+
+        D-076 approve-all staleness chains: the questions are applied in DEPENDENCY order —
+        link-only proposals first (they never change a head), then by their earliest close cut,
+        then by id — so a chain A←B←C closes A at B and B at C. A question whose subject an
+        EARLIER question of this batch closed is rebased, not dropped: a redundant close (the item
+        is already closed at an earlier or equal cut) is skipped and the rest applies
+        (``rebased``; ``already_satisfied`` when nothing is left to do). A real conflict (an
+        inverse supersession of one planned in this batch, or a close before a planned cut) is
+        re-planned: the question is ``superseded`` and a ``write_review`` of its subjects that stay
+        current after this transaction is enqueued (own lineage, recorded in ``resolved.jobs``).
+        A proposal carrying a whole-item close without the v2 evidence (``legacy_close``) is never
+        applied; it is re-planned the same way. An EXTERNAL revision since the proposal keeps the
+        G-Q3 rule: ``superseded``, nothing applied. Returns ``(records, status changes, superseded,
+        recorded_at of closed rows, T, re-plan jobs)``."""
+        from hlmemo.core.temporal import parse_ts
+        from hlmemo.librarian.tasks.apply_batch import legacy_close
+
         records: list[dict[str, Any]] = []
         changes: list[dict[str, Any]] = []
         superseded = 0
         recorded: list[datetime] = []
+        replans: list[dict[str, Any]] = []
         planned: dict[str, set[Any]] = {"links": set(), "closed": set()}
+        cuts: dict[int, datetime] = {}  # logical id -> its close cut planned in this batch
+        sup_edges: set[tuple[int, int]] = set()  # planned supersedes links (src, dst)
+        audit: dict[str, list[str]] = {"rebased": [], "already_satisfied": [], "replanned": []}
         # D-058 propose-only: an approved widen_scope stays approved until memory.answer by a
         # writer on both projects (it never reaches the actor here)
         todo = [
@@ -525,6 +611,15 @@ class LibrarianWorker:
             if a.proposal.get("kind") != "widen_scope"
             and not any(x.get("op") == "widen_scope" for x in actions)
         ]
+        epoch = datetime(1970, 1, 1, tzinfo=T.tzinfo)
+
+        def order(item: tuple[_Approved, list[dict[str, Any]]]) -> tuple[int, datetime, str]:
+            closes = [
+                parse_ts(x["valid_to"], field="valid_to") for x in item[1] if x.get("op") == "version_close"
+            ]
+            return (1, min(closes), item[0].question_id) if closes else (0, epoch, item[0].question_id)
+
+        todo.sort(key=order)
         await q.lock_logical_ids(conn, [lid for _a, actions in todo for lid in _logical_ids(actions)])
         T = max(T, await q.clock_now(conn))  # the last lock wait is over: the TTL against NOW
         for a, actions in todo:
@@ -535,27 +630,108 @@ class LibrarianWorker:
             assessed: dict[str, int] = {}
             for x in actions:
                 assessed.update(x.get("assessed") or {})
-            # stale, or a subject an earlier question of this batch already closed: superseded
-            if {int(k) for k in assessed} & planned["closed"] or await actor.is_stale(
-                conn, {"assessed": assessed}
-            ):
+            if await actor.is_stale(conn, {"assessed": assessed}):  # an external revision (G-Q3)
                 changes.append({"question_id": qid, "status": "superseded"})
                 superseded += 1
                 continue
+            conflict = legacy_close(proposal)
+            keep: list[dict[str, Any]] = []
+            redundant = 0
+            for x in actions:
+                if x.get("op") == "link_insert" and x.get("rel") == "supersedes":
+                    if (int(x["dst_logical_id"]), int(x["src_logical_id"])) in sup_edges:
+                        conflict = True  # the inverse supersession is planned in this batch
+                if x.get("op") == "version_close" and int(x["logical_id"]) in cuts:
+                    if parse_ts(x["valid_to"], field="valid_to") >= cuts[int(x["logical_id"])]:
+                        redundant += 1  # already closed at an earlier (or the same) cut
+                        continue
+                    conflict = True  # pragma: no cover - the dependency order prevents it
+                keep.append(x)
+            if conflict:
+                changes.append({"question_id": qid, "status": "superseded"})
+                superseded += 1
+                audit["replanned"].append(qid)
+                replans.extend(await self._replan(conn, job, a, assessed, cuts))
+                continue
+            chained = bool({int(k) for k in assessed} & set(cuts)) or redundant > 0
             caps = proposal.get("capabilities") or plan.capabilities
             try:
                 async with conn.transaction():  # savepoint: one question's failure applies nothing of it
                     ctx = await actor.recheck(conn, caps, CLIENT)
                     trial = {k: set(v) for k, v in planned.items()}
-                    recs, rec_at = await actor.materialize(conn, ctx, caps, actions, trial)
+                    recs, rec_at = await actor.materialize(conn, ctx, caps, keep, trial)
                 planned = trial
             except AuthorityLost:
                 changes.append({"question_id": qid, "status": "authority_lost"})
                 continue
+            for rec in recs:
+                if rec["op"] == "version_close":
+                    cuts[int(rec["logical_id"])] = parse_ts(rec["valid_to"], field="valid_to")
+                if rec["op"] == "link_insert" and rec["rel"] == "supersedes":
+                    sup_edges.add((int(rec["src_logical_id"]), int(rec["dst_logical_id"])))
+            for x in keep:  # an idempotent (already live) supersedes link still orders the batch
+                if x.get("op") == "link_insert" and x.get("rel") == "supersedes":
+                    sup_edges.add((int(x["src_logical_id"]), int(x["dst_logical_id"])))
+            if chained:
+                audit["rebased"].append(qid)
+            if not any(r["op"] != "signal_upsert" for r in recs):
+                audit["already_satisfied"].append(qid)
             records.extend(recs)
             recorded.extend(rec_at)
             changes.append({"question_id": qid, "status": "applied"})
-        return records, changes, superseded, recorded, T
+        for k, v in audit.items():
+            if v:
+                plan.request_extra[k] = v
+        return records, changes, superseded, recorded, T, replans
+
+    @staticmethod
+    async def _replan(
+        conn: AsyncConnection,
+        job: LeasedJob,
+        a: _Approved,
+        assessed: dict[str, int],
+        cuts: dict[int, datetime],
+    ) -> list[dict[str, Any]]:
+        """The re-plan of a conflicting (or legacy-close) approved question: a ``write_review`` of
+        its subject versions that stay current after this batch (not closed by it; not stale, which
+        the caller checked), under the question's proposing capabilities, with its OWN lineage."""
+        from hlmemo.librarian.jobs import job_spec
+        from hlmemo.librarian.tasks.write_review import MAX_VERSIONS
+        from hlmemo.librarian.tasks.write_review import OP as REVIEW
+
+        vids = sorted(int(v) for k, v in assessed.items() if int(k) not in cuts)
+        if not vids or a.home is None:
+            return []
+        cur = await conn.execute(
+            "SELECT version_id, kind FROM memory_versions WHERE version_id = ANY(%s)", (vids,)
+        )
+        kinds = {int(v): k for v, k in await cur.fetchall()}
+        key = f"librarian_replan:{a.question_id}:{job.dedupe_key}"
+        caps = a.proposal.get("capabilities") or {}
+        return [
+            job_spec(
+                kind="librarian_write",
+                dedupe_key=key,
+                priority=4,
+                payload={
+                    "op": REVIEW,
+                    "trigger": "replan",
+                    "replan_of": a.question_id,
+                    "versions": [
+                        {
+                            "version_id": v,
+                            "kind": kinds.get(v),
+                            "client_importance": None,
+                            "client_stability": True,
+                        }
+                        for v in vids[:MAX_VERSIONS]
+                    ],
+                    "project_id": a.home,
+                    "capabilities": caps,
+                    "lineage": str(uuid.uuid5(NS_LIBRARIAN, "lineage:" + key)),
+                },
+            )
+        ]
 
     async def _split_by_role(
         self, conn: AsyncConnection, live: list[_Approved]
@@ -613,6 +789,7 @@ class LibrarianWorker:
             batch_changes: list[dict[str, Any]] = []
             superseded = 0
             recorded: list[datetime] = []
+            replans: list[dict[str, Any]] = []
             detail: str | None = None
             if plan.op == "apply_batch" and outcome == "approved":
                 live, status_changes, T = await self._lock_approved(conn, plan, T)
@@ -628,8 +805,8 @@ class LibrarianWorker:
                 if deferred:
                     plan.request_extra["role_deferred"] = [a.question_id for a in deferred]
                 if ready:
-                    applied, changes, superseded, recorded, T = await self._apply_approved(
-                        conn, plan, ready, T
+                    applied, changes, superseded, recorded, T, replans = await self._apply_approved(
+                        conn, job, plan, ready, T
                     )
                     status_changes += changes
                     outcome = "applied" if applied else "superseded" if superseded else "no_change"
@@ -666,7 +843,7 @@ class LibrarianWorker:
             T = select_T(T, *recorded)  # a close supersedes rows: T is after every one of them
             for qn in questions:
                 qn["expires_at"] = actor.ts(T + actor.QUESTION_TTL)
-            extra_jobs = actor.close_embed_jobs(applied)
+            extra_jobs = [*actor.close_embed_jobs(applied), *replans]
             child_jobs = await assign_job_ids(conn, [*self._child_jobs(job, plan), *extra_jobs])
             # run_after as it stands now (a retry/backoff moved it): replay restores it (Sol 37 #8)
             cur = await conn.execute("SELECT run_after FROM jobs WHERE job_id = %s", (job.job_id,))
@@ -770,21 +947,47 @@ class LibrarianWorker:
             log.info("librarian: expired %s question(s)", n)
 
     async def run_forever(self, stop: asyncio.Event) -> None:
+        """The service loop: up to ``HLM_LIBRARIAN_CONCURRENCY`` jobs in flight (``run_slots``
+        semantics), with the sweep/expiry/heartbeat housekeeping between leases. On stop, no new
+        job is leased and the jobs in flight end their own way (lease-fenced)."""
         async with await self.connect() as conn:
             await check_role_at_start(conn, self.settings.librarian_role)
             await conn.commit()
-        while not stop.is_set():
-            leased = 0
-            try:
-                await self.maybe_sweep()
-                await self.maybe_expire()
-                leased = await self.run_once()
-                await self.heartbeat()
-            except Exception as exc:  # noqa: BLE001 - database hiccups: retry after a pause
-                log.error("librarian loop error: %s: %s", type(exc).__name__, exc)
-            if leased == 0:
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(stop.wait(), timeout=self.settings.librarian_poll_s)
+        in_flight: set[asyncio.Task[None]] = set()
+        try:
+            while not stop.is_set():
+                leased = 0
+                try:
+                    await self.maybe_sweep()
+                    await self.maybe_expire()
+                    while len(in_flight) < self.concurrency and not stop.is_set():
+                        job = await self.lease_one()
+                        if job is None:
+                            break
+                        in_flight.add(asyncio.create_task(self._guarded(job), name=f"librarian-{job.job_id}"))
+                        leased += 1
+                    await self.heartbeat()
+                except Exception as exc:  # noqa: BLE001 - database hiccups: retry after a pause
+                    log.error("librarian loop error: %s: %s", type(exc).__name__, exc)
+                if in_flight and len(in_flight) >= self.concurrency:
+                    # every slot busy: wake when one frees (or after a poll interval, for housekeeping)
+                    _done, in_flight = await asyncio.wait(
+                        in_flight, timeout=self.settings.librarian_poll_s, return_when=asyncio.FIRST_COMPLETED
+                    )
+                elif leased == 0:
+                    waiters: set[asyncio.Future[Any]] = {asyncio.ensure_future(stop.wait()), *in_flight}
+                    await asyncio.wait(
+                        waiters, timeout=self.settings.librarian_poll_s, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for w in waiters:
+                        if w not in in_flight and not w.done():
+                            w.cancel()
+                    in_flight = {t for t in in_flight if not t.done()}
+                else:
+                    in_flight = {t for t in in_flight if not t.done()}
+        finally:
+            if in_flight:
+                await asyncio.gather(*in_flight, return_exceptions=True)
 
 
 _HEARTBEAT_SQL = """
@@ -841,11 +1044,13 @@ def redact_dsn(dsn: str) -> str:
 
 
 @contextlib.asynccontextmanager
-async def open_pool(dsn: str) -> AsyncIterator[Any]:
-    """A small autocommit pool for the ledger and the reservations (own short transactions)."""
+async def open_pool(dsn: str, *, concurrency: int = 1) -> AsyncIterator[Any]:
+    """A small autocommit pool for the ledger and the reservations (own short transactions); it
+    grows with the number of concurrent jobs (each has at most one provider call in flight)."""
     from psycopg_pool import AsyncConnectionPool
 
-    pool = AsyncConnectionPool(dsn, min_size=1, max_size=4, kwargs={"autocommit": True}, open=False)
+    size = max(4, 2 * max(1, concurrency))
+    pool = AsyncConnectionPool(dsn, min_size=1, max_size=size, kwargs={"autocommit": True}, open=False)
     await pool.open()
     try:
         yield pool
@@ -885,12 +1090,13 @@ async def _amain() -> int:
         with contextlib.suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, stop.set)
     log.info(
-        "librarian: %s, role=%s, mode=%s, profile=%s, fallback=%s",
+        "librarian: %s, role=%s, mode=%s, profile=%s, fallback=%s, concurrency=%s",
         redact_dsn(settings.db_dsn),
         settings.librarian_role,
         settings.llm_mode,
         settings.profile,
         settings.fallback_profile,
+        settings.librarian_concurrency,
     )
     if not settings.librarian_enabled:
         await _idle(settings, connect, stop, "HLM_LIBRARIAN_ENABLED is false")
@@ -898,7 +1104,7 @@ async def _amain() -> int:
     if settings.llm_mode == "off":
         await _idle(settings, connect, stop, "HLM_LLM_MODE=off")
         return 0
-    async with open_pool(settings.db_dsn) as pool:
+    async with open_pool(settings.db_dsn, concurrency=settings.librarian_concurrency) as pool:
         provider = Provider.from_settings(settings, conn=pool.connection)
         budget = None if settings.llm_budget_disabled else provider.budget
         worker = LibrarianWorker(

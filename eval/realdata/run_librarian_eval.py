@@ -110,7 +110,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         report["backfill"] = await backfill(conn, args.project, device=args.device)
         await conn.commit()
     t0 = time.monotonic()
-    async with open_pool(args.dsn) as pool:
+    async with open_pool(args.dsn, concurrency=settings.librarian_concurrency) as pool:
         provider = Provider.from_settings(settings, conn=pool.connection)
         budget = provider.budget if isinstance(provider.budget, DbBudget) else None
         worker = LibrarianWorker(settings, provider=provider, connect=connect, budget=budget)
@@ -135,22 +135,29 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 
         try:
             report["review_jobs"] = await drain_all("review")
-            async with await connect() as conn:  # approve-all: every batch with open questions
-                cur = await conn.execute(
-                    "SELECT DISTINCT batch_id::text FROM librarian_questions WHERE project_id = %s"
-                    " AND status = 'open' ORDER BY 1",
-                    (project_id,),
-                )
-                batches = [r[0] for r in await cur.fetchall()]
-                approved = 0
-                for b in batches:
-                    summary = await record_batch_decision(
-                        conn, batch_id=b, approver=_ops_ctx("eval-approve-all"), decision="accept"
+            n_batches = n_approved = n_apply = 0
+            for rnd in range(max(1, args.approve_rounds)):
+                # approve-all: every batch with open questions (a later round approves the proposals
+                # of re-planned questions, D-076 staleness chains; default: one round)
+                async with await connect() as conn:
+                    cur = await conn.execute(
+                        "SELECT DISTINCT batch_id::text FROM librarian_questions WHERE project_id = %s"
+                        " AND status = 'open' ORDER BY 1",
+                        (project_id,),
                     )
-                    approved += summary["accepted"]
-                await conn.commit()
-            report["approved_batches"], report["approved_questions"] = len(batches), approved
-            report["apply_jobs"] = await drain_all("apply")
+                    batches = [r[0] for r in await cur.fetchall()]
+                    for b in batches:
+                        summary = await record_batch_decision(
+                            conn, batch_id=b, approver=_ops_ctx("eval-approve-all"), decision="accept"
+                        )
+                        n_approved += summary["accepted"]
+                    await conn.commit()
+                if not batches:
+                    break
+                n_batches += len(batches)
+                n_apply += await drain_all(f"apply{rnd}")
+            report["approved_batches"], report["approved_questions"] = n_batches, n_approved
+            report["apply_jobs"] = n_apply
         finally:
             await provider.aclose()
     report["librarian_seconds"] = round(time.monotonic() - t0, 1)
@@ -213,6 +220,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--env-file", default="", help="KEY=VALUE secrets (the repo .env), never echoed")
     ap.add_argument("--max-usd", type=float, default=3.0, help="runaway guard (hour/day/month caps)")
     ap.add_argument("--max-wait-s", type=float, default=3600.0, help="per drain phase")
+    ap.add_argument(
+        "--approve-rounds",
+        type=int,
+        default=1,
+        help="approve-all rounds (> 1: also approve the proposals of re-planned questions)",
+    )
     ap.add_argument("--out-dir", type=Path, required=True)
     ap.add_argument("--skip-embed", action="store_true")
     ap.add_argument("--skip-eval", action="store_true", help="librarian steps only")
