@@ -31,6 +31,7 @@ from hlmemo.librarian.provider import Clock, Provider
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.reserved import ReservedIds, ensure_reserved_rows
 from hlmemo.librarian.worker import LibrarianWorker
+from tests.integration._write_fixtures import replay_job_rows
 
 PRIMARY = "stub-primary"
 FALLBACK = "stub-fallback"
@@ -260,21 +261,32 @@ async def dump_full_jobs_and_questions(conn: psycopg.AsyncConnection) -> dict[st
 
     Librarian-era jobs are compared on EVERY column (``SELECT j.*``: job_id, lease columns,
     last_error, attempts, run_after, done_at, created_at …): their ids, completion time, attempts
-    and final run_after are recorded in events. Phase-0 embed jobs are written by the pre-existing
-    write path, which records neither ids nor creation time, so for those rows ``job_id`` and
-    ``created_at`` are masked (unchanged Phase-0 behaviour; not a W2a projection).
+    and final run_after are recorded in events. The rows are compared PAIRWISE
+    (``ReplayJobRow``, review 61): only a live job still QUEUED after a SYSTEMIC hand-back
+    (``last_error`` in ``worker.SYSTEMIC_HANDBACK_CODES``) against its replayed counterpart (the
+    same job with its event-recorded state only: ``last_error`` NULL, or the code of the recorded
+    back-off it followed) skips the two scheduling hints ``run_after``/``last_error`` — a hand-back
+    changes only those and writes no event (D-086 §2; the attempts are compared). A pristine
+    queued job (NULL on both sides) and a consumed back-off are compared on their raw fields.
+    Phase-0 embed jobs are written by the pre-existing write path, which records neither ids nor
+    creation time, so for those rows ``job_id`` and ``created_at`` are masked (unchanged Phase-0
+    behaviour; not a W2a projection).
     """
-    cur = await conn.execute(
-        """
-        SELECT CASE WHEN kind IN ('embed', 'reembed')
-                    THEN (NULL::bigint, kind, dedupe_key, payload::text, source_event_id, status, attempts,
-                          priority, run_after, done_at, lease_token, lease_until, last_error,
-                          NULL::timestamptz)::text
-                    ELSE j::text END
+    embed = """(NULL::bigint, kind, dedupe_key, payload::text, source_event_id, status, attempts,
+                priority, run_after, done_at, lease_token, lease_until, last_error,
+                NULL::timestamptz)::text"""
+    jobs = await replay_job_rows(
+        conn,
+        f"""
+        SELECT CASE WHEN kind IN ('embed', 'reembed') THEN {embed} ELSE j::text END,
+               CASE WHEN kind IN ('embed', 'reembed') THEN {embed}
+                    ELSE (job_id, kind, dedupe_key, payload::text, source_event_id, status, attempts,
+                          priority, NULL::timestamptz, done_at, lease_token, lease_until, NULL::text,
+                          created_at)::text END,
+               kind NOT IN ('embed', 'reembed'), status, last_error
           FROM jobs j ORDER BY dedupe_key
-        """
+        """,  # noqa: S608 - fixed fragments
     )
-    jobs = [r[0] for r in await cur.fetchall()]
     cur = await conn.execute("SELECT t::text FROM librarian_questions t ORDER BY question_id")
     return {"jobs": jobs, "librarian_questions": [r[0] for r in await cur.fetchall()]}
 

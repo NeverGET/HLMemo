@@ -46,7 +46,7 @@ from hlmemo.core.retrieval import (
     rrf_fuse,
     split_terms,
 )
-from hlmemo.core.supersession import newer_first_on_ties
+from hlmemo.core.supersession import demote_partially_superseded, newer_first_on_ties
 from hlmemo.core.temporal import fmt_ts, parse_opt_ts
 from hlmemo.core.term_stats import StatsCache
 from hlmemo.db import import_queries as iq
@@ -240,8 +240,9 @@ async def query_parts(
         pending = await q.indexing_pending(conn, project.project_id)
 
         ordered = dedupe_and_order(rrf_fuse(lexical, trigram, vector, title))
-        # D-057 (query/2): an applied `supersedes` link between two hits hides the superseded one
-        hidden = await lq.superseded_among(
+        # D-057 (query/2): an applied `supersedes` link between two hits hides the superseded one;
+        # a fact-level (scope=part, D-076) link only ranks the partly outdated item after it
+        hidden, partial = await lq.supersession_among(
             conn,
             [f.logical_id for f in ordered],
             pid=project.project_id,
@@ -257,6 +258,8 @@ async def query_parts(
         for f in head:
             f.row = rows[f.chunk_id]
         head = newer_first_on_ties(head)  # D-057: exact RRF tie, same title -> newer first
+        if partial:  # D-076 fact-level supersession, only for a query that matched the outdated span
+            head = demote_partially_superseded(head, partial, terms.terms)  # the 6a96ba1 term set
         librarian = await pending_block(conn, ctx, project.project_id, now)
 
         card: CardInput | None = None

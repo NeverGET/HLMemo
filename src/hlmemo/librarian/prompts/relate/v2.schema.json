@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "relate/v2",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 40},
+          "relation": {"enum": ["none", "duplicate", "refines", "contradicts"]},
+          "supersedes": {"enum": ["new", "old", "none"]},
+          "scope": {"enum": ["whole", "part", "none"]},
+          "refiner": {"enum": ["new", "old", "none"]},
+          "confidence": {"enum": ["low", "med", "high"]},
+          "new_quote": {"type": "string", "maxLength": 400},
+          "old_quote": {"type": "string", "maxLength": 400},
+          "replaced_statements": {
+            "type": "array",
+            "maxItems": 40,
+            "items": {"type": "string", "maxLength": 800}
+          },
+          "reason": {"type": "string", "maxLength": 600}
+        },
+        "required": ["id", "relation", "supersedes", "confidence"]
+      }
+    }
+  },
+  "required": ["results"]
+}

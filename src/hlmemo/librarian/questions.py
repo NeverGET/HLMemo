@@ -21,8 +21,9 @@ token_budget?}`` → an ack, in ONE transaction (PHASE2-4-ROADMAP W2c, CC-3, D-0
    questions are applied through the normal ``apply_batch`` path with the full recheck.
    ``accept`` otherwise: every item the actions touch is locked (the write path's per-item lock),
    THEN the cross-project policy is rechecked on the items' CURRENT projects (``authority_lost``,
-   reason ``policy_excluded``: nothing applied; Sol 54/55), then every assessed subject is
-   compared with its head; a revision since the
+   reason ``policy_excluded``: nothing applied; Sol 54/55), THEN the TTL once more against a fresh
+   clock (those lock waits can outlast it: ``E_VERSION_CONFLICT {expired}``, nothing recorded;
+   review 61), then every assessed subject is compared with its head; a revision since the
    proposal makes the question ``superseded`` and NOTHING is applied (G-Q3). Otherwise the
    proposed actions are applied as the answering device's act: links and the bi-temporal close
    through the actor's materialize/apply (recorded ids, replayed like every librarian mutation);
@@ -32,6 +33,9 @@ token_budget?}`` → an ack, in ONE transaction (PHASE2-4-ROADMAP W2c, CC-3, D-0
 5. **Every answer** is stored as a ``librarian-rule`` fact (``memory.write_rule``, rule text +
    clue refs only; a note that reproduces item text is dropped from the rule, D-062 overlap
    guard).
+6. **D-095:** the TTL is judged at the linearization point: after the widen and rule writes (their
+   lock waits included), immediately before the answer event, against a fresh clock. Past it the
+   WHOLE transaction rolls back (``E_VERSION_CONFLICT {expired}``): nothing is recorded.
 
 The answer event (kind ``answer``, schema_version 2) records the verbatim arguments as
 ``payload.request`` and the applied effects in ``payload.resolved`` (``question_status`` with the
@@ -57,7 +61,7 @@ from hlmemo.core.write_models import SLUG_RE, _Strict, parse_request
 from hlmemo.core.write_service import payload_sha256
 from hlmemo.db import write_queries as q
 from hlmemo.librarian import actor
-from hlmemo.librarian.events import NS_LIBRARIAN, SCHEMA_VERSION_SYSTEM, insert_system_event
+from hlmemo.librarian.events import NS_LIBRARIAN, SCHEMA_VERSION_SYSTEM, insert_system_event, lock_event_refs
 from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.reserved import reserved_ids
@@ -191,6 +195,7 @@ async def answer(
             answer_rec["note"] = note
         records: list[dict[str, Any]] = []
         jobs: list[dict[str, Any]] = []
+        refused: str | None = None
         recorded: list[datetime] = []
         applied: dict[str, Any] = {"links": 0, "closed": [], "widened": []}
         write_events: list[int] = []
@@ -201,6 +206,8 @@ async def answer(
             # the batch path applies it after a promotion, with the full recheck.
             new_status = "accepted_pending"
         elif request.decision == "accept":
+            from hlmemo.librarian.tasks.apply_batch import legacy_close
+
             assessed: dict[str, int] = {}
             for a in actions:
                 assessed.update(a.get("assessed") or {})
@@ -209,13 +216,26 @@ async def answer(
             # the widened item) has committed and is read by policy_blocked (CURRENT project_ids),
             # and nothing can revise those items until this answer commits
             await q.lock_logical_ids(conn, actor.action_logical_ids(actions))
-            if await actor.policy_blocked(conn, actions, union):
+            blocked = await actor.policy_blocked(conn, actions, union)  # project rows FOR SHARE
+            # review 61: the item and policy waits above can outlast the TTL checked before them.
+            # The LAST policy lock is held: the TTL again against a FRESH clock, before the staleness
+            # verdict and the event id; past it nothing is recorded (the same refusal as above)
+            if expires_at is not None and expires_at <= await q.clock_now(conn):
+                raise ToolError("E_VERSION_CONFLICT", "the question is expired", status="expired")
+            if blocked:
                 # the cross-project policy NOW forbids this relation (Sol 54 #2): nothing applied,
                 # not even an approved widen_scope; the question is closed as authority_lost
                 new_status = "authority_lost"
                 answer_rec["reason"] = actor.POLICY_EXCLUDED
             elif await actor.is_stale(conn, {"assessed": assessed}):
                 new_status = "superseded"
+            elif legacy_close(proposal):
+                # D-076: a whole-item close without the v2 evidence is never applied; the
+                # subjects are re-reviewed under the fact-level rule instead (Sol 54j #2)
+                new_status = "superseded"
+                jobs, refused = await _replan_job(
+                    conn, ctx, pid, qid, [int(v) for v in subject_vids], None, union
+                )
             else:
                 from hlmemo.librarian.errors import AuthorityLost
                 from hlmemo.librarian.trigger import capabilities_from_ctx
@@ -243,7 +263,9 @@ async def answer(
                 ]
                 jobs = actor.close_embed_jobs(records)
         elif request.decision == "custom":
-            jobs = await _replan_job(conn, ctx, pid, qid, [int(v) for v in subject_vids], note)
+            jobs, refused = await _replan_job(
+                conn, ctx, pid, qid, [int(v) for v in subject_vids], note, union
+            )
         rule_vid = await _rule(
             conn, kind, proposal, request.decision, note, list(clues), qid, request.request_id
         )
@@ -262,6 +284,15 @@ async def answer(
         used = _meter().settle(ack, budget)
         if used > budget:
             raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold the ack", min=used)
+        # D-095: the TTL is judged at the linearization point: EVERY lock this answer needs is held
+        # now (items, policy rows, the question row, the widen/rule writes' locks, the answer
+        # event's FK rows), so this fresh clock is the last one that matters. Past it the WHOLE
+        # transaction rolls back — the widen and rule writes included — and nothing is recorded.
+        # NO lock wait from this check to the event insert below: the event id is a sequence value
+        # and the (project, device, request_id) key is serialized by the request-key lock above.
+        await lock_event_refs(conn, pid, ctx.device_id)
+        if expires_at is not None and expires_at <= await q.clock_now(conn):
+            raise ToolError("E_VERSION_CONFLICT", "the question is expired", status="expired")
         (event_id,) = await q.allocate_ids(conn, "events", 1)
         resolved = {
             "recorded_at": fmt_ts(T),
@@ -273,6 +304,8 @@ async def answer(
             "batch_id": batch_id,
             "role": role,
         }
+        if refused:
+            resolved["replan_refused"] = refused
         await conn.execute(
             """
             INSERT INTO events (event_id, project_id, device_id, client, request_id, kind, schema_version,
@@ -360,23 +393,35 @@ async def _replan_job(
     question_id: str,
     subject_vids: list[int],
     note: str | None,
-) -> list[dict[str, Any]]:
-    """``custom``: re-plan = a ``write_review`` of the subjects that are still current, under the
-    ANSWERING device's capabilities; the owner's (redacted) note travels in this job's payload
-    only and is shown to the model as a rule of this one job."""
+    projects: set[int] | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """``custom`` (and a legacy close): re-plan = a ``write_review`` of the subjects that are still
+    current, under the ANSWERING device's capabilities; the owner's (redacted) note travels in
+    this job's payload only and is shown to the model as a rule of this one job.
+
+    Sol 56 #6: the capabilities cover EVERY project of the current subjects (and the question's
+    touched ``projects``): an admin/ops device's capability set is exactly the list it is given,
+    so a home-only set would lose a foreign subject at the privacy gate. If the answering device
+    cannot read a subject's project, nothing is enqueued and the reason is returned (recorded in
+    the answer event as ``replan_refused``). Returns ``(jobs, refused reason | None)``."""
     from hlmemo.librarian.tasks.write_review import MAX_VERSIONS, OP
     from hlmemo.librarian.trigger import capabilities_from_ctx, librarian_on
 
     if not await librarian_on(conn, project_id):
-        return []
+        return [], None
     cur = await conn.execute(
-        "SELECT version_id, kind FROM memory_versions WHERE version_id = ANY(%s)"
+        "SELECT version_id, kind, project_ids FROM memory_versions WHERE version_id = ANY(%s)"
         " AND superseded_at = 'infinity' AND valid_to = 'infinity' AND status = 'active' ORDER BY version_id",
         (list(subject_vids),),
     )
     current = await cur.fetchall()
     if not current:
-        return []
+        return [], None
+    subject_projects = {int(p) for _v, _k, pids in current for p in pids}
+    unreadable = sorted(p for p in subject_projects if not ctx.has(p, Role.READ))
+    if unreadable:
+        return [], f"no read grant on subject project(s) {unreadable}"
+    caps = capabilities_from_ctx(ctx, sorted({project_id, *(projects or set()), *subject_projects}))
     key = f"librarian_replan:{question_id}"
     return [
         job_spec(
@@ -389,15 +434,15 @@ async def _replan_job(
                 "replan_of": question_id,
                 "versions": [
                     {"version_id": int(v), "kind": k, "client_importance": None, "client_stability": True}
-                    for v, k in current[:MAX_VERSIONS]
+                    for v, k, _pids in current[:MAX_VERSIONS]
                 ],
                 "project_id": project_id,
-                "capabilities": capabilities_from_ctx(ctx, [project_id]),
+                "capabilities": caps,
                 "lineage": str(uuid.uuid5(NS_LIBRARIAN, "lineage:" + key)),
                 **({"owner_note": note[:500]} if note else {}),
             },
         )
-    ]
+    ], None
 
 
 def rule_text(kind: str, proposal: dict[str, Any], decision: str, clues: list[str]) -> str:
@@ -497,8 +542,9 @@ def notice_text(kind: str, clues: list[str], proposal: dict[str, Any]) -> str:
         return f"widen_scope: {b} (another project) may also apply here ({rel} of {a})"
     if kind == "contradiction":
         sup = proposal.get("supersedes")
+        part = " part of" if proposal.get("scope") == "part" else ""  # D-076 fact-level
         tail = (
-            f"; proposed: {a if sup == 'new' else b} supersedes {b if sup == 'new' else a}"
+            f"; proposed: {a if sup == 'new' else b} supersedes{part} {b if sup == 'new' else a}"
             if sup
             in (
                 "new",

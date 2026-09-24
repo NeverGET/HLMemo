@@ -359,6 +359,387 @@ async def test_sol49_promotion_job_survives_an_observer_worker(
     await _replay_identical(connect)
 
 
+async def test_sol50_promotion_selects_by_the_actions_current_projects(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Sol 50 / D-077 prerequisite: an accepted_pending answer whose action LATER touches project C
+    (the old item is widened into C after the answer; C carries an observer override) is not
+    released by the deployment promotion (C is observer), and it IS re-queued when C itself is
+    promoted — the recorded question projects ({MAIN}) no longer filter the selection. The apply's
+    recheck then finds the widened (revised) subject and supersedes it: never stranded. A project
+    decision on a project the action does not touch releases nothing. Replay identical."""
+    from hlmemo.librarian.roles import record_role_decision
+
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
+    async with await connect() as conn:  # project C (+ an unrelated D), dev-a may write in C
+        cur = await conn.execute(
+            "INSERT INTO projects (slug, name) VALUES ('g6-third', 'Third'), ('g6-fourth', 'Fourth')"
+            " RETURNING project_id"
+        )
+        c_id, d_id = [r[0] for r in await cur.fetchall()]
+        await conn.execute(
+            "INSERT INTO device_project_grants (device_id, project_id, role, granted_by_device_id)"
+            " VALUES (%s, %s, 'write', 1)",
+            (world.dev_a, c_id),
+        )
+        await record_role_decision(
+            conn, role="observer", decided_by=world.ctx_admin, decision="D-c", project_id=c_id
+        )
+        await conn.commit()
+    ctx_a = AuthContext(
+        world.dev_a, "personal", False, 1, {**world.ctx_a.grants, c_id: Role.WRITE}, "pytest/0"
+    )
+    await write_items(  # the action's old item now also lives in C (current rows)
+        connect,
+        ctx_a,
+        MAIN,
+        [
+            item(
+                *OLD,
+                valid_from=D_OLD,
+                logical_id=old.logical_id,
+                expected_version_id=old.version_id,
+                project_ids=[MAIN, "g6-third"],
+            )
+        ],
+    )
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT project_ids FROM librarian_questions WHERE question_id = %s", (qid,))
+        assert (await cur.fetchone())[0] == [world.main_id]  # the RECORDED projects never saw C
+    released = await _promote(connect, world)  # deployment assistant: C is still observer
+    assert "jobs" not in released
+    async with await connect() as conn:  # an unrelated project's promotion releases nothing
+        event_id = await record_role_decision(
+            conn, role="assistant", decided_by=world.ctx_admin, decision="D-d", project_id=d_id
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT payload->'resolved' ? 'jobs' FROM events WHERE event_id = %s", (event_id,)
+        )
+        assert (await cur.fetchone())[0] is False
+        event_id = await record_role_decision(  # promoting C re-queues it (the old SQL filter missed it)
+            conn, role="assistant", decided_by=world.ctx_admin, decision="D-c2", project_id=c_id
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->'jobs' FROM events WHERE event_id = %s", (event_id,)
+        )
+        (jobs,) = await cur.fetchone()
+        assert [j["payload"]["op"] for j in jobs] == ["apply_batch"]
+        assert jobs[0]["dedupe_key"].endswith(f":promo{event_id}")
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    assert await worker.drain() >= 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions WHERE question_id = %s", (qid,))
+        assert await cur.fetchone() == ("superseded",)  # released and rechecked, not stranded
+        assert await count(conn, "links") == 0
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def _rescope(connect, ctx: AuthContext, old: Any, projects: list[str], deps: Any = None) -> None:  # noqa: ANN001
+    """Revise OLD's projects (a widen or a narrow) at its current head."""
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT max(version_id) FROM memory_versions WHERE logical_id = %s"
+            " AND superseded_at = 'infinity'",
+            (old.logical_id,),
+        )
+        (head,) = await cur.fetchone()
+        await conn.rollback()
+    await write_items(
+        connect,
+        ctx,
+        MAIN,
+        [
+            item(
+                *OLD,
+                valid_from=D_OLD,
+                logical_id=old.logical_id,
+                expected_version_id=head,
+                project_ids=projects,
+            )
+        ],
+        deps=deps,
+    )
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        "promote_then_narrow",  # the narrowing revision's release job applies it
+        "narrow_then_promote",  # the deployment promotion re-evaluates every pending answer
+        "narrow_promote_c_then_deployment",  # C's promotion (no longer touched) then the deployment
+        "sweeper",  # the narrowing wrote no release job (librarian off then): the sweeper catches it
+    ],
+)
+async def test_sol56_scope_churn_never_strands_an_answer(
+    db_dsn, connect, world: World, embedder, order: str
+) -> None:  # noqa: ANN001
+    """Sol 56 #1: the action widens into observer project C, then a revision removes C again. In
+    every order of revisions and promotions the accepted_pending answer ends applied or explicitly
+    superseded (reason recorded), never stuck pending. Replay identical."""
+    import dataclasses
+
+    from hlmemo.core.write_service import default_deps
+    from hlmemo.librarian.roles import record_role_decision
+
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "INSERT INTO projects (slug, name) VALUES ('g6-third', 'Third') RETURNING project_id"
+        )
+        (c_id,) = await cur.fetchone()
+        await conn.execute(
+            "INSERT INTO device_project_grants (device_id, project_id, role, granted_by_device_id)"
+            " VALUES (%s, %s, 'write', 1)",
+            (world.dev_a, c_id),
+        )
+        await record_role_decision(
+            conn, role="observer", decided_by=world.ctx_admin, decision="D-c", project_id=c_id
+        )
+        await conn.commit()
+    ctx_a = AuthContext(
+        world.dev_a, "personal", False, 1, {**world.ctx_a.grants, c_id: Role.WRITE}, "pytest/0"
+    )
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(
+        lib_settings(db_dsn, librarian_role="assistant", librarian_embed_wait_s=0), provider, connect
+    )
+
+    async def promote(project_id: int | None = None) -> None:
+        async with await connect() as conn:
+            await record_role_decision(
+                conn, role="assistant", decided_by=world.ctx_admin, decision="D-p", project_id=project_id
+            )
+            await conn.commit()
+
+    await _rescope(connect, ctx_a, old, [MAIN, "g6-third"])  # the action now touches C (observer)
+    if order == "promote_then_narrow":
+        await promote()
+        await worker.drain()
+        await _rescope(connect, ctx_a, old, [MAIN])
+    elif order == "narrow_then_promote":
+        await _rescope(connect, ctx_a, old, [MAIN])
+        await worker.drain()  # the release job: the deployment is still observer, nothing yet
+        await promote()
+    elif order == "narrow_promote_c_then_deployment":
+        await _rescope(connect, ctx_a, old, [MAIN])
+        await worker.drain()
+        await promote(c_id)  # C is no longer touched; the deployment is still observer
+        await worker.drain()
+        await promote()
+    else:  # sweeper
+        await promote()
+        await worker.drain()
+        silent = dataclasses.replace(default_deps(), librarian_enqueue=False)  # no release job
+        await _rescope(connect, ctx_a, old, [MAIN], deps=silent)
+        await worker.drain()
+        async with await connect() as conn:
+            cur = await conn.execute("SELECT status FROM librarian_questions WHERE question_id = %s", (qid,))
+            assert await cur.fetchone() == ("accepted_pending",)  # nothing else would release it
+        assert await worker.maybe_release(force=True) == 1
+    await worker.drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions WHERE question_id = %s", (qid,))
+        assert await cur.fetchone() == ("superseded",)  # its subject was revised: explicitly superseded
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->'question_status' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+            " AND payload->'resolved'->'question_status' @> %s::jsonb",
+            (f'[{{"question_id": "{qid}", "status": "superseded"}}]',),
+        )
+        [(changes,)] = await cur.fetchall()
+        assert [c.get("reason") for c in changes if c["question_id"] == qid] == ["stale"]
+        cur = await conn.execute("SELECT count(*) FROM librarian_questions WHERE status = 'accepted_pending'")
+        assert (await cur.fetchone())[0] == 0
+        assert await count(conn, "links") == 0
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def _inject_legacy(
+    connect, qid: str, legacy: list[tuple[str, str, dict[str, Any]]], widen_batch: bool = False
+) -> list[str]:  # noqa: ANN001
+    """W2a-format (``proposal.mutation``, no ``actions``) accepted_pending questions next to question
+    ``qid`` (same job/project/subjects), recorded through a ``librarian`` event so replay rebuilds
+    them. ``legacy``: ``[(kind, status, proposal)]``; ``widen_batch`` puts them in a batch of their
+    own (decided) instead of ``qid``'s batch."""
+    from hlmemo.core.temporal import fmt_ts
+    from hlmemo.db import write_queries as q
+    from hlmemo.librarian.actor import apply_batch_changes, insert_questions
+    from hlmemo.librarian.events import CLIENT, insert_system_event
+    from hlmemo.librarian.reserved import reserved_ids
+
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT job_key, batch_id::text, project_id, project_ids, subject_clues, subject_version_ids,"
+            " expires_at FROM librarian_questions WHERE question_id = %s",
+            (qid,),
+        )
+        job_key, batch, pid, pids, clues, vids, expires = await cur.fetchone()
+        batches: list[dict[str, Any]] = []
+        if widen_batch:
+            batch = str(uuid.uuid4())
+            batches = [{"batch_id": batch, "project_id": pid, "status": "decided", "created": True}]
+        rows = [
+            {
+                "question_id": str(uuid.uuid4()),
+                "job_key": job_key,
+                "batch_id": batch,
+                "project_id": pid,
+                "project_ids": list(pids),
+                "kind": kind,
+                "subject_clues": list(clues),
+                "subject_version_ids": list(vids),
+                "proposal": proposal,
+                "status": status,
+                "expires_at": fmt_ts(expires),
+            }
+            for kind, status, proposal in legacy
+        ]
+        at = await q.clock_now(conn)
+        ids = await reserved_ids(conn)
+        event_id = await insert_system_event(
+            conn,
+            kind="librarian",
+            project_id=pid,
+            device_id=ids.librarian_device_id,
+            client=CLIENT,
+            request_id=uuid.uuid4(),
+            request={"op": "test_inject_legacy"},
+            resolved={"recorded_at": fmt_ts(at), "questions": rows, "batches": batches},
+            at=at,
+        )
+        await apply_batch_changes(conn, batches, event_id, at)
+        await insert_questions(conn, rows, event_id, at)
+        await conn.commit()
+    return [r["question_id"] for r in rows]
+
+
+@pytest.mark.parametrize("path", ["promotion", "release", "sweeper"])
+async def test_review60_legacy_mutation_answers_are_released_widens_never(
+    db_dsn, connect, world: World, embedder, path: str
+) -> None:  # noqa: ANN001
+    """Review 60 #1 (D-077): an accepted_pending answer stored in the W2a format (``mutation``, no
+    ``actions``) is picked by a promotion, by a project-scope revision's release job and by the
+    sweeper (a SQL filter on ``actions`` used to drop it as NULL); a legacy-format widen (kind
+    widen_scope, or a widen mutation under another kind) is never auto-released (D-086 §1)."""
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT proposal FROM librarian_questions WHERE question_id = %s", (qid,))
+        (prop,) = await cur.fetchone()
+    caps = prop["capabilities"]
+    link = next(a for a in prop["actions"] if a.get("rel") == "contradicts")
+    widen = {
+        "op": "widen_scope",
+        "logical_id": old.logical_id,
+        "version_id": old.version_id,
+        "add_project_ids": [world.other_id],
+        "assessed": link["assessed"],
+    }
+    if path != "promotion":  # the deployment is assistant already: nothing pending gets released now
+        assert "jobs" not in await _promote(connect, world)
+    [legacy_id] = await _inject_legacy(
+        connect, qid, [("contradiction", "accepted_pending", {"mutation": link, "capabilities": caps})]
+    )
+    widen_ids = await _inject_legacy(
+        connect,
+        qid,
+        [
+            ("widen_scope", "accepted_pending", {"mutation": widen, "capabilities": caps}),
+            ("link", "accepted_pending", {"mutation": widen, "capabilities": caps}),
+        ],
+        widen_batch=True,
+    )
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(
+        lib_settings(db_dsn, librarian_role="assistant", librarian_embed_wait_s=0), provider, connect
+    )
+    if path == "promotion":
+        released = await _promote(connect, world)
+        assert [j["payload"]["op"] for j in released["jobs"]] == ["apply_batch"]
+    elif path == "release":  # a revision that changes the projects of the item the mutation names
+        await write_items(
+            connect,
+            world.ctx_a,
+            MAIN,
+            [
+                item(
+                    *OLD,
+                    valid_from=D_OLD,
+                    logical_id=old.logical_id,
+                    expected_version_id=old.version_id,
+                    project_ids=[MAIN, OTHER],
+                )
+            ],
+        )
+    else:
+        assert await worker.maybe_release(force=True) == 1
+    await worker.drain()
+    for _period in range(3):  # afterwards nothing is left to release: no loop over the widens
+        assert await worker.maybe_release(force=True) == 0
+        await worker.drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT status FROM librarian_questions WHERE question_id = %s", (legacy_id,)
+        )
+        (status,) = await cur.fetchone()
+        # picked and applied (promotion, sweeper); via the revision its subject changed: superseded
+        assert status == ("superseded" if path == "release" else "applied")
+        cur = await conn.execute(
+            "SELECT status FROM librarian_questions WHERE question_id = ANY(%s::uuid[])", (widen_ids,)
+        )
+        assert [r[0] for r in await cur.fetchall()] == ["accepted_pending", "accepted_pending"]
+        cur = await conn.execute(
+            "SELECT count(*) FROM jobs WHERE payload->>'op' = 'apply_batch'"
+            " AND payload->>'batch_id' IN (SELECT batch_id::text FROM librarian_questions"
+            "  WHERE question_id = ANY(%s::uuid[]))",
+            (widen_ids,),
+        )
+        assert (await cur.fetchone())[0] == 0  # the widen batch was never queued
+        if path != "release":
+            cur = await conn.execute("SELECT rel FROM links ORDER BY link_id")
+            assert [r[0] for r in await cur.fetchall()] == ["contradicts"]
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_sol54j_a_running_apply_job_does_not_absorb_a_release(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """A RUNNING apply job of the batch may have planned before the answer existed: a promotion
+    still enqueues its own apply job (only a QUEUED one, which has not planned yet, absorbs it)."""
+    from hlmemo.librarian.jobs import enqueue
+    from hlmemo.librarian.roles import apply_job
+
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT batch_id::text FROM librarian_questions WHERE question_id = %s", (qid,)
+        )
+        (batch,) = await cur.fetchone()
+        spec = apply_job(batch, world.main_id, {}, ":inflight")
+        await enqueue(conn, project_id=world.main_id, trigger_device_id=world.dev_a, specs=[spec])
+        await conn.execute(  # an apply job mid-flight (leased elsewhere, lease still valid)
+            "UPDATE jobs SET status = 'running', lease_token = gen_random_uuid(),"
+            " lease_until = now() + interval '1 hour'"
+            " WHERE dedupe_key = %s",
+            (spec["dedupe_key"],),
+        )
+        await conn.commit()
+    released = await _promote(connect, world)
+    assert [j["payload"]["op"] for j in released["jobs"]] == ["apply_batch"]
+    assert released["jobs"][0]["dedupe_key"] != spec["dedupe_key"]
+
+
 async def test_gq1_accept_applies_directly_in_assistant(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
     """Promoted (decision + configured assistant): memory.answer applies as the answering device."""
     old, new, [(qid, _kind)] = await _propose(db_dsn, connect, world, embedder)
@@ -413,6 +794,37 @@ async def test_gq1_reject_and_custom_replan(db_dsn, connect, world: World, embed
     assert all(
         "Owner note for this re-check: Both hosts exist." in r["messages"][1]["content"] for r in replan
     )
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_sol56_admin_custom_replan_keeps_foreign_subjects(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Sol 56 #6: an admin (ops) device's capability set is exactly the project list it is given.
+    A custom answer on a cross-project question (OLD lives in OTHER) re-plans BOTH subjects: the
+    re-plan job carries the capabilities of every subject project, so the privacy gate lets the
+    foreign subject through (it used to be denied as not in the capabilities)."""
+    old, new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder, other_old=True)
+    ack = await _answer(connect, world.ctx_admin, _args(qid, "custom", note="Check both hosts."))
+    assert ack["status"] == "answered"
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT payload->'capabilities'->'question' FROM jobs WHERE dedupe_key = %s",
+            (f"librarian_replan:{qid}",),
+        )
+        assert sorted((await cur.fetchone())[0]) == sorted([world.main_id, world.other_id])
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT payload->'request'->'subjects', payload->'request'->'denied_subjects' FROM events"
+            " WHERE kind = 'librarian' AND payload->'resolved'->'done'->>'dedupe_key' = %s",
+            (f"librarian_replan:{qid}",),
+        )
+        subjects, denied = await cur.fetchone()
+    assert sorted(subjects) == sorted([f"v{old.version_id}", f"v{new.version_id}"]) and denied is None
     await embed(connect, embedder)
     await _replay_identical(connect)
 
@@ -485,6 +897,11 @@ async def test_gq2_authorization_matrix(db_dsn, connect, world: World, embedder)
 
 
 async def test_gq2_widen_scope_accept_needs_write_on_both(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """D-058/D-086 §1: an accepted widen is applied ONLY by an explicit owner ``memory.answer``
+    from a device with write on both projects: a promotion, release jobs and the sweeper never
+    requeue it (no loop over several sweeper periods); it is listed as awaiting ``owner_apply``."""
+    from hlmemo.ops.librarian import questions_list
+
     lesson_o = ("Heredoc over ssh", "Never pipe a heredoc into ssh with bash -s: stdin is swallowed.")
     lesson_m = ("ssh stdin heredoc", "bash -s over ssh with a heredoc swallows stdin; do not do it.")
     (o,) = await write_items(
@@ -507,7 +924,21 @@ async def test_gq2_widen_scope_accept_needs_write_on_both(db_dsn, connect, world
     ack = await _answer(connect, world.ctx_a, _args(qid, "accept"))  # observer: a label, no widening
     assert ack["status"] == "accepted_pending" and ack["applied"]["widened"] == []
     assert await _user_state(connect, world) == before
-    await _promote(connect, world)  # the batch path never widens (D-058): a writer on both answers
+    released = await _promote(connect, world)  # the batch path never widens (D-058/D-086)
+    assert "jobs" not in released
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    for _period in range(3):  # several sweeper periods: nothing is requeued, no event written
+        assert await worker.maybe_release(force=True) == 0
+        await worker.drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        assert await count(conn, "jobs", "payload->>'op' = 'apply_batch'") == 0
+        assert await count(conn, "events", "payload->'request'->>'op' = 'release_pending'") == 0
+        [listed] = [r for r in await questions_list(conn, None, None) if r["question_id"] == qid]
+        await conn.rollback()
+    assert (listed["status"], listed["awaiting"]) == ("accepted_pending", "owner_apply")
+    assert await _user_state(connect, world) == before
     ack = await _answer(connect, world.ctx_a, _args(qid, "accept"), role="assistant")
     assert ack["status"] == "applied" and len(ack["applied"]["widened"]) == 1
     async with await connect() as conn:
@@ -609,8 +1040,11 @@ async def test_sol44_approved_widen_expires_too(db_dsn, connect, world: World, e
 
 
 async def test_sol44_conflicting_batch_questions(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
-    """Two approved proposals both close the same item: the first applies, the second is
-    superseded, the job completes (it used to fail at apply and roll the whole batch back)."""
+    """Two approved proposals both close the same item (NEW at June, s2 at July): the job
+    completes (it used to fail at apply and roll the whole batch back, Sol 44). D-076 staleness
+    chains: the dependency order applies the EARLIEST cut first, and the second question is
+    rebased instead of dropped — its redundant close is skipped, its links apply; OLD is closed
+    exactly once, at June."""
     from hlmemo.librarian.roles import record_batch_decision, record_role_decision
 
     s2 = ("Deploy host moved again", "Production later moved to a second Hostinger VPS in Vilnius.")
@@ -638,13 +1072,21 @@ async def test_sol44_conflicting_batch_questions(db_dsn, connect, world: World, 
     await provider.aclose()
     async with await connect() as conn:
         cur = await conn.execute("SELECT status, count(*) FROM librarian_questions GROUP BY 1 ORDER BY 1")
-        assert await cur.fetchall() == [("applied", 1), ("superseded", 1)]
+        assert await cur.fetchall() == [("applied", 2)]
         cur = await conn.execute(
-            "SELECT count(*) FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'"
+            "SELECT valid_to FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'"
             " AND valid_to <> 'infinity'",
             (old.logical_id,),
         )
-        assert await cur.fetchone() == (1,)  # closed exactly once
+        assert await cur.fetchall() == [(datetime(2026, 6, 1, tzinfo=UTC),)]  # once, at the EARLIEST cut
+        cur = await conn.execute("SELECT rel, count(*) FROM links GROUP BY 1 ORDER BY 1")
+        assert await cur.fetchall() == [("contradicts", 2), ("supersedes", 2)]
+        cur = await conn.execute(
+            "SELECT payload->'request'->'rebased' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+        )
+        (rebased,) = await cur.fetchone()
+        assert len(rebased) == 1  # the July proposal, rebased on the June close
         assert await count(conn, "jobs", "kind = 'librarian_write' AND status <> 'done'") == 0
     await embed(connect, embedder)
     await _replay_identical(connect)
@@ -926,3 +1368,252 @@ async def test_sol46_apply_batch_takes_the_device_lock_before_item_locks(
         assert await cur.fetchall() == [("applied",)]
     await embed(connect, embedder)
     await _replay_identical(connect)
+
+
+# --------------------------------------------------------------------------- review 61: TTL vs lock waits
+async def _lock_waits(connect, n: int) -> None:  # noqa: ANN001
+    """Wait until ``n`` backends of THIS database wait on a heavyweight lock (row or advisory)."""
+    import asyncio
+
+    for _ in range(200):
+        async with await connect() as conn:
+            cur = await conn.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+                " AND wait_event_type = 'Lock'"
+            )
+            (k,) = await cur.fetchone()
+            await conn.rollback()
+        if k >= n:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"expected {n} lock waits")
+
+
+async def _expire_in(connect, qid: str, seconds: int) -> None:  # noqa: ANN001
+    async with await connect() as conn:
+        await conn.execute(
+            "UPDATE librarian_questions SET expires_at = clock_timestamp() + make_interval(secs => %s)"
+            " WHERE question_id = %s",
+            (seconds, qid),
+        )
+        await conn.commit()
+
+
+async def _hold(blocker, lock: str, world: World, logical_id: int) -> None:  # noqa: ANN001
+    """``policy``: a cross-project policy change in flight (``ops project policy set`` updates the
+    project row; its row lock conflicts with the apply's ``FOR SHARE``); ``item``: a write in
+    flight on the subject (the write path's per-item lock)."""
+    if lock == "policy":
+        await blocker.execute("UPDATE projects SET policy = policy WHERE project_id = %s", (world.other_id,))
+    else:
+        await blocker.execute("SELECT pg_advisory_xact_lock(%s::bigint)", (logical_id,))
+
+
+async def _nothing_applied(connect) -> None:  # noqa: ANN001
+    async with await connect() as conn:
+        assert await count(conn, "links") == 0
+        assert await count(conn, "memory_versions", "superseded_at <> 'infinity'") == 0  # no close
+
+
+async def test_review61_apply_batch_rechecks_the_ttl_after_the_policy_lock_wait(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Review 61 (HIGH): an approved cross-project question passes the TTL after the item locks,
+    then its policy read (the project rows ``FOR SHARE``) waits for a policy change in flight and
+    expires during that wait. The fresh-clock recheck after the LAST policy lock makes it
+    ``expired``: no link, no close, and the job's event records no mutation."""
+    import asyncio
+
+    from hlmemo.librarian.roles import record_batch_decision
+
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder, other_old=True)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.commit()
+    await _promote(connect, world)  # both projects assistant: the apply is not role-deferred
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    async with await connect() as blocker:
+        await _hold(blocker, "policy", world, old.logical_id)
+        await _expire_in(connect, qid, 2)
+        applying = asyncio.create_task(worker.drain())
+        await _lock_waits(connect, 1)  # device, question and item locks taken: the policy read waits
+        await asyncio.sleep(2.5)  # the question expires during the wait
+        await blocker.rollback()
+        assert await asyncio.wait_for(applying, 30) == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("expired",)]
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->>'outcome', payload->'resolved'->'mutations',"
+            " payload->'resolved'->'question_status' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+        )
+        assert await cur.fetchall() == [("no_change", [], [{"question_id": qid, "status": "expired"}])]
+    await _nothing_applied(connect)
+
+
+@pytest.mark.parametrize("lock", ["item", "policy"])
+async def test_review61_answer_rechecks_the_ttl_after_the_item_and_policy_lock_waits(
+    db_dsn, connect, world: World, embedder, lock: str
+) -> None:  # noqa: ANN001
+    """Review 61 (HIGH), the direct ``memory.answer`` apply: the TTL passed at the top, then the
+    answer waits for a subject's item lock or for the policy rows' ``FOR SHARE``, and the question
+    expires during the wait: ``E_VERSION_CONFLICT {expired}``, nothing applied, no answer event."""
+    import asyncio
+
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder, other_old=True)
+    await _promote(connect, world)
+
+    async def answering() -> ToolError | dict[str, Any]:
+        try:
+            return await _answer(connect, world.ctx_a, _args(qid, "accept"), role="assistant")
+        except ToolError as exc:
+            return exc
+
+    async with await connect() as blocker:
+        await _hold(blocker, lock, world, old.logical_id)
+        await _expire_in(connect, qid, 2)
+        task = asyncio.create_task(answering())
+        await _lock_waits(connect, 1)
+        await asyncio.sleep(2.5)  # the question expires during the wait
+        await blocker.rollback()
+        res = await asyncio.wait_for(task, 30)
+    assert isinstance(res, ToolError), res
+    assert res.code == "E_VERSION_CONFLICT" and res.details["status"] == "expired"
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("open",)]  # the expiry sweep records it, not a refused answer
+        assert await count(conn, "events", "kind = 'answer'") == 0
+    await _nothing_applied(connect)
+
+
+# --------------------------------------------------------------------------- D-095: linearization point
+async def test_d095_apply_batch_judges_the_ttl_after_the_batch_row_lock(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """D-095 (consult 62): the apply passes every TTL check up to its policy locks, then waits for
+    the batch row (``FOR UPDATE``, the last lock of an apply) held by a concurrent batch writer, and
+    the question expires during that wait. The final fresh-clock check at the linearization point
+    makes it ``expired``: the batch is re-planned without it, nothing is applied, and the job's
+    event records no mutation."""
+    import asyncio
+
+    from hlmemo.librarian.roles import record_batch_decision
+
+    _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
+        (batch,) = await cur.fetchone()
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.commit()
+    await _promote(connect, world)
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
+    async with await connect() as blocker:
+        await blocker.execute("SELECT 1 FROM librarian_batches WHERE batch_id = %s FOR UPDATE", (batch,))
+        await _expire_in(connect, qid, 2)
+        applying = asyncio.create_task(worker.drain())
+        await _lock_waits(connect, 1)  # every other lock taken: the apply waits for the batch row
+        await asyncio.sleep(2.5)  # the question expires during the wait
+        await blocker.rollback()
+        assert await asyncio.wait_for(applying, 30) == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions")
+        assert await cur.fetchall() == [("expired",)]
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->>'outcome', payload->'resolved'->'mutations',"
+            " payload->'resolved'->'question_status' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+        )
+        assert await cur.fetchall() == [("no_change", [], [{"question_id": qid, "status": "expired"}])]
+    await _nothing_applied(connect)
+    # (no replay identity here: expires_at was moved in the projection only, as a test shortcut)
+
+
+def _widen_question_items() -> tuple[tuple[str, str], tuple[str, str], Oracle]:
+    lesson_o = ("Heredoc over ssh", "Never pipe a heredoc into ssh with bash -s: stdin is swallowed.")
+    lesson_m = ("ssh stdin heredoc", "bash -s over ssh with a heredoc swallows stdin; do not do it.")
+    return lesson_o, lesson_m, Oracle(relations={(lesson_m[0], lesson_o[0]): ("refines", "none", "high")})
+
+
+@pytest.mark.parametrize("write", ["rule", "widen"])
+async def test_d095_answer_judges_the_ttl_after_the_rule_and_widen_writes(
+    db_dsn, connect, world: World, embedder, write: str
+) -> None:  # noqa: ANN001
+    """D-095 (consult 62): an assistant-role accept passes every TTL check up to its policy lock,
+    then its own writes wait — the ``librarian-rule`` fact's request-key lock (every answer), or
+    the widen revision's (``widen_scope``) — and the question expires during that wait. The final
+    check before the answer event rolls back the WHOLE transaction: ``E_VERSION_CONFLICT
+    {expired}``, no rule fact, no widened version, no write or answer event, no link or close."""
+    import asyncio
+
+    from hlmemo.librarian.events import NS_LIBRARIAN
+    from hlmemo.librarian.reserved import reserved_ids
+
+    if write == "rule":
+        _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+        widened = None
+    else:
+        lesson_o, lesson_m, oracle = _widen_question_items()
+        (widened,) = await write_items(
+            connect, world.ctx_a, OTHER, [{**item(*lesson_o, valid_from=D_OLD), "kind": "lesson"}]
+        )
+        await write_items(connect, world.ctx_a, MAIN, [{**item(*lesson_m), "kind": "lesson"}])
+        await embed(connect, embedder)
+        provider = make_provider(db_dsn, ScriptedLLM(default=oracle), budget_disabled=True)
+        await make_worker(lib_settings(db_dsn), provider, connect).drain()
+        await provider.aclose()
+        async with await connect() as conn:
+            cur = await conn.execute(
+                "SELECT question_id::text FROM librarian_questions WHERE kind = 'widen_scope'"
+            )
+            (qid,) = await cur.fetchone()
+    await _promote(connect, world)
+    args = _args(qid, "accept")
+    async with await connect() as conn:
+        ids = await reserved_ids(conn)
+        writes_before = await count(conn, "events", "kind = 'write'")
+        versions_before = await count(conn, "memory_versions")
+        await conn.rollback()
+    if widened is None:  # memory.write_rule's request key: the reserved memory project + device
+        rid = uuid.uuid5(NS_LIBRARIAN, f"rule:answer:{qid}:{args['request_id']}")
+        key = f"{ids.memory_project_id}:{ids.librarian_device_id}:{rid}"
+    else:  # the widen revision's request key: the item's home project + the answering device
+        rid = uuid.uuid5(NS_LIBRARIAN, f"widen:{args['request_id']}:{widened.logical_id}")
+        key = f"{world.other_id}:{world.dev_a}:{rid}"
+
+    async def answering() -> ToolError | dict[str, Any]:
+        try:
+            return await _answer(connect, world.ctx_a, args, role="assistant")
+        except ToolError as exc:
+            return exc
+
+    async with await connect() as blocker:
+        await blocker.execute("SELECT pg_advisory_xact_lock(1, hashtext(%s))", (key,))
+        await _expire_in(connect, qid, 2)
+        task = asyncio.create_task(answering())
+        await _lock_waits(connect, 1)  # item + policy locks passed: the write waits for its key
+        await asyncio.sleep(2.5)  # the question expires during the wait
+        await blocker.rollback()
+        res = await asyncio.wait_for(task, 30)
+    assert isinstance(res, ToolError), res
+    assert res.code == "E_VERSION_CONFLICT" and res.details["status"] == "expired"
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions WHERE question_id = %s", (qid,))
+        assert await cur.fetchone() == ("open",)
+        assert await count(conn, "events", "kind = 'answer'") == 0
+        assert await count(conn, "events", "kind = 'write'") == writes_before  # no rule, no widen
+        assert await count(conn, "memory_versions") == versions_before  # no rule fact, no revision
+        if widened is not None:
+            cur = await conn.execute(
+                "SELECT project_ids FROM memory_versions WHERE logical_id = %s"
+                " AND superseded_at = 'infinity'",
+                (widened.logical_id,),
+            )
+            assert await cur.fetchall() == [([world.other_id],)]  # not widened
+    await _nothing_applied(connect)

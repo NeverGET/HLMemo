@@ -116,47 +116,98 @@ async def _role_after(conn: AsyncConnection, role: str, decision_project: int | 
 async def pending_apply_jobs(
     conn: AsyncConnection, role: str, decision_project: int | None, event_id: int
 ) -> list[dict[str, Any]]:
-    """D-074 promotion (Sol 49 #2): the ``accepted_pending`` answers this decision can release.
+    """D-074 promotion (Sol 49 #2, Sol 50, Sol 56 #1): the ``accepted_pending`` answers this
+    decision can release — EVERY eligible one, not only those touching the decided project.
 
-    A question qualifies if the decided project is its home OR any project it touches (a project
-    decision), or any question at all (a deployment decision), AND every project it touches (home,
-    ``project_ids``, its actions' projects on the current rows) is assistant+ after the decision;
-    otherwise the promotion of its last observer project releases it later. One ``apply_batch`` job
-    per batch, keyed by this ``set_role`` event (``librarian_apply:<batch>:promo<event_id>``),
-    unless an apply job of that batch is already queued or running (that job picks them up; an
-    observer worker never leases it, D-074). The job re-checks everything under its own locks."""
-    from hlmemo.librarian.tasks.apply_batch import proposal_actions
-
+    A demotion (``observer``) releases nothing. Any other decision re-evaluates every pending
+    answer (``releasable``) with the roles AFTER it: an answer whose CURRENT touched projects are
+    all assistant+ gets an apply job, whichever project was decided (Sol 56: an answer whose
+    action touched C and then no longer did would otherwise wait forever for a promotion of a
+    project it no longer touches). Keyed by this event
+    (``librarian_apply:<batch>:promo<event_id>``); recorded in ``resolved.jobs``."""
     if role == "observer":
         return []
+
+    async def role_of(pid: int) -> str:
+        return await _role_after(conn, role, decision_project, pid)
+
+    return await releasable(conn, role_of, f":promo{event_id}")
+
+
+async def releasable(
+    conn: AsyncConnection,
+    role_of: Any,
+    suffix: str,
+    logical_ids: set[int] | None = None,
+) -> list[dict[str, Any]]:
+    """The ``apply_batch`` jobs that release eligible ``accepted_pending`` answers (the one rule
+    behind a promotion, a project-scope revision and the sweeper, Sol 56 #1).
+
+    A question is eligible when every project it touches NOW — its home, its recorded
+    ``project_ids`` and the projects its actions touch on the CURRENT rows (``action_projects``) —
+    has an effective role above observer (``role_of``). ``logical_ids`` restricts the check to the
+    questions whose actions or assessed subjects name one of them (a revision's items). One job per
+    batch, ``librarian_apply:<batch><suffix>``, unless an apply job of that batch is still QUEUED:
+    it has not planned yet and will read the answer; a RUNNING one may hold an older snapshot (Sol
+    54j #1). The job re-checks role, TTL, staleness and authority under its own locks: an answer
+    whose action went stale is ``superseded`` there with the recorded reason ``stale``, never left
+    pending.
+
+    D-086 §1: a ``widen_scope`` answer is NEVER released here (propose-only in every role, D-058):
+    the batch path would skip it anyway, so selecting it would requeue an apply job forever. It
+    stays ``accepted_pending`` (``ops librarian questions list``: awaiting ``owner_apply``) until an
+    explicit ``memory.answer`` by a device with write on every touched project applies it."""
+    from hlmemo.librarian.tasks.apply_batch import proposal_actions
+
     cur = await conn.execute(
         """
         SELECT lq.batch_id::text, lq.project_id, lq.project_ids, lq.proposal
           FROM librarian_questions lq
          WHERE lq.status = 'accepted_pending' AND lq.batch_id IS NOT NULL
-           AND (%(p)s::bigint IS NULL OR lq.project_id = %(p)s OR %(p)s = ANY(lq.project_ids))
+           AND lq.kind <> 'widen_scope'
            AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'librarian_write'
                             AND j.payload->>'op' = 'apply_batch'
                             AND j.payload->>'batch_id' = lq.batch_id::text
-                            AND j.status IN ('queued', 'running'))
+                            AND j.status = 'queued')
          ORDER BY lq.batch_id, lq.question_id
-        """,
-        {"p": decision_project},
+        """
     )
     released: dict[str, tuple[int, dict[str, Any]]] = {}
     for batch_id, home, pids, proposal in await cur.fetchall():
         if batch_id in released:
             continue
-        touched = {int(home), *(int(x) for x in pids)} | await action_projects(
-            conn, proposal_actions(proposal)
-        )
-        after = [await _role_after(conn, role, decision_project, p) for p in sorted(touched)]
-        if "observer" not in after:
+        actions = proposal_actions(proposal)  # both stored formats: W2b actions, W2a mutation
+        if any(a.get("op") == "widen_scope" for a in actions):
+            continue  # D-086 §1 (review 60: in Python, so a legacy W2a row is never dropped by SQL NULL)
+        if logical_ids is not None:
+            named = {int(k) for a in actions for k in (a.get("assessed") or {})} | {
+                int(a[f])
+                for a in actions
+                for f in ("src_logical_id", "dst_logical_id", "logical_id")
+                if a.get(f)
+            }
+            if not named & logical_ids:
+                continue
+        touched = {int(home), *(int(x) for x in pids)} | await action_projects(conn, actions)
+        roles = [await role_of(p) for p in sorted(touched)]
+        if "observer" not in roles:
             released[batch_id] = (int(home), proposal.get("capabilities") or {})
-    return [
-        apply_job(batch_id, home, caps, f":promo{event_id}")
-        for batch_id, (home, caps) in sorted(released.items())
-    ]
+    return [apply_job(batch_id, home, caps, suffix) for batch_id, (home, caps) in sorted(released.items())]
+
+
+async def release_now(
+    conn: AsyncConnection, configured: str, suffix: str, logical_ids: set[int] | None = None
+) -> list[dict[str, Any]]:
+    """``releasable`` with the roles as they stand NOW for a librarian configured as ``configured``
+    (a revision's ``release_pending`` job and the sweeper). The caller holds the role-order lock
+    (shared). An observer librarian releases nothing (every effective role is observer)."""
+    if configured == "observer":
+        return []
+
+    async def role_of(pid: int) -> str:
+        return await effective_role(conn, configured, pid)
+
+    return await releasable(conn, role_of, suffix, logical_ids)
 
 
 def apply_job(batch_id: str, project_id: int, capabilities: dict[str, Any], rnd: str) -> dict[str, Any]:
@@ -260,6 +311,10 @@ async def record_batch_decision(
     rows = await batch_questions(conn, batch_id, "open")
     if not rows:
         raise ToolError("E_NOT_FOUND", "batch not found")
+    # Sol 56 #2: the batch row is locked BEFORE any event id of this decision is allocated, so a
+    # librarian job that changes the same batch (fills it, marks it ready/applied) commits entirely
+    # before or after this decision, and the event ids follow that order (replay = live order)
+    await conn.execute("SELECT 1 FROM librarian_batches WHERE batch_id = %s FOR UPDATE", (batch_id,))
     project_id = int(rows[0]["project_id"])
     touched = {int(x) for r in rows for x in r["project_ids"]} | {project_id}
     if not all(approver.has(pid, Role.WRITE) for pid in touched):
@@ -335,5 +390,7 @@ __all__ = [
     "lowest_role",
     "pending_apply_jobs",
     "record_batch_decision",
+    "release_now",
+    "releasable",
     "record_role_decision",
 ]
