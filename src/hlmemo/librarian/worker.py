@@ -67,7 +67,7 @@ from hlmemo.librarian.errors import (
     ProviderUnavailable,
     RoleNotAuthorized,
 )
-from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event
+from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event, lock_event_refs
 from hlmemo.librarian.jobs import LIBRARIAN_JOB_KINDS, assign_job_ids, insert_recorded_jobs
 from hlmemo.librarian.provider import Provider, lineage_scope
 from hlmemo.librarian.redact import REDACTION_VERSION
@@ -131,6 +131,8 @@ SYSTEMIC_HANDBACK_CODES = frozenset(
 #: question statuses an ``apply_batch`` job applies: batch approvals and owner accepts recorded
 #: under observer (D-074)
 APPLICABLE = ("approved", "accepted_pending")
+#: the ``request`` audit lists ``_apply_approved`` records (reset when a batch is re-planned, D-095)
+_APPLY_AUDIT_KEYS = ("rebased", "already_satisfied", "replanned", "replan_refused")
 
 
 @dataclass(slots=True)
@@ -1076,15 +1078,47 @@ class LibrarianWorker:
                 ]
                 if deferred:
                     plan.request_extra["role_deferred"] = [a.question_id for a in deferred]
-                if ready:
-                    applied, changes, superseded, recorded, T, replans = await self._apply_approved(
-                        conn, job, plan, ready, T
+                base, had_ready = status_changes, bool(ready)
+                late: list[dict[str, Any]] = []
+                while True:
+                    for k in _APPLY_AUDIT_KEYS:  # re-planned from scratch below
+                        plan.request_extra.pop(k, None)
+                    applied, changes, superseded, recorded, replans = [], [], 0, [], []
+                    if ready:
+                        applied, changes, superseded, recorded, T, replans = await self._apply_approved(
+                            conn, job, plan, ready, T
+                        )
+                    status_changes = [*base, *late, *changes]
+                    batch_changes = await self._batch_after_apply(
+                        conn, job.payload["batch_id"], status_changes
                     )
-                    status_changes += changes
+                    await lock_event_refs(conn, project_id, ids.librarian_device_id)
+                    # D-095: the TTL is judged at the linearization point: EVERY lock this decision
+                    # needs is held now (items, policy rows, question and batch rows, the event's FK
+                    # rows), so this fresh clock is the last one that matters. A question that
+                    # expired during any wait (the batch row lock included) is `expired` and the
+                    # batch is planned again without it; that re-plan takes only locks already held
+                    # (a subset of the same items/policy rows), so it cannot wait either.
+                    now = await q.clock_now(conn)
+                    T = max(T, now)
+                    gone = {c["question_id"] for c in changes if c["status"] == "expired"}
+                    due = {
+                        a.question_id
+                        for a in ready
+                        if a.question_id not in gone and a.expires_at is not None and a.expires_at <= now
+                    }
+                    if not due:
+                        break
+                    late += [{"question_id": qid, "status": "expired"} for qid in sorted(due)]
+                    ready = [a for a in ready if a.question_id not in due]
+                if had_ready:
                     outcome = "applied" if applied else "superseded" if superseded else "no_change"
                 else:
                     outcome = "role_denied" if deferred else "no_change"
-                batch_changes = await self._batch_after_apply(conn, job.payload["batch_id"], status_changes)
+                # NO lock wait from the D-095 check above to the event insert below: the event and
+                # job ids are sequence values, the run_after read is a plain read and the insert's
+                # FK rows are locked. Only a concurrent duplicate of this same job (a lost lease) can
+                # make the insert wait on its unique key, and then this job records nothing.
             elif (plan.proposals or plan.signals) and outcome in ("proposed", "approved"):
                 try:
                     ctx = await actor.recheck(conn, caps, CLIENT)

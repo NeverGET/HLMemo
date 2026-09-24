@@ -33,6 +33,9 @@ token_budget?}`` → an ack, in ONE transaction (PHASE2-4-ROADMAP W2c, CC-3, D-0
 5. **Every answer** is stored as a ``librarian-rule`` fact (``memory.write_rule``, rule text +
    clue refs only; a note that reproduces item text is dropped from the rule, D-062 overlap
    guard).
+6. **D-095:** the TTL is judged at the linearization point: after the widen and rule writes (their
+   lock waits included), immediately before the answer event, against a fresh clock. Past it the
+   WHOLE transaction rolls back (``E_VERSION_CONFLICT {expired}``): nothing is recorded.
 
 The answer event (kind ``answer``, schema_version 2) records the verbatim arguments as
 ``payload.request`` and the applied effects in ``payload.resolved`` (``question_status`` with the
@@ -58,7 +61,7 @@ from hlmemo.core.write_models import SLUG_RE, _Strict, parse_request
 from hlmemo.core.write_service import payload_sha256
 from hlmemo.db import write_queries as q
 from hlmemo.librarian import actor
-from hlmemo.librarian.events import NS_LIBRARIAN, SCHEMA_VERSION_SYSTEM, insert_system_event
+from hlmemo.librarian.events import NS_LIBRARIAN, SCHEMA_VERSION_SYSTEM, insert_system_event, lock_event_refs
 from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.reserved import reserved_ids
@@ -281,6 +284,15 @@ async def answer(
         used = _meter().settle(ack, budget)
         if used > budget:
             raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold the ack", min=used)
+        # D-095: the TTL is judged at the linearization point: EVERY lock this answer needs is held
+        # now (items, policy rows, the question row, the widen/rule writes' locks, the answer
+        # event's FK rows), so this fresh clock is the last one that matters. Past it the WHOLE
+        # transaction rolls back — the widen and rule writes included — and nothing is recorded.
+        # NO lock wait from this check to the event insert below: the event id is a sequence value
+        # and the (project, device, request_id) key is serialized by the request-key lock above.
+        await lock_event_refs(conn, pid, ctx.device_id)
+        if expires_at is not None and expires_at <= await q.clock_now(conn):
+            raise ToolError("E_VERSION_CONFLICT", "the question is expired", status="expired")
         (event_id,) = await q.allocate_ids(conn, "events", 1)
         resolved = {
             "recorded_at": fmt_ts(T),
