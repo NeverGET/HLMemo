@@ -440,6 +440,129 @@ async def test_sol50_promotion_selects_by_the_actions_current_projects(
     await _replay_identical(connect)
 
 
+async def _rescope(connect, ctx: AuthContext, old: Any, projects: list[str], deps: Any = None) -> None:  # noqa: ANN001
+    """Revise OLD's projects (a widen or a narrow) at its current head."""
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT max(version_id) FROM memory_versions WHERE logical_id = %s"
+            " AND superseded_at = 'infinity'",
+            (old.logical_id,),
+        )
+        (head,) = await cur.fetchone()
+        await conn.rollback()
+    await write_items(
+        connect,
+        ctx,
+        MAIN,
+        [
+            item(
+                *OLD,
+                valid_from=D_OLD,
+                logical_id=old.logical_id,
+                expected_version_id=head,
+                project_ids=projects,
+            )
+        ],
+        deps=deps,
+    )
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        "promote_then_narrow",  # the narrowing revision's release job applies it
+        "narrow_then_promote",  # the deployment promotion re-evaluates every pending answer
+        "narrow_promote_c_then_deployment",  # C's promotion (no longer touched) then the deployment
+        "sweeper",  # the narrowing wrote no release job (librarian off then): the sweeper catches it
+    ],
+)
+async def test_sol56_scope_churn_never_strands_an_answer(
+    db_dsn, connect, world: World, embedder, order: str
+) -> None:  # noqa: ANN001
+    """Sol 56 #1: the action widens into observer project C, then a revision removes C again. In
+    every order of revisions and promotions the accepted_pending answer ends applied or explicitly
+    superseded (reason recorded), never stuck pending. Replay identical."""
+    import dataclasses
+
+    from hlmemo.core.write_service import default_deps
+    from hlmemo.librarian.roles import record_role_decision
+
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "INSERT INTO projects (slug, name) VALUES ('g6-third', 'Third') RETURNING project_id"
+        )
+        (c_id,) = await cur.fetchone()
+        await conn.execute(
+            "INSERT INTO device_project_grants (device_id, project_id, role, granted_by_device_id)"
+            " VALUES (%s, %s, 'write', 1)",
+            (world.dev_a, c_id),
+        )
+        await record_role_decision(
+            conn, role="observer", decided_by=world.ctx_admin, decision="D-c", project_id=c_id
+        )
+        await conn.commit()
+    ctx_a = AuthContext(
+        world.dev_a, "personal", False, 1, {**world.ctx_a.grants, c_id: Role.WRITE}, "pytest/0"
+    )
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(
+        lib_settings(db_dsn, librarian_role="assistant", librarian_embed_wait_s=0), provider, connect
+    )
+
+    async def promote(project_id: int | None = None) -> None:
+        async with await connect() as conn:
+            await record_role_decision(
+                conn, role="assistant", decided_by=world.ctx_admin, decision="D-p", project_id=project_id
+            )
+            await conn.commit()
+
+    await _rescope(connect, ctx_a, old, [MAIN, "g6-third"])  # the action now touches C (observer)
+    if order == "promote_then_narrow":
+        await promote()
+        await worker.drain()
+        await _rescope(connect, ctx_a, old, [MAIN])
+    elif order == "narrow_then_promote":
+        await _rescope(connect, ctx_a, old, [MAIN])
+        await worker.drain()  # the release job: the deployment is still observer, nothing yet
+        await promote()
+    elif order == "narrow_promote_c_then_deployment":
+        await _rescope(connect, ctx_a, old, [MAIN])
+        await worker.drain()
+        await promote(c_id)  # C is no longer touched; the deployment is still observer
+        await worker.drain()
+        await promote()
+    else:  # sweeper
+        await promote()
+        await worker.drain()
+        silent = dataclasses.replace(default_deps(), librarian_enqueue=False)  # no release job
+        await _rescope(connect, ctx_a, old, [MAIN], deps=silent)
+        await worker.drain()
+        async with await connect() as conn:
+            cur = await conn.execute("SELECT status FROM librarian_questions WHERE question_id = %s", (qid,))
+            assert await cur.fetchone() == ("accepted_pending",)  # nothing else would release it
+        assert await worker.maybe_release(force=True) == 1
+    await worker.drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT status FROM librarian_questions WHERE question_id = %s", (qid,))
+        assert await cur.fetchone() == ("superseded",)  # its subject was revised: explicitly superseded
+        cur = await conn.execute(
+            "SELECT payload->'resolved'->'question_status' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'op' = 'apply_batch'"
+            " AND payload->'resolved'->'question_status' @> %s::jsonb",
+            (f'[{{"question_id": "{qid}", "status": "superseded"}}]',),
+        )
+        [(changes,)] = await cur.fetchall()
+        assert [c.get("reason") for c in changes if c["question_id"] == qid] == ["stale"]
+        cur = await conn.execute("SELECT count(*) FROM librarian_questions WHERE status = 'accepted_pending'")
+        assert (await cur.fetchone())[0] == 0
+        assert await count(conn, "links") == 0
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
 async def test_sol54j_a_running_apply_job_does_not_absorb_a_release(
     db_dsn, connect, world: World, embedder
 ) -> None:  # noqa: ANN001
@@ -523,6 +646,37 @@ async def test_gq1_reject_and_custom_replan(db_dsn, connect, world: World, embed
     assert all(
         "Owner note for this re-check: Both hosts exist." in r["messages"][1]["content"] for r in replan
     )
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
+async def test_sol56_admin_custom_replan_keeps_foreign_subjects(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Sol 56 #6: an admin (ops) device's capability set is exactly the project list it is given.
+    A custom answer on a cross-project question (OLD lives in OTHER) re-plans BOTH subjects: the
+    re-plan job carries the capabilities of every subject project, so the privacy gate lets the
+    foreign subject through (it used to be denied as not in the capabilities)."""
+    old, new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder, other_old=True)
+    ack = await _answer(connect, world.ctx_admin, _args(qid, "custom", note="Check both hosts."))
+    assert ack["status"] == "answered"
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT payload->'capabilities'->'question' FROM jobs WHERE dedupe_key = %s",
+            (f"librarian_replan:{qid}",),
+        )
+        assert sorted((await cur.fetchone())[0]) == sorted([world.main_id, world.other_id])
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    await make_worker(lib_settings(db_dsn), provider, connect).drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT payload->'request'->'subjects', payload->'request'->'denied_subjects' FROM events"
+            " WHERE kind = 'librarian' AND payload->'resolved'->'done'->>'dedupe_key' = %s",
+            (f"librarian_replan:{qid}",),
+        )
+        subjects, denied = await cur.fetchone()
+    assert sorted(subjects) == sorted([f"v{old.version_id}", f"v{new.version_id}"]) and denied is None
     await embed(connect, embedder)
     await _replay_identical(connect)
 

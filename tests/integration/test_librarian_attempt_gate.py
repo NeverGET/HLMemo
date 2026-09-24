@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -340,8 +341,10 @@ async def test_budget_denials_never_consume_the_lineage_ceiling(db_dsn) -> None:
 
 
 async def test_deferred_job_replays_its_run_after(db_dsn, connect, world, deps) -> None:  # noqa: ANN001
-    """Sol 38 #6: a job handed back (budget refusal) and not yet completed rebuilds with the
-    recorded status, attempts, run_after and last_error."""
+    """Sol 38 #6 as amended by Sol 56 #4: a job handed back for a SYSTEMIC reason (a budget refusal:
+    no attempt consumed) changes only its job row — status queued, attempts unchanged, run_after
+    and last_error as scheduling hints — and writes NO event; a rebuild restores it as queued with
+    the same attempts (its run_after/last_error hints are not event-recorded)."""
     await _pair(connect, world, deps, "deferred")
     llm = ScriptedLLM(default=CONTRADICTS_B)
     zero = Decimal(0)
@@ -351,14 +354,65 @@ async def test_deferred_job_replays_its_run_after(db_dsn, connect, world, deps) 
     assert llm.calls == 0
     async with await connect() as conn:
         cur = await conn.execute(
-            "SELECT status, last_error, run_after > created_at + interval '30 seconds' FROM jobs"
+            "SELECT status, attempts, last_error, run_after > created_at + interval '30 seconds' FROM jobs"
             " WHERE dedupe_key = 'librarian_write:deferred'"
         )
-        assert await cur.fetchone() == ("queued", "E_BUDGET_DEFERRED", True)
+        assert await cur.fetchone() == ("queued", 0, "E_BUDGET_DEFERRED", True)
         cur = await conn.execute(
             "SELECT count(*) FROM events WHERE kind = 'librarian' AND payload->'request'->>'op' = 'defer'"
         )
-        assert (await cur.fetchone())[0] == 1
+        assert (await cur.fetchone())[0] == 0  # a systemic hand-back is not an event
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
+        cur = await conn.execute(
+            "SELECT status, attempts FROM jobs WHERE dedupe_key = 'librarian_write:deferred'"
+        )
+        assert await cur.fetchone() == ("queued", 0)
+
+
+async def test_one_terminal_event_per_job_and_compact_backoffs(db_dsn, connect, world, deps) -> None:  # noqa: ANN001
+    """Sol 56 #4 (D-062 "one event per job"): a job that fails on every attempt records one compact
+    non-terminal event per consumed attempt (back-off, at most MAX_ATTEMPTS - 1) and EXACTLY ONE
+    terminal event (outcome failed) under the job's own request id — the id its completion event
+    would carry — so no job can record two terminal events. Rebuild identical."""
+    from hlmemo.librarian.events import NS_LIBRARIAN
+    from hlmemo.librarian.jobs import enqueue, job_spec
+    from hlmemo.worker.lease import MAX_ATTEMPTS
+
+    class Boom:  # a job-specific failure on every attempt (not a systemic hand-back)
+        op = "boom"
+
+        async def plan(self, w, job):  # noqa: ANN001, ANN202
+            raise RuntimeError("job-specific failure")
+
+    async with await connect() as conn:
+        spec = job_spec(kind="librarian_write", dedupe_key="librarian_write:doomed", payload={"op": "boom"})
+        await enqueue(conn, project_id=world.main_id, trigger_device_id=world.dev_a, specs=[spec])
+        await conn.commit()
+    provider = make_provider(db_dsn, ScriptedLLM(), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn), provider, connect, handlers={"boom": Boom()})
+    for _ in range(MAX_ATTEMPTS):
+        async with await connect() as conn:  # skip the back-off wait
+            await conn.execute(
+                "UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:doomed'"
+            )
+            await conn.commit()
+        await worker.drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT status, attempts FROM jobs WHERE dedupe_key = 'librarian_write:doomed'"
+        )
+        assert await cur.fetchone() == ("failed", MAX_ATTEMPTS)
+        cur = await conn.execute(
+            "SELECT request_id, payload->'resolved'->>'outcome' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'job_key' = 'librarian_write:doomed' ORDER BY event_id"
+        )
+        rows = await cur.fetchall()
+        assert [o for _r, o in rows] == ["deferred"] * (MAX_ATTEMPTS - 1) + ["failed"]
+        assert rows[-1][0] == uuid.uuid5(NS_LIBRARIAN, "job:librarian_write:doomed")  # the terminal id
         before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
         await rebuild_projections(conn)
         await conn.commit()

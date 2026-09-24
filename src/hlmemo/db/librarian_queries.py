@@ -291,22 +291,24 @@ async def supersession_among(
     scopes: list[str],
     valid_at: datetime,
     known_at: datetime,
-) -> tuple[set[int], list[tuple[int, int]]]:
+) -> tuple[set[int], list[tuple[int, int, str]]]:
     """D-057 read side, ONE query: ``(hidden, partial)`` over the live ``supersedes`` links between
     two ids of ``logical_ids`` (the link row passes authz (a) and is live at ``(valid_at,
     known_at)``; links exist only once applied — a proposal is a question row).
 
     ``hidden``: the superseded ids of whole-item links (no ``props.scope``, or ``whole``).
-    ``partial``: ``(superseding, superseded)`` pairs of fact-level links (``props.scope = part``,
-    D-076): the superseded item still holds valid statements, so it is never hidden, only ranked
-    after the item that replaced one of its statements (``core/supersession``)."""
+    ``partial``: ``(superseding, superseded, quoted span)`` of fact-level links
+    (``props.scope = part``, D-076): the superseded item still holds valid statements, so it is
+    never hidden; it is ranked after the item that replaced the quoted statement only when the query
+    matched that statement (``core/supersession`` rule 3)."""
     from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L
 
     if len(logical_ids) < 2:
         return set(), []
     cur = await conn.execute(
         f"""
-        SELECT DISTINCT l.src_logical_id, l.dst_logical_id, COALESCE(l.props->>'scope', 'whole') = 'part'
+        SELECT DISTINCT l.src_logical_id, l.dst_logical_id, COALESCE(l.props->>'scope', 'whole') = 'part',
+               COALESCE(l.props->>'quote', '')
           FROM links l
          WHERE l.rel = 'supersedes' AND l.src_logical_id = ANY(%(lids)s) AND l.dst_logical_id = ANY(%(lids)s)
            AND l.src_logical_id <> l.dst_logical_id AND {AUTHZ_L} AND {TEMPORAL_L}
@@ -320,10 +322,10 @@ async def supersession_among(
         },
     )
     hidden: set[int] = set()
-    partial: set[tuple[int, int]] = set()
-    for src, dst, is_part in await cur.fetchall():
+    partial: set[tuple[int, int, str]] = set()
+    for src, dst, is_part, quote in await cur.fetchall():
         if is_part:
-            partial.add((int(src), int(dst)))
+            partial.add((int(src), int(dst), str(quote)))
         else:
             hidden.add(int(dst))
     return hidden, sorted(partial)

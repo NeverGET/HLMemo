@@ -184,10 +184,15 @@ async def dump_w2b(conn: psycopg.AsyncConnection) -> dict[str, list[str]]:
     out = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
     # Phase 0: an embed job's completion is not an event (the worker derives vectors; replay
     # re-queues the job and the worker re-embeds). Compare those rows without their run state.
+    # a QUEUED librarian job's scheduling hints (run_after, last_error) are not event-recorded: a
+    # systemic hand-back writes no event (Sol 56 #4)
     cur = await conn.execute(
         """
         SELECT CASE WHEN kind IN ('embed', 'reembed')
                     THEN (kind, dedupe_key, payload::text, source_event_id, priority, run_after)::text
+                    WHEN status = 'queued'
+                    THEN (job_id, kind, dedupe_key, payload::text, source_event_id, status, attempts,
+                          priority, done_at, lease_token, lease_until, created_at)::text
                     ELSE j::text END
           FROM jobs j ORDER BY dedupe_key
         """
