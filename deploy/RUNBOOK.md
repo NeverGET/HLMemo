@@ -600,11 +600,13 @@ template, so hand edits on the host are replaced (and kept in the backup) by the
 After cutover the deployment prints the **librarian check** (`deploy/scripts/check_librarian.py`,
 after the device inventory): switch, role, heartbeat (`enabled`, `role`, `breaker_state`), spend,
 the api's risk-judge chain, and per profile whether its key is set and whether its base URL answers.
-It fails the deployment (the new stack stays running, no database rollback) when `llm.env` enables
-the librarian but the heartbeat is not `enabled=True` with the configured role (`observer`), when
-the api sees a different switch, or when a provider key is missing. An unreachable provider is
-**reported only** (`UNREACHABLE ...; reported only`): jobs wait with backoff and risk_check answers
-retrieval-only until it returns. Without `llm.env` the librarian idles and the check passes.
+With `llm.env` present it validates the R2 configuration strictly (Sol 48) and fails the deployment
+(the new stack stays running, no database rollback) unless the api settings, the librarian settings
+**and** the heartbeat all say `enabled=true` and role `observer`, both settings say
+`HLM_LLM_MODE=live`, the api's risk-judge chain loads and is non-empty, and every profile key is
+set. An unreachable provider is **reported only** (`UNREACHABLE ...; reported only`): jobs wait
+with backoff and risk_check answers retrieval-only until it returns. Without `llm.env` (R1-style)
+the check passes only while everything idles.
 
 `remote_gates.sh` then adds two gates. `risk-check` (always): one registered lesson plus a task
 that repeats its mistake; PASS when the tool returns a verdict, reporting `judged=true|false` and
@@ -619,6 +621,9 @@ audit` subcommand the gate is SKIPPED with that message.
 that read it; `--no-deps` leaves db, worker, caddy and the one-shot `migrate` alone. The api restarts
 (about a minute of 502s), the librarian idles, the api stops enqueueing librarian jobs and
 risk_check answers retrieval-only; queued jobs wait. Back on: the same command with `true`.
+While switched off this way, a **deployment** fails its post-cutover librarian check (llm.env present
+but not enabled/live/observer; the new stack stays running). To deploy with the librarian off,
+take the key off the host first (`install_llm_env.sh --remove`, below), and reinstall it afterwards.
 
 ```sh
 ssh -F "$STATE/ssh_config" hlm-deploy 'sed -i "s/^HLM_LIBRARIAN_ENABLED=.*/HLM_LIBRARIAN_ENABLED=false/" /etc/hlmemo/llm.env &&

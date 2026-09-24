@@ -410,9 +410,10 @@ unset routes_token
 # (never tokens). RUNBOOK: rotate g7-*, revoke stale gates-*/deploy-* with hlm_ops.sh.
 echo 'Device inventory after cutover (python -m hlmemo.ops device list):'
 dc exec -T api python -m hlmemo.ops device list </dev/null || echo 'WARNING: device inventory unavailable; run hlm_ops.sh device list' >&2
-# R2 (D-058): the librarian's effective state. llm.env enabling it: the heartbeat must show
-# enabled=true with the configured role (observer) and the api must see the same switch (risk judge,
-# W2b enqueue). An unreachable provider is only reported. Without llm.env the librarian idles.
+# R2 (D-058, Sol 48): the librarian's effective state. llm.env present: api settings, librarian
+# settings and heartbeat must all be enabled/live/observer and the api's risk judge must load with a
+# non-empty chain (it and the W2b enqueue run there). An unreachable provider is only reported.
+# Without llm.env (R1-style) it passes only while everything idles.
 # Like the public checks above, a failure leaves the new stack running (no database rollback).
 llm_env_state=absent
 if [[ -f ${HLM_LLM_ENV_FILE:-$(dirname "$HLM_ENV_FILE")/llm.env} ]]; then llm_env_state=present; fi
