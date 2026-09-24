@@ -30,7 +30,7 @@ from hlmemo.librarian.profiles import LlmProfile
 from hlmemo.librarian.provider import Clock, Provider
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.reserved import ReservedIds, ensure_reserved_rows
-from hlmemo.librarian.worker import LibrarianWorker
+from hlmemo.librarian.worker import SYSTEMIC_HANDBACK_CODES, LibrarianWorker
 
 PRIMARY = "stub-primary"
 FALLBACK = "stub-fallback"
@@ -236,8 +236,13 @@ async def dump_full_jobs_and_questions(conn: psycopg.AsyncConnection) -> dict[st
     Librarian-era jobs are compared on EVERY column (``SELECT j.*``: job_id, lease columns,
     last_error, attempts, run_after, done_at, created_at …): their ids, completion time, attempts
     and final run_after are recorded in events — except the two scheduling hints of a job that is
-    still QUEUED (``run_after``, ``last_error``): a systemic hand-back changes only those and
-    writes no event (Sol 56 #4; the attempts are compared). Phase-0 embed jobs are written by the
+    still QUEUED after a SYSTEMIC hand-back (``last_error`` in ``worker.SYSTEMIC_HANDBACK_CODES``)
+    and of its replayed counterpart (``last_error`` NULL: replay cannot know the unrecorded hint):
+    a hand-back changes only ``run_after``/``last_error`` and writes no event (D-086 §2; the
+    attempts are compared). A queued job after a job-specific back-off (its state is event-recorded,
+    ``last_error`` a job code) is compared on its raw fields (review 60). Residual: a back-off
+    followed by a hand-back leaves live and replay different — a D-086 non-authoritative hint that
+    this dump would flag; no test produces it. Phase-0 embed jobs are written by the
     pre-existing write path, which records neither ids nor creation time, so for those rows
     ``job_id`` and ``created_at`` are masked (unchanged Phase-0 behaviour; not a W2a projection).
     """
@@ -247,13 +252,14 @@ async def dump_full_jobs_and_questions(conn: psycopg.AsyncConnection) -> dict[st
                     THEN (NULL::bigint, kind, dedupe_key, payload::text, source_event_id, status, attempts,
                           priority, run_after, done_at, lease_token, lease_until, last_error,
                           NULL::timestamptz)::text
-                    WHEN status = 'queued'
+                    WHEN status = 'queued' AND (last_error IS NULL OR last_error = ANY(%(systemic)s))
                     THEN (job_id, kind, dedupe_key, payload::text, source_event_id, status, attempts,
                           priority, NULL::timestamptz, done_at, lease_token, lease_until, NULL::text,
                           created_at)::text
                     ELSE j::text END
           FROM jobs j ORDER BY dedupe_key
-        """
+        """,
+        {"systemic": sorted(SYSTEMIC_HANDBACK_CODES)},
     )
     jobs = [r[0] for r in await cur.fetchall()]
     cur = await conn.execute("SELECT t::text FROM librarian_questions t ORDER BY question_id")

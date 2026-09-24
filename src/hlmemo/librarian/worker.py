@@ -114,6 +114,20 @@ def error_code(exc: BaseException) -> str:
     return f"E_{type(exc).__name__}"
 
 
+#: D-086 §2: the ``last_error`` codes of a SYSTEMIC hand-back (no attempt consumed, no event): the
+#: only job-row state that is not event-recorded, hence not compared by the replay tests. A back-off
+#: after a job-specific failure records its state in a compact event and is compared on raw fields.
+SYSTEMIC_HANDBACK_CODES = frozenset(
+    {
+        "E_BUDGET_DEFERRED",
+        "E_NOT_READY",
+        "E_LLM_DISABLED",
+        "E_ProviderUnavailable",
+        "E_BreakerOpen",
+        "E_DB_ENVELOPE",
+    }
+)
+
 #: question statuses an ``apply_batch`` job applies: batch approvals and owner accepts recorded
 #: under observer (D-074)
 APPLICABLE = ("approved", "accepted_pending")
@@ -517,9 +531,9 @@ class LibrarianWorker:
                     self.stats.jobs_failed += 1
                     self.pause("budget", BUDGET_PAUSE_S)
                 except ProviderUnavailable as exc:
-                    await self.defer(
-                        await holder.fresh(), job, error_code(exc), release_s=max(1.0, exc.retry_after_s)
-                    )
+                    code = error_code(exc)
+                    code = code if code in SYSTEMIC_HANDBACK_CODES else "E_ProviderUnavailable"
+                    await self.defer(await holder.fresh(), job, code, release_s=max(1.0, exc.retry_after_s))
                     self.stats.jobs_released += 1
                 except NotReady as exc:  # W2b: inputs (embeddings) still in flight; no attempt consumed
                     await self.defer(
@@ -1438,6 +1452,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "HANDLED_KINDS",
+    "SYSTEMIC_HANDBACK_CODES",
     "LibrarianConfigError",
     "LibrarianWorker",
     "check_connection_envelope",

@@ -563,6 +563,154 @@ async def test_sol56_scope_churn_never_strands_an_answer(
     await _replay_identical(connect)
 
 
+async def _inject_legacy(
+    connect, qid: str, legacy: list[tuple[str, str, dict[str, Any]]], widen_batch: bool = False
+) -> list[str]:  # noqa: ANN001
+    """W2a-format (``proposal.mutation``, no ``actions``) accepted_pending questions next to question
+    ``qid`` (same job/project/subjects), recorded through a ``librarian`` event so replay rebuilds
+    them. ``legacy``: ``[(kind, status, proposal)]``; ``widen_batch`` puts them in a batch of their
+    own (decided) instead of ``qid``'s batch."""
+    from hlmemo.core.temporal import fmt_ts
+    from hlmemo.db import write_queries as q
+    from hlmemo.librarian.actor import apply_batch_changes, insert_questions
+    from hlmemo.librarian.events import CLIENT, insert_system_event
+    from hlmemo.librarian.reserved import reserved_ids
+
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT job_key, batch_id::text, project_id, project_ids, subject_clues, subject_version_ids,"
+            " expires_at FROM librarian_questions WHERE question_id = %s",
+            (qid,),
+        )
+        job_key, batch, pid, pids, clues, vids, expires = await cur.fetchone()
+        batches: list[dict[str, Any]] = []
+        if widen_batch:
+            batch = str(uuid.uuid4())
+            batches = [{"batch_id": batch, "project_id": pid, "status": "decided", "created": True}]
+        rows = [
+            {
+                "question_id": str(uuid.uuid4()),
+                "job_key": job_key,
+                "batch_id": batch,
+                "project_id": pid,
+                "project_ids": list(pids),
+                "kind": kind,
+                "subject_clues": list(clues),
+                "subject_version_ids": list(vids),
+                "proposal": proposal,
+                "status": status,
+                "expires_at": fmt_ts(expires),
+            }
+            for kind, status, proposal in legacy
+        ]
+        at = await q.clock_now(conn)
+        ids = await reserved_ids(conn)
+        event_id = await insert_system_event(
+            conn,
+            kind="librarian",
+            project_id=pid,
+            device_id=ids.librarian_device_id,
+            client=CLIENT,
+            request_id=uuid.uuid4(),
+            request={"op": "test_inject_legacy"},
+            resolved={"recorded_at": fmt_ts(at), "questions": rows, "batches": batches},
+            at=at,
+        )
+        await apply_batch_changes(conn, batches, event_id, at)
+        await insert_questions(conn, rows, event_id, at)
+        await conn.commit()
+    return [r["question_id"] for r in rows]
+
+
+@pytest.mark.parametrize("path", ["promotion", "release", "sweeper"])
+async def test_review60_legacy_mutation_answers_are_released_widens_never(
+    db_dsn, connect, world: World, embedder, path: str
+) -> None:  # noqa: ANN001
+    """Review 60 #1 (D-077): an accepted_pending answer stored in the W2a format (``mutation``, no
+    ``actions``) is picked by a promotion, by a project-scope revision's release job and by the
+    sweeper (a SQL filter on ``actions`` used to drop it as NULL); a legacy-format widen (kind
+    widen_scope, or a widen mutation under another kind) is never auto-released (D-086 §1)."""
+    old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT proposal FROM librarian_questions WHERE question_id = %s", (qid,))
+        (prop,) = await cur.fetchone()
+    caps = prop["capabilities"]
+    link = next(a for a in prop["actions"] if a.get("rel") == "contradicts")
+    widen = {
+        "op": "widen_scope",
+        "logical_id": old.logical_id,
+        "version_id": old.version_id,
+        "add_project_ids": [world.other_id],
+        "assessed": link["assessed"],
+    }
+    if path != "promotion":  # the deployment is assistant already: nothing pending gets released now
+        assert "jobs" not in await _promote(connect, world)
+    [legacy_id] = await _inject_legacy(
+        connect, qid, [("contradiction", "accepted_pending", {"mutation": link, "capabilities": caps})]
+    )
+    widen_ids = await _inject_legacy(
+        connect,
+        qid,
+        [
+            ("widen_scope", "accepted_pending", {"mutation": widen, "capabilities": caps}),
+            ("link", "accepted_pending", {"mutation": widen, "capabilities": caps}),
+        ],
+        widen_batch=True,
+    )
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(
+        lib_settings(db_dsn, librarian_role="assistant", librarian_embed_wait_s=0), provider, connect
+    )
+    if path == "promotion":
+        released = await _promote(connect, world)
+        assert [j["payload"]["op"] for j in released["jobs"]] == ["apply_batch"]
+    elif path == "release":  # a revision that changes the projects of the item the mutation names
+        await write_items(
+            connect,
+            world.ctx_a,
+            MAIN,
+            [
+                item(
+                    *OLD,
+                    valid_from=D_OLD,
+                    logical_id=old.logical_id,
+                    expected_version_id=old.version_id,
+                    project_ids=[MAIN, OTHER],
+                )
+            ],
+        )
+    else:
+        assert await worker.maybe_release(force=True) == 1
+    await worker.drain()
+    for _period in range(3):  # afterwards nothing is left to release: no loop over the widens
+        assert await worker.maybe_release(force=True) == 0
+        await worker.drain()
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT status FROM librarian_questions WHERE question_id = %s", (legacy_id,)
+        )
+        (status,) = await cur.fetchone()
+        # picked and applied (promotion, sweeper); via the revision its subject changed: superseded
+        assert status == ("superseded" if path == "release" else "applied")
+        cur = await conn.execute(
+            "SELECT status FROM librarian_questions WHERE question_id = ANY(%s::uuid[])", (widen_ids,)
+        )
+        assert [r[0] for r in await cur.fetchall()] == ["accepted_pending", "accepted_pending"]
+        cur = await conn.execute(
+            "SELECT count(*) FROM jobs WHERE payload->>'op' = 'apply_batch'"
+            " AND payload->>'batch_id' IN (SELECT batch_id::text FROM librarian_questions"
+            "  WHERE question_id = ANY(%s::uuid[]))",
+            (widen_ids,),
+        )
+        assert (await cur.fetchone())[0] == 0  # the widen batch was never queued
+        if path != "release":
+            cur = await conn.execute("SELECT rel FROM links ORDER BY link_id")
+            assert [r[0] for r in await cur.fetchall()] == ["contradicts"]
+    await embed(connect, embedder)
+    await _replay_identical(connect)
+
+
 async def test_sol54j_a_running_apply_job_does_not_absorb_a_release(
     db_dsn, connect, world: World, embedder
 ) -> None:  # noqa: ANN001
