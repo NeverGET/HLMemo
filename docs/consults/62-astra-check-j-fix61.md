@@ -1,0 +1,9 @@
+## Verdict (FIX-NEEDED)
+
+- **1 — PARTIAL:** `src/hlmemo/librarian/worker.py:880` ve `src/hlmemo/librarian/questions.py:220` item/policy beklemeleri sonrası TTL’yi doğru kontrol ediyor; sonraki beklemeler yarışı açık bırakıyor.
+- **HIGH | `src/hlmemo/librarian/worker.py:1032,1087,1121` |** Batch kilidi TTL kontrolünden sonra bekletilirse soru süre dolduktan sonra uygulanıyor. **Fix:** batch kilidini aldıktan sonra fresh-clock TTL kontrolüyle uygulanacak kayıtları ve durumları yeniden hesapla.
+- **HIGH | `src/hlmemo/librarian/questions.py:251,266,284` |** `_widen`/`_rule` içindeki write kilitleri TTL’yi aşabilir; ardından answer kaydedilip mutasyon uygulanıyor. **Fix:** bu beklemelerden sonra TTL kontrolü; dolmuşsa tüm transaction’ı `E_VERSION_CONFLICT {expired}` ile rollback et. İki yol için kilit-bariyerli regresyon ekle.
+- Sweeper bu arada soruyu `expired` yapamaz: question satırları `FOR UPDATE` kilitli (`worker.py:781`, `questions.py:149`); sweeper `SKIP LOCKED` kullanıyor (`questions.py:486`). Ancak duvar saatine göre TTL dolabilir.
+- **2 — FIXED:** `src/hlmemo/core/supersession.py:127`, `src/hlmemo/core/normalize.py:59`: örtüşen tekrarlar, kelime sınırları ve limitsiz dış tarama korunuyor. İzole 18 unit test, 3.000-vakalık D-087 property testi dahil geçti.
+- **3 — FIXED:** `tests/integration/_write_fixtures.py:139,169`: yalnız systemic hand-back ↔ queued counterpart çifti maskeleniyor; NULL↔NULL ve consumed back-off ham karşılaştırılıyor. Kaydedilmiş back-off koduna izin verilmesi D-086 ile uyumlu; diğer karşılaştırılan sütunlardaki sapmalar gizlenmiyor.
+- DB kilit regresyonları yeniden çalıştırılmadı; TTL bulguları kodun kilit/transaction sırasına dayanıyor. Dosya değiştirilmedi.
