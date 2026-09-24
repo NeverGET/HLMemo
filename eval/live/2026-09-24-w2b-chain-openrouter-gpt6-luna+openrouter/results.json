@@ -1,23 +1,32 @@
 {
  "profile": "openrouter-gpt6-luna",
  "model_id": "openai/gpt-6-luna",
+ "mode": "live",
  "reps": 3,
  "worst": {
-  "placement": 0.9688,
+  "placement": 0.9844,
   "contradiction_exact": 0.9944,
   "false_supersede": 0.0,
   "positive_recall": 0.9722,
   "positive_precision": 1.0,
   "direction": 1.0,
-  "false_cross_raise": 0.0
+  "false_cross_raise": 0.0,
+  "per_class": {
+   "contra_new": 1.0,
+   "contra_old": 1.0,
+   "contra_none": 1.0,
+   "duplicate": 1.0,
+   "refines": 0.8571
+  },
+  "positive_class_min": 0.8571
  },
  "mean": {
-  "positive_recall": 0.9907,
+  "positive_recall": 0.9815,
   "positive_precision": 1.0,
   "direction": 1.0,
   "false_cross_raise": 0.0,
-  "placement": 0.9792,
-  "contradiction_exact": 0.9981,
+  "placement": 0.9896,
+  "contradiction_exact": 0.9963,
   "false_supersede": 0.0
  },
  "thresholds": {
@@ -27,32 +36,38 @@
   "positive_recall": 0.85,
   "positive_precision": 0.9,
   "direction": 0.9,
-  "false_cross_raise_max": 0.02
+  "false_cross_raise_max": 0.02,
+  "positive_class_min": 0.66
  },
- "calls": 227,
+ "calls": 228,
  "json_fail": 0,
  "json_fail_rate": 0.0,
  "infra_error": 0,
- "latency_p50_ms": 2607,
- "latency_p95_ms": 3780,
- "cost_usd": "0.0291423432",
+ "latency_p50_ms": 2602,
+ "latency_p95_ms": 3663,
+ "cost_usd": "0.0285264664",
+ "ledger_calls": {
+  "live|place|openrouter-gpt6-luna|openai/gpt-6-luna|ok": 48,
+  "live|relate_verify|openrouter|deepseek/deepseek-v4.1-flash|ok": 69,
+  "live|relate|openrouter-gpt6-luna|openai/gpt-6-luna|ok": 111
+ },
  "pass": true,
  "reps_detail": [
   {
    "metrics": {
-    "positive_recall": 0.9722,
+    "positive_recall": 1.0,
     "positive_precision": 1.0,
     "direction": 1.0,
     "false_cross_raise": 0.0,
-    "placement": 0.9844,
-    "contradiction_exact": 0.9944,
+    "placement": 1.0,
+    "contradiction_exact": 1.0,
     "false_supersede": 0.0,
     "false_supersede_all_pairs": 0.0,
     "per_class": {
      "contra_new": 1.0,
      "contra_none": 1.0,
      "contra_old": 1.0,
-     "duplicate": 0.9,
+     "duplicate": 1.0,
      "near_miss": 1.0,
      "none": 1.0,
      "refines": 1.0
@@ -66,7 +81,7 @@
      "none": 66,
      "refines": 7
     },
-    "cross_exact": 0.9677,
+    "cross_exact": 1.0,
     "calibration_precision": {
      "contradicts/high": [
       1.0,
@@ -78,7 +93,7 @@
      ],
      "duplicate/high": [
       1.0,
-      9
+      10
      ],
      "refines/high": [
       1.0,
@@ -87,8 +102,7 @@
     },
     "confusion": {
      "contradicts->contradicts": 19,
-     "duplicate->duplicate": 9,
-     "duplicate->none": 1,
+     "duplicate->duplicate": 10,
      "none->none": 143,
      "refines->refines": 7
     },
@@ -105,7 +119,7 @@
       "stable"
      ],
      "got": [
-      10,
+      9,
       "stable"
      ],
      "ok": true
@@ -131,7 +145,7 @@
       "volatile"
      ],
      "got": [
-      3,
+      4,
       "volatile"
      ],
      "ok": true
@@ -144,7 +158,7 @@
       "stable"
      ],
      "got": [
-      10,
+      9,
       "stable"
      ],
      "ok": true
@@ -183,7 +197,7 @@
       "stable"
      ],
      "got": [
-      7,
+      6,
       "stable"
      ],
      "ok": true
@@ -326,7 +340,7 @@
       "volatile"
      ],
      "got": [
-      1,
+      2,
       "volatile"
      ],
      "ok": true
@@ -352,7 +366,7 @@
       "stable"
      ],
      "got": [
-      8,
+      7,
       "stable"
      ],
      "ok": true
@@ -365,7 +379,7 @@
       "volatile"
      ],
      "got": [
-      3,
+      4,
       "volatile"
      ],
      "ok": true
@@ -430,7 +444,7 @@
       "stable"
      ],
      "got": [
-      7,
+      8,
       "stable"
      ],
      "ok": true
@@ -482,7 +496,7 @@
       "stable"
      ],
      "got": [
-      8,
+      9,
       "stable"
      ],
      "ok": true
@@ -599,7 +613,7 @@
       "stable"
      ],
      "got": [
-      8,
+      7,
       "stable"
      ],
      "ok": true
@@ -651,7 +665,7 @@
       "stable"
      ],
      "got": [
-      8,
+      9,
       "stable"
      ],
      "ok": true
@@ -664,10 +678,10 @@
       "stable"
      ],
      "got": [
-      3,
-      "volatile"
+      4,
+      "stable"
      ],
-     "ok": false
+     "ok": true
     },
     {
      "id": "p45",
@@ -742,7 +756,7 @@
       "stable"
      ],
      "got": [
-      8,
+      9,
       "stable"
      ],
      "ok": true
@@ -846,7 +860,7 @@
       "stable"
      ],
      "got": [
-      2,
+      1,
       "stable"
      ],
      "ok": true
@@ -859,7 +873,7 @@
       "stable"
      ],
      "got": [
-      8,
+      9,
       "stable"
      ],
      "ok": true
@@ -2192,18 +2206,18 @@
       "none"
      ],
      "final": [
-      "none",
+      "duplicate",
       "none"
      ],
      "raw": [
+      "duplicate",
       "none",
-      "none",
-      "med"
+      "high"
      ],
-     "tier": "abstain",
+     "tier": "action",
      "flags": [],
-     "verified": null,
-     "exact": false,
+     "verified": true,
+     "exact": true,
      "false_supersede": false
     },
     {
@@ -5415,97 +5429,98 @@
     "supersedes_against_time": 0,
     "supersedes_without_contradiction": 0,
     "abstained_low": 0,
-    "verified": 22
+    "verified": 23
    },
-   "calls": 75,
+   "calls": 76,
    "json_fail": 0,
    "infra_error": 0,
    "latency_ms": [
-    2130,
-    2606,
-    2881,
-    2820,
-    1660,
-    1690,
-    3038,
-    3934,
-    2552,
-    3254,
-    1738,
-    2339,
-    2763,
-    2702,
-    1572,
-    2602,
-    1975,
-    820,
-    2270,
-    869,
-    3020,
-    4482,
-    651,
-    2636,
-    1765,
-    3263,
-    1219,
     2504,
-    1900,
-    2404,
-    2691,
-    3046,
-    5292,
-    2271,
-    618,
-    3024,
-    543,
-    2832,
-    903,
-    2711,
-    2739,
-    2830,
-    2450,
-    1038,
-    2674,
-    1669,
-    3263,
-    2657,
-    2636,
+    1506,
+    2736,
+    2706,
+    2230,
+    2538,
+    2540,
+    2445,
+    2671,
+    3092,
+    2477,
+    2662,
+    2631,
+    1661,
+    3570,
+    2456,
+    1960,
+    922,
     2658,
-    3780,
-    510,
-    3040,
-    7092,
-    2993,
-    1023,
-    4957,
-    1491,
-    3295,
-    1952,
-    3759,
-    2684,
-    3637,
-    1170,
-    3129,
-    532,
-    2409,
-    475,
-    3579,
-    835,
-    2918,
-    1684,
-    3272,
-    861,
-    2076
+    2641,
+    2442,
+    3264,
+    1047,
+    2644,
+    1057,
+    2311,
+    1387,
+    2601,
+    2674,
+    2351,
+    3218,
+    2471,
+    3981,
+    2029,
+    2529,
+    1185,
+    3164,
+    1600,
+    3081,
+    1268,
+    2698,
+    3217,
+    3263,
+    2837,
+    1421,
+    2669,
+    817,
+    2210,
+    2503,
+    3507,
+    2960,
+    3141,
+    2078,
+    3102,
+    6141,
+    2478,
+    2445,
+    4869,
+    892,
+    3293,
+    3464,
+    3253,
+    2539,
+    2383,
+    844,
+    3576,
+    2603,
+    2822,
+    438,
+    2796,
+    1343,
+    2891,
+    1323,
+    3078,
+    501,
+    2371
    ]
   },
   {
    "metrics": {
-    "positive_recall": 1.0,
+    "positive_recall": 0.9722,
     "positive_precision": 1.0,
     "direction": 1.0,
     "false_cross_raise": 0.0,
-    "placement": 0.9688,
-    "contradiction_exact": 1.0,
+    "placement": 0.9844,
+    "contradiction_exact": 0.9944,
     "false_supersede": 0.0,
     "false_supersede_all_pairs": 0.0,
     "per_class": {
@@ -5515,7 +5530,7 @@
      "duplicate": 1.0,
      "near_miss": 1.0,
      "none": 1.0,
-     "refines": 1.0
+     "refines": 0.8571
     },
     "per_class_n": {
      "contra_new": 13,
@@ -5546,14 +5561,15 @@
      ],
      "refines/high": [
       1.0,
-      7
+      6
      ]
     },
     "confusion": {
      "contradicts->contradicts": 19,
      "duplicate->duplicate": 10,
      "none->none": 143,
-     "refines->refines": 7
+     "refines->none": 1,
+     "refines->refines": 6
     },
     "abstained": 0,
     "pairs": 179,
@@ -5568,7 +5584,7 @@
       "stable"
      ],
      "got": [
-      10,
+      9,
       "stable"
      ],
      "ok": true
@@ -5646,7 +5662,7 @@
       "stable"
      ],
      "got": [
-      7,
+      6,
       "stable"
      ],
      "ok": true
@@ -5659,7 +5675,7 @@
       "volatile"
      ],
      "got": [
-      5,
+      4,
       "volatile"
      ],
      "ok": true
@@ -5712,9 +5728,9 @@
      ],
      "got": [
       7,
-      "volatile"
+      "stable"
      ],
-     "ok": false
+     "ok": true
     },
     {
      "id": "p13",
@@ -5815,7 +5831,7 @@
       "stable"
      ],
      "got": [
-      7,
+      8,
       "stable"
      ],
      "ok": true
@@ -5945,7 +5961,7 @@
       "stable"
      ],
      "got": [
-      9,
+      8,
       "stable"
      ],
      "ok": true
@@ -6049,7 +6065,7 @@
       "stable"
      ],
      "got": [
-      6,
+      7,
       "stable"
      ],
      "ok": true
@@ -6062,7 +6078,7 @@
       "stable"
      ],
      "got": [
-      7,
+      8,
       "stable"
      ],
      "ok": true
@@ -6153,7 +6169,7 @@
       "stable"
      ],
      "got": [
-      9,
+      10,
       "stable"
      ],
      "ok": true
@@ -6309,7 +6325,7 @@
       "stable"
      ],
      "got": [
-      2,
+      1,
       "stable"
      ],
      "ok": true
@@ -6322,7 +6338,7 @@
       "stable"
      ],
      "got": [
-      8,
+      9,
       "stable"
      ],
      "ok": true
@@ -8780,18 +8796,18 @@
       "none"
      ],
      "final": [
-      "refines",
+      "none",
       "none"
      ],
      "raw": [
-      "refines",
+      "none",
       "none",
       "high"
      ],
-     "tier": "action",
+     "tier": "abstain",
      "flags": [],
      "verified": null,
-     "exact": true,
+     "exact": false,
      "false_supersede": false
     },
     {
@@ -10884,92 +10900,92 @@
    "json_fail": 0,
    "infra_error": 0,
    "latency_ms": [
-    1667,
-    3685,
-    2870,
-    2940,
-    2191,
-    1594,
-    3006,
-    3097,
-    6683,
-    3178,
-    3635,
-    2096,
-    2805,
-    1632,
-    1507,
-    2636,
-    2490,
-    685,
-    2256,
-    1706,
-    2676,
-    3612,
-    594,
-    2696,
+    1627,
+    5127,
+    2451,
+    2661,
+    1896,
+    1513,
+    3026,
+    2574,
+    3374,
+    3253,
+    2357,
+    3156,
+    1674,
+    1718,
+    2624,
+    2620,
+    2093,
+    1575,
+    3222,
+    713,
+    2527,
+    2969,
+    1099,
+    2994,
+    735,
+    2538,
+    921,
+    3238,
+    628,
+    4408,
+    2572,
+    2766,
+    4639,
+    464,
+    3168,
     759,
-    2463,
-    915,
-    2852,
-    517,
-    3170,
-    2627,
-    2471,
-    3891,
-    481,
-    2372,
-    3895,
-    2669,
-    632,
-    3014,
-    651,
-    2808,
-    2744,
-    3116,
-    3615,
-    3229,
-    3009,
-    1296,
-    2311,
-    2607,
-    3562,
-    2718,
-    2518,
-    650,
-    3307,
-    757,
-    2690,
-    495,
-    3627,
-    1295,
-    3279,
-    849,
-    3143,
-    2833,
-    3147,
-    2740,
-    2388,
-    1171,
-    2852,
-    398,
-    2395,
-    1851,
-    4152,
-    1035,
-    2460,
-    3827,
-    4302
+    4477,
+    533,
+    3051,
+    1023,
+    2719,
+    2850,
+    3145,
+    2646,
+    577,
+    4136,
+    1221,
+    3204,
+    2425,
+    3173,
+    2528,
+    2739,
+    1997,
+    2698,
+    1292,
+    3483,
+    7518,
+    3373,
+    1696,
+    3382,
+    641,
+    3045,
+    2556,
+    2260,
+    905,
+    3179,
+    890,
+    2721,
+    407,
+    2957,
+    1243,
+    3110,
+    1350,
+    2974,
+    406,
+    2386
    ]
   },
   {
    "metrics": {
-    "positive_recall": 1.0,
+    "positive_recall": 0.9722,
     "positive_precision": 1.0,
     "direction": 1.0,
     "false_cross_raise": 0.0,
     "placement": 0.9844,
-    "contradiction_exact": 1.0,
+    "contradiction_exact": 0.9944,
     "false_supersede": 0.0,
     "false_supersede_all_pairs": 0.0,
     "per_class": {
@@ -10979,7 +10995,7 @@
      "duplicate": 1.0,
      "near_miss": 1.0,
      "none": 1.0,
-     "refines": 1.0
+     "refines": 0.8571
     },
     "per_class_n": {
      "contra_new": 13,
@@ -10994,22 +11010,31 @@
     "calibration_precision": {
      "contradicts/high": [
       1.0,
-      19
+      18
+     ],
+     "contradicts/med": [
+      1.0,
+      1
      ],
      "duplicate/high": [
       1.0,
-      10
+      9
+     ],
+     "duplicate/med": [
+      1.0,
+      1
      ],
      "refines/high": [
       1.0,
-      7
+      6
      ]
     },
     "confusion": {
      "contradicts->contradicts": 19,
      "duplicate->duplicate": 10,
      "none->none": 143,
-     "refines->refines": 7
+     "refines->none": 1,
+     "refines->refines": 6
     },
     "abstained": 0,
     "pairs": 179,
@@ -11024,7 +11049,7 @@
       "stable"
      ],
      "got": [
-      10,
+      9,
       "stable"
      ],
      "ok": true
@@ -11063,7 +11088,7 @@
       "stable"
      ],
      "got": [
-      10,
+      9,
       "stable"
      ],
      "ok": true
@@ -11076,7 +11101,7 @@
       "stable"
      ],
      "got": [
-      8,
+      7,
       "stable"
      ],
      "ok": true
@@ -11115,7 +11140,7 @@
       "volatile"
      ],
      "got": [
-      5,
+      4,
       "volatile"
      ],
      "ok": true
@@ -11349,7 +11374,7 @@
       "stable"
      ],
      "got": [
-      8,
+      7,
       "stable"
      ],
      "ok": true
@@ -11440,7 +11465,7 @@
       "stable"
      ],
      "got": [
-      7,
+      8,
       "stable"
      ],
      "ok": true
@@ -11505,7 +11530,7 @@
       "stable"
      ],
      "got": [
-      6,
+      7,
       "stable"
      ],
      "ok": true
@@ -11583,8 +11608,8 @@
       "stable"
      ],
      "got": [
-      4,
-      "volatile"
+      3,
+      "stable"
      ],
      "ok": false
     },
@@ -11661,7 +11686,7 @@
       "stable"
      ],
      "got": [
-      8,
+      9,
       "stable"
      ],
      "ok": true
@@ -11674,7 +11699,7 @@
       "stable"
      ],
      "got": [
-      7,
+      8,
       "stable"
      ],
      "ok": true
@@ -11765,7 +11790,7 @@
       "stable"
      ],
      "got": [
-      2,
+      1,
       "stable"
      ],
      "ok": true
@@ -13117,9 +13142,9 @@
      "raw": [
       "duplicate",
       "none",
-      "high"
+      "med"
      ],
-     "tier": "action",
+     "tier": "question",
      "flags": [],
      "verified": true,
      "exact": true,
@@ -13492,9 +13517,9 @@
      "raw": [
       "contradicts",
       "old",
-      "high"
+      "med"
      ],
-     "tier": "action",
+     "tier": "question",
      "flags": [],
      "verified": true,
      "exact": true,
@@ -14236,18 +14261,18 @@
       "none"
      ],
      "final": [
-      "refines",
+      "none",
       "none"
      ],
      "raw": [
-      "refines",
+      "none",
       "none",
       "high"
      ],
-     "tier": "action",
+     "tier": "abstain",
      "flags": [],
      "verified": null,
-     "exact": true,
+     "exact": false,
      "false_supersede": false
     },
     {
@@ -16340,82 +16365,82 @@
    "json_fail": 0,
    "infra_error": 0,
    "latency_ms": [
-    1697,
-    2525,
-    3584,
-    2139,
-    3139,
-    2741,
-    2931,
-    2698,
-    2708,
-    1534,
-    3559,
-    2817,
-    2922,
-    1459,
-    1429,
-    2397,
-    2088,
-    585,
-    2289,
-    741,
-    2421,
+    1638,
+    2946,
+    3352,
+    1736,
+    2903,
+    3402,
+    3790,
+    3083,
+    2670,
+    3016,
+    2049,
+    2737,
+    3425,
+    1586,
+    3066,
+    2668,
+    2138,
+    792,
+    2336,
+    2300,
+    3141,
+    3663,
+    627,
+    2574,
+    902,
+    2531,
+    732,
     2845,
-    557,
-    3079,
-    1047,
-    2813,
-    711,
-    2765,
-    1230,
-    3194,
-    2902,
-    2200,
-    3563,
-    433,
-    2791,
-    752,
-    3355,
-    555,
-    2062,
-    694,
-    2153,
-    3251,
-    3426,
-    3485,
-    1038,
-    3247,
-    522,
-    2622,
-    2701,
-    3314,
+    840,
+    2310,
+    2350,
+    2748,
+    4173,
+    470,
+    2351,
+    866,
+    2602,
+    534,
+    3356,
+    1158,
+    2444,
+    2316,
+    3226,
+    2864,
+    1538,
+    3335,
+    939,
+    3587,
+    3327,
+    3056,
+    2927,
+    3500,
+    1339,
+    3255,
+    1101,
     2888,
-    3668,
-    1983,
-    2733,
-    775,
-    2661,
-    817,
-    3098,
-    927,
-    2394,
-    743,
-    2779,
-    2898,
-    2290,
-    572,
-    2796,
-    579,
-    2696,
-    366,
-    2701,
-    548,
-    3532,
-    1153,
-    2073,
-    387,
-    2070
+    659,
+    3388,
+    1285,
+    2941,
+    725,
+    3450,
+    3001,
+    2613,
+    2812,
+    3040,
+    2999,
+    2630,
+    469,
+    3144,
+    1363,
+    3301,
+    943,
+    3397,
+    404,
+    2136
    ]
   }
  ],
