@@ -1,6 +1,8 @@
 """``apply_batch``: apply the owner-approved proposals of one batch (role ``assistant``+, §4b).
 
-Enqueued by the last ``answer`` event of a batch decision. No LLM call. The worker applies the
+Enqueued by the last ``answer`` event of a batch decision, or by a promotion (``set_role``
+assistant+) for the ``accepted_pending`` answers recorded under observer (D-074); both statuses
+are applied the same way. No LLM call. The worker applies the
 accepted proposals only if the effective role is ``assistant`` or ``autonomous`` (in ``observer``
 the outcome is ``role_denied`` and nothing changes). Each question is applied under ITS OWN
 proposing job's capability set (W2b: one batch collects the proposals of many jobs): the CC-3
@@ -27,7 +29,7 @@ class ApplyBatch:
         async with await w.connect() as conn:
             cur = await conn.execute(
                 "SELECT question_id::text, kind, proposal FROM librarian_questions"
-                " WHERE batch_id = %s AND status = 'approved' ORDER BY question_id",
+                " WHERE batch_id = %s AND status IN ('approved', 'accepted_pending') ORDER BY question_id",
                 (batch_id,),
             )
             approved = await cur.fetchall()

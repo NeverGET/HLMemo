@@ -61,8 +61,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS librarian_batches_one_open ON librarian_batche
   WHERE status = 'open';
 
 ALTER TABLE librarian_questions DROP CONSTRAINT IF EXISTS librarian_questions_status_check;
+-- accepted_pending (D-074): an owner accept recorded while a touched project is OBSERVER; applied
+-- later through the batch path after a promotion (never a user mutation in observer).
 ALTER TABLE librarian_questions ADD CONSTRAINT librarian_questions_status_check CHECK (status IN (
-  'open','approved','rejected','superseded','answered','applied','expired','authority_lost'));
+  'open','approved','rejected','superseded','answered','applied','expired','authority_lost',
+  'accepted_pending'));
 ALTER TABLE librarian_questions ADD COLUMN IF NOT EXISTS answer jsonb;
 ALTER TABLE librarian_questions ADD COLUMN IF NOT EXISTS expires_at timestamptz;
 CREATE INDEX IF NOT EXISTS librarian_questions_expiry ON librarian_questions (expires_at)
