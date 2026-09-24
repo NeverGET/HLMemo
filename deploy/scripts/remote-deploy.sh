@@ -364,7 +364,8 @@ dc up -d --no-deps --wait --wait-timeout 300 db api worker librarian caddy </dev
 # failures before this boundary may restore the snapshot automatically.
 dc exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()" </dev/null
 dc exec -T caddy wget -q -O /dev/null http://127.0.0.1:8081/ready </dev/null
-# W2a librarian: fresh heartbeat (it idles without provider calls while HLM_LIBRARIAN_ENABLED=false).
+# W2a librarian: fresh heartbeat (enabled by llm.env since R2; without it, it idles without
+# provider calls). Liveness only: the provider is never contacted here, so an outage cannot fail it.
 dc exec -T librarian python -m hlmemo.librarian.health 120 </dev/null
 # W0a route table on the API's own loopback listener (the route filter applies to any listener).
 # The checker mints a 10-minute ci device with hlmemo.ops inside the container and revokes it
@@ -409,6 +410,20 @@ unset routes_token
 # (never tokens). RUNBOOK: rotate g7-*, revoke stale gates-*/deploy-* with hlm_ops.sh.
 echo 'Device inventory after cutover (python -m hlmemo.ops device list):'
 dc exec -T api python -m hlmemo.ops device list </dev/null || echo 'WARNING: device inventory unavailable; run hlm_ops.sh device list' >&2
+# R2 (D-058): the librarian's effective state. llm.env enabling it: the heartbeat must show
+# enabled=true with the configured role (observer) and the api must see the same switch (risk judge,
+# W2b enqueue). An unreachable provider is only reported. Without llm.env the librarian idles.
+# Like the public checks above, a failure leaves the new stack running (no database rollback).
+llm_env_state=absent
+if [[ -f ${HLM_LLM_ENV_FILE:-$(dirname "$HLM_ENV_FILE")/llm.env} ]]; then llm_env_state=present; fi
+dc exec -T librarian python - collect --service librarian --probe \
+  < deploy/scripts/check_librarian.py > "$run_dir/librarian-report.json" || true
+dc exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$run_dir/api-report.json" || true
+if ! python3 deploy/scripts/check_librarian.py evaluate --llm-env "$llm_env_state" \
+  --librarian "$run_dir/librarian-report.json" --api "$run_dir/api-report.json" </dev/null; then
+  echo 'Librarian check failed (RESULT librarian above); new stack left running (no database rollback). Fix llm.env (deploy/scripts/install_llm_env.sh), then stack.sh up -d --no-deps librarian api.' >&2
+  exit 1
+fi
 # Release the operation lock before the pruning helper acquires it again.
 exec 8>&-
 if ! bash deploy/backup/backup.sh --prune-pre-upgrade </dev/null; then

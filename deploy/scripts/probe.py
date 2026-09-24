@@ -110,9 +110,18 @@ class Probe:
         self.protocol = init["protocolVersion"]
         self.rpc(token, "notifications/initialized", notification=True)
         tools = self.rpc(token, "tools/list")["tools"]
-        expected = {"memory.query", "memory.drilldown", "memory.raw", "memory.write", "memory.call_the_day"}
+        # CC-4: the five Phase-0 tools plus W2d's two; client-only tools (hlm.export) are never listed.
+        expected = {
+            "memory.query",
+            "memory.drilldown",
+            "memory.raw",
+            "memory.write",
+            "memory.call_the_day",
+            "memory.risk_check",
+            "memory.register_lesson",
+        }
         if {tool["name"] for tool in tools} != expected:
-            raise ValueError("tools/list does not expose exactly the five expected memory tools")
+            raise ValueError("tools/list does not expose exactly the seven expected memory tools")
 
     def ops(self, *args):
         """`python -m hlmemo.ops ARGS` in this project's api container -> (stdout, stderr metadata)."""

@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,10 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ComposeIsolationTests(unittest.TestCase):
-    def render(self, local=False):
+    def render(self, local=False, llm_env=None):
         env = {key: value for key, value in os.environ.items() if not key.startswith(("HLM_", "BAKE_"))}
         for name in ("APP", "API", "DB"):
             env[f"HLM_{name}_ENV_FILE"] = str(ROOT / "deploy" / f"{name.lower()}.env.example")
+        # llm.env is optional (required: false): absent unless a test passes one.
+        env["HLM_LLM_ENV_FILE"] = str(llm_env or ROOT / "deploy" / "no-such-llm.env")
         if local:
             env.update(
                 BAKE_PROJECT="bake-astra",
@@ -56,6 +59,40 @@ class ComposeIsolationTests(unittest.TestCase):
         self.assertIn("HLM_CURSOR_SECRET", services["api"]["environment"])
         self.assertNotIn("HLM_ADMIN_TOKEN", services["api"]["environment"])
         self.assertNotIn("HLM_REGISTRATION_SECRET", services["api"]["environment"])
+
+    def test_llm_env_reaches_only_api_and_librarian(self):
+        """R2: the provider key and the switch reach the librarian AND the api (risk judge, W2b
+        enqueue), never db/worker/migrate/caddy; no Compose pin overrides llm.env any more."""
+        with tempfile.TemporaryDirectory() as tmp:
+            llm = Path(tmp) / "llm.env"
+            llm.write_text(
+                (ROOT / "deploy/llm.env.example")
+                .read_text()
+                .replace("HLM_LIBRARIAN_ENABLED=false", "HLM_LIBRARIAN_ENABLED=true")
+                .replace("OPENROUTER_API_KEY=\n", "OPENROUTER_API_KEY=placeholder-not-a-key\n")
+            )
+            services = self.render(llm_env=llm)["services"]
+        for name in ("api", "librarian"):
+            env = services[name]["environment"]
+            self.assertEqual(env["OPENROUTER_API_KEY"], "placeholder-not-a-key", name)
+            self.assertEqual(env["HLM_LIBRARIAN_ENABLED"], "true", name)
+            self.assertEqual(env["HLM_LIBRARIAN_ROLE"], "observer", name)
+            # llm.env is the last env file: its profile wins over app.env's HLM_PROFILE=openrouter.
+            self.assertEqual(env["HLM_PROFILE"], "openrouter-gpt6-luna", name)
+            self.assertEqual(env["HLM_DEPLOYMENT"], "production", name)  # W0a pins still win
+        for name in ("db", "worker", "migrate", "caddy"):
+            keys = set(services[name].get("environment") or {})
+            self.assertFalse(
+                keys & {"OPENROUTER_API_KEY", "HLM_LIBRARIAN_ENABLED", "HLM_LLM_BUDGET_DAY_USD"}, name
+            )
+        # Without llm.env the model still renders and nothing enables the librarian (code default off).
+        services = self.render()["services"]
+        for name in ("api", "librarian"):
+            self.assertNotIn("HLM_LIBRARIAN_ENABLED", services[name]["environment"], name)
+            self.assertNotIn("OPENROUTER_API_KEY", services[name]["environment"], name)
+        self.assertNotRegex(
+            (ROOT / "deploy/compose.prod.yaml").read_text(), r"(?m)^\s*HLM_LIBRARIAN_ENABLED\s*:", "R1 pin"
+        )
 
     def test_access_settings_ship_with_the_release(self):
         """W0a (D-061): production access mode is pinned in the tracked Compose model, not env files."""
