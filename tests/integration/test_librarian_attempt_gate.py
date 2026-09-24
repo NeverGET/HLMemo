@@ -423,13 +423,27 @@ async def test_one_terminal_event_per_job_and_compact_backoffs(db_dsn, connect, 
         await conn.commit()
     provider = make_provider(db_dsn, ScriptedLLM(), budget_disabled=True)
     worker = make_worker(lib_settings(db_dsn), provider, connect, handlers={"boom": Boom()})
-    for _ in range(MAX_ATTEMPTS):
-        async with await connect() as conn:  # skip the back-off wait
-            await conn.execute(
-                "UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:doomed'"
-            )
-            await conn.commit()
+    for attempt in range(MAX_ATTEMPTS):
+        if attempt:
+            async with await connect() as conn:  # skip the back-off wait
+                await conn.execute(
+                    "UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:doomed'"
+                )
+                await conn.commit()
         await worker.drain()
+        if attempt == 0:  # review 60: a consumed back-off is event-recorded: compared on RAW fields
+            async with await connect() as conn:
+                cur = await conn.execute(
+                    "SELECT status, attempts, last_error FROM jobs"
+                    " WHERE dedupe_key = 'librarian_write:doomed'"
+                )
+                assert await cur.fetchone() == ("queued", 1, "E_RuntimeError")
+                before = await dump_full_jobs_and_questions(conn)
+                row = next(r for r in before["jobs"] if "librarian_write:doomed" in r)
+                assert "E_RuntimeError" in row  # not masked: run_after/last_error are compared
+                await rebuild_projections(conn)
+                await conn.commit()
+                assert await dump_full_jobs_and_questions(conn) == before
     await provider.aclose()
     async with await connect() as conn:
         cur = await conn.execute(

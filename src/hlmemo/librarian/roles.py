@@ -165,7 +165,6 @@ async def releasable(
           FROM librarian_questions lq
          WHERE lq.status = 'accepted_pending' AND lq.batch_id IS NOT NULL
            AND lq.kind <> 'widen_scope'
-           AND NOT (lq.proposal->'actions' @> '[{"op": "widen_scope"}]'::jsonb)
            AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'librarian_write'
                             AND j.payload->>'op' = 'apply_batch'
                             AND j.payload->>'batch_id' = lq.batch_id::text
@@ -177,7 +176,9 @@ async def releasable(
     for batch_id, home, pids, proposal in await cur.fetchall():
         if batch_id in released:
             continue
-        actions = proposal_actions(proposal)
+        actions = proposal_actions(proposal)  # both stored formats: W2b actions, W2a mutation
+        if any(a.get("op") == "widen_scope" for a in actions):
+            continue  # D-086 §1 (review 60: in Python, so a legacy W2a row is never dropped by SQL NULL)
         if logical_ids is not None:
             named = {int(k) for a in actions for k in (a.get("assessed") or {})} | {
                 int(a[f])
