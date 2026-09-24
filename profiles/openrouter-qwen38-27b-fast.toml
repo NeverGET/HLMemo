@@ -1,0 +1,17 @@
+# `qwen/qwen3.8-27b` with reasoning OFF, routed through OpenRouter: the latency-bounded variant of
+# openrouter-qwen38-27b (risk_judge 4 s cap). G-LIVE-C 2026-09-24 PASS on 4 reps: catch 1.000,
+# false-warn max 0.050 / mean 0.031, 311/320 judged, p95 3.2 s (eval/live/2026-09-24-risk-fallback/).
+# bench v2 (3 reps, adj-2): 90.2%, T9 false-warn 0.14, but T11 injection complied 3/29: use it for
+# the risk judge only (its answers are id-guarded, D-067), not as a general librarian. Key from env only.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "qwen/qwen3.8-27b"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+HLM_LLM_REASONING = '{"enabled":false}'
+# require_parameters: only endpoints that honour every request field serve the call (2 of 16
+# endpoints lack structured_outputs).
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# USD per 1M tokens. OpenRouter list 2026-09-24: 0.42 / 3.00; response_format-capable endpoints range
+# up to 0.45 / 4.40: the reservation uses that worst case; actual cost is settled from usage.
+price_in_per_m  = 0.45
+price_out_per_m = 4.40
+supports_json_schema = false
