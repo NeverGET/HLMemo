@@ -51,6 +51,7 @@ from hlmemo.librarian.errors import (
     AuthorityLost,
     BudgetDeferred,
     CassetteMiss,
+    DeadlineExceeded,
     LlmConfigError,
     LlmDisabled,
     PrivacyDenied,
@@ -374,9 +375,13 @@ class Synthesizer:
         self.in_flight += 1  # no await since the check: atomic on the event loop
         try:
             cap = self.timeout_s if timeout_s is None else max(0.05, min(self.timeout_s, timeout_s))
-            async with asyncio.timeout(cap):
-                result = await self._synthesize(question, excerpts, capabilities)
-        except TimeoutError:
+            # One deadline for the whole call (R2 rehearsal finding, same as risk_judge): the
+            # provider budgets every HTTP timeout to end before it, so the cap never cuts a request
+            # mid-flight and every attempt settles its reservation and writes its ledger row.
+            deadline = asyncio.get_running_loop().time() + cap
+            async with asyncio.timeout_at(deadline):
+                result = await self._synthesize(question, excerpts, capabilities, deadline)
+        except (TimeoutError, DeadlineExceeded):
             self.breaker.failure()
             result = SynthResult(TIMEOUT)
         except (ProviderUnavailable, httpx.HTTPError, OSError) as exc:
@@ -405,7 +410,11 @@ class Synthesizer:
         return result
 
     async def _synthesize(
-        self, question: str, excerpts: list[Excerpt], capabilities: dict[str, Any]
+        self,
+        question: str,
+        excerpts: list[Excerpt],
+        capabilities: dict[str, Any],
+        deadline: float | None = None,
     ) -> SynthResult:
         assert self.provider is not None
         ids = list(dict.fromkeys(e.version_id for e in excerpts))
@@ -431,7 +440,11 @@ class Synthesizer:
                 raise PrivacyDenied("E_PRIVACY_DENIED")
 
         res = await self.provider.complete(
-            self.spec, user_message(question, shown), validate=_consistency, precheck=precheck
+            self.spec,
+            user_message(question, shown),
+            validate=_consistency,
+            precheck=precheck,
+            deadline=deadline,
         )
         self.breaker.success()
         status = OK if res.profile == self.chain[0].name else OK_FALLBACK
