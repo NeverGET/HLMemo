@@ -40,6 +40,15 @@ hit; `evidence_any5` = at least one span hit.
 Stale claim (temporal rows): the stale value is ranked above the current key, or present while the current
 key is absent; reported over all hits (l1), the top-3 hits (l1_top3) and the drilldown items (l2).
 
+--synthesize (W2e, the W-E feature gate for synthesis): every `memory.query` call sets `synthesize:true`
+(query/2; the server runs the librarian LLM only when the fast path is weak). Per run it records the
+synthesis outcome (`syn_status`: answered | insufficient_evidence | unavailable:<reason>), its text and
+clues (the text is kept in results.jsonl for the answer-level LLM judge), `syn` (an answer key in the
+synthesis text: the W2e answer accuracy), `syn_system` (the synthesis text when it answered, else the
+fast path's L2) and, for negatives, `syn_false_answer` (a synthesis that answered a question without an
+answer). The fast-path metrics are computed on the same responses (hits may be trimmed to make room for
+the synthesis), so compare them against a run without the flag.
+
 Outputs in --out-dir: results.jsonl (one record per question), summary.json, summary.md.
 Credentials: $HLM_DEVICE_TOKEN or <config-dir>/credentials.toml (never printed). Standard library only;
 reuses the MCP client of import_corpus.py next to this file.
@@ -238,6 +247,33 @@ def evidence_view(
     }
 
 
+def synthesis_view(res: dict[str, Any], keys: list[str], l2: bool, *, negative: bool) -> dict[str, Any]:
+    """W2e (--synthesize): the query/2 synthesis outcome of one response."""
+    syn = res.get("synthesis")
+    if isinstance(syn, dict):
+        status = str(syn.get("status"))
+        text = str(syn.get("text") or "")
+        clues = list(syn.get("clues") or [])
+        tier = syn.get("tier")
+    else:
+        status = f"unavailable:{res.get('synthesis_reason')}"
+        text, clues, tier = "", [], None
+    found = keys_in(norm(text), keys) if keys else []
+    answered = status == "answered"
+    hit_clues = {h.get("clue") for h in res.get("hits", [])}
+    return {
+        "syn_status": status,
+        "syn_tier": tier,
+        "syn_text": text,
+        "syn_clues": clues,
+        "syn_clues_in_hits": set(clues) <= hit_clues,
+        "syn_keys": found,
+        "syn": bool(found),
+        "syn_system": bool(found) if answered else l2,
+        "syn_false_answer": answered and negative,
+    }
+
+
 def evaluate_budget(
     mcp: Mcp,
     a: argparse.Namespace,
@@ -248,12 +284,10 @@ def evaluate_budget(
 ) -> dict[str, Any]:
     keys = list(q.get("answer_keys") or [])
     t0 = time.perf_counter()
-    res = mcp.call_retry(
-        "memory.query",
-        {"project": a.project, "query": q["question"], "token_budget": budget},
-        errors,
-        f"{q['id']} query b={budget}",
-    )
+    q_args: dict[str, Any] = {"project": a.project, "query": q["question"], "token_budget": budget}
+    if a.synthesize:
+        q_args["synthesize"] = True
+    res = mcp.call_retry("memory.query", q_args, errors, f"{q['id']} query b={budget}")
     q_ms = (time.perf_counter() - t0) * 1000
     hits = res.get("hits", [])
     gold_rank = next((i for i, h in enumerate(hits, start=1) if source_of_title(h["title"]) in gold), None)
@@ -306,6 +340,8 @@ def evaluate_budget(
             "l2_all_keys": bool(keys) and set(l2_drill) | set(l1_keys) == set(keys),
         }
     )
+    if a.synthesize:
+        out.update(synthesis_view(res, keys, out["l2"], negative=not gold))
     if q.get("stale_answer"):
         stale = stale_keys_for(q)
         hit_units = [h.get("title", "") + "\n" + h.get("preview", "") for h in hits]
@@ -430,6 +466,12 @@ def group_metrics(recs: list[dict[str, Any]], bi: int) -> dict[str, Any]:
     if any(d is not None for d in deep):
         m["deep_found"] = rate(sum(d is not None for d in deep), n)
         m["deep_hit@20"] = rate(sum(1 for d in deep if d and d <= 20), n)
+    if runs and "syn_status" in runs[0]:  # --synthesize (W2e)
+        m["syn_key"] = rate(sum(x["syn"] for x in runs), n)
+        m["syn_system"] = rate(sum(x["syn_system"] for x in runs), n)
+        m["syn_answered"] = rate(sum(x["syn_status"] == "answered" for x in runs), n)
+        m["syn_abstained"] = rate(sum(x["syn_status"] == "insufficient_evidence" for x in runs), n)
+        m["syn_clues_in_hits"] = rate(sum(x["syn_clues_in_hits"] for x in runs), n)
     return m
 
 
@@ -483,6 +525,21 @@ def summarize(recs: list[dict[str, Any]], budgets: list[int]) -> dict[str, Any]:
             "auc_pos_gt_neg": auc(neg, pos),
             "best_threshold": best_threshold(neg, pos),
         }
+        syn_runs = [r["runs"][bi] for r in recs if "syn_status" in r["runs"][bi]]
+        if syn_runs:  # --synthesize (W2e): outcomes over every question, false answers on negatives
+            negs = [r["runs"][bi] for r in recs if not r["positive"] and "syn_status" in r["runs"][bi]]
+            s["synthesis"] = {
+                "status": dict(
+                    sorted(
+                        {
+                            k: sum(1 for x in syn_runs if x["syn_status"] == k)
+                            for k in {x["syn_status"] for x in syn_runs}
+                        }.items()
+                    )
+                ),
+                "negative_false_answer": rate(sum(x["syn_false_answer"] for x in negs), len(negs)),
+                "clues_in_hits": rate(sum(x["syn_clues_in_hits"] for x in syn_runs), len(syn_runs)),
+            }
         out["budgets"][str(b)] = s
     return out
 
@@ -497,6 +554,8 @@ def md_table(rows: dict[str, dict[str, Any]], cols: list[str]) -> list[str]:
 def render_md(summary: dict[str, Any], meta: dict[str, Any]) -> str:
     cols = ["n_pos", "hit@1", "hit@3", "hit@5", "hit@10", "mrr", "l1_key", "l2_key", "l2_drill_key"]
     cols += ["deep_hit@20", "evidence_r5", "evidence_any5", "stale_claim_l1_top3", "tokens_total_mean"]
+    if meta.get("synthesize"):
+        cols += ["syn_key", "syn_system", "syn_answered", "syn_abstained"]
     lines = [f"# Real-data retrieval eval — project `{meta['project']}`", ""]
     lines.append(f"Questions: {summary['n_questions']}. Drilldown: top-{meta['drill_top']} clues at ")
     lines[-1] += f"budget {meta['drill_budget']}. Run at {meta['started']}."
@@ -510,6 +569,8 @@ def render_md(summary: dict[str, Any], meta: dict[str, Any]) -> str:
         if "temporal" in s:
             lines.append(f"Temporal: `{json.dumps(s['temporal'])}`")
         lines.append(f"Negative: `{json.dumps(s['negative'])}`")
+        if "synthesis" in s:
+            lines.append(f"Synthesis: `{json.dumps(s['synthesis'])}`")
     return "\n".join(lines) + "\n"
 
 
@@ -543,6 +604,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     ap.add_argument("--span-git-dir", type=Path, help="corpus-b: git repo for git:YYYY-MM-DD spans")
     ap.add_argument("--span-git-rev", help="corpus-b: git log up to this commit")
+    ap.add_argument(
+        "--synthesize",
+        action="store_true",
+        help="W2e: memory.query with synthesize:true (query/2); scores the synthesis (syn_* fields)",
+    )
     a = ap.parse_args(argv)
     a.budgets = [int(x) for x in a.budgets.split(",") if x.strip()]
     return a
@@ -578,9 +644,10 @@ def main(argv: list[str] | None = None) -> int:
             recs.append(rec)
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             r = rec["runs"][-1]
+            syn = f" syn={r['syn_status']}:{int(r['syn'])}" if "syn_status" in r else ""
             print(
                 f"[{i}/{len(questions)}] {q['id']} rank={r['gold_rank']} l1={int(r['l1'])} "
-                f"l2={int(r['l2'])} {r['latency_ms']:.0f}ms",
+                f"l2={int(r['l2'])}{syn} {r['latency_ms']:.0f}ms",
                 file=sys.stderr,
             )
     summary = summarize(recs, a.budgets)
@@ -590,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
         "drill_budget": a.drill_budget,
         "deep_budget": a.deep_budget,
         "schema": a.schema,
+        "synthesize": a.synthesize,
         "started": started,
         "errors": errors,
     }
