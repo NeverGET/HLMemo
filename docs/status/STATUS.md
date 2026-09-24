@@ -50,6 +50,8 @@ Owner framing: the librarian's gradual supervised learning (observe → apply) h
 
 - **RESUMED 2026-09-24 evening.** Running in parallel: F (merge main + full integration + gate-release on wf-fallback-per-task), L (pivot-s1-r3 = main + slice 1 + B1, D-086 check, gates off/on), V3 (wf-librarian-v3 from main per D-089: instrumentation, temporal/direction flag, owner-approved close flag, candidate expansion quotas; G-LIVE-B v2 vs v3). Next: routine check + merge F; critical dual review + merge pivot-s1-r3; hold-out re-measure with rewrite ON on final main → R3.
 
+- 2x:xx F MERGED (D-098). pivot-s1-r3 FIX-NEEDED after dual review 64 → L fixing per D-097 (merge main first). **Owner conditional prod GO for R3 = D-099** (criteria listed there; any miss → stop and report). R3 is code-only since R2 (no alembic / compose / deploy.sh / Dockerfile change). Next: L done → routine check of the delta → merge → hold-out re-measure (rewrite ON) + quiet-machine G-L3 → VM rehearsal (upgrade from R2 state, gates, G-LIVE-C via wiring, rollback drill) → prod → remote gates + e2e re-run. V3 continues in parallel (not in R3).
+
 ## GOAL (D-051/D-058) — active
 Phases 2-5 per docs/decisions/PHASE2-4-ROADMAP.md → gates → incremental releases → final acceptance (HLMemo self-migration, then the corpus-A project) → delete local dev stack + lima VMs.
 State 2026-09-23 night: **R1 is LIVE in production** (ee6ce9c, D-068): D-055 retrieval, W0a access hardening (ops over SSH, closed registration), W2a librarian foundation (DISABLED). Owner device id 21 `cemals-mb-pro-3` (hlmemo:write); the three CLIs point to production; the repo hlm.toml points to production, project hlmemo. **Dogfood D1 starts in the next chat** (a restart is needed so the MCP connection uses device 21).
