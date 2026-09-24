@@ -62,7 +62,7 @@ from hlmemo.librarian.jobs import LIBRARIAN_JOB_KINDS, assign_job_ids, insert_re
 from hlmemo.librarian.provider import Provider, lineage_scope
 from hlmemo.librarian.redact import REDACTION_VERSION
 from hlmemo.librarian.reserved import reserved_ids
-from hlmemo.librarian.roles import check_role_at_start, effective_role, lock_role_order
+from hlmemo.librarian.roles import check_role_at_start, effective_role, lock_role_order, lowest_role
 from hlmemo.librarian.tasks import Handler, Plan
 from hlmemo.librarian.tasks.apply_batch import ApplyBatch, proposal_actions
 from hlmemo.librarian.tasks.pair_check import PairCheck
@@ -107,6 +107,7 @@ class _Approved:
     proposal: dict[str, Any]
     status: str
     expires_at: datetime | None
+    projects: frozenset[int] = frozenset()  # the question's home + project_ids
 
 
 def _logical_ids(actions: list[dict[str, Any]]) -> list[int]:
@@ -213,7 +214,15 @@ class LibrarianWorker:
         if self.paused:
             return 0
         async with await self.connect() as conn:
-            jobs = await lease_jobs(conn, HANDLED_KINDS, 1, lease_seconds=self.settings.librarian_lease_s)
+            jobs = await lease_jobs(
+                conn,
+                HANDLED_KINDS,
+                1,
+                lease_seconds=self.settings.librarian_lease_s,
+                # D-074 (Sol 49 #2): an OBSERVER-configured librarian can never apply, so it does not
+                # even lease an apply job: it stays queued (no attempt, no event) for a promoted worker
+                exclude_ops=("apply_batch",) if self.settings.librarian_role == "observer" else (),
+            )
         for job in jobs:
             await self.process(job)
         return len(jobs)
@@ -388,7 +397,12 @@ class LibrarianWorker:
         for i, prop in enumerate(plan.proposals):
             stale = await actor.is_stale(conn, {"assessed": prop.assessed})
             superseded += int(stale)
-            if auto and prop.auto_ok:
+            if (
+                auto
+                and prop.auto_ok
+                and await lowest_role(conn, self.settings.librarian_role, set(prop.project_ids))
+                == "autonomous"
+            ):  # D-074: every touched project, not only the job's home
                 if not stale:
                     direct.extend(prop.actions)
                 continue
@@ -470,22 +484,25 @@ class LibrarianWorker:
         for device_id in sorted(devices):
             await lock_device_access(conn, device_id)
         cur = await conn.execute(
-            "SELECT question_id::text, status, expires_at FROM librarian_questions"
+            "SELECT question_id::text, status, expires_at, project_id, project_ids FROM librarian_questions"
             " WHERE question_id = ANY(%s::uuid[]) ORDER BY question_id FOR UPDATE",
             ([qid for qid, _p in plan.approved],),
         )
-        rows = {qid: (status, expires) for qid, status, expires in await cur.fetchall()}
+        rows = {
+            qid: (status, expires, frozenset({int(home), *(int(x) for x in pids)}))
+            for qid, status, expires, home, pids in await cur.fetchall()
+        }
         now = max(T, await q.clock_now(conn))
         live: list[_Approved] = []
         changes: list[dict[str, Any]] = []
         for qid, proposal in plan.approved:
-            status, expires = rows.get(qid, (None, None))
+            status, expires, projects = rows.get(qid, (None, None, frozenset()))
             if status not in APPLICABLE:
                 continue
             if expires is not None and expires <= now:
                 changes.append({"question_id": qid, "status": "expired"})
                 continue
-            live.append(_Approved(qid, proposal, status, expires))
+            live.append(_Approved(qid, proposal, status, expires, projects))
         return live, changes, now
 
     async def _apply_approved(
@@ -540,22 +557,44 @@ class LibrarianWorker:
             changes.append({"question_id": qid, "status": "applied"})
         return records, changes, superseded, recorded, T
 
+    async def _split_by_role(
+        self, conn: AsyncConnection, live: list[_Approved]
+    ) -> tuple[list[_Approved], list[_Approved]]:
+        """(applicable, deferred): a question applies only if EVERY project it touches (its home,
+        its ``project_ids`` and every project of its actions on the CURRENT rows) has an effective
+        role above observer, read under the role-order lock like ``memory.answer`` (D-074, Sol 49
+        #1). An A→B action while B is observer is deferred WHOLE: nothing on A or B."""
+        ready: list[_Approved] = []
+        deferred: list[_Approved] = []
+        for a in live:
+            touched = set(a.projects) | await actor.action_projects(conn, proposal_actions(a.proposal))
+            role = await lowest_role(conn, self.settings.librarian_role, touched)
+            (deferred if role == "observer" else ready).append(a)
+        return ready, deferred
+
     @staticmethod
-    async def _batch_after_apply(conn: AsyncConnection, batch_id: str, denied: bool) -> list[dict[str, Any]]:
-        """The batch row changes of an apply (the row is locked last). A decided batch becomes
-        ``applied`` (or ``ready`` again when the role denied it); a batch that still collects open
-        questions (a promotion released its ``accepted_pending`` answers, D-074) keeps its status."""
-        cur = await conn.execute(
-            "SELECT status, EXISTS (SELECT 1 FROM librarian_questions"
-            "                        WHERE batch_id = %s AND status = 'open')"
-            " FROM librarian_batches WHERE batch_id = %s",
-            (batch_id, batch_id),
-        )
+    async def _batch_after_apply(
+        conn: AsyncConnection, batch_id: str, status_changes: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """The batch row change of an apply (the row comes last in the lock order), from the
+        questions' statuses AFTER this job: open questions left (still collecting, or handed back)
+        → a decided batch is ``ready`` again (to be decided anew), any other keeps its status;
+        approvals or ``accepted_pending`` answers still waiting (a touched project is observer) →
+        unchanged; nothing left → ``applied``."""
+        cur = await conn.execute("SELECT status FROM librarian_batches WHERE batch_id = %s", (batch_id,))
         row = await cur.fetchone()
-        if row is None or row[1]:
+        if row is None:
             return []
-        if denied:
+        cur = await conn.execute(
+            "SELECT question_id::text, status FROM librarian_questions WHERE batch_id = %s", (batch_id,)
+        )
+        after = {qid: st for qid, st in await cur.fetchall()}
+        after.update({c["question_id"]: c["status"] for c in status_changes if c["question_id"] in after})
+        left = set(after.values())
+        if "open" in left:
             return [{"batch_id": batch_id, "status": "ready"}] if row[0] == "decided" else []
+        if left & set(APPLICABLE) or row[0] == "applied":
+            return []
         return [{"batch_id": batch_id, "status": "applied"}]
 
     async def apply(self, conn: AsyncConnection, job: LeasedJob, plan: Plan) -> None:
@@ -577,25 +616,26 @@ class LibrarianWorker:
             detail: str | None = None
             if plan.op == "apply_batch" and outcome == "approved":
                 live, status_changes, T = await self._lock_approved(conn, plan, T)
-                if role == "observer":
-                    # nothing applies; batch approvals are handed back (questions open again, the
-                    # batch ready): a new decision round re-approves them once the role allows
-                    # it (Sol 44 #7; Sol 46: round-keyed answer events and apply job). An owner's
-                    # accepted_pending answer (D-074) stays as it is until a promotion.
-                    outcome = "role_denied"
-                    status_changes += [
-                        {"question_id": a.question_id, "status": "open"}
-                        for a in live
-                        if a.status == "approved"
-                    ]
-                    batch_changes = await self._batch_after_apply(conn, job.payload["batch_id"], True)
-                else:
+                ready, deferred = await self._split_by_role(conn, live)
+                # a question with ANY observer project applies nothing: batch approvals are handed
+                # back (open again; a new decision round re-approves them, Sol 44 #7 / Sol 46); an
+                # owner's accepted_pending answer (D-074) stays until that project is promoted
+                status_changes += [
+                    {"question_id": a.question_id, "status": "open"}
+                    for a in deferred
+                    if a.status == "approved"
+                ]
+                if deferred:
+                    plan.request_extra["role_deferred"] = [a.question_id for a in deferred]
+                if ready:
                     applied, changes, superseded, recorded, T = await self._apply_approved(
-                        conn, plan, live, T
+                        conn, plan, ready, T
                     )
                     status_changes += changes
                     outcome = "applied" if applied else "superseded" if superseded else "no_change"
-                    batch_changes = await self._batch_after_apply(conn, job.payload["batch_id"], False)
+                else:
+                    outcome = "role_denied" if deferred else "no_change"
+                batch_changes = await self._batch_after_apply(conn, job.payload["batch_id"], status_changes)
             elif (plan.proposals or plan.signals) and outcome in ("proposed", "approved"):
                 try:
                     ctx = await actor.recheck(conn, caps, CLIENT)

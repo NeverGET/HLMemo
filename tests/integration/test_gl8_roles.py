@@ -174,14 +174,17 @@ async def test_gl8_assistant_applies_only_approved_batches(db_dsn, connect, worl
 
 
 async def test_gl8_observer_never_applies_an_approved_batch(db_dsn, connect, world: World, deps) -> None:  # noqa: ANN001
+    """An observer never applies: it does not even lease the apply job, which stays queued for a
+    promoted worker (D-074, Sol 49 #2: never consumed, never discarded)."""
     worker, provider, batch_id, _ = await _proposals_job(db_dsn, connect, world, deps, "observer")
     async with await connect() as conn:
         await record_batch_decision(conn, batch_id=batch_id, approver=world.ctx_a, decision="accept")
         await conn.commit()
-    assert await worker.drain() == 1
+    assert await worker.drain() == 0
     async with await connect() as conn:
         assert await count(conn, "links") == 0
-        assert (await outcomes(conn))[-1] == "role_denied"
+        cur = await conn.execute("SELECT status, attempts FROM jobs WHERE payload->>'op' = 'apply_batch'")
+        assert await cur.fetchall() == [("queued", 0)]
     await provider.aclose()
 
 

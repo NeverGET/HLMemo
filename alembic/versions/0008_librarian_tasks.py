@@ -17,7 +17,14 @@ Adds, never rewrites (CC-1):
   * ``librarian_questions`` (D-062 shape) gains the W2c lifecycle: status ``answered`` (custom
     answer, re-plan queued), ``applied`` (accepted and applied), ``expired`` (30 days),
     ``authority_lost`` (apply-time recheck failed); the ``answer`` jsonb (decision, note, by) and
-    ``expires_at`` (created_at + 30 days, set by the writer).
+    ``expires_at`` (created_at + 30 days, set by the writer); ``accepted_pending`` (D-074: an owner
+    accept recorded while a touched project is OBSERVER, applied only after a promotion).
+
+Release status (orchestrator ruling after Sol 49): 0008 has NEVER been released (production is at
+0006), so it is edited in place instead of adding a follow-up migration (the ``accepted_pending``
+value of the status CHECK included). Every DB that already ran an earlier draft of 0008 is a dev or
+test DB and is rebuilt (drop + ``alembic upgrade``); none may be carried forward. Once 0008 ships,
+this file is frozen and any change is a new revision.
 """
 
 from __future__ import annotations
