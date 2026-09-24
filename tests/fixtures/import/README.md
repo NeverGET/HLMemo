@@ -22,7 +22,7 @@ clock values, so they are stable across checkouts.
   a `type: project` fact with `date:` frontmatter) plus files in the CURRENT Claude Code shape, with
   `type` nested under `metadata:` (e2e 2026-09-24 finding #1; the layout copies real files, the
   text is synthetic): `feedback_deploy_footguns.md` (a lead line, three rules, a `**Why:**`
-  paragraph, a second list with its own intro; one rule labelled `**Mistake:**`/`**Fix:**`) → one
+  paragraph, a second list with its own intro; one rule labelled `**Mistake:**`/`**Fix:**`, one named `**Maintenance page:**`) → one
   lesson per rule; `feedback_review_style.md` (one rule with `**Why:**`/`**How to apply:**`) → one
   lesson, text unchanged; `user_profile.md` (`user`) and `reference_dashboards.md` (`reference`)
   → facts.

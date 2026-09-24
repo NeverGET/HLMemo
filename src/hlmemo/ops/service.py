@@ -401,8 +401,9 @@ async def project_policy_set(conn: AsyncConnection, slug: str, key: str, value: 
     """Set one allow-listed ``projects.policy`` key. ``librarian_cross_project exclude`` isolates a
     disposable/test project from cross-project librarian work in both directions (candidates,
     ``widen_scope``, risk_check; e2e 2026-09-24 #2). Reserved system projects are refused. The
-    change is recorded as a ``librarian`` event (op ``set_project_policy``; replay rebuilds nothing
-    from it: ``projects`` is not a projection)."""
+    change is recorded as a ``librarian`` event (op ``set_project_policy``) whose
+    ``resolved.project_policy`` replay applies: the replayed keys are rebuilt from the events
+    alone (``db/replay.py``, G6; Sol 54 #5)."""
     from hlmemo.librarian.events import insert_system_event
 
     allowed = POLICY_VALUES.get(key)
@@ -431,7 +432,10 @@ async def project_policy_set(conn: AsyncConnection, slug: str, key: str, value: 
             "value": value,
             "previous": previous,
         },
-        resolved={"recorded_at": fmt_ts(at)},
+        resolved={
+            "recorded_at": fmt_ts(at),
+            "project_policy": {"project_id": pid, "key": key, "value": value},
+        },
         at=at,
     )
     return {"project": slug, "policy": policy, "previous": previous, "changed": previous != value}

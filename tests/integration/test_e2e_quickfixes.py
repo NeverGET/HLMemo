@@ -16,6 +16,7 @@ The provider is a scripted oracle: these tests prove the deterministic machinery
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -290,6 +291,7 @@ async def test_reimport_turns_misparsed_feedback_into_split_lessons(connect, mon
     )
     counts = second["counts"]
     assert (counts["new"], counts["changed"], counts["unchanged"], counts["closed"]) == (5, 1, 5, 1), counts
+    assert [r["key"] for r in second["replaced_by_split"]] == ["automemory:feedback_deploy_footguns.md"]
     assert not second["writes"]["failed"] and second["writes"]["closed"] == 1
     current = await rows(
         connect,
@@ -310,3 +312,274 @@ async def test_reimport_turns_misparsed_feedback_into_split_lessons(connect, mon
         meter=meter,
     )
     assert third["writes"]["written"] == 0 and third["counts"]["unchanged"] == 11  # idempotent
+
+
+# --------------------------------------------------------------------------- Sol 54 #1 multi-project
+M_AT = ("Deploy host", "Production runs on the Hetzner CX33 host in Falkenstein for every service.")
+A_SUB = ("Deploy host moved", "Since June production runs on the Hostinger KVM 2 host for every service.")
+T_SUB = ("Deploy host moved again", "Since July production runs on a Vilnius VPS for every service.")
+A_OLD2 = ("Backup window", "The nightly backup runs at 02:00 on the database host every day.")
+AT_SUB = (
+    "Backup window moved",
+    "Since June the nightly backup runs at 04:00 on the database host every day.",
+)
+T_OLD2 = ("Backup window test", "The test backup runs at 02:00 on the test database host every day.")
+MULTI = {
+    (A_SUB[0], M_AT[0]): CONTRA,  # A subject vs a multi-project [A, T] item
+    (T_SUB[0], M_AT[0]): CONTRA,  # T subject vs the [A, T] item
+    (AT_SUB[0], A_OLD2[0]): CONTRA,  # an [A, T] subject vs a pure A item
+    (AT_SUB[0], T_OLD2[0]): CONTRA,  # ... and vs a pure T item
+}
+
+
+@pytest.mark.parametrize("policy", ["include", "exclude"])
+async def test_multi_project_items_never_cross_an_excluded_project(
+    db_dsn, connect, world: World, embedder, policy: str
+) -> None:  # noqa: ANN001
+    """Sol 54 #1: an item touching T (here [A, T]) is related with nothing outside T, and a
+    subject spanning T and A gets no candidate; ``include`` is the control."""
+    await _policy(connect, OTHER, policy)
+    both = [MAIN, OTHER]
+    (m,) = await write_items(connect, world.ctx_a, MAIN, [item(*M_AT, valid_from=D_OLD, project_ids=both)])
+    (a2,) = await write_items(connect, world.ctx_a, MAIN, [item(*A_OLD2, valid_from=D_OLD)])
+    (t2,) = await write_items(connect, world.ctx_a, OTHER, [item(*T_OLD2, valid_from=D_OLD)])
+    await write_items(connect, world.ctx_a, MAIN, [item(*A_SUB, valid_from=D_NEW)])
+    await write_items(connect, world.ctx_a, OTHER, [item(*T_SUB, valid_from=D_NEW)])
+    await write_items(connect, world.ctx_a, MAIN, [item(*AT_SUB, valid_from=D_NEW, project_ids=both)])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, Oracle(relations=MULTI))
+    qs = await rows(connect, "SELECT kind, project_ids FROM librarian_questions")
+    closes = {
+        a["logical_id"]
+        for (p,) in await rows(connect, "SELECT proposal FROM librarian_questions")
+        for a in p.get("actions", [])
+        if a["op"] == "version_close"
+    }
+    if policy == "include":
+        assert len(qs) == 4 and {m.logical_id, a2.logical_id, t2.logical_id} <= closes, qs
+        return
+    assert qs == [] and closes == set()
+
+
+async def test_risk_check_multi_project_lesson_both_directions(connect, world: World, read_deps) -> None:  # noqa: ANN001, F811
+    deps = default_deps()
+    at = ("Backup before migrating", "Always take a database backup snapshot before running a migration.")
+    t_only = ("Snapshot first", "Take a database snapshot before any migration on the test stack.")
+    await write_items(
+        connect, world.ctx_a, MAIN, [{**item(*at, project_ids=[MAIN, OTHER]), "kind": "lesson"}], deps=deps
+    )
+    await write_items(connect, world.ctx_a, OTHER, [{**item(*t_only), "kind": "lesson"}], deps=deps)
+    await embed(connect, read_deps.embedder)
+    task = "run the database migration now without a backup snapshot"
+
+    async def titles(home_pid: int) -> set[str]:
+        async with await connect() as conn:
+            cands, _ = await rs.candidates(conn, world.ctx_a, home_pid, task, read_deps)
+            await conn.commit()
+        return {c.title for c in cands}
+
+    assert await titles(world.main_id) == {at[0], t_only[0]}  # default: everything readable
+    await _policy(connect, OTHER, "exclude")
+    assert await titles(world.main_id) == set()  # the [A, T] lesson touches T: not for A
+    assert await titles(world.other_id) == {t_only[0]}  # T sees only lessons lying entirely in T
+
+
+# --------------------------------------------------------------------------- Sol 54 #2 apply time
+async def _cross_question(db_dsn, connect, world: World, embedder, relation: tuple[str, str, str]) -> str:  # noqa: ANN001
+    """Under ``include``: A_OLD in A, T_NEW in T, reviewed as observer → one cross-project question."""
+    await _policy(connect, OTHER, "include")
+    await write_items(connect, world.ctx_a, MAIN, [item(*A_OLD, valid_from=D_OLD)])
+    await write_items(connect, world.ctx_a, OTHER, [item(*T_NEW, valid_from=D_NEW)])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, Oracle(relations={(T_NEW[0], A_OLD[0]): relation}))
+    ((qid,),) = await rows(connect, "SELECT question_id::text FROM librarian_questions WHERE status = 'open'")
+    return qid
+
+
+async def _answer(connect, world: World, qid: str, role: str) -> dict[str, Any]:  # noqa: ANN001
+    from hlmemo.librarian.questions import answer
+
+    args = {"project": OTHER, "request_id": str(uuid.uuid4()), "question_id": qid, "decision": "accept"}
+    async with await connect() as conn:
+        res = await answer(conn, world.ctx_a, args, raw=args, configured_role=role)
+        await conn.commit()
+    return res
+
+
+async def _user_rows(connect) -> list[Any]:  # noqa: ANN001
+    return await rows(
+        connect,
+        "SELECT version_id, valid_to::text, superseded_at::text, project_ids FROM memory_versions"
+        " WHERE kind <> 'project_card' AND 'librarian-rule' <> ALL(tags) ORDER BY 1",
+    ) + await rows(connect, "SELECT link_id FROM links")
+
+
+async def _promote(connect, world: World) -> None:  # noqa: ANN001
+    from hlmemo.librarian.roles import record_role_decision
+
+    async with await connect() as conn:
+        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await conn.commit()
+
+
+async def _status(connect) -> list[Any]:  # noqa: ANN001
+    return await rows(connect, "SELECT status, answer->>'reason' FROM librarian_questions")
+
+
+async def test_policy_flip_blocks_an_approved_batch(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    from hlmemo.librarian.roles import record_batch_decision
+
+    await _cross_question(db_dsn, connect, world, embedder, CONTRA)
+    before = await _user_rows(connect)
+    (batch,) = (await rows(connect, "SELECT DISTINCT batch_id::text FROM librarian_questions"))[0]
+    async with await connect() as conn:
+        await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+        await conn.commit()
+    await _policy(connect, OTHER, "exclude")  # after the approval, before the apply
+    await _promote(connect, world)
+    llm = ScriptedLLM(default={})
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain()
+    await provider.aclose()
+    assert await _user_rows(connect) == before  # nothing applied: no link, no close
+    assert [s for s, _r in await _status(connect)] == ["authority_lost"]
+    reasons = await rows(
+        connect,
+        "SELECT c->>'reason' FROM events, jsonb_array_elements(payload->'resolved'->'question_status') c"
+        " WHERE kind = 'librarian' AND payload->'request'->>'op' = 'apply_batch'",
+    )
+    assert reasons == [("policy_excluded",)]
+
+
+async def test_policy_flip_blocks_a_direct_memory_answer(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    qid = await _cross_question(db_dsn, connect, world, embedder, CONTRA)
+    before = await _user_rows(connect)
+    await _policy(connect, OTHER, "exclude")
+    await _promote(connect, world)
+    ack = await _answer(connect, world, qid, "assistant")  # a direct accept (assistant)
+    assert ack["status"] == "authority_lost" and ack["applied"] == {"links": 0, "closed": [], "widened": []}
+    assert await _status(connect) == [("authority_lost", "policy_excluded")]
+    assert await _user_rows(connect) == before
+
+
+async def test_policy_flip_blocks_an_accepted_pending_answer_at_promotion(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    qid = await _cross_question(db_dsn, connect, world, embedder, CONTRA)
+    before = await _user_rows(connect)
+    assert (await _answer(connect, world, qid, "observer"))["status"] == "accepted_pending"  # a label
+    await _policy(connect, OTHER, "exclude")
+    await _promote(connect, world)  # enqueues the apply of the accepted_pending answer
+    provider = make_provider(db_dsn, ScriptedLLM(default={}), budget_disabled=True)
+    await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain()
+    await provider.aclose()
+    assert [s for s, _r in await _status(connect)] == ["authority_lost"]
+    assert await _user_rows(connect) == before
+
+
+async def test_policy_flip_blocks_an_approved_widen_scope(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    dup = ("duplicate", "none", "high")
+    qid = await _cross_question(db_dsn, connect, world, embedder, dup)
+    assert await rows(connect, "SELECT kind FROM librarian_questions") == [("widen_scope",)]
+    before = await _user_rows(connect)
+    await _policy(connect, OTHER, "exclude")
+    await _promote(connect, world)
+    ack = await _answer(connect, world, qid, "assistant")
+    assert ack["status"] == "authority_lost" and ack["applied"]["widened"] == []
+    assert await _user_rows(connect) == before  # the item's project_ids did not grow
+
+
+async def test_policy_flip_between_plan_and_apply_raises_no_question(
+    db_dsn, connect, world: World, embedder, monkeypatch
+) -> None:  # noqa: ANN001
+    """The plan still paired A and T (as if the policy had been ``include`` while planning); the
+    apply transaction reads the policy NOW and raises no question for it."""
+    from hlmemo.librarian import candidates as cands
+
+    await _policy(connect, OTHER, "exclude")
+    monkeypatch.setattr(cands, "isolated_scope", lambda subject, allowed, excluded: list(allowed))
+    await write_items(connect, world.ctx_a, MAIN, [item(*A_OLD, valid_from=D_OLD)])
+    await write_items(connect, world.ctx_a, OTHER, [item(*T_NEW, valid_from=D_NEW)])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, Oracle(relations={(T_NEW[0], A_OLD[0]): CONTRA}))
+    assert await rows(connect, "SELECT kind FROM librarian_questions") == []
+    blocked = await rows(
+        connect,
+        "SELECT payload->'request'->'policy_excluded' FROM events WHERE kind = 'librarian'"
+        " AND payload->'request' ? 'policy_excluded'",
+    )
+    assert len(blocked) == 1 and blocked[0][0]  # the planned pair, recorded as policy_excluded
+
+
+# --------------------------------------------------------------------------- Sol 54 #5 replay
+async def test_project_policy_is_rebuilt_by_replay(connect, world: World) -> None:  # noqa: ANN001
+    from hlmemo.db.replay import rebuild_projections
+
+    await _policy(connect, OTHER, "exclude")
+    await _policy(connect, OTHER, "include")
+    await _policy(connect, MAIN, "exclude")
+    async with await connect() as conn:
+        await conn.execute(
+            'UPDATE projects SET policy = policy || \'{"librarian_cross_project": "exclude"}\''
+            " WHERE project_id = %s",
+            (world.other_id,),
+        )  # drift the table away from the events
+        await conn.execute(
+            "UPDATE projects SET policy = policy - 'librarian_cross_project' WHERE project_id = %s",
+            (world.main_id,),
+        )
+        await rebuild_projections(conn)
+        await conn.commit()
+    got = dict(await rows(connect, "SELECT slug, policy->>'librarian_cross_project' FROM projects"))
+    assert (got[MAIN], got[OTHER]) == ("exclude", "include")
+    assert got[GLOBAL_PROJECT] is None
+
+
+# --------------------------------------------------------------------------- Sol 54 #3 small scope
+async def test_small_scope_reimport_replaces_the_split_file(connect, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """Re-importing ONE multi-rule file imported as a single fact: its bare item is
+    ``replaced_by_split`` and closed in the same import, although it is 100% of the in-scope items
+    (the mass-close guard would have kept it open next to the new lessons: duplicates)."""
+    import shutil
+
+    pid, _ = await make_project(connect, "am1")
+    ctx = await make_device(connect, "am1-importer", {pid: "write"})
+    call = Caller(connect, ctx)
+    d = tmp_path / "memory"
+    d.mkdir()
+    shutil.copy(FIXTURE / "automemory" / "feedback_deploy_footguns.md", d)
+    meter = Meter()
+    monkeypatch.setattr(automemory, "memory_type", lambda meta: str(meta.get("type") or "").lower())
+    first = await import_async(
+        call,
+        source="automemory",
+        parsed=parse_source("automemory", [d], tz=UTC),
+        project="am1",
+        dry_run=False,
+        meter=meter,
+    )
+    assert first["counts"]["new"] == 1 and [i["kind"] for i in first["items"]] == ["fact"]
+    monkeypatch.undo()
+    parsed = parse_source("automemory", [d], tz=UTC)
+    dry = await import_async(
+        call, source="automemory", parsed=parsed, project="am1", dry_run=True, meter=meter
+    )
+    assert dry["replaced_by_split"] == [
+        {"key": "automemory:feedback_deploy_footguns.md", "by": sorted(r.key for r in parsed.records)}
+    ]
+    assert dry["closed"] == ["automemory:feedback_deploy_footguns.md"] and dry["missing"] == []
+    rep = await import_async(
+        call, source="automemory", parsed=parsed, project="am1", dry_run=False, meter=meter
+    )
+    assert rep["counts"]["new"] == 5 and rep["writes"]["closed"] == 1 and not rep["writes"]["failed"]
+    kept = await rows(
+        connect,
+        "SELECT source->>'path' FROM memory_versions WHERE project_id = %s AND source IS NOT NULL"
+        " AND superseded_at = 'infinity' AND valid_to = 'infinity' ORDER BY 1",
+        (pid,),
+    )
+    assert [p for (p,) in kept] == sorted(r.path for r in parsed.records)  # no duplicate left open
+    kept_missing = await import_async(
+        call, source="automemory", parsed=parsed, project="am1", dry_run=False, meter=meter, close=False
+    )
+    assert kept_missing["writes"]["written"] == 0  # idempotent

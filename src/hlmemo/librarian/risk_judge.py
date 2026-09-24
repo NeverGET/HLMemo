@@ -182,22 +182,39 @@ def _terms(task: str) -> set[str]:
     return {t.strip("./-") for t in _TERM_RE.findall(task.casefold()) if len(t.strip("./-")) >= 3}
 
 
+def _folded(text: str) -> tuple[str, list[int]]:
+    """``text.casefold()`` with, per folded character, the index of the original character it
+    came from: casefolding changes lengths (``ß`` → ``ss``, ``İ`` → ``i̇``), so a match in the
+    folded text is mapped back to ORIGINAL positions through this list (Sol 54 #5)."""
+    out: list[str] = []
+    origin: list[int] = []
+    for i, ch in enumerate(text):
+        folded = ch.casefold()
+        out.append(folded)
+        origin.extend([i] * len(folded))
+    return "".join(out), origin
+
+
 def _best_start(body: str, a: int, b: int, width: int, terms: set[str]) -> int:
     """Start of the ``width``-character window of ``body[a:b]`` holding the most distinct task
-    terms (then the most occurrences; ties: the earliest), at a line or sentence start."""
+    terms (then the most occurrences), at a line or sentence start; among equal windows the LATEST
+    start, i.e. the boundary right before the first matched term, so the matched sentence is sent
+    from its beginning and the room goes to what follows it. Without a match: the chunk start."""
     if b - a <= width:
         return a
-    hits: list[tuple[int, str]] = []
-    low = body[a:b].casefold()
+    hits: list[tuple[int, int, str]] = []  # (start, end) in the ORIGINAL body, term
+    low, origin = _folded(body[a:b])
     for term in terms:
         for m in re.finditer(re.escape(term), low):
-            hits.append((a + m.start(), term))
+            hits.append((a + origin[m.start()], a + origin[m.end() - 1] + 1, term))
     starts = {a, b - width}
     starts.update(a + m.end() for m in re.finditer(r"\n+|(?<=[.!?;:])\s+", body[a : b - width]))
+    if not hits:
+        return a
     best, best_key = a, (-1, -1, 0)
     for s in sorted(starts):
-        inside = [t for p, t in hits if s <= p and p + len(t) <= s + width]
-        key = (len(set(inside)), len(inside), -s)
+        inside = [t for p, e, t in hits if s <= p and e <= s + width]
+        key = (len(set(inside)), len(inside), s)
         if key > best_key:
             best, best_key = s, key
     return best

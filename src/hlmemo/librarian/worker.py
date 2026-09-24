@@ -395,6 +395,11 @@ class LibrarianWorker:
         # check below atomic: a concurrent job proposing the same pair waits here, then sees the row.
         await q.lock_logical_ids(conn, [int(k) for prop in plan.proposals for k in prop.assessed])
         for i, prop in enumerate(plan.proposals):
+            if await actor.policy_blocked(conn, prop.actions, prop.project_ids):
+                # the cross-project policy changed since the plan (Sol 54 #2): neither applied nor asked
+                excluded = plan.request_extra.setdefault(actor.POLICY_EXCLUDED, [])
+                excluded.append(list(prop.subject_clues))
+                continue
             stale = await actor.is_stale(conn, {"assessed": prop.assessed})
             superseded += int(stale)
             if (
@@ -535,6 +540,11 @@ class LibrarianWorker:
             assessed: dict[str, int] = {}
             for x in actions:
                 assessed.update(x.get("assessed") or {})
+            if await actor.policy_blocked(conn, actions, a.projects):  # the policy NOW (Sol 54 #2)
+                changes.append(
+                    {"question_id": qid, "status": "authority_lost", "reason": actor.POLICY_EXCLUDED}
+                )
+                continue
             # stale, or a subject an earlier question of this batch already closed: superseded
             if {int(k) for k in assessed} & planned["closed"] or await actor.is_stale(
                 conn, {"assessed": assessed}

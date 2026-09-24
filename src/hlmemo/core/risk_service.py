@@ -9,8 +9,9 @@ a warning only means no stored lesson matched.
    and device scope (``AuthContext``, resolved under FOR SHARE by the middleware) select every
    current lesson/experience it may read, in the home project, in other granted projects and in
    ``hlm-global`` if granted. A project whose ``policy.librarian_cross_project`` is ``exclude``
-   (a disposable/test project) is isolated: it is never a candidate source for another project's
-   check, and its own checks see only its own lessons (e2e 2026-09-24 #2). The query path's four
+   (a disposable/test project) is isolated (``candidates.relation_allowed``, e2e 2026-09-24 #2,
+   Sol 54): a lesson touching it (a multi-project one too) is never a candidate for another
+   project's check, and its own checks see only lessons lying entirely in it. The query path's four
    RRF lists (lexical over DF-filtered terms, titles, trigram for identifiers, exact vector) are
    fused over that universe; the top ``TOP_K`` are the candidates, each with the char spans of
    its matching chunks (best first, ≤ ``MATCH_CHUNKS``).
@@ -73,11 +74,9 @@ from hlmemo.core.retrieval import (
 )
 from hlmemo.core.write_models import SLUG_RE, _Strict, parse_request
 from hlmemo.db import auth_queries
-from hlmemo.db import librarian_queries as lq
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as q
 from hlmemo.librarian import risk_judge as rj
-from hlmemo.librarian.candidates import isolated_scope
 
 TOOL = "memory.risk_check"
 TOP_K = 10
@@ -166,9 +165,8 @@ async def candidates(
     )
     if home_pid not in pids:
         pids.append(home_pid)
-    pids = isolated_scope(home_pid, pids, await lq.cross_project_excluded(conn, pids))
     now = await rq.clock_now(conn)
-    f = q.RiskFilter(pids=pids, scopes=list(ctx.scope_values()), at=now)
+    f = q.RiskFilter(pids=pids, scopes=list(ctx.scope_values()), at=now, home=home_pid)
     stats = await deps.term_stats.get(conn, home_pid)
     terms = split_terms(task, stats)
     qvec = deps.embedder.embed_query(task)
@@ -292,10 +290,12 @@ async def _recheck(conn: AsyncConnection, ctx: AuthContext, slug: str, version_i
             grants={pid: Role(role) for pid, role in grants},
             client=ctx.client,
         )
-        await _read_project(conn, fresh, slug)
+        project = await _read_project(conn, fresh, slug)
         pids = await q.all_projects(conn) if fresh.is_admin else sorted(fresh.grants)
         pids = [p for p in pids if fresh.has(p, Role.READ)]
-        f = q.RiskFilter(pids=pids, scopes=list(fresh.scope_values()), at=await rq.clock_now(conn))
+        f = q.RiskFilter(  # home: the isolation policy as it is NOW (Sol 54)
+            pids=pids, scopes=list(fresh.scope_values()), at=await rq.clock_now(conn), home=project.project_id
+        )
         return await q.visible_versions(conn, f, version_ids)
 
 
