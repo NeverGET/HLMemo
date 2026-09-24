@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
@@ -26,6 +25,24 @@ TOOL_QUERY = "memory.query"
 TOOL_CALL_THE_DAY = "memory.call_the_day"
 CLIENT_NAME = "hlm-cli"
 _STATUS_RE = re.compile(r"\b(401|403|404|429|5\d\d)\b")
+#: Client-protocol tools the server dispatches but never lists (W1.5, Sol 40 #1: the agent tool
+#: surface stays small). The SDK validates every result against the listed output schema; for an
+#: unlisted tool it re-lists the tools and warns "not listed by server" on EVERY call (e2e
+#: 2026-09-24 #10). There is no schema to validate against, so these are not validated.
+UNLISTED_TOOLS = frozenset({"hlm.export"})
+
+
+def _skip_unlisted_validation(client: Client) -> None:
+    """Make an entered ``Client`` skip output validation for ``UNLISTED_TOOLS`` (no warning and no
+    extra ``tools/list`` round trip per call); listed tools are validated as before."""
+    session = client.session
+    validate = session.validate_tool_result
+
+    async def validate_listed(name: str, result: Any) -> None:
+        if name not in UNLISTED_TOOLS:
+            await validate(name, result)
+
+    session.validate_tool_result = validate_listed  # type: ignore[method-assign]
 
 
 class ToolCallError(Exception):
@@ -162,6 +179,7 @@ class MemoryClient:
     async def call_async(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
             async with self._client() as c:
+                _skip_unlisted_validation(c)
                 result = await c.call_tool(tool, arguments, read_timeout_seconds=self.timeout_s)
         except ToolCallError:
             raise
@@ -179,11 +197,11 @@ class MemoryClient:
         """One MCP session for many calls (``hlm import``/``hlm export``); yields ``call(tool, args)``.
 
         Tool errors raise ``ToolCallError``; transport failures are classified like ``call_async``.
-        The unlisted client tool ``hlm.export`` makes the SDK log "not listed" once per call: muted.
+        The unlisted client tool ``hlm.export`` is not output-validated (``UNLISTED_TOOLS``).
         """
-        logging.getLogger("mcp.client.session").setLevel(logging.ERROR)
         try:
             async with self._client() as c:
+                _skip_unlisted_validation(c)
 
                 async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
                     try:

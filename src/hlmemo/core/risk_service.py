@@ -8,15 +8,20 @@ a warning only means no stored lesson matched.
 1. **Deterministic stage** (one read transaction, no LLM, ≤ 300 ms): the caller's CURRENT grants
    and device scope (``AuthContext``, resolved under FOR SHARE by the middleware) select every
    current lesson/experience it may read, in the home project, in other granted projects and in
-   ``hlm-global`` if granted. The query path's four RRF lists (lexical over DF-filtered terms,
-   titles, trigram for identifiers, exact vector) are fused over that universe; the top
-   ``TOP_K`` are the candidates.
+   ``hlm-global`` if granted. A project whose ``policy.librarian_cross_project`` is ``exclude``
+   (a disposable/test project) is isolated: it is never a candidate source for another project's
+   check, and its own checks see only its own lessons (e2e 2026-09-24 #2). The query path's four
+   RRF lists (lexical over DF-filtered terms, titles, trigram for identifiers, exact vector) are
+   fused over that universe; the top ``TOP_K`` are the candidates, each with the char spans of
+   its matching chunks (best first, ≤ ``MATCH_CHUNKS``).
 2. **Deterministic verdict**: each candidate gets ``det_score`` = its RRF over the lists in which it
    qualifies (the vector leg only counts below ``VEC_MAX_DIST``); warn iff ``det_score ≥ TAU``.
    The constants are calibrated on the cal split of ``tests/fixtures/risk`` (procedure and values
    in its README; ``tests/integration/test_w2d_risk_calibration.py``).
 3. **LLM judge** (``mode=auto``, librarian enabled): ``librarian.risk_judge`` gets the
-   candidates under the privacy gate, a 4 s cap and the spend guard. Judged warnings are the
+   candidates under the privacy gate, a 4 s cap and the spend guard; a lesson longer than the
+   judge's text cap is shown as its title plus the best-matching window of those spans, not its
+   first characters (e2e 2026-09-24 #6). Judged warnings are the
    judge's matches, each citing a candidate clue (D-067 guard). Candidates the privacy gate
    withheld (``device:*``, ``policy.librarian=off``, co-owned by an ungranted project) are never
    sent; they warn only deterministically, at the stricter ``TAU_STRICT``. On any judge failure
@@ -39,7 +44,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from psycopg import AsyncConnection
@@ -68,13 +73,16 @@ from hlmemo.core.retrieval import (
 )
 from hlmemo.core.write_models import SLUG_RE, _Strict, parse_request
 from hlmemo.db import auth_queries
+from hlmemo.db import librarian_queries as lq
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as q
 from hlmemo.librarian import risk_judge as rj
+from hlmemo.librarian.candidates import isolated_scope
 
 TOOL = "memory.risk_check"
 TOP_K = 10
 LIST_LIMIT = 50  # per RRF list over the lesson universe
+MATCH_CHUNKS = 3  # matching chunks per candidate handed to the judge (its text window)
 MAX_WARNINGS = 3
 WHY_MAX = rj.WHY_MAX
 
@@ -115,6 +123,8 @@ class RiskCandidate:
     det_score: float
     vector_dist: float | None
     ranks: Ranks  # (lexical, trigram, title, vector) ranks, None = not in that list
+    #: ``(char_start, char_end)`` of the chunks that matched the task, best first
+    spans: list[tuple[int, int]] = field(default_factory=list)
 
     @property
     def lists(self) -> str:  # e.g. "LTV" = lexical + title + vector (diagnostics)
@@ -156,6 +166,7 @@ async def candidates(
     )
     if home_pid not in pids:
         pids.append(home_pid)
+    pids = isolated_scope(home_pid, pids, await lq.cross_project_excluded(conn, pids))
     now = await rq.clock_now(conn)
     f = q.RiskFilter(pids=pids, scopes=list(ctx.scope_values()), at=now)
     stats = await deps.term_stats.get(conn, home_pid)
@@ -177,9 +188,11 @@ async def candidates(
         limit=LIST_LIMIT,
     )
     dist = {c.chunk_id: float(c.score) for c in vector}
-    ordered = dedupe_and_order(rrf_fuse(lexical, trigram, vector, title))[:top_k]
+    fused = rrf_fuse(lexical, trigram, vector, title)
+    ordered = dedupe_and_order(fused)[:top_k]
     if not ordered:
         return [], 0
+    spans = await _match_spans(conn, fused, {x.version_id for x in ordered})
     rows = await q.rows(conn, [x.version_id for x in ordered])
     slugs = await q.project_slugs(conn, sorted({rows[x.version_id].project_id for x in ordered}))
     out = []
@@ -200,9 +213,23 @@ async def candidates(
                 det_score=det_score(ranks_of(x), d),
                 vector_dist=d,
                 ranks=ranks_of(x),
+                spans=spans.get(r.version_id, []),
             )
         )
     return out, len(ordered)
+
+
+async def _match_spans(
+    conn: AsyncConnection, fused: list[Fused], keep: set[int]
+) -> dict[int, list[tuple[int, int]]]:
+    """Per kept version, the char spans of its best ``MATCH_CHUNKS`` fused chunks (the §4.9
+    order: fused score, then lexical rank, then chunk id); the first is the chunk the dedupe kept."""
+    best: dict[int, list[Fused]] = {}
+    for f in sorted(fused, key=lambda f: (-f.score, f.lexical_rank or 1 << 30, f.chunk_id)):
+        if f.version_id in keep and len(best.setdefault(f.version_id, [])) < MATCH_CHUNKS:
+            best[f.version_id].append(f)
+    offsets = await q.chunk_offsets(conn, [f.chunk_id for fs in best.values() for f in fs])
+    return {vid: [offsets[f.chunk_id] for f in fs if f.chunk_id in offsets] for vid, fs in best.items()}
 
 
 def _warning(c: RiskCandidate, why: str) -> dict[str, Any]:
@@ -322,7 +349,7 @@ async def risk_check(
                 "token_generation": ctx.token_generation,  # a rotated bearer loses authority (D-062)
                 "question": sorted({p for c in cands for p in c.project_ids if ctx.has(p, Role.READ)}),
             }
-            items = [rj.JudgeItem(c.version_id, c.project) for c in cands]
+            items = [rj.JudgeItem(c.version_id, c.project, tuple(c.spans)) for c in cands]
             res = await judge.judge(request.task, items, caps)
             status = res.status
             guard_dropped = res.dropped
@@ -372,6 +399,7 @@ def _det(cands: list[RiskCandidate], reason: str, tau: float) -> list[tuple[int,
 
 
 __all__ = [
+    "MATCH_CHUNKS",
     "TAU",
     "TAU_STRICT",
     "TOOL",

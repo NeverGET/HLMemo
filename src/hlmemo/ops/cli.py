@@ -6,6 +6,7 @@ Run inside the api container (it has the app DSN), normally through `deploy/scri
     python -m hlmemo.ops device list|revoke REF|rotate REF [--expires D|--no-expiry]
     python -m hlmemo.ops device grant REF SLUG ROLE | ungrant REF SLUG
     python -m hlmemo.ops project create SLUG [--name N] [--exists-ok] | project list
+    python -m hlmemo.ops project policy show SLUG | policy set SLUG librarian_cross_project include|exclude
     python -m hlmemo.ops status [--json]
     python -m hlmemo.ops librarian audit|questions list|approve-batch|role set|expire (ops/librarian.py)
 
@@ -65,13 +66,22 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("ref")
     u.add_argument("slug")
 
-    proj = sub.add_parser("project", help="create or list projects")
+    proj = sub.add_parser("project", help="create or list projects, show or set a project policy")
     psub = proj.add_subparsers(dest="action", required=True)
     pc = psub.add_parser("create")
     pc.add_argument("slug")
     pc.add_argument("--name")
     pc.add_argument("--exists-ok", action="store_true", help="succeed if the project already exists")
     psub.add_parser("list").add_argument("--json", action="store_true")
+    pol = psub.add_parser("policy", help="show or set a project policy key")
+    polsub = pol.add_subparsers(dest="policy_action", required=True)
+    polsub.add_parser("show").add_argument("slug")
+    ps = polsub.add_parser(
+        "set", help="librarian_cross_project exclude: isolate a disposable/test project (e2e #2)"
+    )
+    ps.add_argument("slug")
+    ps.add_argument("key", choices=sorted(service.POLICY_VALUES))
+    ps.add_argument("value")
 
     src = sub.add_parser("sources", help="W1.5 import sources: reconcile duplicate open source keys")
     ssub = src.add_subparsers(dest="action", required=True)
@@ -180,6 +190,12 @@ async def _dispatch(conn: AsyncConnection, args: argparse.Namespace, settings: A
             for p in rows:
                 sys.stdout.write(f"{p['id']:>4}  {p['slug']:<28} {p['name']}\n")
         return 0
+    if group == "project" and action == "policy":
+        if args.policy_action == "set":
+            _print(await service.project_policy_set(conn, args.slug, args.key, args.value))
+        else:
+            _print(await service.project_policy(conn, args.slug))
+        return 0
     if group == "sources" and action == "duplicates":
         groups = await service.source_duplicates(conn)
         if args.json:
@@ -233,9 +249,12 @@ async def _status(args: argparse.Namespace, settings: Any) -> int:
         f"last_done_at={w['last_done_at']} expired_leases={w['expired_leases']}\n"
     )
     lib = st["librarian"]
+    source = lib["breaker_source"]
+    if "llm_calls_15m" in lib:
+        source += f", {lib['llm_calls_15m']} calls/15m"
     sys.stdout.write(
         f"librarian   ready={lib['ready']} in_flight={lib['in_flight']} role={lib['role']} "
-        f"breaker={lib['breaker_state']} ({lib['breaker_source']}) failed_24h={lib['failed_24h']} "
+        f"breaker={lib['breaker_state']} ({source}) failed_24h={lib['failed_24h']} "
         f"spend_today_usd={lib['spend_today_usd']} spend_hour_usd={lib['spend_hour_usd']} "
         f"reserved_usd={lib['reserved_usd']}\n"
     )

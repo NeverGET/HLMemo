@@ -35,6 +35,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -74,7 +75,7 @@ JUDGE_TIMEOUT_S = 4.0
 #: its ledger row (instead of being cancelled mid-flight and swept later as worst case)
 HTTP_TIMEOUT_S = 3.5
 MAX_CANDIDATES = 10
-LESSON_TEXT_CHARS = 1200
+LESSON_TEXT_CHARS = 1200  # per lesson in the prompt (title + best-matching window when longer)
 WHY_MAX = 300
 MAX_MATCHES = 3
 #: judged calls in flight per process (a provider-load bound; the API request's connection is
@@ -109,6 +110,10 @@ ConnectFactory = Callable[[], Any]  # () -> awaitable AsyncConnection (``async w
 class JudgeItem:
     version_id: int
     project: str  # slug shown to the model next to the lesson text
+    #: ``(char_start, char_end)`` in the body of the chunks that matched the task in the
+    #: deterministic stage, best first: a lesson longer than the cap is sent as its title plus
+    #: the best-matching window of these (``lesson_text``), not its first characters
+    spans: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(slots=True)
@@ -169,11 +174,92 @@ def direct_connector(dsn: str, settings: Any) -> tuple[ConnectFactory, Callable[
     return connect, ctx
 
 
-def _text(title: str, body: str) -> str:
-    """Title + body; a register_lesson title is the mistake's first line, so it is not repeated."""
+_TERM_RE = re.compile(r"[\w][\w./-]{2,}", re.UNICODE)
+_GAP = "\n…\n"
+
+
+def _terms(task: str) -> set[str]:
+    return {t.strip("./-") for t in _TERM_RE.findall(task.casefold()) if len(t.strip("./-")) >= 3}
+
+
+def _best_start(body: str, a: int, b: int, width: int, terms: set[str]) -> int:
+    """Start of the ``width``-character window of ``body[a:b]`` holding the most distinct task
+    terms (then the most occurrences; ties: the earliest), at a line or sentence start."""
+    if b - a <= width:
+        return a
+    hits: list[tuple[int, str]] = []
+    low = body[a:b].casefold()
+    for term in terms:
+        for m in re.finditer(re.escape(term), low):
+            hits.append((a + m.start(), term))
+    starts = {a, b - width}
+    starts.update(a + m.end() for m in re.finditer(r"\n+|(?<=[.!?;:])\s+", body[a : b - width]))
+    best, best_key = a, (-1, -1, 0)
+    for s in sorted(starts):
+        inside = [t for p, t in hits if s <= p and p + len(t) <= s + width]
+        key = (len(set(inside)), len(inside), -s)
+        if key > best_key:
+            best, best_key = s, key
+    return best
+
+
+def _merge(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for s, e in sorted(windows):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
+def lesson_text(
+    title: str,
+    body: str,
+    spans: tuple[tuple[int, int], ...] | list[tuple[int, int]] = (),
+    task: str = "",
+    cap: int = LESSON_TEXT_CHARS,
+) -> str:
+    """The lesson as the judge sees it, at most ``cap`` characters (e2e 2026-09-24 #6).
+
+    A lesson that fits is sent whole (title + body; a register_lesson title is the mistake's first
+    line, so it is not repeated). A longer one is sent as its title plus the best-matching window:
+    the chunks that matched the task in the deterministic stage (``spans``, best first), whole
+    while they fit, the rest of the room from the next chunk's densest part in task terms; the
+    pieces keep their order in the body and gaps are marked ``…``. Without spans: the first
+    ``cap`` characters (the pre-fix behaviour)."""
     head = title.rstrip("…").strip()
-    t = body.strip() if head and head in body else f"{title}\n{body}".strip()
-    return t if len(t) <= LESSON_TEXT_CHARS else t[:LESSON_TEXT_CHARS] + " …"
+    full = body.strip() if head and head in body else f"{title}\n{body}".strip()
+    if len(full) <= cap:
+        return full
+    valid = [(max(0, a), min(len(body), b)) for a, b in spans if min(len(body), b) > max(0, a)]
+    if not valid:
+        return full[:cap] + " …"
+    prefix = f"{title.strip()}\n"
+    terms = _terms(task)
+    windows: list[tuple[int, int]] = []
+    for a, b in valid:
+        merged = _merge(windows)
+        used = sum(e - s for s, e in merged) + len(_GAP) * len(merged)  # a gap before each new piece
+        room = cap - len(prefix) - 4 - used  # 4: the leading/trailing "… " markers
+        if room < 80:  # a sliver is noise, not evidence
+            break
+        covered = [(max(s, a), min(e, b)) for s, e in merged if min(e, b) > max(s, a)]
+        if sum(e - s for s, e in covered) >= b - a:  # an earlier window holds it already
+            continue
+        if b - a <= room:
+            windows.append((a, b))
+            continue
+        start = _best_start(body, a, b, room, terms)
+        windows.append((start, start + room))
+        break
+    pieces = _merge(windows)
+    text = _GAP.join(body[s:e].strip() for s, e in pieces)
+    if pieces[0][0] > 0:
+        text = "… " + text
+    if pieces[-1][1] < len(body.rstrip()):
+        text += " …"
+    return (prefix + text)[: cap + 2]
 
 
 def user_message(task: str, lessons: list[dict[str, str]]) -> str:
@@ -341,7 +427,7 @@ class RiskJudge:
             {
                 "id": lid,
                 "project": it.project,
-                "text": _text(loaded[it.version_id].title, loaded[it.version_id].body),
+                "text": lesson_text(loaded[it.version_id].title, loaded[it.version_id].body, it.spans, task),
             }
             for lid, it in local.items()
         ]
@@ -413,5 +499,6 @@ __all__ = [
     "direct_connector",
     "disabled_tasks",
     "judge_chain",
+    "lesson_text",
     "user_message",
 ]

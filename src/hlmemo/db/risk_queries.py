@@ -194,6 +194,17 @@ async def rows(conn: AsyncConnection, version_ids: list[int]) -> dict[int, RiskR
     return out
 
 
+async def chunk_offsets(conn: AsyncConnection, chunk_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """``chunk_id → (char_start, char_end)`` in its version's body (the judge's text window)."""
+    if not chunk_ids:
+        return {}
+    cur = await conn.execute(
+        "SELECT chunk_id, char_start, char_end FROM chunks WHERE chunk_id = ANY(%s)",
+        (sorted(set(chunk_ids)),),
+    )
+    return {int(c): (int(a), int(b)) for c, a, b in await cur.fetchall()}
+
+
 async def project_slugs(conn: AsyncConnection, pids: list[int]) -> dict[int, str]:
     if not pids:
         return {}
@@ -252,6 +263,7 @@ __all__ = [
     "RiskFilter",
     "RiskRow",
     "all_projects",
+    "chunk_offsets",
     "lexical",
     "project_slugs",
     "rows",
