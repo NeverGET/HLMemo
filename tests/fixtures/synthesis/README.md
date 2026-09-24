@@ -55,3 +55,6 @@ stays near one half, so synthesis runs for about half of the preflight questions
   their markers, stay ≤ 400 tokens and within `budget.used`.
 * `tests/integration/test_w2e_glive_d.py` (G-LIVE-D, live, opt-in `HLM_GLIVE_D=1`): the weak
   questions of the held-out split, both profiles, 3 reps; results in `eval/live/<date>-synthesis/`.
+  2026-09-24 (62 questions, fast path 0.435): `openrouter-gpt6-luna` synthesis 0.597 min / 0.608
+  mean (Δ +0.161 min), `openrouter` (deepseek) 0.629 / 0.656 (Δ +0.194 min): both PASS
+  (`eval/live/2026-09-24-synthesis/FALLBACK-POLICY.md`).

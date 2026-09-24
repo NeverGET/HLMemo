@@ -276,3 +276,13 @@ def test_synthesis_chain_excludes_unqualified_profiles(tmp_path: Path, monkeypat
 def test_disabled_synthesizer_never_calls(monkeypatch) -> None:  # noqa: ANN001
     synth = syn.Synthesizer(get_settings(librarian_enabled=False))
     assert synth.unavailable() == syn.DISABLED and synth.provider is None
+
+
+def test_both_live_profiles_are_qualified_for_synthesis(monkeypatch) -> None:  # noqa: ANN001
+    """G-LIVE-D 2026-09-24 (eval/live/2026-09-24-synthesis): luna and the deepseek fallback both pass,
+    so neither lists `synthesis` in disabled_tasks (deepseek keeps risk_judge, D-071)."""
+    assert syn.TASK not in disabled_tasks("openrouter-gpt6-luna")
+    assert syn.TASK not in disabled_tasks("openrouter") and "risk_judge" in disabled_tasks("openrouter")
+    monkeypatch.setenv("HLM_PROFILE", "openrouter-gpt6-luna")
+    settings = get_settings(profile="openrouter-gpt6-luna", fallback_profile="openrouter")
+    assert [p.name for p in syn.synthesis_chain(settings)] == ["openrouter-gpt6-luna", "openrouter"]
