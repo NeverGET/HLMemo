@@ -48,6 +48,7 @@
  "rejected": [],
  "remap_ambiguous": [],
  "remapped": [],
+ "replaced_by_split": [],
  "skipped": [
   {
    "path": "sub/CLAUDE.md",

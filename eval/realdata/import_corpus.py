@@ -45,18 +45,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
 import time
 import tomllib
-import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -543,15 +543,74 @@ class ToolError(Exception):
 
 
 class Mcp:
-    """Minimal MCP streamable-HTTP client (JSON-RPC over POST, JSON or SSE answers)."""
+    """Minimal MCP streamable-HTTP client (JSON-RPC over POST, JSON or SSE answers).
+
+    ONE persistent HTTP(S) connection (TLS keep-alive, one SSL context) and ONE ``initialize`` per
+    client: the production server is stateless (no ``Mcp-Session-Id``), and the e2e 2026-09-24 run
+    found the old client opening a new TLS connection and re-initializing on every call (3 round
+    trips, ~950 ms per call instead of ~115 ms). A keep-alive connection the server closed while
+    idle is reopened once, transparently; ``connections`` counts the connections opened."""
 
     def __init__(self, server: str, token: str, timeout: float) -> None:
         base = server.rstrip("/")
         self.url = base if base.endswith("/mcp") else base + "/mcp"
         self.token, self.timeout = token, timeout
-        self.session: str | None = None
+        self.session: str | None = None  # Mcp-Session-Id, when the server issues one
+        self.initialized = False
         self.protocol = "2025-03-26"
         self.seq = 0
+        self.connections = 0
+        u = urllib.parse.urlsplit(self.url)
+        self._https = u.scheme == "https"
+        self._host = u.hostname or "localhost"
+        self._port = u.port
+        self._path = (u.path or "/") + (f"?{u.query}" if u.query else "")
+        self._ssl = ssl.create_default_context() if self._https else None
+        self._conn: http.client.HTTPConnection | None = None
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self) -> Mcp:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def _connection(self) -> http.client.HTTPConnection:
+        if self._conn is None:
+            if self._https:
+                self._conn = http.client.HTTPSConnection(
+                    self._host, self._port, timeout=self.timeout, context=self._ssl
+                )
+            else:
+                self._conn = http.client.HTTPConnection(self._host, self._port, timeout=self.timeout)
+            self.connections += 1
+        return self._conn
+
+    def _exchange(self, data: bytes, headers: dict[str, str]) -> tuple[int, Any, bytes]:
+        """One request on the kept-alive connection: ``(status, headers, body)``."""
+        for attempt in (1, 2):
+            conn = self._connection()
+            reused = conn.sock is not None
+            try:
+                conn.request("POST", self._path, body=data, headers=headers)
+                resp = conn.getresponse()
+                raw = resp.read()
+            except (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError) as exc:
+                self.close()
+                if reused and attempt == 1:  # the server closed the idle keep-alive connection
+                    continue
+                raise ToolError("E_UNAVAILABLE", f"transport: {exc}", True, None) from None
+            except (OSError, http.client.HTTPException) as exc:  # timeouts, refused, TLS, protocol
+                self.close()
+                raise ToolError("E_UNAVAILABLE", f"transport: {exc}", True, None) from None
+            if resp.will_close:
+                self.close()
+            return resp.status, resp.headers, raw
+        raise AssertionError("unreachable")
 
     def _post(self, body: dict[str, Any]) -> Any:
         headers = {
@@ -563,31 +622,25 @@ class Mcp:
         }
         if self.session:
             headers["Mcp-Session-Id"] = self.session
-        req = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                self.session = resp.headers.get("Mcp-Session-Id", self.session)
-                raw = resp.read().decode()
-                ctype = resp.headers.get("Content-Type", "")
-        except urllib.error.HTTPError as exc:
-            text = exc.read().decode(errors="replace")
-            exc.close()
+        status, resp_headers, payload = self._exchange(json.dumps(body).encode(), headers)
+        raw = payload.decode(errors="replace")
+        if status >= 400:
             try:
-                env = json.loads(text)
+                env = json.loads(raw)
             except ValueError:
                 env = {}
             if not isinstance(env, dict):
                 env = {}
             err = env.get("error") if isinstance(env.get("error"), dict) else env
             raise ToolError(
-                str(err.get("code", f"HTTP_{exc.code}")),
-                str(err.get("message", text[:300])),
-                exc.code in RETRY_STATUS or bool(err.get("retryable")),
-                exc.code,
+                str(err.get("code", f"HTTP_{status}")),
+                str(err.get("message", raw[:300])),
+                status in RETRY_STATUS or bool(err.get("retryable")),
+                status,
                 err.get("details"),
-            ) from None
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            raise ToolError("E_UNAVAILABLE", f"transport: {exc}", True, None) from None
+            )
+        self.session = resp_headers.get("Mcp-Session-Id", self.session)
+        ctype = resp_headers.get("Content-Type", "")
         if not raw:
             return None
         if "text/event-stream" in ctype:
@@ -615,6 +668,7 @@ class Mcp:
 
     def initialize(self) -> None:
         self.session = None
+        self.initialized = False
         init = self.rpc(
             "initialize",
             {
@@ -625,9 +679,10 @@ class Mcp:
         )
         self.protocol = init.get("protocolVersion", self.protocol)
         self.rpc("notifications/initialized", notify=True)
+        self.initialized = True
 
     def call(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
-        if self.session is None:
+        if not self.initialized:
             self.initialize()
         res = self.rpc("tools/call", {"name": tool, "arguments": args})
         text = next((c.get("text") for c in res.get("content", []) if c.get("type") == "text"), "")
@@ -672,7 +727,7 @@ class Mcp:
                     file=sys.stderr,
                 )
                 if exc.status == 404 or exc.code == "E_RPC":
-                    self.session = None  # session expired / reset: re-initialize
+                    self.session, self.initialized = None, False  # session reset: re-initialize
                 elif not exc.retryable or n == attempts:
                     raise
                 time.sleep(delay)

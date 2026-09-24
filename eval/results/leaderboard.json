@@ -156,6 +156,206 @@
      "confirmation": false,
      "complete": true,
      "source": "cand-w2b-librarian-assistant-approveall.json"
+    },
+    {
+     "id": 4,
+     "corpus": "corpus_a",
+     "label": "J@a65a8f5 (librarian judgement v2 branch), no librarian: the before on the same eval copy",
+     "date": "2026-09-24",
+     "commit": "a65a8f5",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "system": "J branch fast path (query/2 read-side supersession incl. rule 3), no librarian",
+      "librarian": null
+     },
+     "config_hash": "f34647b3f244",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l2_key_top3": 0.75,
+      "l1_key": 0.533,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "tokens_query_mean": 2950.3
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-j-a65a8f5-nolib.json"
+    },
+    {
+     "id": 5,
+     "corpus": "corpus_a",
+     "label": "Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy)",
+     "date": "2026-09-24",
+     "commit": "a65a8f5",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "system": "J fast path + W2b/W2c librarian judgement v2 (fact-level supersession, strict action tier, refine direction, doc_chunk contradictions); write_review backfill of all write events; approve-all by the eval harness",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "model": "openai/gpt-6-luna",
+       "reasoning": "low",
+       "fallback": "openrouter",
+       "fallback_model": "deepseek/deepseek-v4.1-flash",
+       "verifier": "cross",
+       "runner": "eval/realdata/run_librarian_eval.py"
+      },
+      "usd_per_query_note": "librarian (write-time) spend amortized over the 180 eval questions; the query path makes no LLM call"
+     },
+     "config_hash": "0652a76c53a8",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "schema_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.002622,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.761,
+     "secondary": {
+      "mrr": 0.638,
+      "l2_key": 0.75,
+      "l2_key_top3": 0.717,
+      "l1_key": 0.511,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.781,
+      "tokens_query_mean": 2944.7,
+      "librarian_usd": 0.3379,
+      "librarian_calls": 525,
+      "jobs_reviewed": 76,
+      "proposals": 47,
+      "applied": 47,
+      "supersedes_part_links": 30,
+      "closes": 0,
+      "proposal_precision_blind50_pooledAB": {
+       "n": 50,
+       "correct": 24,
+       "near_miss": 23,
+       "incorrect": 3,
+       "strict": 0.48,
+       "strict_wilson95": [
+        0.348,
+        0.615
+       ],
+       "lenient": 0.94
+      },
+      "proposal_precision_blind50_replicate": {
+       "n": 50,
+       "correct": 30,
+       "near_miss": 19,
+       "incorrect": 1,
+       "strict": 0.6,
+       "strict_wilson95": [
+        0.462,
+        0.724
+       ],
+       "lenient": 0.98
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-w2b-librarian-v2-approveall-rounds1.json"
+    },
+    {
+     "id": 6,
+     "corpus": "corpus_a",
+     "label": "Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy)",
+     "date": "2026-09-24",
+     "commit": "a65a8f5",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "system": "J fast path + W2b/W2c librarian judgement v2 (fact-level supersession, strict action tier, refine direction, doc_chunk contradictions); write_review backfill of all write events; approve-all by the eval harness",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 2,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "model": "openai/gpt-6-luna",
+       "reasoning": "low",
+       "fallback": "openrouter",
+       "fallback_model": "deepseek/deepseek-v4.1-flash",
+       "verifier": "cross",
+       "runner": "eval/realdata/run_librarian_eval.py"
+      },
+      "usd_per_query_note": "librarian (write-time) spend amortized over the 180 eval questions; the query path makes no LLM call; rounds-2 spend is lower because OpenRouter served cached prompts identical to the rounds-1 run"
+     },
+     "config_hash": "6a9428d10322",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "schema_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.001374,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.739,
+     "secondary": {
+      "mrr": 0.619,
+      "l2_key": 0.739,
+      "l2_key_top3": 0.717,
+      "l1_key": 0.522,
+      "temporal_l2_stale_first": 0.533,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.77,
+      "tokens_query_mean": 2947.5,
+      "librarian_usd": 0.1756,
+      "librarian_calls": 523,
+      "jobs_reviewed": 76,
+      "proposals": 42,
+      "applied": 42,
+      "supersedes_part_links": 28,
+      "closes": 0
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-w2b-librarian-v2-approveall-rounds2.json"
     }
    ],
    "best": 1
@@ -292,6 +492,173 @@
      "confirmation": false,
      "complete": true,
      "source": "cand-w2b-librarian-assistant-approveall.json"
+    },
+    {
+     "id": 4,
+     "corpus": "corpus_b_dev",
+     "label": "J@a65a8f5 (librarian judgement v2 branch), no librarian: the before on the same eval copy",
+     "date": "2026-09-24",
+     "commit": "a65a8f5",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "system": "J branch fast path (query/2 read-side supersession incl. rule 3), no librarian",
+      "librarian": null
+     },
+     "config_hash": "f34647b3f244",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_evidence_r5": 0.219,
+      "temporal_l2_stale_first": 0.375,
+      "tokens_query_mean": 2944.6
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-j-a65a8f5-nolib.json"
+    },
+    {
+     "id": 5,
+     "corpus": "corpus_b_dev",
+     "label": "Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy)",
+     "date": "2026-09-24",
+     "commit": "a65a8f5",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "system": "J fast path + W2b/W2c librarian judgement v2 (fact-level supersession, strict action tier, refine direction, doc_chunk contradictions); write_review backfill of all write events; approve-all by the eval harness",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "model": "openai/gpt-6-luna",
+       "reasoning": "low",
+       "fallback": "openrouter",
+       "fallback_model": "deepseek/deepseek-v4.1-flash",
+       "verifier": "cross",
+       "runner": "eval/realdata/run_librarian_eval.py"
+      },
+      "usd_per_query_note": "librarian (write-time) spend amortized over the 180 eval questions; the query path makes no LLM call"
+     },
+     "config_hash": "0652a76c53a8",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "schema_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.002622,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.431,
+     "secondary": {
+      "hit@5": 0.611,
+      "mrr": 0.385,
+      "l2_key": 0.542,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_evidence_r5": 0.25,
+      "temporal_l2_stale_first": 0.438,
+      "tokens_query_mean": 2944.3,
+      "librarian_usd": 0.1341,
+      "librarian_calls": 214,
+      "jobs_reviewed": 25,
+      "proposals": 20,
+      "applied": 20,
+      "supersedes_part_links": 13,
+      "closes": 0
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-w2b-librarian-v2-approveall-rounds1.json"
+    },
+    {
+     "id": 6,
+     "corpus": "corpus_b_dev",
+     "label": "Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy)",
+     "date": "2026-09-24",
+     "commit": "a65a8f5",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "system": "J fast path + W2b/W2c librarian judgement v2 (fact-level supersession, strict action tier, refine direction, doc_chunk contradictions); write_review backfill of all write events; approve-all by the eval harness",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 2,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "model": "openai/gpt-6-luna",
+       "reasoning": "low",
+       "fallback": "openrouter",
+       "fallback_model": "deepseek/deepseek-v4.1-flash",
+       "verifier": "cross",
+       "runner": "eval/realdata/run_librarian_eval.py"
+      },
+      "usd_per_query_note": "librarian (write-time) spend amortized over the 180 eval questions; the query path makes no LLM call; rounds-2 spend is lower because OpenRouter served cached prompts identical to the rounds-1 run"
+     },
+     "config_hash": "6a9428d10322",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "schema_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.001374,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.41,
+     "secondary": {
+      "hit@5": 0.597,
+      "mrr": 0.38,
+      "l2_key": 0.514,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_evidence_r5": 0.219,
+      "temporal_l2_stale_first": 0.438,
+      "tokens_query_mean": 2944.8,
+      "librarian_usd": 0.0718,
+      "librarian_calls": 232,
+      "jobs_reviewed": 25,
+      "proposals": 18,
+      "applied": 18,
+      "supersedes_part_links": 13,
+      "closes": 0
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-w2b-librarian-v2-approveall-rounds2.json"
     }
    ],
    "best": 1

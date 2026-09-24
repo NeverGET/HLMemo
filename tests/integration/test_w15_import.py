@@ -344,7 +344,7 @@ async def test_gi3_export_import_export_is_byte_identical(connect, tmp_path, met
     res = await run_export(call, "fx", first)
     assert (
         res["card"]
-        and res["items"] == 16
+        and res["items"] == 25  # markdown 9 + automemory 11 (5 split rules) + serena 4 (2) + card
         and (first / "CARD.md").is_file()
         and (first / "INDEX.md").is_file()
     )
@@ -367,7 +367,7 @@ async def test_gi3_export_import_export_is_byte_identical(connect, tmp_path, met
     again = await import_async(
         call, source="markdown", parsed=parsed, project="fx-copy", dry_run=False, meter=meter
     )
-    assert again["writes"]["written"] == 0 and again["counts"]["unchanged"] == 16
+    assert again["writes"]["written"] == 0 and again["counts"]["unchanged"] == 25
 
 
 # --------------------------------------------------------------------------- source ownership

@@ -1,2 +1,6 @@
 - [Testing feedback](feedback_testing.md) — integration tests must hit a real database, never mocks
 - [Project state](project_state.md) — the fixture project is in its migration phase
+- [Deploy footguns](feedback_deploy_footguns.md) — recurring deployment mistakes and how to avoid them
+- [Review style](feedback_review_style.md) — blocking findings first, nits last
+- [Owner profile](user_profile.md) — backend engineer, terse answers
+- [Dashboards](reference_dashboards.md) — where the latency dashboard lives

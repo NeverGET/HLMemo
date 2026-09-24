@@ -37,6 +37,7 @@ from hlmemo.auth.resolve import context_from_row, lock_device_access
 from hlmemo.core.normalize import normalize
 from hlmemo.core.temporal import fmt_ts, overlaps, parse_opt_ts, parse_ts
 from hlmemo.db import auth_queries as aq
+from hlmemo.db import librarian_queries as lq
 from hlmemo.db import write_queries as q
 from hlmemo.librarian.errors import AuthorityLost
 
@@ -109,6 +110,34 @@ async def action_projects(conn: AsyncConnection, actions: list[dict[str, Any]]) 
         )
         out.update(int(r[0]) for r in await cur.fetchall())
     return out
+
+
+def action_logical_ids(actions: list[dict[str, Any]]) -> list[int]:
+    """Every logical item an action set touches (assessed subjects, link endpoints, closes, the
+    widened item), sorted: the per-item locks every apply path takes before its rechecks."""
+    out: set[int] = set()
+    for a in actions:
+        out.update(int(k) for k in a.get("assessed") or {})
+        out.update(int(a[f]) for f in ("src_logical_id", "dst_logical_id", "logical_id") if a.get(f))
+    return sorted(out)
+
+
+#: the question status reason of a proposal the CURRENT cross-project policy forbids (Sol 54 #2)
+POLICY_EXCLUDED = "policy_excluded"
+
+
+async def policy_blocked(conn: AsyncConnection, actions: list[dict[str, Any]], projects: Any = ()) -> bool:
+    """Apply-time recheck of ``policy.librarian_cross_project`` (e2e 2026-09-24 #2, Sol 54 #2): True
+    if the projects the actions touch on the CURRENT rows (``action_projects``) plus ``projects``
+    (the question's own) relate an excluded project to anything else (``relation_allowed``). The
+    project rows are read ``FOR SHARE``: a policy change commits before this read or waits for the
+    caller's transaction. Every apply path calls it after its own locks, before materializing."""
+    from hlmemo.librarian.candidates import relation_allowed
+
+    touched = await action_projects(conn, actions) | {int(p) for p in projects}
+    if len(touched) < 2:
+        return False
+    return not relation_allowed(touched, await lq.cross_project_excluded(conn, touched, lock=True))
 
 
 def allowed(ctx: AuthContext, capabilities: dict[str, Any], capability: str, project_ids: list[int]) -> bool:
