@@ -1,0 +1,18 @@
+# Phase 5 fallback candidate (D-066): `z-ai/glm-5.3` routed through OpenRouter. Key from env only.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "z-ai/glm-5.3"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+# Reasoning is mandatory on this model ({"enabled":false} → HTTP 400). bench v2 2026-09-24: 91.0%
+# (T8 79.1%), 2.7% final schema fails.
+HLM_LLM_REASONING = '{"effort":"low"}'
+# require_parameters: only endpoints that honour every request field serve the call (2 of 34
+# endpoints lack response_format, 8 lack structured_outputs).
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# USD per 1M tokens. OpenRouter list 2026-09-24: 0.84 / 2.64; response_format-capable endpoints range
+# up to 1.40 / 4.40: the reservation uses that worst case; actual cost is settled from usage.
+price_in_per_m  = 1.40
+price_out_per_m = 4.40
+supports_json_schema = false
+# Not qualified for the risk judge (D-071): G-LIVE-C 2026-09-24 FAIL, false-warn 0.200 > 0.10 (catch
+# 1.000; 15 schema-fail attempts in 80 calls); eval/live/2026-09-24-risk-fallback/r1-openrouter-glm53.
+disabled_tasks = ["risk_judge"]

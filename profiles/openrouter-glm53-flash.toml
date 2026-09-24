@@ -1,0 +1,18 @@
+# Phase 5 routine-tier fallback candidate: `z-ai/glm-5.3-flash` routed through OpenRouter (same
+# price tier as gpt-6-luna; a different upstream vendor = outage hedge). Key from env only.
+# bench v2 2026-09-24 (hlm bench, 3 reps, adj-2): 92.4% (deepseek-v4.1-flash 89.9%), $0.000265/correct,
+# p50/p95 4.7/22.1 s, 0.3% final schema fails, T11 injection 0/30. G-LIVE-C PASS on 4 reps but at the
+# limit (false-warn max 0.100, 35/320 calls hit the 4 s cap): eval/live/2026-09-24-risk-fallback.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "z-ai/glm-5.3-flash"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+# Reasoning is mandatory on this model ({"enabled":false} → HTTP 400); low keeps it short.
+HLM_LLM_REASONING = '{"effort":"low"}'
+# require_parameters: only endpoints that honour every request field serve the call (3 of 31
+# endpoints lack response_format, 8 lack structured_outputs).
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# USD per 1M tokens. OpenRouter list 2026-09-24: 0.15 / 0.50; response_format-capable endpoints range
+# up to 0.45 / 1.50: the reservation uses that worst case; actual cost is settled from usage.
+price_in_per_m  = 0.45
+price_out_per_m = 1.50
+supports_json_schema = false

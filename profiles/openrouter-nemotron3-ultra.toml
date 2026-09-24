@@ -1,0 +1,18 @@
+# Phase 5 fallback candidate (coordinator add): `nvidia/nemotron-3-ultra-550b-a55b`, the PAID id,
+# routed through OpenRouter. Never the `:free` variant (NVIDIA API Trial ToS: no production use,
+# inputs logged and used for training, no confidential data). Key from env only.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "nvidia/nemotron-3-ultra-550b-a55b"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+HLM_LLM_REASONING = '{"effort":"low"}'
+# require_parameters: only 2 of 4 endpoints honour response_format (DeepInfra fp4, Venice fp8);
+# the BaseTen endpoints ignore it and must never serve a librarian call. Observed 2026-09-24: the
+# calls were served by Venice (fp8; 13 of 14 probed calls); DeepInfra returned 429 (rate-limited upstream).
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# USD per 1M tokens. OpenRouter list 2026-09-24: 0.60 / 2.40; response_format-capable endpoints range
+# up to 0.625 / 3.125 (Venice): the reservation uses that worst case; actual cost is settled from usage.
+price_in_per_m  = 0.625
+price_out_per_m = 3.125
+supports_json_schema = false
+# Not qualified for the risk judge (D-071: G-LIVE-C not run, bench v2 below the cutoff).
+disabled_tasks = ["risk_judge"]
