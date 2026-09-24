@@ -405,6 +405,9 @@ class AuthMiddleware:
             nonlocal conn
             if conn is not None:
                 owned = conn
+                # Ownership is taken exactly once, before any await: a handler's detach() and
+                # this task's error path can never both return the same connection (W2d).
+                conn = None
                 # MCP workers live in the session manager's task group. On cancellation
                 # their savepoint cleanup may outlive this HTTP task: never pool a
                 # connection they could still use, or let a late handler fall back to
@@ -428,11 +431,36 @@ class AuthMiddleware:
                     except asyncio.CancelledError as exc:
                         cancelled = exc
                 task.result()
-                conn = None
                 if cancelled is not None:
                     raise cancelled
 
+        detached = False
+
+        async def detach() -> bool:
+            """W2d (D-062): commit the request transaction and return its connection to the pool
+            before a long DB-free phase of a handler (the memory.risk_check judge). The device's
+            FOR SHARE lock ends with it; the handler must re-check authority in a fresh short
+            transaction before answering and must not touch the request connection again. The
+            response stays buffered and is sent after the app returns. False: nothing detached."""
+            nonlocal detached
+            if detached or conn is None or streaming or commit_error is not None:
+                return False
+            await self.commit_request(conn)
+            detached = True
+            if ctx is not None and state["device"]["status"] == "trusted":
+                try:
+                    await q.touch_last_seen(conn, ctx.device_id)
+                    await conn.commit()
+                except Exception:
+                    log.debug("last_seen_at refresh failed", exc_info=True)
+                    await _rollback_quietly(conn)
+            await release()
+            return True
+
         async def finish() -> None:
+            if detached:  # committed and released by the handler's detach()
+                deadline.reschedule(None)
+                return
             # Release BEFORE touching the network, including a slow response consumer.
             await self.commit_request(conn)
             if ctx is not None and state["device"]["status"] == "trusted":
@@ -525,6 +553,7 @@ class AuthMiddleware:
                     state["auth"] = ctx
                     state["device"] = row
                 state["conn"] = conn
+                state["detach"] = detach
                 dispatched = True
                 await self.app(scope, receive, send_wrapper)
                 # The transport may swallow a send failure; never retry a failed commit.

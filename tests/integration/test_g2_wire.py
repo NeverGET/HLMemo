@@ -40,6 +40,8 @@ pytestmark = pytest.mark.integration
 
 PROJECT = "g2-wire"
 FIVE = {"memory.query", "memory.drilldown", "memory.raw", "memory.write", "memory.call_the_day"}
+W2D = {"memory.risk_check", "memory.register_lesson"}  # W2d (CC-4); the name FIVE is kept for the diff
+FIVE = FIVE | W2D
 ENVELOPE_KEYS = {"code", "message", "retryable", "details"}
 READ_TOOLS = ("memory.query", "memory.drilldown", "memory.raw")
 
@@ -130,6 +132,8 @@ async def test_tools_list_has_five_tools_no_output_schema(db_dsn) -> None:
         assert req["memory.raw"] == {"project", "version_id", "token_budget"}
         assert req["memory.write"] == {"project", "request_id", "client", "items"}
         assert req["memory.call_the_day"] == {"project", "request_id", "session_id", "client", "notes"}
+        assert req["memory.risk_check"] == {"project", "task", "token_budget"}
+        assert req["memory.register_lesson"] == {"project", "request_id", "mistake", "fix"}
 
         async with sdk_client(client.app, token) as sdk:  # type: ignore[attr-defined]
             listed = await sdk.list_tools()
@@ -158,6 +162,10 @@ def _success_args(tool: str, seed: dict[str, Any]) -> dict[str, Any]:
         return {"project": PROJECT, "clue_ids": [f"v{seed['version_id']}"], "token_budget": 2000}
     if tool == "memory.raw":
         return {"project": PROJECT, "version_id": seed["version_id"], "token_budget": 4000}
+    if tool == "memory.risk_check":
+        return {"project": PROJECT, "task": "rotate APP_DB_DSN on svc-qx7", "token_budget": 2000}
+    if tool == "memory.register_lesson":
+        return {"project": PROJECT, "request_id": str(uuid.uuid4()), "mistake": "m", "fix": "f"}
     raise AssertionError(tool)
 
 
@@ -181,6 +189,13 @@ def _error_args(tool: str) -> tuple[dict[str, Any], str]:
         return {"project": PROJECT, "clue_ids": ["v1"], "token_budget": 100}, "E_BUDGET_TOO_SMALL"
     if tool == "memory.raw":
         return {"project": PROJECT, "version_id": 1, "token_budget": 100000}, "E_BUDGET_TOO_LARGE"
+    if tool == "memory.risk_check":
+        return {"project": PROJECT, "task": "t", "token_budget": 100}, "E_BUDGET_TOO_SMALL"
+    if tool == "memory.register_lesson":
+        return (
+            {"project": "no-such-project", "request_id": str(uuid.uuid4()), "mistake": "m", "fix": "f"},
+            "E_FORBIDDEN_PROJECT",
+        )
     raise AssertionError(tool)
 
 
