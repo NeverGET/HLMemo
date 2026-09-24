@@ -33,6 +33,12 @@ History (append-only):
 | corpus_a | 9 | 2026-09-24 | L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE) | d3ce0ac | 016c33e768f0 | 0.859 | 3.94e-05 | - | False | True |
 | corpus_a | 10 | 2026-09-24 | L@d3ce0ac cap + query rewrite, prewarmed | d3ce0ac | d2bdff50cc53 | 0.859 | 3.78e-05 | - | False | True |
 | corpus_a | 11 | 2026-09-24 | L@d3ce0ac cap + query rewrite + renditions (0% rendition coverage: all rejected/failed) | d3ce0ac | cf240adadd26 | 0.859 | 0.0005228 | - | False | True |
+| corpus_a | 12 | 2026-09-25 | v3@0757c4b no librarian (the before on the same prod-rule import) | 0757c4b | c31f4d5139d3 | 0.793 | 0.0 | - | False | True |
+| corpus_a | 13 | 2026-09-25 | Librarian v3@0757c4b C0 (all v3 flags off), assistant, approve-all x1 | 0757c4b | 3391a48f995a | 0.793 | 0.002298 | - | False | True |
+| corpus_a | 14 | 2026-09-25 | Librarian v3@0757c4b C1 (LIBRARIAN_V3_TEMPORAL=True), assistant, approve-all x1 | 0757c4b | a04bb0588a3b | 0.793 | 0.001373 | - | False | True |
+| corpus_a | 15 | 2026-09-25 | Librarian v3@0757c4b C2 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True), assistant, approve-all x1 | 0757c4b | b09748a8bc4a | 0.793 | 0.002339 | - | False | True |
+| corpus_a | 16 | 2026-09-25 | Librarian v3@0757c4b C3 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True), assistant, approve-all x1 | 0757c4b | 76bfbaee8885 | 0.793 | 0.00216 | - | False | True |
+| corpus_a | 17 | 2026-09-25 | Librarian v3@0757c4b C4 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True, LIBRARIAN_SAME_TOP=24, LIBRARIAN_DOC_TOP=8, LLM_JOB_CALL_CAP=60), assistant, approve-all x1 | 0757c4b | 4205012b88e6 | 0.793 | 0.00605 | - | False | True |
 | corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
@@ -44,6 +50,12 @@ History (append-only):
 | corpus_b_dev | 9 | 2026-09-24 | L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE) | d3ce0ac | 016c33e768f0 | 0.556 | 3.94e-05 | - | False | True |
 | corpus_b_dev | 10 | 2026-09-24 | L@d3ce0ac cap + query rewrite, prewarmed | d3ce0ac | d2bdff50cc53 | 0.542 | 3.78e-05 | - | False | True |
 | corpus_b_dev | 11 | 2026-09-24 | L@d3ce0ac cap + query rewrite + renditions (0% rendition coverage: all rejected/failed) | d3ce0ac | cf240adadd26 | 0.549 | 0.0005228 | - | False | True |
+| corpus_b_dev | 12 | 2026-09-25 | v3@0757c4b no librarian (the before on the same prod-rule import) | 0757c4b | c31f4d5139d3 | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 13 | 2026-09-25 | Librarian v3@0757c4b C0 (all v3 flags off), assistant, approve-all x1 | 0757c4b | 3391a48f995a | 0.451 | 0.002298 | - | False | True |
+| corpus_b_dev | 14 | 2026-09-25 | Librarian v3@0757c4b C1 (LIBRARIAN_V3_TEMPORAL=True), assistant, approve-all x1 | 0757c4b | a04bb0588a3b | 0.451 | 0.001373 | - | False | True |
+| corpus_b_dev | 15 | 2026-09-25 | Librarian v3@0757c4b C2 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True), assistant, approve-all x1 | 0757c4b | b09748a8bc4a | 0.451 | 0.002339 | - | False | True |
+| corpus_b_dev | 16 | 2026-09-25 | Librarian v3@0757c4b C3 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True), assistant, approve-all x1 | 0757c4b | 76bfbaee8885 | 0.451 | 0.00216 | - | False | True |
+| corpus_b_dev | 17 | 2026-09-25 | Librarian v3@0757c4b C4 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True, LIBRARIAN_SAME_TOP=24, LIBRARIAN_DOC_TOP=8, LLM_JOB_CALL_CAP=60), assistant, approve-all x1 | 0757c4b | 4205012b88e6 | 0.451 | 0.00605 | - | False | True |
 
 ## Librarian: bench_v2 (score = macro mean of per-task mean scores, %)
 
