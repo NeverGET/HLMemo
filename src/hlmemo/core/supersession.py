@@ -10,6 +10,12 @@ Two deterministic rules, applied after RRF fusion and the §4.9 dedupe:
    fused score that are near-duplicates (same normalized title) and have different
    ``valid_from``, the newer one is ranked first. No other order changes, so G3 is untouched
    unless a fixture has exact-score, same-title pairs.
+3. **Fact-level supersession** (``demote_partially_superseded``, D-076): a live ``supersedes`` link
+   with ``props.scope = part`` says that ONE statement of the older item is outdated while its
+   other statements stay valid, so the item is never hidden; when both are hits and the partly
+   outdated item ranks above the item that replaced its statement, it is moved to just after it
+   (its displayed score capped at that item's, so scores stay non-increasing). Without such links
+   (every database before the librarian applies one) the order is unchanged.
 """
 
 from __future__ import annotations
@@ -48,4 +54,20 @@ def newer_first_on_ties(hits: list[Any]) -> list[Any]:
     return out
 
 
-__all__ = ["newer_first_on_ties"]
+def demote_partially_superseded(ordered: list[Any], pairs: list[tuple[int, int]]) -> list[Any]:
+    """Rule 3: for each ``(superseding, partly superseded)`` logical-id pair (sorted, applied in
+    order), a partly superseded hit ranked ABOVE its superseding hit moves to just after it."""
+    out = list(ordered)
+    for src, dst in sorted(pairs):
+        pos = {f.logical_id: i for i, f in enumerate(out)}
+        if src not in pos or dst not in pos or pos[dst] > pos[src]:
+            continue
+        moved = out.pop(pos[dst])
+        at = pos[src]  # the superseding hit shifted up by one
+        if moved.score > out[at - 1].score:
+            moved.score = out[at - 1].score
+        out.insert(at, moved)
+    return out
+
+
+__all__ = ["demote_partially_superseded", "newer_first_on_ties"]

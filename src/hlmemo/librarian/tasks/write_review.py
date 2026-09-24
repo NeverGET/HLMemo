@@ -15,20 +15,29 @@ enqueue). Plan (reads in short committed transactions; provider calls outside an
    cosine/lexical drop rule. The candidate set is recorded in the audit payload.
 4. **Placement** (``place/v1``, one call for all subjects): importance / stability for the fields
    the client left unset, a topic hint, ≤ 5 tags → ``version_signals`` (``signal_upsert``).
-   Session notes, project cards and document chunks get placement only.
-5. **Relation** (``relate/v1``): one call per subject and ≤ 8 candidates. D-067 guards
+   Session notes and project cards get placement only; a document chunk gets the relation review
+   only when it carries dated/decision content (``candidates.reviewable``), and chunks are
+   candidates of fact/lesson/doc_chunk subjects in a reserved same-project list (``DOC_TOP``).
+5. **Relation** (``relate/v2``): one call per subject and ≤ 8 candidates. D-067 guards
    (``librarian/guards.py``): cited ids only, quote evidence, temporal consistency, calibrated
-   confidence tiers, first-class abstention.
-6. **Verifier** (``relate_verify/v1``) for every high-impact judgement (contradicts + supersedes,
-   cross-project duplicate/refines) — batched ≤ 8 pairs, by default on the OTHER profile of the
-   chain (``HLM_LIBRARIAN_VERIFIER``); without agreement the proposal is downgraded or dropped.
-7. **Resolution** into proposals (roadmap W2b step 4): duplicate → ``relates_to{dup:true}``;
-   refines → ``relates_to``; contradicts+supersedes → ``contradicts`` + ``supersedes`` links and
-   the bi-temporal close of the replaced item (``version_close``: ``valid_to`` = the newer
-   item's ``valid_from``; nothing deleted). ``auto_ok`` marks the auto-rule class: high
-   confidence, verified quotes, verifier agreement, same home project, identical
-   ``device_scope``, neither item pinned, no ``experience``, the newer ``valid_from`` ≥ the
-   older's. A cross-project duplicate/refinement is a ``widen_scope`` question in every role.
+   confidence tiers, first-class abstention; v2 (D-076): fact-level supersession scope, strict
+   duplicates, the refine direction check, doc_chunk pairs contradiction-only.
+6. **Verifier** (``relate_verify/v2``) for every high-impact judgement (contradicts + supersedes,
+   cross-project duplicate/refines) and every action-tier judgement (``confirm``) — batched ≤ 8
+   pairs, by default on the OTHER profile of the chain (``HLM_LIBRARIAN_VERIFIER``); without
+   agreement a high-impact proposal is downgraded or dropped, an action becomes a question.
+7. **Resolution** into proposals (roadmap W2b step 4): duplicate (near-identical text only) →
+   ``relates_to{dup:true}``; a restated claim → ``relates_to{relation:relates}``; refines →
+   ``relates_to`` from the more specific item to the more general one; contradicts+supersedes →
+   ``contradicts`` + a ``supersedes`` link carrying the scope and the quoted outdated span, and the
+   bi-temporal close of the replaced item (``version_close``: ``valid_to`` = the newer item's
+   ``valid_from``; nothing deleted) ONLY when the whole item is proven outdated
+   (``guards.finalize`` → ``close_ok``); a partial supersession proposes no close
+   (``resolution: split_and_supersede`` for the owner). ``auto_ok`` marks the auto-rule class: the
+   strict action tier (verifier agreement, quotes pinning the claim, same kind), same home project,
+   identical ``device_scope``, neither item pinned, no ``experience``, the newer ``valid_from`` ≥
+   the older's, and a close only for a one-statement item. A cross-project
+   duplicate/refinement/restatement is a ``widen_scope`` question in every role.
 
 The worker applies the plan (role ladder, CC-3 recheck, one ``librarian`` event).
 """
@@ -150,7 +159,8 @@ def relate_payload(s: Any, cands: list[tuple[Any, bool]]) -> dict[str, Any]:
 
 
 def relate_texts(s: Any, cands: list[tuple[Any, bool]]) -> list[guards.PairText]:
-    """What the model saw of each pair (the quote guard checks against exactly this)."""
+    """What the model saw of each pair (the quote guard checks against exactly this) and the
+    deterministic context of the v2 rules (kinds, full bodies, truncation, recorded_at)."""
     return [
         guards.PairText(
             _clue(c.version_id),
@@ -158,6 +168,14 @@ def relate_texts(s: Any, cands: list[tuple[Any, bool]]) -> list[guards.PairText]
             f"{c.title}\n{_cut(c.body, OLD_TEXT_CHARS)}",
             s.valid_from,
             c.valid_from,
+            new_kind=s.kind,
+            old_kind=c.kind,
+            new_body=s.body,
+            old_body=c.body,
+            new_shown_all=len(s.body) <= NEW_TEXT_CHARS,
+            old_shown_all=len(c.body) <= OLD_TEXT_CHARS,
+            new_recorded=getattr(s, "recorded_at", None),
+            old_recorded=getattr(c, "recorded_at", None),
         )
         for c, _cross in cands
     ]
@@ -191,7 +209,7 @@ def verify_payload(pairs: list[tuple[Any, Any, bool]], start: int = 0) -> list[d
 
 
 class _Pair:
-    __slots__ = ("cand", "cross", "judgement", "judgement_profile", "scored", "subject")
+    __slots__ = ("cand", "cross", "judgement", "judgement_profile", "scored", "subject", "text")
 
     def __init__(self, subject: lq.SubjectRow, cand: lq.CandRow, cross: bool, scored: cands.Scored) -> None:
         self.subject = subject
@@ -200,6 +218,7 @@ class _Pair:
         self.scored = scored
         self.judgement: guards.Judgement | None = None
         self.judgement_profile = ""  # the profile that answered the relate call (verifier choice)
+        self.text: guards.PairText = relate_texts(subject, [(cand, cross)])[0]
 
 
 class WriteReview:
@@ -234,10 +253,10 @@ class WriteReview:
             cur = await conn.execute("SELECT clock_timestamp()")
             (now,) = await cur.fetchone()
             full = [
-                subjects[int(e["version_id"])]
+                sub
                 for e in entries
-                if subjects[int(e["version_id"])].kind not in cands.PLACEMENT_ONLY
-                and subjects[int(e["version_id"])].kind in cands.COMPATIBLE
+                for sub in [subjects[int(e["version_id"])]]
+                if cands.reviewable(sub.kind, sub.title, sub.body, sub.valid_from, sub.recorded_at)
             ]
             lexical_only: list[str] = []
             for s in full:
@@ -298,6 +317,9 @@ class WriteReview:
             await self._verify(w, job, plan, pairs, precheck_for, counters)
         except AuthorityLost:
             return Plan(OP, "authority_lost", caps, calls=plan.calls, request_extra=plan.request_extra)
+        for pr in pairs:  # v2: the strict action tier and the close decision, after the verifier
+            if pr.judgement is not None:
+                guards.finalize(pr.judgement, pr.text, counters)
 
         plan.signals = self._signals(entries, subjects, placement)
         plan.proposals = self._proposals(pairs)
@@ -324,10 +346,15 @@ class WriteReview:
             s_terms = cands.subject_terms(s.title, s.body)
             lex_text = " ".join(s_terms[: cands.LEX_TERMS])
             kinds_same = cands.COMPATIBLE[s.kind]
-            kinds_cross = tuple(k for k in cands.CROSS_KINDS if k in kinds_same)
+            kinds_cross = (
+                ()
+                if s.kind in cands.SAME_PROJECT_ONLY
+                else tuple(k for k in cands.CROSS_KINDS if k in kinds_same)
+            )
             for cross, kinds, top in (
                 (False, kinds_same, cands.SAME_TOP),
                 (True, kinds_cross, cands.CROSS_TOP),
+                (False, cands.DOC_KINDS.get(s.kind, ()), cands.DOC_TOP),  # reserved document list
             ):
                 if not kinds:
                     continue
@@ -466,7 +493,7 @@ class WriteReview:
         todo: list[tuple[_Pair, str]] = []
         for pr in pairs:
             j = pr.judgement
-            kind = None if j is None else guards.high_impact(j, cross_project=pr.cross)
+            kind = None if j is None else guards.verification_kind(j, cross_project=pr.cross, pair=pr.text)
             if kind is not None:
                 todo.append((pr, kind))
         if not todo:
@@ -573,10 +600,11 @@ class WriteReview:
                 "verification": j.verification,
                 "cos": None if pr.scored.cos is None else round(pr.scored.cos, 4),
                 "cross_project": pr.cross,
+                "judgement": "v2",
             }
             props = {"by": "librarian", "relation": j.relation, "confidence": j.confidence}
 
-            if pr.cross and j.relation in ("duplicate", "refines"):
+            if pr.cross and j.relation in ("duplicate", "refines", "relates"):
                 action = {
                     "op": "widen_scope",
                     "logical_id": c.logical_id,
@@ -585,13 +613,18 @@ class WriteReview:
                     "assessed": assessed,
                 }
                 out.append(Proposal("widen_scope", [action], False, assessed, clues, touched, meta))
-            elif j.relation in ("duplicate", "refines"):
-                extra = {"dup": True} if j.relation == "duplicate" else {}
+            elif j.relation in ("duplicate", "refines", "relates"):
+                extra: dict[str, Any] = {"dup": True} if j.relation == "duplicate" else {}
+                src, dst = s, c
+                if j.relation == "refines":  # the more specific item refines the more general one
+                    meta["refiner"] = j.refiner
+                    if j.refiner == "old":
+                        src, dst = c, s
                 auto = j.tier == "action" and same_class
                 out.append(
                     Proposal(
                         "link",
-                        [_link("relates_to", s, c, {**props, **extra}, assessed)],
+                        [_link("relates_to", src, dst, {**props, **extra}, assessed)],
                         auto,
                         assessed,
                         clues,
@@ -603,21 +636,28 @@ class WriteReview:
                 actions = [_link("contradicts", s, c, props, assessed)]
                 auto = False
                 verified = bool((j.verification or {}).get("agreed"))
-                if j.supersedes == "new":
-                    actions.append(_link("supersedes", s, c, props, assessed))
-                    if s.valid_from > c.valid_from:
-                        actions.append(_close(c, s.valid_from, assessed))
+                if j.supersedes in ("new", "old"):
+                    newer, older = (s, c) if j.supersedes == "new" else (c, s)
+                    # the outdated span, only when verified verbatim in the item (never raw model text)
+                    quote = "" if "quote_unverified" in j.flags else j.replaced_quote
+                    sup_props = {**props, "scope": j.scope, "quote": quote}
+                    actions.append(_link("supersedes", newer, older, sup_props, assessed))
+                    meta.update(scope=j.scope, close_ok=j.close_ok)
+                    if j.close_ok and newer.valid_from > older.valid_from:
+                        actions.append(_close(older, newer.valid_from, assessed))
+                    if not j.close_ok:
+                        # fact-level: never a close; the owner may split the item into single facts
+                        meta["resolution"] = "split_and_supersede"
                     auto = (
-                        j.tier == "action"
+                        j.supersedes == "new"
+                        and j.tier == "action"
                         and verified
                         and same_class
                         and s.valid_from >= c.valid_from
                         and "quote_unverified" not in j.flags
+                        and j.close_ok
+                        and j.single_statement  # a multi-statement item is never closed without the owner
                     )
-                elif j.supersedes == "old":
-                    actions.append(_link("supersedes", c, s, props, assessed))
-                    if c.valid_from > s.valid_from:
-                        actions.append(_close(s, c.valid_from, assessed))
                 out.append(Proposal("contradiction", actions, auto, assessed, clues, touched, meta))
         return out
 

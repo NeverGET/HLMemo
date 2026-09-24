@@ -104,7 +104,10 @@ def test_verification_downgrades_or_drops() -> None:
     (j,), _ = g.check_relations({"results": [_res()]}, [_pair()])
     g.apply_verification(j, "supersede", None, new_is_b=True)  # no second opinion: not raised
     assert not j.raised and "verifier_no_answer" in j.flags
-    (j,), _ = g.check_relations({"results": [_res(relation="duplicate", supersedes="none")]}, [_pair()])
+    same = _pair(new="The TTL is 60 s for every endpoint.", old="The TTL is 60 s for every endpoint!")
+    dup = _res(relation="duplicate", supersedes="none", new_quote="TTL is 60 s", old_quote="TTL is 60 s")
+    (j,), _ = g.check_relations({"results": [dup]}, [same])
+    assert j.relation == "duplicate"  # near-identical text: a real duplicate
     assert g.high_impact(j, cross_project=True) == "widen" and g.high_impact(j, cross_project=False) is None
     g.apply_verification(j, "widen", None, new_is_b=True)
     assert not j.raised

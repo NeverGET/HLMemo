@@ -198,11 +198,18 @@ async def answer(
             # the batch path applies it after a promotion, with the full recheck.
             new_status = "accepted_pending"
         elif request.decision == "accept":
+            from hlmemo.librarian.tasks.apply_batch import legacy_close
+
             assessed: dict[str, int] = {}
             for a in actions:
                 assessed.update(a.get("assessed") or {})
             if await actor.is_stale(conn, {"assessed": assessed}):
                 new_status = "superseded"
+            elif legacy_close(proposal):
+                # D-076: a whole-item close without the v2 evidence is never applied; the
+                # subjects are re-reviewed under the fact-level rule instead (Sol 54j #2)
+                new_status = "superseded"
+                jobs = await _replan_job(conn, ctx, pid, qid, [int(v) for v in subject_vids], None)
             else:
                 from hlmemo.librarian.errors import AuthorityLost
                 from hlmemo.librarian.trigger import capabilities_from_ctx
@@ -484,8 +491,9 @@ def notice_text(kind: str, clues: list[str], proposal: dict[str, Any]) -> str:
         return f"widen_scope: {b} (another project) may also apply here ({rel} of {a})"
     if kind == "contradiction":
         sup = proposal.get("supersedes")
+        part = " part of" if proposal.get("scope") == "part" else ""  # D-076 fact-level
         tail = (
-            f"; proposed: {a if sup == 'new' else b} supersedes {b if sup == 'new' else a}"
+            f"; proposed: {a if sup == 'new' else b} supersedes{part} {b if sup == 'new' else a}"
             if sup
             in (
                 "new",

@@ -556,7 +556,10 @@ async def test_sol47_rule_ref_lost_mid_job_stops_the_next_calls(
 
     llm = ScriptedLLM(default=Oracle(relations=CONTRA), on_request=hide_ref)
     provider = make_provider(db_dsn, llm, budget_disabled=True)
-    await make_worker(lib_settings(db_dsn), provider, connect).drain()
+    # one job after the other: "the NEXT job loads its rules without the ref" is an ordering claim
+    # (with concurrent jobs a second job's attempt may pass its precheck before the hide: the D-062
+    # race semantics allow an attempt already past its precheck to complete)
+    await make_worker(lib_settings(db_dsn, librarian_concurrency=1), provider, connect).drain()
     await provider.aclose()
     carried = [
         "Owner accepted a link proposal (refines)" in r["messages"][1]["content"] for r in llm.requests

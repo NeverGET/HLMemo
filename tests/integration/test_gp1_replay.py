@@ -5,7 +5,8 @@ stored embeddings, the drop rule, placement, relation, the D-067 guards and the 
 verifier, the observer role, batches and the one ``librarian`` event per job — runs over
 ``tests/fixtures/w2b/relations.json`` (≥ 150 pairs: 40+ adversarial near-misses, 20+ cross-project,
 TR/DE/EN) and ``placement.json`` (64 items), with the provider in STRICT cassette replay
-(``tests/cassettes/w2b``, recorded from the default profile chain: gpt-6-luna, verifier deepseek).
+(``tests/cassettes/w2b/gp1_pipeline.jsonl``, recorded from the default profile chain: gpt-6-luna,
+verifier deepseek; re-recorded deliberately for the v2 relation prompts, D-076 judgement v2).
 
 Gate: every job's ``payload.resolved`` equals the golden file (timestamps masked); observer →
 0 links, 0 invalidations; a client-set importance is never overwritten; a projection rebuild is
@@ -239,7 +240,10 @@ async def test_gp1_pipeline_replays_golden(db_dsn, connect, embedder) -> None:  
         for q in p["resolved"].get("questions") or []:
             prop = q["proposal"]
             s, c = (int(x[1:]) for x in q["subject_clues"][:2])
-            decided[(s, c)] = (prop.get("relation"), prop.get("supersedes"))
+            rel = prop.get("relation")
+            # the fixture's v1 gold is frozen (Sol 54j #8): a v2 "relates" (a restated claim that is not
+            # near-identical text) is the fixture's semantic "duplicate"
+            decided[(s, c)] = ("duplicate" if rel == "relates" else rel, prop.get("supersedes"))
     exact = sum(decided.get(k, ("none", "none")) == tuple(e["gold"]) for k, e in world["pairs"].items())
     n_reached = len(reached & set(world["pairs"]))
     print(
