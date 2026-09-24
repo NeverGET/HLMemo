@@ -258,7 +258,9 @@ def _terms(q: str) -> list[str]:
 def test_partial_demotion_only_when_the_query_matched_the_outdated_statement() -> None:
     from hlmemo.core.supersession import matched_in_span
 
-    assert matched_in_span(MULTI_CHUNK, SPAN, set(_terms("API cache TTL seconds")))
+    assert matched_in_span(MULTI_CHUNK, SPAN, set(_terms("TTL seconds")))
+    # review 60: "cache"/"api" also occur in the chunk's still-valid statements: no demotion
+    assert not matched_in_span(MULTI_CHUNK, SPAN, set(_terms("API cache TTL seconds")))
     assert not matched_in_span(MULTI_CHUNK, SPAN, set(_terms("where is the cache stored, Redis host")))
     assert not matched_in_span("Keys carry the tenant id.", SPAN, set(_terms("cache TTL")))  # span elsewhere
     assert not matched_in_span(MULTI_CHUNK, SPAN, set(_terms("unrelated words")))  # span is a third
@@ -268,19 +270,19 @@ def test_partial_demotion_only_when_the_query_matched_the_outdated_statement() -
         return [_Hit(1, 0.9, _Row(MULTI_CHUNK)), _Hit(2, 0.8, _Row("x")), _Hit(3, 0.7, _Row("y"))]
 
     link = [(3, 1, SPAN)]  # 3 replaced one statement of 1
-    out = demote_partially_superseded(hits(), link, _terms("API cache TTL"))
+    out = demote_partially_superseded(hits(), link, _terms("TTL seconds"))
     assert [h.logical_id for h in out] == [2, 3, 1] and out[2].score == 0.7
     out = demote_partially_superseded(hits(), link, _terms("Redis host of the cache"))
     assert [h.logical_id for h in out] == [1, 2, 3]  # a still-valid statement matched: no demotion
     fresh = hits()
     assert [
-        h.logical_id for h in demote_partially_superseded(fresh, [(1, 3, SPAN)], _terms("cache TTL"))
+        h.logical_id for h in demote_partially_superseded(fresh, [(1, 3, SPAN)], _terms("TTL seconds"))
     ] == [
         1,
         2,
         3,
     ]  # already below its superseder
-    assert demote_partially_superseded(fresh, [(9, 1, SPAN)], _terms("cache TTL")) == fresh  # no hit 9
+    assert demote_partially_superseded(fresh, [(9, 1, SPAN)], _terms("TTL seconds")) == fresh  # no hit 9
 
 
 def test_partial_demotion_needs_the_evidence_inside_the_span() -> None:
@@ -293,6 +295,10 @@ def test_partial_demotion_needs_the_evidence_inside_the_span() -> None:
     assert not matched_in_span(text, span, set(_terms("backups retain")))
     assert matched_in_span(text, span, set(_terms("API port")))
     assert not matched_in_span(text, span, set(_terms("API port backups")))  # mixed: ambiguous
+    # review 60: the same term in the valid clause too ("port" in both) means no demotion
+    both = "API uses port 8080 and backups use port 9090."
+    assert not matched_in_span(both, span, set(_terms("port")))
+    assert matched_in_span(both, span, set(_terms("API 8080")))
     hits = [_Hit(1, 0.9, _Row(text)), _Hit(2, 0.8, _Row("API now uses port 8765."))]
     link = [(2, 1, span)]
     assert [h.logical_id for h in demote_partially_superseded(hits, link, _terms("backups retain"))] == [1, 2]
@@ -391,7 +397,99 @@ def test_partial_demotion_resolves_chains_in_one_stable_order() -> None:
     assert [h.logical_id for h in out] == [1, 3, 9]
     four = [_Hit(3, 0.95, _Row(b)), _Hit(1, 0.9, _Row(a)), _Hit(9, 0.7, _Row("unrelated note"))]
     out = demote_partially_superseded(four, both, _terms("cache TTL"))
-    assert [h.logical_id for h in out] == [1, 3, 9]  # the first edge (1 before 3) stands, 9 stays last
+    assert [h.logical_id for h in out] == [3, 1, 9]  # review 60: a cycle keeps its original interleaving
+
+
+def test_review60_cycle_never_loses_a_hit_under_a_tight_budget() -> None:
+    """Sol 60: hits [3, unrelated 9, 1] with mutual partial links. 6a96ba1 gave [9, 3, 1] and the
+    review-57 rule [9, 1, 3]; with a budget of two hits, 3 must stay in (the original order)."""
+    from hlmemo.core.supersession import order_6a96ba1
+
+    a = "The API cache TTL is 60 seconds."
+    b = "The API cache TTL is 120 seconds."
+    hits = [_Hit(3, 0.9, _Row(b)), _Hit(9, 0.8, _Row("unrelated note")), _Hit(1, 0.7, _Row(a))]
+    both = [(3, 1, "API cache TTL is 60 seconds"), (1, 3, "API cache TTL is 120 seconds")]
+    terms = _terms("TTL seconds")
+    assert [hits[i].logical_id for i in order_6a96ba1(hits, both, set(terms))] == [9, 3, 1]
+    out = demote_partially_superseded(hits, both, terms)
+    assert [h.logical_id for h in out] == [3, 9, 1]
+    assert 3 in [h.logical_id for h in out[:2]]  # a two-hit budget keeps hit 3
+
+
+def test_review60_no_hit_ranks_worse_than_baseline_or_6a96ba1() -> None:
+    """D-087 ordering guarantee (review 60 #4), over >= 1,000 generated head orders: for every hit,
+    rank_new <= max(rank_baseline, rank_6a96ba1), where rank_6a96ba1 comes from a FROZEN copy of the
+    whole 6a96ba1 procedure (its predicate, smallest-rank Kahn, cycle members appended)."""
+    import heapq
+    import random
+
+    rng = random.Random(60)
+    clauses = [
+        "The API cache TTL is 60 seconds",
+        "the cache is stored in Redis 7 on the api host",
+        "API uses port 8080",
+        "backups retain 30 days",
+        "backups use port 9090",
+        "cache keys are prefixed with the tenant id",
+    ]
+    queries = [
+        "cache",
+        "TTL seconds",
+        "API cache TTL",
+        "port",
+        "API 8080",
+        "backups retain",
+        "Redis host",
+        "x",
+    ]
+
+    def frozen_6a96ba1(hits, links, terms):  # noqa: ANN001, ANN202
+        pos = {h.logical_id: i for i, h in enumerate(hits)}
+        succ: dict[int, list[int]] = {}
+        indeg = dict.fromkeys(pos, 0)
+        for src, dst, quote in sorted(links):
+            if src not in pos or dst not in pos or src == dst or dst in succ.get(src, []):
+                continue
+            if not _rule_6a96ba1(hits[pos[dst]].row.text, quote, terms):
+                continue
+            succ.setdefault(src, []).append(dst)
+            indeg[dst] += 1
+        ready = [pos[lid] for lid, n in indeg.items() if n == 0]
+        heapq.heapify(ready)
+        order: list[int] = []
+        while ready:
+            i = heapq.heappop(ready)
+            order.append(i)
+            for dst in succ.get(hits[i].logical_id, []):
+                indeg[dst] -= 1
+                if indeg[dst] == 0:
+                    heapq.heappush(ready, pos[dst])
+        seen = set(order)
+        return order + [i for i in range(len(hits)) if i not in seen]
+
+    cases = changed = 0
+    for _ in range(3000):
+        n = rng.randint(2, 7)
+        hits = []
+        for lid in range(1, n + 1):
+            k = rng.randint(1, 3)
+            text = rng.choice([". ", " and ", "\n- "]).join(rng.sample(clauses, k)) + "."
+            hits.append(_Hit(lid, 1.0 - lid / 10, _Row(text)))
+        links = []
+        for _l in range(rng.randint(1, 5)):
+            src, dst = rng.sample(range(1, n + 1), 2)
+            quote = rng.choice(clauses)
+            links.append((src, dst, quote))
+        q = _terms(rng.choice(queries))
+        old = frozen_6a96ba1(hits, links, set(q))
+        rank_old = {hits[i].logical_id: r for r, i in enumerate(old)}
+        new = demote_partially_superseded([_Hit(h.logical_id, h.score, h.row) for h in hits], links, q)
+        for r, h in enumerate(new):
+            base = h.logical_id - 1
+            assert r <= max(base, rank_old[h.logical_id]), (hits, links, q, [x.logical_id for x in new])
+        cases += 1
+        changed += [h.logical_id for h in new] != [h.logical_id for h in hits]
+    assert cases >= 1000 and changed > 0
 
 
 def test_notice_and_legacy_close() -> None:
