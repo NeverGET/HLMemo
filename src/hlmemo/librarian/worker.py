@@ -62,6 +62,7 @@ from hlmemo.librarian.errors import (
     BudgetDeferred,
     JobCallCapExceeded,
     LibrarianError,
+    LlmConfigError,
     LlmDisabled,
     NotReady,
     ProviderUnavailable,
@@ -69,6 +70,7 @@ from hlmemo.librarian.errors import (
 )
 from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event, lock_event_refs
 from hlmemo.librarian.jobs import LIBRARIAN_JOB_KINDS, assign_job_ids, insert_recorded_jobs
+from hlmemo.librarian.profiles import check_chains, describe_chains
 from hlmemo.librarian.provider import Provider, lineage_scope
 from hlmemo.librarian.redact import REDACTION_VERSION
 from hlmemo.librarian.reserved import reserved_ids
@@ -1476,6 +1478,13 @@ async def _amain() -> int:
     if settings.llm_mode == "off":
         await _idle(settings, connect, stop, "HLM_LLM_MODE=off")
         return 0
+    try:  # D-094: every configured profile resolves before any job is leased (fail fast)
+        for warning in check_chains(settings):
+            log.warning("librarian: %s", warning)
+    except LlmConfigError as exc:
+        log.error("librarian: refusing to start: %s", exc)
+        return 2
+    log.info("librarian: task chains %s", chains_line(settings))
     async with open_pool(settings.db_dsn, concurrency=settings.librarian_concurrency) as pool:
         provider = Provider.from_settings(settings, conn=pool.connection)
         budget = None if settings.llm_budget_disabled else provider.budget
@@ -1494,6 +1503,14 @@ async def _amain() -> int:
             await provider.aclose()
     log.info("librarian: stopped")
     return 0
+
+
+def chains_line(settings: Any) -> str:
+    """``task=primary>fallback`` per task, one log line (D-094; ``-``: no fallback)."""
+    desc = describe_chains(settings)
+    if "error" in desc:
+        return f"error: {desc['error']}"
+    return ", ".join(f"{t}={e['primary']}>{e['fallback'] or '-'}" for t, e in desc["tasks"].items())
 
 
 def main() -> int:

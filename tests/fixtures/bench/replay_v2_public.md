@@ -4,7 +4,7 @@ profile `openrouter-gpt6-luna` · mode replay · reps 1 · gold adj-2+4c0651b4 �
 
 prompt bench-v2-p1 (sha256 be426d40e385) · schema bench-v2-s1 · redaction redact/1 · max-usd 1.0
 
-budget: replay (no reservation) · config c0366c7ebd60
+budget: replay (no reservation) · config e921b5bff1a7
 
 ## Overview
 

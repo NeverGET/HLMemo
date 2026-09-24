@@ -1,7 +1,10 @@
 """OpenAI-compatible librarian provider (W2a; D-017, D-019, CC-5).
 
 ``Provider.complete(task, user)`` sends ``[system prompt, redacted user message]`` to the profile
-chain ``[primary, fallback?]`` and returns schema-valid JSON. Per profile:
+chain ``[primary, fallback?]`` and returns schema-valid JSON. The fallback is the TASK's
+(``chain_for(task)``, D-094): ``HLM_FALLBACK_PROFILE__<TASK>`` when configured (carried by the
+chain's primary, see ``librarian.profiles``), else the default ``HLM_FALLBACK_PROFILE``; a fallback
+whose file lists the task in ``disabled_tasks`` is never used for it. Per profile:
 
 * every request sets ``max_tokens`` from the task bound; ``response_format`` is ``json_object``
   from the profile's ``extra``, or ``json_schema`` when the profile declares support;
@@ -26,11 +29,11 @@ Attempt policies (``complete(attempt_policy=)``):
   (minus the margin). A timeout, 5xx/429/408, transport error or non-retryable HTTP error goes
   straight to the next profile, so a stalled or failing primary leaves the fallback real time.
   Every attempt still runs the privacy precheck (D-062), the reservation/settle and its ledger
-  row (shielded) and the per-lineage ceiling; the chain is the caller's (``disabled_tasks``:
-  the risk judge has no fallback, D-071). When every attempted profile timed out the call raises
-  ``DeadlineExceeded`` (the caller's ``timeout``), otherwise ``ProviderUnavailable``. Breaker
-  failures are counted per PROFILE (``ChainBreakers`` is an API caller's view of them), so a
-  failing primary never suppresses a working fallback.
+  row (shielded) and the per-lineage ceiling; the chain is the task's (``chain_for``: the risk
+  judge uses its own qualified fallback or none, D-071/D-094). When every attempted profile timed
+  out the call raises ``DeadlineExceeded`` (the caller's ``timeout``), otherwise
+  ``ProviderUnavailable``. Breaker failures are counted per PROFILE (``ChainBreakers`` is an API
+  caller's view of them), so a failing primary never suppresses a working fallback.
 
 Every attempt writes exactly one ``llm_calls`` row. ``HLM_LLM_MODE`` selects live / record /
 replay (strict cassettes) / off. The raw provider response is never stored anywhere.
@@ -73,7 +76,7 @@ from hlmemo.librarian.errors import (
     SchemaFail,
 )
 from hlmemo.librarian.ledger import DbLedger, Ledger, LedgerRow
-from hlmemo.librarian.profiles import LlmProfile, profile_chain
+from hlmemo.librarian.profiles import LlmProfile, for_task, profile_chain
 from hlmemo.librarian.prompts import TaskSpec
 from hlmemo.librarian.redact import Redactor
 
@@ -195,14 +198,18 @@ class ChainBreakers:
     """An API caller's view of its provider's PER-PROFILE breakers: the call is refused only while
     EVERY profile of the chain is unavailable, so an open primary never suppresses a working
     fallback. The provider counts the failures (per profile, per attempt chain); ``success()``
-    closes them all (an operator or test reset). Without a provider (disabled) nothing is open."""
+    closes them all (an operator or test reset). Without a provider (disabled) nothing is open.
+    ``task``: the caller's task, whose chain (``Provider.chain_for``, D-094) is the one watched."""
 
-    def __init__(self, provider: Callable[[], Provider | None]) -> None:
+    def __init__(self, provider: Callable[[], Provider | None], *, task: str | None = None) -> None:
         self._provider = provider
+        self._task = task
 
     def _all(self) -> list[Breaker]:
         p = self._provider()
-        return [] if p is None else [p.breaker(x.name) for x in p.chain]
+        if p is None:
+            return []
+        return [p.breaker(x.name) for x in (p.chain_for(self._task) if self._task else p.chain)]
 
     def allow(self) -> bool:
         breakers = self._all()
@@ -221,7 +228,7 @@ class ChainBreakers:
     @property
     def state(self) -> str:
         p = self._provider()
-        return "closed" if p is None else p.breaker_state()
+        return "closed" if p is None else p.breaker_state(self._task)
 
 
 @dataclass(slots=True)
@@ -374,23 +381,36 @@ class Provider:
         self._clients.clear()
 
     # ------------------------------------------------------------------ state
+    def chain_for(self, task: str) -> list[LlmProfile]:
+        """The chain a call of ``task`` uses: the primary and the task's qualified fallback
+        (``HLM_FALLBACK_PROFILE__<TASK>`` when configured, else the default one; D-094)."""
+        return for_task(self.chain, task)
+
     def breaker(self, profile: str) -> Breaker:
+        """The breaker of ONE profile (keyed by its name: per model, whichever task uses it)."""
         b = self._breakers.get(profile)
         if b is None:
             b = self._breakers[profile] = Breaker(self.clock, **self._breaker_args)
         return b
 
-    def breaker_state(self) -> str:
-        """``closed`` unless every profile's breaker is open (``open``) or some are (``degraded``)."""
-        states = [self.breaker(p.name).state for p in self.chain]
+    def breaker_state(self, task: str | None = None) -> str:
+        """``closed`` unless every profile's breaker is open (``open``) or some are (``degraded``).
+        Over ``task``'s chain, or (no task: the heartbeat) the default chain plus every task-specific
+        fallback this process has called."""
+        if task is not None:
+            names = [p.name for p in self.chain_for(task)]
+        else:
+            names = [p.name for p in self.chain]
+            names += [n for n in self._breakers if n not in names]
+        states = [self.breaker(n).state for n in names]
         if all(s == "open" for s in states):
             return "open"
         if any(s != "closed" for s in states):
             return "degraded"
         return "closed"
 
-    def retry_after_s(self) -> float:
-        rem = [self.breaker(p.name).remaining_s() for p in self.chain]
+    def retry_after_s(self, profiles: list[LlmProfile] | None = None) -> float:
+        rem = [self.breaker(p.name).remaining_s() for p in (profiles if profiles is not None else self.chain)]
         return max(1.0, min(rem)) if rem else 1.0
 
     # ------------------------------------------------------------------ request building
@@ -462,7 +482,7 @@ class Provider:
     ) -> LlmResult:
         if self.mode == "off":
             raise LlmDisabled("HLM_LLM_MODE=off")
-        profiles = chain or self.chain
+        profiles = chain or self.chain_for(task.name)  # an explicit chain (the verifier's) as given
         user_redacted = self.redactor.redact(user).text
         attempted = False
         timeouts_only = True
@@ -494,10 +514,10 @@ class Provider:
             breaker.success()
             return result
         if not attempted:
-            raise BreakerOpen("; ".join(reasons), retry_after_s=self.retry_after_s())
+            raise BreakerOpen("; ".join(reasons), retry_after_s=self.retry_after_s(profiles))
         if latency and timeouts_only:  # every bounded attempt ran out of time: the caller's timeout
             raise DeadlineExceeded("every profile timed out: " + "; ".join(reasons))
-        raise ProviderUnavailable("; ".join(reasons), retry_after_s=self.retry_after_s())
+        raise ProviderUnavailable("; ".join(reasons), retry_after_s=self.retry_after_s(profiles))
 
     # ------------------------------------------------------------------ internals
     def _row(

@@ -93,7 +93,11 @@ class InstallLlmEnvTest(unittest.TestCase):
             "HLM_LIBRARIAN_ENABLED=true",
             "HLM_LIBRARIAN_ROLE=observer",
             "HLM_PROFILE=openrouter-gpt6-luna",
-            "HLM_FALLBACK_PROFILE=openrouter",
+            # D-094 production mapping, straight from the template
+            "HLM_FALLBACK_PROFILE=openrouter-glm53-flash",
+            "HLM_FALLBACK_PROFILE__SYNTHESIS=openrouter",
+            "HLM_FALLBACK_PROFILE__QUERY_REWRITE=openrouter",
+            "HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast",
             f"OPENROUTER_API_KEY={KEY_A}",
             "HLM_LLM_MODE=live",
             "HLM_LLM_BUDGET_HOUR_USD=3",
@@ -177,6 +181,37 @@ class InstallLlmEnvTest(unittest.TestCase):
             )
             self.assertEqual(64, result.returncode)
         self.assertFalse(self.target.exists())
+
+    def test_fallback_flag_replaces_the_default_only_and_template_profiles_must_exist(self):
+        """D-094: --fallback replaces HLM_FALLBACK_PROFILE; the per-task lines stay the template's.
+        A template naming a profile that does not exist sends nothing."""
+        result, output = self.run_install("--fallback", "openrouter")
+        self.assertEqual(0, result.returncode, output)
+        content = self.target.read_text()
+        self.assertIn("HLM_FALLBACK_PROFILE=openrouter\n", content)
+        self.assertIn("HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast\n", content)
+        self.assertEqual(1, content.count("HLM_FALLBACK_PROFILE="))
+        self.assert_never_exposed(output, KEY_A)
+        # a copy of the script next to a template with a mistyped per-task profile
+        repo = self.root / "repo"
+        (repo / "deploy/scripts").mkdir(parents=True)
+        (repo / "deploy/scripts/install_llm_env.sh").write_text(SCRIPT.read_text())
+        (repo / "profiles").symlink_to(ROOT / "profiles")
+        template = (ROOT / "deploy/llm.env.example").read_text()
+        (repo / "deploy/llm.env.example").write_text(
+            template.replace("__RISK_JUDGE=openrouter-qwen38-27b-fast", "__RISK_JUDGE=no-such-profile")
+        )
+        before = len(self.calls())
+        result = subprocess.run(
+            ["bash", str(repo / "deploy/scripts/install_llm_env.sh"), "--state", str(self.state),
+             "--key-file", str(self.key_file)],
+            env=self.env, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
+        )  # fmt: skip
+        output = result.stdout + result.stderr
+        self.assertEqual(65, result.returncode, output)
+        self.assertIn("unknown profile in llm.env: no-such-profile", output)
+        self.assertEqual(before, len(self.calls()), "nothing is sent")
+        self.assert_never_exposed(output, KEY_A)
 
     def test_truncated_transfer_is_refused_and_leaves_the_file(self):
         self.assertEqual(0, self.run_install()[0].returncode)

@@ -5,9 +5,11 @@
 #   deploy/scripts/install_llm_env.sh --state DIR --remove
 #
 # Builds llm.env from deploy/llm.env.example with HLM_LIBRARIAN_ENABLED=true,
-# HLM_LIBRARIAN_ROLE=observer, HLM_PROFILE=openrouter-gpt6-luna, HLM_FALLBACK_PROFILE=openrouter
-# and the template's budget guard (D-058 development defaults). The key variable names come from
-# the profiles (HLM_LLM_API_KEY = "env:NAME", D-017; R2: OPENROUTER_API_KEY) and ONLY those are
+# HLM_LIBRARIAN_ROLE=observer, HLM_PROFILE=openrouter-gpt6-luna, the template's fallbacks (D-094:
+# HLM_FALLBACK_PROFILE and the per-task HLM_FALLBACK_PROFILE__<TASK> lines; --fallback replaces the
+# default one only) and the template's budget guard (D-058 development defaults). Every profile the
+# file names must exist. The key variable names come from those
+# profiles (HLM_LLM_API_KEY = "env:NAME", D-017; R2: OPENROUTER_API_KEY) and ONLY those are
 # read from --key-file (default: the repository's .env). The key travels to the host on ssh STDIN,
 # never in argv, a log or this script's output, and is written atomically to <env dir>/llm.env
 # (default /etc/hlmemo/llm.env, next to $HLM_REMOTE_ENV), 0600, owned by the deploy user.
@@ -22,7 +24,7 @@ REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 usage() { sed -n '4,5p' "${BASH_SOURCE[0]}" | sed 's/^# *//'; }
 die() { printf 'install_llm_env: %s\n' "$*" >&2; exit "${2:-64}"; }
 
-state='' key_file=$REPO_ROOT/.env profile=openrouter-gpt6-luna fallback=openrouter mode=install
+state='' key_file=$REPO_ROOT/.env profile=openrouter-gpt6-luna fallback='' mode=install
 while (($#)); do
   case $1 in
     --state|--key-file|--profile|--fallback)
@@ -37,6 +39,7 @@ while (($#)); do
   esac
 done
 [[ -n $state ]] || { usage >&2; die '--state DIR is required (the target host is never guessed)'; }
+[[ -n $fallback ]] || fallback=$(sed -n 's/^HLM_FALLBACK_PROFILE=//p' "$REPO_ROOT/deploy/llm.env.example" | tail -n 1)
 ssh_config=${HLM_OPS_SSH_CONFIG:-$state/ssh_config}
 [[ -f $ssh_config ]] || die "no SSH config at $ssh_config (run first_deploy.sh first)"
 remote_env=${HLM_REMOTE_ENV:-/etc/hlmemo/prod.env}
@@ -153,9 +156,19 @@ END = "# END llm.env (install_llm_env.sh)"
 def fail(msg):
     print(f"install_llm_env: {msg}", file=sys.stderr)
     sys.exit(65)
+# D-094: the per-task fallbacks the template sets are kept verbatim; their profiles must exist too
+task_profiles = []
+with open(example, encoding="utf-8") as fh:
+    for line in fh:
+        m = re.fullmatch(r"HLM_FALLBACK_PROFILE__[A-Z][A-Z0-9_]*=(.*)", line.strip())
+        if m and m.group(1).strip():
+            task_profiles.append(m.group(1).strip())
 names = []
-for profile in dict.fromkeys((primary, fallback)):
-    with open(os.path.join(profiles, profile + ".toml"), "rb") as fh:
+for profile in dict.fromkeys((primary, fallback, *task_profiles)):
+    path = os.path.join(profiles, profile + ".toml")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", profile) or not os.path.isfile(path):
+        fail(f"unknown profile in llm.env: {profile} (profiles/*.toml)")
+    with open(path, "rb") as fh:
         ref = str(tomllib.load(fh).get("HLM_LLM_API_KEY", ""))
     m = re.fullmatch(r"env:([A-Z][A-Z0-9_]*)", ref)
     if not m:

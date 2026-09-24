@@ -101,7 +101,7 @@ def probe(url: str, timeout: float = 5.0) -> dict[str, Any]:
 
 def collect(service: str, with_probe: bool, wait_heartbeat_s: float = 0.0) -> int:
     from hlmemo.config import get_settings
-    from hlmemo.librarian.profiles import profile_chain
+    from hlmemo.librarian.profiles import describe_chains, profile_chain
 
     out: dict[str, Any] = {"service": service}
     try:
@@ -118,9 +118,14 @@ def collect(service: str, with_probe: bool, wait_heartbeat_s: float = 0.0) -> in
     )
     try:
         chain = profile_chain(s)
+        # D-094: the per-task fallbacks too (each needs its key and a reachable endpoint)
+        extra = [p for p in chain[0].task_fallbacks.values() if p is not None]
+        chain = list({p.name: p for p in [*chain, *extra]}.values())
         out["profiles"] = [
             {"name": p.name, "base_url": p.base_url, "key_set": bool(p.api_key)} for p in chain
         ]
+        tasks = describe_chains(s).get("tasks", {})
+        out["fallbacks"] = {t: e["fallback"] for t, e in tasks.items() if e["source"] == "task"}
     except Exception as exc:  # noqa: BLE001
         chain = []
         out["profiles_error"] = type(exc).__name__
@@ -221,6 +226,8 @@ def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
         f"librarian: llm.env={llm_env} enabled={str(lib.get('enabled')).lower()} role={lib.get('role')} "
         f"mode={lib.get('llm_mode')} profile={lib.get('profile')} fallback={lib.get('fallback')}"
     )
+    if lib.get("fallbacks"):  # D-094 per-task overrides (HLM_FALLBACK_PROFILE__<TASK>)
+        print("per-task fallbacks: " + " ".join(f"{t}={p or '-'}" for t, p in sorted(lib["fallbacks"].items())))
     if "error" in hb:
         print(f"librarian heartbeat: unreadable ({hb['error']})")
     else:
