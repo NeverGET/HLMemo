@@ -23,7 +23,11 @@ History (append-only):
 | corpus | # | date | label | commit | config | score | $/query | decision | merge | complete |
 |---|---|---|---|---|---|---|---|---|---|---|
 | corpus_a | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.793 | 0.0 | - | False | True |
+| corpus_a | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.793 | 0.0 | - | False | True |
+| corpus_a | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.783 | 0.001368 | - | False | True |
 | corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
 
 ## Librarian: bench_v2 (score = macro mean of per-task mean scores, %)
 
