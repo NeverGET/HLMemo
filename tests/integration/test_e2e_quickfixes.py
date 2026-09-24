@@ -583,3 +583,185 @@ async def test_small_scope_reimport_replaces_the_split_file(connect, tmp_path, m
         call, source="automemory", parsed=parsed, project="am1", dry_run=False, meter=meter, close=False
     )
     assert kept_missing["writes"]["written"] == 0  # idempotent
+
+
+# --------------------------------------------------------------------------- Sol 55 #1 content loss
+async def test_failed_section_write_keeps_the_old_item_open(connect, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """A replacement section whose write fails: the old whole-file item is NOT closed (no content
+    loss); the report says which section is missing; the next clean run closes it."""
+    import shutil
+
+    from hlmemo.cli.mcp_client import ToolCallError
+    from hlmemo.importers.cli import human_summary
+
+    pid, _ = await make_project(connect, "am2")
+    ctx = await make_device(connect, "am2-importer", {pid: "write"})
+    d = tmp_path / "memory"
+    d.mkdir()
+    shutil.copy(FIXTURE / "automemory" / "feedback_deploy_footguns.md", d)
+    meter = Meter()
+    call = Caller(connect, ctx)
+    monkeypatch.setattr(automemory, "memory_type", lambda meta: str(meta.get("type") or "").lower())
+    await import_async(
+        call,
+        source="automemory",
+        parsed=parse_source("automemory", [d], tz=UTC),
+        project="am2",
+        dry_run=False,
+        meter=meter,
+    )
+    monkeypatch.undo()
+
+    class Failing(Caller):
+        async def __call__(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+            if tool == "memory.write" and args["items"][0].get("source", {}).get("path", "").endswith(
+                "#rule-2"
+            ):
+                raise ToolCallError("E_UNAVAILABLE", "injected failure", retryable=True)
+            return await super().__call__(tool, args)
+
+    parsed = parse_source("automemory", [d], tz=UTC)
+    rep = await import_async(
+        call=Failing(connect, ctx),
+        source="automemory",
+        parsed=parsed,
+        project="am2",
+        dry_run=False,
+        meter=meter,
+    )
+    w = rep["writes"]
+    assert [f["key"] for f in w["failed"]] == ["automemory:feedback_deploy_footguns.md#rule-2"]
+    assert w["closed"] == 0 and w["kept_open"] == [
+        {
+            "key": "automemory:feedback_deploy_footguns.md",
+            "reason": "replacement-incomplete",
+            "absent": ["automemory:feedback_deploy_footguns.md#rule-2"],
+        }
+    ]
+    assert (
+        "kept open (replacement-incomplete; not stored: automemory:feedback_deploy_footguns.md#rule-2)"
+        in (human_summary(rep))
+    )
+    open_bare = (
+        "SELECT count(*) FROM memory_versions WHERE project_id = %s AND source->>'path' = %s"
+        " AND valid_to = 'infinity' AND superseded_at = 'infinity'"
+    )
+    assert (await rows(connect, open_bare, (pid, "feedback_deploy_footguns.md")))[0][0] == 1
+    again = await import_async(
+        call, source="automemory", parsed=parsed, project="am2", dry_run=False, meter=meter
+    )
+    assert (
+        again["writes"]["closed"] == 1
+        and again["writes"]["kept_open"] == []
+        and not again["writes"]["failed"]
+    )
+    assert (await rows(connect, open_bare, (pid, "feedback_deploy_footguns.md")))[0][0] == 0
+
+
+# --------------------------------------------------------------------------- Sol 55 #2 answer race
+async def test_answer_sees_a_concurrent_revision_adding_an_excluded_project(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """A widen_scope A→B was proposed; while the owner answers, a revision adds the excluded T to
+    the B item. The answer takes the item lock BEFORE the policy recheck, waits for the revision
+    and refuses (authority_lost, policy_excluded); nothing is widened."""
+    import asyncio
+
+    from hlmemo.core.write_service import write
+    from hlmemo.librarian.questions import answer
+
+    b_pid, _ = await make_project(connect, "g6-third")
+    dev = await make_device(
+        connect, "dev-abt", {world.main_id: "write", world.other_id: "write", b_pid: "write"}
+    )
+    await _policy(connect, OTHER, "exclude")
+    lesson_b = ("Never pipe an ssh heredoc", "Never use bash -s with an ssh heredoc: stdin is swallowed.")
+    lesson_a = ("ssh heredoc stdin", "Using bash -s over ssh with a heredoc swallows stdin; avoid it.")
+    (c,) = await write_items(
+        connect, dev, "g6-third", [{**item(*lesson_b, valid_from=D_OLD), "kind": "lesson"}]
+    )
+    await write_items(connect, dev, MAIN, [{**item(*lesson_a), "kind": "lesson"}])
+    await embed(connect, embedder)
+    await _drain(
+        db_dsn, connect, Oracle(relations={(lesson_a[0], lesson_b[0]): ("duplicate", "none", "high")})
+    )
+    ((qid, kind),) = await rows(connect, "SELECT question_id::text, kind FROM librarian_questions")
+    assert kind == "widen_scope"
+    await _promote(connect, world)
+
+    reviser = await connect()
+    await reviser.execute("SELECT 1")  # an open transaction: the revision's item lock is held
+    await write(
+        reviser,
+        dev,
+        {
+            "project": "g6-third",
+            "request_id": str(uuid.uuid4()),
+            "client": "pytest/0",
+            "items": [
+                {
+                    **item(*lesson_b, valid_from=D_OLD, project_ids=["g6-third", OTHER]),
+                    "kind": "lesson",
+                    "logical_id": c.logical_id,
+                    "expected_version_id": c.version_id,
+                }
+            ],
+        },
+    )
+    args = {"project": MAIN, "request_id": str(uuid.uuid4()), "question_id": qid, "decision": "accept"}
+
+    async def owner() -> dict[str, Any]:
+        async with await connect() as conn:
+            res = await answer(conn, dev, args, raw=args, configured_role="assistant")
+            await conn.commit()
+        return res
+
+    task = asyncio.create_task(owner())
+    await asyncio.sleep(0.7)
+    assert not task.done()  # waiting for the revision's item lock
+    await reviser.commit()
+    await reviser.close()
+    ack = await asyncio.wait_for(task, 10)
+    assert ack["status"] == "authority_lost" and ack["applied"]["widened"] == [], ack
+    assert await rows(connect, "SELECT status, answer->>'reason' FROM librarian_questions") == [
+        ("authority_lost", "policy_excluded")
+    ]
+    heads = await rows(
+        connect,
+        "SELECT project_ids FROM memory_versions WHERE logical_id = %s AND superseded_at = 'infinity'",
+        (c.logical_id,),
+    )
+    assert [sorted(p) for (p,) in heads] == [sorted([b_pid, world.other_id])]  # MAIN never added
+
+
+# --------------------------------------------------------------------------- Sol 55 #4 legacy replay
+async def test_legacy_policy_event_replays(connect, world: World) -> None:  # noqa: ANN001
+    """A policy change recorded in the pre-``resolved.project_policy`` shape is rebuilt by replay."""
+    from hlmemo.db.replay import rebuild_projections
+    from hlmemo.librarian.events import insert_system_event
+
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT clock_timestamp()")
+        (at,) = await cur.fetchone()
+        await insert_system_event(
+            conn,
+            kind="librarian",
+            project_id=world.other_id,
+            device_id=1,
+            client="hlm-ops/0.0.1",
+            request_id=uuid.uuid4(),
+            request={
+                "actor": "hlm-ops/0.0.1",
+                "op": "set_project_policy",
+                "key": KEY,
+                "value": "exclude",
+                "previous": None,
+            },
+            resolved={"recorded_at": at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")},
+            at=at,
+        )
+        await conn.commit()
+        assert (await ops.project_policy(conn, OTHER))["policy"] == {}  # the old code set only the row
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert (await ops.project_policy(conn, OTHER))["policy"] == {KEY: "exclude"}

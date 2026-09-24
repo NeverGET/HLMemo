@@ -23,8 +23,11 @@ keeps its logical item: one revision that also moves the source key, Sol 42 #6);
 A file's bare item whose file is still imported but now ONLY as sections (a lesson file split into
 one lesson per rule, ``importers.lessons``) is ``replaced_by_split``: an intended replacement, not
 a vanished source, so it is closed in the same import outside the mass-close guard and never
-re-mapped (Sol 54 #3). Lessons are re-mapped on their rule text (the shared ``## Context`` is cut),
-so rules of one file that share a context never look alike.
+re-mapped (Sol 54 #3) — but only when EVERY section of that file is admitted: a rejected section
+(future evidence date, a refused export record) is no replacement, so the bare item stays open and
+the report says why (``replacement-incomplete``); the runner closes it only after verifying that
+every replacement section is actually stored (Sol 55). Lessons are re-mapped on their rule text
+(the shared ``## Context`` is cut), so rules of one file that share a context never look alike.
 
 ``request_id = uuid5(NS_IMPORT, project ‖ source_key ‖ sha256 ‖ expected_version_id ‖ action)``:
 re-sending the same step is a replay, and an A→B→A cycle never reuses an id (Sol 42 #4).
@@ -192,11 +195,16 @@ def classify(
 
     # Items this source imported earlier under the run's paths that the run no longer produces
     produced = {r.key for r in parsed.records} | {r.key for r in parsed.rejected}
-    sections_of: dict[str, list[str]] = {}  # bare file key -> the section keys produced for it
-    for key in sorted(produced):
+    sections_of: dict[str, list[str]] = {}  # bare file key -> the ADMITTED section keys for it
+    for key in sorted(e.record.key for e in plan.entries):
         base, sep, _anchor = key.partition("#")
         if sep:
             sections_of.setdefault(base, []).append(key)
+    refused: dict[str, list[str]] = {}  # bare file key -> its sections that will NOT be written
+    for key in sorted({r.key for r in (*parsed.rejected, *plan.rejected)}):
+        base, sep, _anchor = key.partition("#")
+        if sep:
+            refused.setdefault(base, []).append(key)
     keep_files = {s.path: s.reason for s in parsed.skipped if s.reason.split(":", 1)[0] in KEEP_REASONS}
     for k, it in sorted(by_key.items()):
         src = it.get("source") or {}
@@ -207,6 +215,9 @@ def classify(
             continue
         plan.in_scope += 1
         if k in produced:
+            continue
+        if "#" not in path and k in refused:  # a section is refused: no full replacement (Sol 55)
+            plan.kept.append({"key": k, "reason": "replacement-incomplete:" + ",".join(refused[k])})
             continue
         if "#" not in path and k in sections_of:  # the file now yields sections only (Sol 54 #3)
             plan.replaced.append({"key": k, "by": sections_of[k]})
