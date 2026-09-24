@@ -130,12 +130,16 @@ async def test_record_mode_normalizes_array_and_tool_call_content(
     await provider.aclose()
     recorded = (tmp_path / "arr.jsonl").read_text()
     assert SECRET not in recorded
-    content = json.loads(recorded)["response"]["choices"][0]["message"]["content"]
-    assert (
-        isinstance(content, str)
-        and "⟦CONTENT:unsupported⟧" in content
-        and content.endswith("⟦CONTENT:tool_calls⟧")
-    )
+    # One record per attempt (the schema retry is recorded too since the attempt-keyed cassettes).
+    records = [json.loads(line) for line in recorded.splitlines() if line.strip()]
+    assert records
+    for rec in records:
+        content = rec["response"]["choices"][0]["message"]["content"]
+        assert (
+            isinstance(content, str)
+            and "⟦CONTENT:unsupported⟧" in content
+            and content.endswith("⟦CONTENT:tool_calls⟧")
+        )
 
 
 def test_cassette_writer_redacts_raw_input_itself(tmp_path) -> None:  # noqa: ANN001
