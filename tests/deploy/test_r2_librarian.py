@@ -1,8 +1,9 @@
 """R2 (librarian ON, observer) deploy checks, offline.
 
 * remote-deploy.sh's post-cutover librarian check under the fake ssh/docker harness (D-037b):
-  a missing llm.env idles and deploys; llm.env enabling the librarian needs an enabled heartbeat
-  in the configured role and an api that sees the same switch; an unreachable provider is only
+  a missing llm.env idles and deploys (R1-style); with llm.env present the api settings, the
+  librarian settings and the heartbeat must all be enabled/live/observer and the api risk judge
+  must load non-empty (Sol 48); an unreachable provider is only
   reported; a failure leaves the new stack running (no database rollback).
 * check_librarian.py observer-gate (remote_gates.sh --librarian) on crafted job/audit reports.
 """
@@ -31,12 +32,12 @@ def profiles(reachable=True, key=True):
     ]
 
 
-def report(service, *, enabled=True, role="observer", hb_enabled=True, hb_role="observer", **kw):
+def report(service, *, enabled=True, role="observer", mode="live", hb_enabled=True, hb_role="observer", **kw):
     out = {
         "service": service,
         "enabled": enabled,
         "role": role,
-        "llm_mode": "live",
+        "llm_mode": mode,
         "profile": "openrouter-gpt6-luna",
         "fallback": "openrouter",
         "profiles": profiles(kw.get("reachable", True), kw.get("key", True)),
@@ -53,7 +54,10 @@ def report(service, *, enabled=True, role="observer", hb_enabled=True, hb_role="
             "reserved_usd": 0.0,
         }
     else:
-        out["risk_judge"] = ["openrouter-gpt6-luna"]
+        out["risk_judge"] = kw.get("risk_judge", ["openrouter-gpt6-luna"])
+        if "risk_judge_error" in kw:
+            out.pop("risk_judge")
+            out["risk_judge_error"] = kw["risk_judge_error"]
     return json.dumps(out)
 
 
@@ -89,12 +93,18 @@ class R2DeployCheckTest(unittest.TestCase):
         self.assertIn("Deployment ready", output)
 
     def test_llm_env_enabled_observer_passes(self):
+        """Happy path: api settings, librarian settings and heartbeat all enabled/live/observer."""
         _, result, output, _ = self.run_r2(True, report("librarian"), report("api"))
         self.assertEqual(0, result.returncode, output)
         self.assertIn("librarian heartbeat: enabled=True role=observer breaker_state=closed", output)
-        self.assertIn("api: enabled=true mode=live risk_judge=openrouter-gpt6-luna", output)
-        self.assertIn("RESULT librarian PASS llm.env=present enabled=true role=observer", output)
+        self.assertIn("api: enabled=true role=observer mode=live risk_judge=openrouter-gpt6-luna", output)
+        self.assertIn(
+            "RESULT librarian PASS llm.env=present enabled=true mode=live role=observer"
+            " risk_judge=openrouter-gpt6-luna",
+            output,
+        )
         self.assertIn("key set, reachable (HTTP 200)", output)
+        self.assertIn("Deployment ready", output)
 
     def test_unreachable_provider_is_reported_not_fatal(self):
         lib, api = report("librarian", reachable=False), report("api", reachable=False)
@@ -103,32 +113,104 @@ class R2DeployCheckTest(unittest.TestCase):
         self.assertIn("UNREACHABLE (URLError); reported only", output)
         self.assertIn("RESULT librarian PASS", output)
 
-    def test_mismatches_fail_after_cutover_without_database_rollback(self):
+    def assert_fails_after_cutover(self, llm_env, lib, api, *messages):
+        root, result, output, rows = self.run_r2(llm_env, lib, api)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("RESULT librarian FAIL", output)
+        for message in messages:
+            self.assertIn(message, output)
+        self.assertIn("new stack left running (no database rollback)", output)
+        self.assertEqual(NEXT, (root / "current-ref").read_text().strip(), "cutover kept")
+        self.assertFalse(any("dropdb" in r[-1] for r in rows))
+        self.assertNotIn("Deployment ready", output)
+
+    def test_r2_fails_unless_every_source_is_enabled_live_observer(self):
+        """Sol 48 High: with llm.env present, OFF, a non-live mode or a role above observer in the
+        api settings, the librarian settings or the heartbeat is a failed R2 release."""
         cases = {
-            "heartbeat enabled=False although llm.env enables": (
+            "off": (
+                report("librarian", enabled=False, hb_enabled=False),
+                report("api", enabled=False),
+                (
+                    "api settings: HLM_LIBRARIAN_ENABLED=False (R2: true)",
+                    "librarian settings: HLM_LIBRARIAN_ENABLED=False (R2: true)",
+                    "heartbeat enabled=False (R2: True)",
+                ),
+            ),
+            "mode off": (
+                report("librarian", mode="off", hb_enabled=False),
+                report("api", mode="off"),
+                (
+                    "api settings: HLM_LLM_MODE=off (R2: live)",
+                    "librarian settings: HLM_LLM_MODE=off (R2: live)",
+                ),
+            ),
+            "wrong role everywhere": (
+                report("librarian", role="assistant", hb_role="assistant"),
+                report("api", role="assistant"),
+                (
+                    "api settings: HLM_LIBRARIAN_ROLE=assistant (R2: observer)",
+                    "librarian settings: HLM_LIBRARIAN_ROLE=assistant (R2: observer)",
+                    "heartbeat role=assistant (R2: observer)",
+                ),
+            ),
+            "heartbeat role only": (
+                report("librarian", hb_role="autonomous"),
+                report("api"),
+                ("heartbeat role=autonomous (R2: observer)",),
+            ),
+            "heartbeat disabled only": (
                 report("librarian", hb_enabled=False),
                 report("api"),
+                ("heartbeat enabled=False (R2: True)",),
             ),
-            "heartbeat role=assistant, configured observer": (
-                report("librarian", hb_role="assistant"),
-                report("api"),
-            ),
-            "api and librarian see different": (report("librarian"), report("api", enabled=False)),
-            "provider key missing for openrouter-gpt6-luna,openrouter": (
+            "keys missing": (
                 report("librarian", key=False),
                 report("api", key=False),
+                ("provider key missing for openrouter-gpt6-luna,openrouter",),
             ),
         }
-        for message, (lib, api) in cases.items():
-            with self.subTest(message=message):
-                root, result, output, rows = self.run_r2(True, lib, api)
-                self.assertNotEqual(0, result.returncode, output)
-                self.assertIn("RESULT librarian FAIL", output)
-                self.assertIn(message, output)
-                self.assertIn("new stack left running (no database rollback)", output)
-                self.assertEqual(NEXT, (root / "current-ref").read_text().strip(), "cutover kept")
-                self.assertFalse(any("dropdb" in r[-1] for r in rows))
-                self.assertNotIn("Deployment ready", output)
+        for name, (lib, api, messages) in cases.items():
+            with self.subTest(name):
+                self.assert_fails_after_cutover(True, lib, api, *messages)
+
+    def test_api_librarian_mismatch_fails(self):
+        cases = {
+            "api off": (report("api", enabled=False), "api settings: HLM_LIBRARIAN_ENABLED=False (R2: true)"),
+            "api role": (report("api", role="assistant"), "api settings: HLM_LIBRARIAN_ROLE=assistant"),
+            "api mode": (report("api", mode="replay"), "api settings: HLM_LLM_MODE=replay (R2: live)"),
+        }
+        for name, (api, message) in cases.items():
+            with self.subTest(name):
+                self.assert_fails_after_cutover(
+                    True, report("librarian"), api, "api and librarian settings differ", message
+                )
+
+    def test_risk_judge_configuration_error_or_empty_chain_fails(self):
+        """Sol 48 Medium: the api's judge must load with a non-empty chain when llm.env is present."""
+        self.assert_fails_after_cutover(
+            True,
+            report("librarian"),
+            report("api", risk_judge_error="LlmConfigError"),
+            "api: enabled=true role=observer mode=live risk_judge=ERROR LlmConfigError",
+            "api risk-judge configuration error (LlmConfigError)",
+        )
+        self.assert_fails_after_cutover(
+            True, report("librarian"), report("api", risk_judge=[]), "api risk-judge chain is empty"
+        )
+
+    def test_no_llm_env_fails_when_anything_is_active(self):
+        """R1-style (no llm.env) passes only while idle; an enabled api or heartbeat fails."""
+        idle_lib = report("librarian", enabled=False, hb_enabled=False)
+        self.assert_fails_after_cutover(
+            False, idle_lib, report("api"), "librarian enabled without llm.env (api;"
+        )
+        self.assert_fails_after_cutover(
+            False,
+            report("librarian", enabled=False, hb_enabled=True),
+            report("api", enabled=False),
+            "librarian enabled without llm.env (heartbeat;",
+        )
 
     def test_no_report_fails(self):
         _, result, output, _ = self.run_r2(True, "", report("api"))
