@@ -217,7 +217,11 @@ def _classify_one(
         target = by_key.get(rec.key)
         if target is None:
             return Entry(rec, "new")
-        same = (target.get("source") or {}).get("sha256") == rec.sha256
+        # a kind change alone is a revision too (e2e 2026-09-24 #1: feedback files imported as facts
+        # become lessons on the next run)
+        same = (target.get("source") or {}).get("sha256") == rec.sha256 and target.get(
+            "kind", rec.kind_guess
+        ) == rec.kind_guess
         return Entry(
             rec,
             "unchanged" if same else "changed",

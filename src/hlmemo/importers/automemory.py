@@ -1,9 +1,18 @@
 """``hlm import automemory <dir>``: a Claude Code auto-memory directory
 (``~/.claude/projects/<project>/memory/``: ``MEMORY.md`` index + topic files with frontmatter
-``name``/``description``/``type``). Flat directory; keys are file names relative to ``<dir>``.
+``name``/``description`` and a ``type``). Flat directory; keys are file names relative to ``<dir>``.
 
-Kinds: ``type: feedback`` → lesson, everything else (``project``, ``reference``, ``user``, the
-index) → fact. The frontmatter stays in the body (its description is good retrieval text); its
+The ``type`` sits at the top level in older files and under ``metadata:`` in current Claude Code
+(``metadata:\\n  type: feedback``); both are read (e2e 2026-09-24 finding #1: the nested form
+was missed, so no feedback file became a lesson). Kinds (``TYPE_KINDS``): ``feedback`` → lesson;
+``user`` (who the owner is, preferences), ``project`` (state, goals, decisions) and ``reference``
+(pointers to external systems) → fact, like the ``MEMORY.md`` index and untyped files: HLMemo
+has no preference/reference kind (``write_models.Kind``) and the legacy inventory
+(docs/research/03) prescribes none. A lesson file with several independent rules becomes one
+lesson per rule (``importers.lessons``, applied by ``build``).
+
+The frontmatter stays in the body of a single item (its description is good retrieval text); a
+split rule carries the description in its ``## Context``. The frontmatter's
 ``date``/``valid_from`` is the only accepted date evidence besides dated headings (Sol #6).
 """
 
@@ -17,13 +26,26 @@ from hlmemo.importers.build import Candidate, build
 from hlmemo.importers.common import SECTION_CHARS, ParseResult, walk_files
 
 SYSTEM = "automemory"
+TYPE_KINDS = {
+    "feedback": "lesson",
+    "lesson": "lesson",
+    "user": "fact",
+    "project": "fact",
+    "reference": "fact",
+}
+
+
+def memory_type(meta: dict[str, Any]) -> str:
+    """The file's auto-memory type: top-level ``type`` (older files) or ``metadata.type``."""
+    value = meta.get("type")
+    if not (isinstance(value, str) and value.strip()):
+        nested = meta.get("metadata")
+        value = nested.get("type") if isinstance(nested, dict) else None
+    return value.strip().lower() if isinstance(value, str) else ""
 
 
 def kind_for(rel: str, meta: dict[str, Any], text: str) -> str:
-    kind = str(meta.get("type", "")).strip().lower()
-    if kind in ("feedback", "lesson"):
-        return "lesson"
-    return "fact"
+    return TYPE_KINDS.get(memory_type(meta), "fact")
 
 
 def parse(
@@ -51,4 +73,4 @@ def parse(
     )
 
 
-__all__ = ["SYSTEM", "kind_for", "parse"]
+__all__ = ["SYSTEM", "TYPE_KINDS", "kind_for", "memory_type", "parse"]

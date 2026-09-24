@@ -90,7 +90,11 @@ def test_fixture_report_covers_every_rule(meter: Meter) -> None:
     assert auto["automemory:feedback_testing.md"]["kind"] == "lesson"
     assert auto["automemory:project_state.md"]["valid_from"] == "2026-04-02T00:00:00Z"
     ser = {i["key"]: i for i in dry_run("serena", meter)["items"]}
-    assert ser["serena:lessons_learned.md"]["kind"] == "lesson"
+    # a lesson file with several rules → one lesson per rule (e2e 2026-09-24 §7.1)
+    assert [(k, i["kind"]) for k, i in ser.items() if k.startswith("serena:lessons_learned.md")] == [
+        ("serena:lessons_learned.md#a-heredoc-that-starts-ssh-must-use-ssh-n-or-it-s", "lesson"),
+        ("serena:lessons_learned.md#never-run-the-test-suite-against-the-development", "lesson"),
+    ]
     assert ser["serena:session_2026_05_01.md"]["kind"] == "episode"
     assert ser["serena:session_2026_05_01.md"]["valid_from"] == "2026-05-01T00:00:00Z"
     assert ser["serena:01_auth_flow.md"]["describes"] == ["src/app/main.py"]
