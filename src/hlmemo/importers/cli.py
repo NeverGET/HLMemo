@@ -81,12 +81,14 @@ async def import_async(
     plan = classify(project, source, parsed, manifest, meter)
     if call is not None:
         await resolve_missing(call, plan, confirm_close=confirm_close)
-        if not close:
+        if not close:  # --keep-missing keeps vanished sources, not items replaced by their sections
+            replaced = {it["logical_id"] for it in plan.replaced_items}
             plan.kept += [
                 {"key": f"{it['source']['system']}:{it['source']['path']}", "reason": "keep-missing"}
                 for it in plan.closes
+                if it["logical_id"] not in replaced
             ]
-            plan.closes = []
+            plan.closes = [it for it in plan.closes if it["logical_id"] in replaced]
     out = report(plan, dry_run=dry_run or call is None)
     if call is None or dry_run:
         return out

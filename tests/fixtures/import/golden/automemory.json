@@ -4,7 +4,7 @@
   "changed": 0,
   "closed": 0,
   "missing": 0,
-  "new": 3,
+  "new": 11,
   "rejected": 0,
   "skipped": 0,
   "unchanged": 0
@@ -17,9 +17,69 @@
    "evidence": "none",
    "key": "automemory:MEMORY.md",
    "kind": "fact",
-   "sha256": "23abc4c32c09e77a4ac9fc60cd73ed2684101f023cbd9e8af596438630dd47b8",
+   "sha256": "df7339fb93b2b58e6059e4df2ae46e084632a6130e8183d64b8e7e1b39f0bbe2",
    "title": "MEMORY · MEMORY.md",
-   "tokens": 40,
+   "tokens": 116,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:feedback_deploy_footguns.md#maintenance-page",
+   "kind": "lesson",
+   "sha256": "2e9790ce46c9f9588c0079e7733cbc494230cfd1cda43e449eb8884c0d42e8af",
+   "title": "Deploy footguns › Maintenance page: keep it on a separate host, because the proxy goes down together with the app. · feedback_deploy_footguns.md",
+   "tokens": 54,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:feedback_deploy_footguns.md#rule-1",
+   "kind": "lesson",
+   "sha256": "a36dc6fb103361f794248b8ea1a5969c0c56c49232c7539cc2d404a3df35c164",
+   "title": "Deploy footguns › Never restart the database container while a migration runs: the half-applied schema needs a… · feedback_deploy_footguns.md",
+   "tokens": 59,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:feedback_deploy_footguns.md#rule-2",
+   "kind": "lesson",
+   "sha256": "ac1f389a3c66e46cd8d8144119a546e80ad3d8faa3e2b84634e7a91bd443f85e",
+   "title": "Deploy footguns › Pass `-n` to every `ssh` call inside a deploy heredoc, otherwise it reads the rest of the script… · feedback_deploy_footguns.md",
+   "tokens": 68,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:feedback_deploy_footguns.md#rule-3",
+   "kind": "lesson",
+   "sha256": "2a5fe706ce3f1a0c41d6c16635655f4fe71ca03590db605f77710be1e058031d",
+   "title": "Deploy footguns › the cache was warmed before the new release took traffic, so it served stale pages for an hour… · feedback_deploy_footguns.md",
+   "tokens": 80,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:feedback_deploy_footguns.md#rule-4",
+   "kind": "lesson",
+   "sha256": "b175b5e5440fb6a5c4c35c082848728291c2c0eabb8fda8db8f47c0befa811f2",
+   "title": "Deploy footguns › Always pin the base image by digest; a floating tag pulled a different libc during a rebuild. · feedback_deploy_footguns.md",
+   "tokens": 52,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:feedback_review_style.md",
+   "kind": "lesson",
+   "sha256": "387965b15780d771bc072ae9ae4d1e8f9a1ff46f3b34143a0527eae172baa3f1",
+   "title": "Review style · feedback_review_style.md",
+   "tokens": 83,
    "valid_from": null
   },
   {
@@ -41,6 +101,26 @@
    "title": "Project state · project_state.md",
    "tokens": 55,
    "valid_from": "2026-04-02T00:00:00Z"
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:reference_dashboards.md",
+   "kind": "fact",
+   "sha256": "e21bf4c5d062e8a9de4832f0a6717aaae3556255135177983704e89ddb672072",
+   "title": "Dashboards · reference_dashboards.md",
+   "tokens": 46,
+   "valid_from": null
+  },
+  {
+   "action": "new",
+   "evidence": "none",
+   "key": "automemory:user_profile.md",
+   "kind": "fact",
+   "sha256": "6d5172b33bc61fee042ddfdb1b890e1d8a652ff115e29cfecfb0ddd3660129cd",
+   "title": "Owner profile · user_profile.md",
+   "tokens": 48,
+   "valid_from": null
   }
  ],
  "missing": [],
@@ -48,11 +128,12 @@
  "rejected": [],
  "remap_ambiguous": [],
  "remapped": [],
+ "replaced_by_split": [],
  "skipped": [],
  "source": "automemory",
  "token_estimate": {
-  "items": 3,
+  "items": 11,
   "tokenizer": "o200k_base",
-  "tokens": 144
+  "tokens": 710
  }
 }

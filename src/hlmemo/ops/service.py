@@ -19,13 +19,17 @@ from typing import Any
 from psycopg import AsyncConnection
 from psycopg import errors as pgerrors
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from hlmemo import __version__
 from hlmemo.auth.errors import HlmError
 from hlmemo.auth.resolve import lock_device_access
 from hlmemo.auth.tokens import generate_token, hash_token
 from hlmemo.core.skeleton_card import operator_context, write_skeleton_card
+from hlmemo.core.temporal import fmt_ts
 from hlmemo.db import auth_queries as q
+from hlmemo.db import librarian_queries as lq
+from hlmemo.db import write_queries as wq
 
 CLIENT = f"hlm-ops/{__version__}"
 OPERATOR_DEVICE_ID = 1
@@ -374,6 +378,69 @@ def _project_public(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: the ``projects.policy`` keys ``project policy set`` may change, with their allowed values
+POLICY_VALUES: dict[str, tuple[str, ...]] = {lq.CROSS_PROJECT_POLICY: lq.CROSS_PROJECT_VALUES}
+
+
+async def _project_policy_row(conn: AsyncConnection, slug: str, *, lock: bool) -> tuple[int, dict[str, Any]]:
+    cur = await conn.execute(
+        "SELECT project_id, policy FROM projects WHERE slug = %s" + (" FOR UPDATE" if lock else ""), (slug,)
+    )
+    row = await cur.fetchone()
+    if row is None:
+        raise HlmError("E_NOT_FOUND", "unknown project", {"project": slug})
+    return int(row[0]), dict(row[1] or {})
+
+
+async def project_policy(conn: AsyncConnection, slug: str) -> dict[str, Any]:
+    _pid, policy = await _project_policy_row(conn, slug, lock=False)
+    return {"project": slug, "policy": policy}
+
+
+async def project_policy_set(conn: AsyncConnection, slug: str, key: str, value: str) -> dict[str, Any]:
+    """Set one allow-listed ``projects.policy`` key. ``librarian_cross_project exclude`` isolates a
+    disposable/test project from cross-project librarian work in both directions (candidates,
+    ``widen_scope``, risk_check; e2e 2026-09-24 #2). Reserved system projects are refused. The
+    change is recorded as a ``librarian`` event (op ``set_project_policy``) whose
+    ``resolved.project_policy`` replay applies: the replayed keys are rebuilt from the events
+    alone (``db/replay.py``, G6; Sol 54 #5)."""
+    from hlmemo.librarian.events import insert_system_event
+
+    allowed = POLICY_VALUES.get(key)
+    if allowed is None:
+        raise invalid(f"unknown policy key (settable: {', '.join(sorted(POLICY_VALUES))})", key=key)
+    if value not in allowed:
+        raise invalid(f"{key} must be one of: {', '.join(allowed)}", key=key, value=value)
+    pid, policy = await _project_policy_row(conn, slug, lock=True)
+    if str(policy.get("reserved", "")).lower() == "true":
+        raise HlmError("E_FORBIDDEN", "reserved system project: its policy is fixed", {"project": slug})
+    previous = policy.get(key)
+    policy[key] = value
+    await conn.execute("UPDATE projects SET policy = %s WHERE project_id = %s", (Jsonb(policy), pid))
+    at = await wq.clock_now(conn)
+    await insert_system_event(
+        conn,
+        kind="librarian",
+        project_id=pid,
+        device_id=OPERATOR_DEVICE_ID,
+        client=CLIENT,
+        request_id=uuid.uuid4(),
+        request={
+            "actor": CLIENT,
+            "op": "set_project_policy",
+            "key": key,
+            "value": value,
+            "previous": previous,
+        },
+        resolved={
+            "recorded_at": fmt_ts(at),
+            "project_policy": {"project_id": pid, "key": key, "value": value},
+        },
+        at=at,
+    )
+    return {"project": slug, "policy": policy, "previous": previous, "changed": previous != value}
+
+
 async def list_projects(conn: AsyncConnection) -> list[dict[str, Any]]:
     rows = await q.list_projects(conn, device_id=OPERATOR_DEVICE_ID, is_admin=True)
     return [_project_public(r) for r in rows]
@@ -456,7 +523,9 @@ async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[
     container: a visible, fresh heartbeat file is used when there is one (``breaker_source =
     "heartbeat"``), else the breaker is inferred from the ledger (``"ledger"``): the latest
     ``llm_calls`` outcome of the last 15 minutes — ``breaker_open`` → ``open``,
-    ``budget_deferred`` → ``budget``, any other → ``closed``; no call at all → ``idle``.
+    ``budget_deferred`` → ``budget``, any other → ``closed``. No call at all is ``closed`` too,
+    as the librarian's own heartbeat reports an untripped breaker (e2e 2026-09-24 #10: ops said
+    ``idle`` while the heartbeat said ``closed``); ``llm_calls_15m`` tells the two apart.
     """
     import time as _time
 
@@ -474,13 +543,14 @@ async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[
         out["enabled"] = bool(hb.get("enabled", True))
         return out
     cur = await conn.execute(
-        f"SELECT outcome FROM llm_calls WHERE created_at > now() - interval '{LEDGER_WINDOW}'"
-        " ORDER BY created_at DESC, call_id LIMIT 1"
+        "SELECT outcome, count(*) OVER () FROM llm_calls"
+        f" WHERE created_at > now() - interval '{LEDGER_WINDOW}' ORDER BY created_at DESC, call_id LIMIT 1"
     )
     row = await cur.fetchone()
-    state = {"breaker_open": "open", "budget_deferred": "budget"}.get(row[0], "closed") if row else "idle"
+    state = {"breaker_open": "open", "budget_deferred": "budget"}.get(row[0], "closed") if row else "closed"
     out["breaker_state"] = state
     out["breaker_source"] = "ledger"
+    out["llm_calls_15m"] = int(row[1]) if row else 0
     return out
 
 

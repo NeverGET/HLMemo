@@ -201,7 +201,12 @@ async def answer(
             assessed: dict[str, int] = {}
             for a in actions:
                 assessed.update(a.get("assessed") or {})
-            if await actor.is_stale(conn, {"assessed": assessed}):
+            if await actor.policy_blocked(conn, actions, union):
+                # the cross-project policy NOW forbids this relation (Sol 54 #2): nothing applied,
+                # not even an approved widen_scope; the question is closed as authority_lost
+                new_status = "authority_lost"
+                answer_rec["reason"] = actor.POLICY_EXCLUDED
+            elif await actor.is_stale(conn, {"assessed": assessed}):
                 new_status = "superseded"
             else:
                 from hlmemo.librarian.errors import AuthorityLost

@@ -84,15 +84,20 @@ async def fetch_full(call: Call, project: str, logical_ids: list[int]) -> list[d
 
 
 async def resolve_missing(call: Call, plan: Plan, *, confirm_close: bool = False) -> None:
-    """Re-map missing items onto new records, else close them (bodies fetched by id)."""
-    if not plan.missing:
+    """Re-map missing items onto new records, else close them (bodies fetched by id). A bare item
+    replaced by its file's sections (``replaced_by_split``) is always closed, outside the
+    mass-close guard, and never re-mapped (Sol 54 #3)."""
+    replaced = {it["logical_id"] for it in plan.replaced_items}
+    wanted = sorted({it["logical_id"] for it in plan.missing} | replaced)
+    if not wanted:
         return
-    full = await fetch_full(call, plan.project, sorted({it["logical_id"] for it in plan.missing}))
+    full = await fetch_full(call, plan.project, wanted)
     heads: dict[int, dict[str, Any]] = {}
     for it in full:  # one logical item may have several live segments: the head version
         if heads.get(it["logical_id"], {}).get("version_id", 0) < it["version_id"]:
             heads[it["logical_id"]] = it
-    remap(plan, list(heads.values()), confirm_close=confirm_close)
+    remap(plan, [h for lid, h in heads.items() if lid not in replaced], confirm_close=confirm_close)
+    plan.closes = [heads[lid] for lid in sorted(replaced) if lid in heads] + plan.closes
 
 
 # --------------------------------------------------------------------------- import
