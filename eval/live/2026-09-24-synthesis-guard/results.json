@@ -1,0 +1,68 @@
+{
+ "fast_path_accuracy": 0.435,
+ "fixture": "tests/fixtures/synthesis",
+ "max_usd": "0.3",
+ "negatives": 10,
+ "profiles": {
+  "openrouter-gpt6-luna": {
+   "calls": 70,
+   "cost_usd": "0.037706750",
+   "delta_mean": 0.161,
+   "delta_min": 0.161,
+   "latency_ms_p50": 1404.0,
+   "latency_ms_p95": 2807.05,
+   "model_id": "openai/gpt-6-luna",
+   "negatives_answered_max": 0,
+   "outcomes": {
+    "ok": 70
+   },
+   "pass": true,
+   "reps": [
+    {
+     "delta": 0.161,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q022",
+      "q089",
+      "q090",
+      "q167"
+     ],
+     "negatives_abstained": 8,
+     "negatives_answered": 0,
+     "negatives_weak": 8,
+     "rep": 0,
+     "statuses": {
+      "answered": 43,
+      "insufficient_evidence": 19
+     },
+     "synthesis_accuracy": 0.597,
+     "system_accuracy": 0.645,
+     "wins": [
+      "q001",
+      "q002",
+      "q045",
+      "q050",
+      "q059",
+      "q060",
+      "q083",
+      "q088",
+      "q106",
+      "q115",
+      "q141",
+      "q164",
+      "q168",
+      "q181"
+     ]
+    }
+   ],
+   "synthesis_accuracy_mean": 0.597,
+   "synthesis_accuracy_min": 0.597,
+   "system_accuracy_min": 0.645
+  }
+ },
+ "reps": 1,
+ "spent_usd": "0.03770674",
+ "split": "test",
+ "subset": 62,
+ "tau_s": 0.0434
+}

@@ -3,7 +3,8 @@
 Evaluated in its own short transaction immediately before EVERY provider call, for every item the
 prompt will contain. An item is sent only if ALL hold:
 
-* the job's triggering device is trusted NOW (not revoked, not pending, not expired);
+* the job's triggering device is trusted NOW (not revoked, not pending, not expired) and, when the
+  caller pins ``token_generation`` (API callers: the risk judge, synthesis), still on that generation;
 * the item is current and active;
 * its ``device_scope`` is not ``device:*`` (hard-pinned: device-scoped content is never sent) and
   is visible to the triggering device (``all`` or its own class);
@@ -94,15 +95,23 @@ async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list
     cur = await conn.execute(
         """
         SELECT d.status, d.class, d.is_admin,
-               COALESCE((to_jsonb(d)->>'expires_at')::timestamptz > now(), true)
+               COALESCE((to_jsonb(d)->>'expires_at')::timestamptz > now(), true), d.token_generation
           FROM devices d WHERE d.device_id = %s FOR SHARE
         """,
         (device_id,),
     )
     row = await cur.fetchone()
-    if row is None or row[0] != "trusted" or not row[3]:
+    # an API caller (risk judge, synthesis) also pins the bearer's token generation: a rotated
+    # token (generation + 1) loses the authority of the request exactly like a revocation
+    generation = capabilities.get("token_generation")
+    if (
+        row is None
+        or row[0] != "trusted"
+        or not row[3]
+        or (generation is not None and int(row[4]) != int(generation))
+    ):
         return Verdict(False, {it.version_id: DEVICE_NOT_TRUSTED for it in items})
-    _status, device_class, is_admin, _ = row
+    _status, device_class, is_admin, _, _gen = row
     cur = await conn.execute(
         "SELECT project_id FROM device_project_grants WHERE device_id = %s AND revoked_at IS NULL FOR SHARE",
         (device_id,),

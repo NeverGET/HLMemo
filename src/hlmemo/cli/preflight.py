@@ -27,13 +27,13 @@ optional `librarian` block of the query result (`query/2`: pending questions, no
 is moved out of the query JSON into its own `<hlmemo-librarian>` evidence block, at most 3 of each;
 its absence changes nothing. The wrapper's own lines (trusted) only state counts and verdicts.
 
-W2e: `--ask` sets `synthesize:true` on the preflight query; with `HLM_PREFLIGHT_SYNTHESIZE=auto` a
-`--task` ending in "?" does too. The default is `off` (only `--ask`; `ask` is the same) until the
-hold-out W-E gate decides whether a question should synthesize by itself. The query still runs in
-parallel with the risk_check under the same bounded waits. The query's `synthesis` stays inside the
-preflight block (evidence data); the wrapper adds one trusted line saying whether a cited draft
-answer, an "insufficient evidence" result or no synthesis came back. The query client then waits up
-to `SYNTH_TIMEOUT_S` (the server caps synthesis at 6 s).
+W2e: `--ask` (or, with `HLM_PREFLIGHT_SYNTHESIZE=auto`, a `--task` ending in "?") sets
+`synthesize:true` on the query (default `off`: only `--ask`, Sol 51, until the hold-out W-E feature
+gate passes). The (possibly synthesizing) query still runs in parallel with the risk_check under the
+same bounded waits. The query's `synthesis` stays inside the preflight block (evidence data); the
+wrapper adds one trusted line saying whether a cited draft answer, an "insufficient evidence" result
+or no synthesis came back. The query client then waits up to `SYNTH_TIMEOUT_S` (the server caps a
+synthesizing request at 7 s).
 """
 
 from __future__ import annotations
@@ -79,9 +79,9 @@ RISK_GRACE_S = 1.5
 RISK_TOTAL_S = 5.0
 RISK_TIMEOUT_S = RISK_TOTAL_S + 1.0  # client transport timeout (the waits above are shorter)
 LIBRARIAN_MAX = 3
-#: W2e: client timeout of a synthesizing preflight query (server cap 6 s + the query + margin)
+#: W2e: client timeout of a synthesizing preflight query (server cap 7 s for the whole request + margin)
 SYNTH_TIMEOUT_S = 8.0
-SYNTH_MODES = ("auto", "ask", "off")
+SYNTH_MODES = ("off", "auto")
 #: default of HLM_PREFLIGHT_SYNTHESIZE: off (only --ask) until the hold-out W-E gate decides
 SYNTH_DEFAULT_MODE = "off"
 EXTRA_BLOCKS_LINE = (
@@ -180,13 +180,11 @@ def risk_line(risk: dict[str, Any] | None, risk_error: str | None) -> str | None
 
 
 def wants_synthesis(task: str | None, ask: bool = False) -> bool:
-    """W2e: ``--ask`` always synthesizes (an explicit per-launch request); a task ending in "?"
-    does only with ``HLM_PREFLIGHT_SYNTHESIZE=auto``. ``off`` (``SYNTH_DEFAULT_MODE``), ``ask`` and
-    any unknown value: only ``--ask``."""
-    if ask:
-        return True
+    """W2e: ``--ask`` always asks for a synthesis. ``HLM_PREFLIGHT_SYNTHESIZE`` = ``off`` (default,
+    Sol 51: until the W-E feature gate passes) | ``auto`` (also every task ending in "?"); any
+    other value is ``off``."""
     mode = os.environ.get("HLM_PREFLIGHT_SYNTHESIZE", SYNTH_DEFAULT_MODE).strip().lower()
-    return mode == "auto" and bool(task) and str(task).strip().endswith("?")
+    return ask or (mode == "auto" and bool(task) and str(task).strip().endswith("?"))
 
 
 def synthesis_line(result: dict[str, Any]) -> str | None:
