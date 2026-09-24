@@ -11,3 +11,6 @@ price_in_per_m  = 0.30
 price_out_per_m = 1.20
 # The endpoint advertises structured_outputs, but D-019 benched json_object; switch only after a re-bench.
 supports_json_schema = false
+# Tasks this model is NOT qualified for (release gates). risk_judge: G-LIVE-C false-warn 0.250 > 0.10
+# (eval/live/2026-09-24-risk); memory.risk_check answers retrieval-only while this profile would judge.
+disabled_tasks = ["risk_judge"]

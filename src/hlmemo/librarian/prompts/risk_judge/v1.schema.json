@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "risk_judge/v1",
+  "type": "object",
+  "properties": {
+    "verdict": {"enum": ["warn", "none"]},
+    "matches": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "maxLength": 16},
+          "why": {"type": "string", "maxLength": 600}
+        },
+        "required": ["id", "why"]
+      }
+    }
+  },
+  "required": ["verdict", "matches"]
+}

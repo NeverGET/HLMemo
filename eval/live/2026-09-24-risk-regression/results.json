@@ -1,0 +1,59 @@
+{
+ "fixture": "tests/fixtures/risk",
+ "max_usd": "0.5",
+ "profiles": {
+  "openrouter-gpt6-luna": {
+   "calls": 80,
+   "catch_mean": 1.0,
+   "catch_min": 1.0,
+   "cost_usd": "0.017495500",
+   "false_warn_max": 0.075,
+   "false_warn_mean": 0.075,
+   "latency_ms_p50": 1423.0,
+   "latency_ms_p95": 3109.8,
+   "model_id": "openai/gpt-6-luna",
+   "outcomes": {
+    "ok": 80
+   },
+   "pass": true,
+   "reps": [
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.1,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.075,
+     "false_warns": [
+      "N05",
+      "N12",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.075,
+      "n_neg": 40,
+      "n_pos": 40
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 80
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.05,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  }
+ },
+ "reps": 1,
+ "spent_usd": "0.01749551"
+}

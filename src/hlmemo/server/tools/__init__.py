@@ -1,7 +1,8 @@
-"""The five HLMemo tools (PHASE0-SPEC §3, D-013): name, description, input schema, handler.
+"""The HLMemo tools (PHASE0-SPEC §3, D-013; CC-4): name, description, input schema, handler.
 
 ``TOOLS`` is the single registry ``server/mcp_server.py`` advertises on ``tools/list`` and
-dispatches ``tools/call`` against.
+dispatches ``tools/call`` against. New tools live in their own modules and register with one line.
+An ``app_bound`` handler is called as ``handler(conn, auth, args, app=<Starlette app>)``.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hlmemo.core import export_service
-from hlmemo.server.tools import handlers, schemas
+from hlmemo.server.tools import handlers, risk, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
 
@@ -20,6 +21,7 @@ class ToolSpec:
     description: str
     input_schema: dict[str, Any]
     handler: Handler
+    app_bound: bool = False
 
 
 TOOLS: tuple[ToolSpec, ...] = (
@@ -60,6 +62,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         schemas.CALL_THE_DAY_INPUT,
         handlers.memory_call_the_day,
     ),
+    *risk.tool_specs(ToolSpec),  # W2d: memory.risk_check, memory.register_lesson
 )
 
 # Client-protocol tools (W1.5; Sol consult 40 #1): dispatched by tools/call for the `hlm` CLI but

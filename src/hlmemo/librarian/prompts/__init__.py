@@ -26,6 +26,7 @@ MAX_TOKENS: dict[str, int] = {
     "contradiction": 600,
     "summary": 700,
     "risk": 500,
+    "risk_judge": 500,  # W2d memory.risk_check judge (api process, 4 s cap)
     "synthesis": 700,
 }
 
