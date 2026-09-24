@@ -40,6 +40,8 @@ Owner framing: the librarian's gradual supervised learning (observe → apply) h
 
 - 1x:xx Hold-out re-run of librarian v2 (D-087): FAIL both gates (stale-first 8/15 unchanged; G-E-W2b −2.7/−4.8 from the a65a8f5 read-side rule 3; the 6a96ba1 read side is neutral). Observer-only stays. In flight: J = dual-review 57 fixes (+ read side must be neutral or better, D-087); L = English pivot slices 1/2; stale-first diagnosis (per-case classification + R-close/R-newer simulation, output docs/private/*/results-librarian-v2/diagnosis-stale-first.md). Next: dual review of J delta → merge J → stale-first design consult on the diagnosis → L review/measure → R3.
 
+- 1x:xx L DONE (branch worktree-agent-a143819e825766fb8: d5c8209 slice 1, d3ce0ac slice 2 + migration 0009; all gates green flags off/on; stress G-L3 at 100% rendition coverage 541/515 ms > 500). Running: dual review 58 (astra-low + 5.6-sol xhigh, prompt docs/consults/58-prompt-l-pivot-dual.md) and the Sol 53 hold-out measurement on pinned d3ce0ac (→ docs/private/*/results-pivot-l/, branch eval-pivot-l).
+
 ## GOAL (D-051/D-058) — active
 Phases 2-5 per docs/decisions/PHASE2-4-ROADMAP.md → gates → incremental releases → final acceptance (HLMemo self-migration, then the corpus-A project) → delete local dev stack + lima VMs.
 State 2026-09-23 night: **R1 is LIVE in production** (ee6ce9c, D-068): D-055 retrieval, W0a access hardening (ops over SSH, closed registration), W2a librarian foundation (DISABLED). Owner device id 21 `cemals-mb-pro-3` (hlmemo:write); the three CLIs point to production; the repo hlm.toml points to production, project hlmemo. **Dogfood D1 starts in the next chat** (a restart is needed so the MCP connection uses device 21).
