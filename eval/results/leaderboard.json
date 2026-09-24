@@ -633,6 +633,404 @@
      "confirmation": false,
      "complete": true,
      "source": "cand-pivot-l-c5-renditions.json"
+    },
+    {
+     "id": 12,
+     "corpus": "corpus_a",
+     "label": "v3@0757c4b no librarian (the before on the same prod-rule import)",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "fast path, no librarian",
+      "librarian": null
+     },
+     "config_hash": "c31f4d5139d3",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l2_key_top3": 0.75,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "query_p95_ms": 165.3
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-before.json"
+    },
+    {
+     "id": 13,
+     "corpus": "corpus_a",
+     "label": "Librarian v3@0757c4b C0 (all v3 flags off), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {},
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "3391a48f995a",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.002298,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l2_key_top3": 0.75,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "query_p95_ms": 111.0,
+      "librarian_usd": 0.3035,
+      "jobs_per_min": 5.08,
+      "calls_per_job": 6.54,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 49,
+       "link:refines": 1,
+       "supersede:part": 13
+      },
+      "stale_pair_outcomes_15": {
+       "not_candidate": 4,
+       "time_rejected": 2,
+       "judged_none": 5,
+       "no_stale_item": 2,
+       "proposed": 2
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c0.json"
+    },
+    {
+     "id": 14,
+     "corpus": "corpus_a",
+     "label": "Librarian v3@0757c4b C1 (LIBRARIAN_V3_TEMPORAL=True), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {
+        "HLM_LIBRARIAN_V3_TEMPORAL": true
+       },
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "a04bb0588a3b",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.001373,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l2_key_top3": 0.75,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "query_p95_ms": 105.7,
+      "librarian_usd": 0.1826,
+      "jobs_per_min": 5.13,
+      "calls_per_job": 6.66,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 62,
+       "link:refines": 1,
+       "supersede:part": 4
+      },
+      "stale_pair_outcomes_15": {
+       "not_candidate": 4,
+       "proposed": 2,
+       "judged_none": 6,
+       "no_stale_item": 2,
+       "time_rejected": 1
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c1.json"
+    },
+    {
+     "id": 15,
+     "corpus": "corpus_a",
+     "label": "Librarian v3@0757c4b C2 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {
+        "HLM_LIBRARIAN_V3_TEMPORAL": true,
+        "HLM_LIBRARIAN_V3_CLOSE": true
+       },
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "b09748a8bc4a",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.002339,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l2_key_top3": 0.75,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "query_p95_ms": 105.3,
+      "librarian_usd": 0.3014,
+      "jobs_per_min": 5.22,
+      "calls_per_job": 6.62,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 57,
+       "link:refines": 1,
+       "supersede:part": 8
+      },
+      "stale_pair_outcomes_15": {
+       "not_candidate": 4,
+       "proposed": 1,
+       "judged_none": 7,
+       "no_stale_item": 2,
+       "time_rejected": 1
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c2.json"
+    },
+    {
+     "id": 16,
+     "corpus": "corpus_a",
+     "label": "Librarian v3@0757c4b C3 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {
+        "HLM_LIBRARIAN_V3_TEMPORAL": true,
+        "HLM_LIBRARIAN_V3_CLOSE": true,
+        "HLM_LIBRARIAN_SECTION_TOP": 4,
+        "HLM_LIBRARIAN_DOC_EPISODE": true
+       },
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "76bfbaee8885",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.00216,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l2_key_top3": 0.75,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "query_p95_ms": 157.8,
+      "librarian_usd": 0.2589,
+      "jobs_per_min": 3.96,
+      "calls_per_job": 8.88,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 69,
+       "link:refines": 1,
+       "supersede:part": 6
+      },
+      "stale_pair_outcomes_15": {
+       "not_candidate": 4,
+       "proposed": 2,
+       "judged_none": 6,
+       "no_stale_item": 2,
+       "time_rejected": 1
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c3.json"
+    },
+    {
+     "id": 17,
+     "corpus": "corpus_a",
+     "label": "Librarian v3@0757c4b C4 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True, LIBRARIAN_SAME_TOP=24, LIBRARIAN_DOC_TOP=8, LLM_JOB_CALL_CAP=60), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {
+        "HLM_LIBRARIAN_V3_TEMPORAL": true,
+        "HLM_LIBRARIAN_V3_CLOSE": true,
+        "HLM_LIBRARIAN_SECTION_TOP": 4,
+        "HLM_LIBRARIAN_DOC_EPISODE": true,
+        "HLM_LIBRARIAN_SAME_TOP": 24,
+        "HLM_LIBRARIAN_DOC_TOP": 8,
+        "HLM_LLM_JOB_CALL_CAP": 60
+       },
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "4205012b88e6",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.00605,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key": 0.772,
+      "l2_key_top3": 0.75,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "negative_auc": 0.792,
+      "query_p95_ms": 173.5,
+      "librarian_usd": 0.9064,
+      "jobs_per_min": 1.82,
+      "calls_per_job": 17.42,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 122,
+       "link:refines": 2,
+       "supersede:part": 12
+      },
+      "stale_pair_outcomes_15": {
+       "not_candidate": 1,
+       "time_rejected": 3,
+       "judged_none": 7,
+       "no_stale_item": 2,
+       "verifier_rejected": 1,
+       "proposed": 1
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c4.json"
     }
    ],
    "best": 9
@@ -1213,6 +1611,358 @@
      "confirmation": false,
      "complete": true,
      "source": "cand-pivot-l-c5-renditions.json"
+    },
+    {
+     "id": 12,
+     "corpus": "corpus_b_dev",
+     "label": "v3@0757c4b no librarian (the before on the same prod-rule import)",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "fast path, no librarian",
+      "librarian": null
+     },
+     "config_hash": "c31f4d5139d3",
+     "prompt_versions": null,
+     "schema_versions": null,
+     "model_id": null,
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.0,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_l2_stale_first": 0.375,
+      "temporal_evidence_r5": 0.219,
+      "query_p95_ms": 163.7
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-before.json"
+    },
+    {
+     "id": 13,
+     "corpus": "corpus_b_dev",
+     "label": "Librarian v3@0757c4b C0 (all v3 flags off), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {},
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "3391a48f995a",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v2",
+      "relate_verify": "v2"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.002298,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_l2_stale_first": 0.375,
+      "temporal_evidence_r5": 0.219,
+      "query_p95_ms": 118.5,
+      "librarian_usd": 0.1103,
+      "jobs_per_min": 4.36,
+      "calls_per_job": 7.52,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 10,
+       "supersede:part": 8
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c0.json"
+    },
+    {
+     "id": 14,
+     "corpus": "corpus_b_dev",
+     "label": "Librarian v3@0757c4b C1 (LIBRARIAN_V3_TEMPORAL=True), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {
+        "HLM_LIBRARIAN_V3_TEMPORAL": true
+       },
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "a04bb0588a3b",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.001373,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_l2_stale_first": 0.375,
+      "temporal_evidence_r5": 0.219,
+      "query_p95_ms": 126.1,
+      "librarian_usd": 0.0645,
+      "jobs_per_min": 4.03,
+      "calls_per_job": 7.88,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 17,
+       "supersede:part": 7
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c1.json"
+    },
+    {
+     "id": 15,
+     "corpus": "corpus_b_dev",
+     "label": "Librarian v3@0757c4b C2 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {
+        "HLM_LIBRARIAN_V3_TEMPORAL": true,
+        "HLM_LIBRARIAN_V3_CLOSE": true
+       },
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "b09748a8bc4a",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.002339,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_l2_stale_first": 0.375,
+      "temporal_evidence_r5": 0.219,
+      "query_p95_ms": 124.6,
+      "librarian_usd": 0.1198,
+      "jobs_per_min": 4.16,
+      "calls_per_job": 7.72,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 27,
+       "supersede:part": 4
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c2.json"
+    },
+    {
+     "id": 16,
+     "corpus": "corpus_b_dev",
+     "label": "Librarian v3@0757c4b C3 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {
+        "HLM_LIBRARIAN_V3_TEMPORAL": true,
+        "HLM_LIBRARIAN_V3_CLOSE": true,
+        "HLM_LIBRARIAN_SECTION_TOP": 4,
+        "HLM_LIBRARIAN_DOC_EPISODE": true
+       },
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "76bfbaee8885",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.00216,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_l2_stale_first": 0.375,
+      "temporal_evidence_r5": 0.219,
+      "query_p95_ms": 182.5,
+      "librarian_usd": 0.1299,
+      "jobs_per_min": 3.14,
+      "calls_per_job": 9.6,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 26,
+       "link:refines": 1,
+       "supersede:part": 6
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c3.json"
+    },
+    {
+     "id": 17,
+     "corpus": "corpus_b_dev",
+     "label": "Librarian v3@0757c4b C4 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True, LIBRARIAN_SAME_TOP=24, LIBRARIAN_DOC_TOP=8, LLM_JOB_CALL_CAP=60), assistant, approve-all x1",
+     "date": "2026-09-25",
+     "commit": "0757c4b",
+     "config": {
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree of 0757c4b), one clone per config",
+      "system": "librarian v3 hold-out ablation (G-E-TEMP/G-E-W2b)",
+      "librarian": {
+       "role": "assistant",
+       "approval": "approve-all",
+       "approve_rounds": 1,
+       "concurrency": 3,
+       "profile": "openrouter-gpt6-luna",
+       "fallback": "openrouter",
+       "flags": {
+        "HLM_LIBRARIAN_V3_TEMPORAL": true,
+        "HLM_LIBRARIAN_V3_CLOSE": true,
+        "HLM_LIBRARIAN_SECTION_TOP": 4,
+        "HLM_LIBRARIAN_DOC_EPISODE": true,
+        "HLM_LIBRARIAN_SAME_TOP": 24,
+        "HLM_LIBRARIAN_DOC_TOP": 8,
+        "HLM_LLM_JOB_CALL_CAP": 60
+       },
+       "runner": "eval/realdata/run_librarian_eval.py"
+      }
+     },
+     "config_hash": "4205012b88e6",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek/deepseek-v4.1-flash)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.00605,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "l2_key": 0.556,
+      "stale_claim_l1_top3": 0.25,
+      "temporal_l2_stale_first": 0.375,
+      "temporal_evidence_r5": 0.219,
+      "query_p95_ms": 162.5,
+      "librarian_usd": 0.1826,
+      "jobs_per_min": 2.6,
+      "calls_per_job": 11.24,
+      "closes_applied": 0,
+      "proposals": {
+       "contradicts_only": 32,
+       "supersede:part": 5
+      }
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-v3-c4.json"
     }
    ],
    "best": 9
