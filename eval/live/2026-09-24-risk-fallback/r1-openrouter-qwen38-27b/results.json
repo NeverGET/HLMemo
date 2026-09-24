@@ -1,0 +1,80 @@
+{
+ "fixture": "tests/fixtures/risk",
+ "max_usd": "2",
+ "profiles": {
+  "openrouter-qwen38-27b": {
+   "calls": 81,
+   "catch_mean": 0.975,
+   "catch_min": 0.975,
+   "cost_usd": "0.2208696766",
+   "false_warn_max": 0.475,
+   "false_warn_mean": 0.475,
+   "latency_ms_p50": 2618.5,
+   "latency_ms_p95": 3543.0,
+   "model_id": "qwen/qwen3.8-27b",
+   "outcomes": {
+    "ok": 10,
+    "schema_fail": 2,
+    "timeout": 69
+   },
+   "pass": false,
+   "reps": [
+    {
+     "cal": {
+      "catch": 0.95,
+      "false_warn": 0.4,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 0.975,
+     "false_warn": 0.475,
+     "false_warns": [
+      "N01",
+      "N02",
+      "N03",
+      "N04",
+      "N06",
+      "N07",
+      "N08",
+      "N09",
+      "N10",
+      "N11",
+      "N12",
+      "N13",
+      "N14",
+      "N16",
+      "N17",
+      "N18",
+      "N19",
+      "N20",
+      "N32"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.3333333333333333,
+      "n_neg": 6,
+      "n_pos": 4
+     },
+     "misses": [
+      "P17"
+     ],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 10,
+      "retrieval_only": 70
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.55,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  }
+ },
+ "reps": 1,
+ "spent_usd": "0.22086967"
+}

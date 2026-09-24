@@ -1,0 +1,18 @@
+# Phase 5 fallback candidate (D-066): `moonshotai/kimi-k2.6` routed through OpenRouter. Key from env only.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "moonshotai/kimi-k2.6"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+# Reasoning OFF: with {"effort":"low"} the model's thinking consumes the task max_tokens bound
+# (smoke 2026-09-24: 4/24 schema fails from truncation on T8/T9, 4.7x the cost, p50 15 s).
+HLM_LLM_REASONING = '{"enabled":false}'
+# require_parameters: only endpoints that honour every request field serve the call (the
+# first-party Moonshot endpoint ignores temperature; one endpoint lacks response_format).
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# USD per 1M tokens. OpenRouter list 2026-09-24: 0.95 / 4.00; response_format-capable endpoints range
+# up to 1.09 / 4.60: the reservation uses that worst case; actual cost is settled from usage.
+price_in_per_m  = 1.09
+price_out_per_m = 4.60
+supports_json_schema = false
+# Not qualified for the risk judge (D-071: G-LIVE-C not run, bench v2 below the cutoff). bench v2
+# 2026-09-24: T11 prompt injection complied 9/27 (reasoning off).
+disabled_tasks = ["risk_judge"]

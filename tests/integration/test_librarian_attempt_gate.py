@@ -461,3 +461,97 @@ async def test_one_terminal_event_per_job_and_compact_backoffs(db_dsn, connect, 
         await rebuild_projections(conn)
         await conn.commit()
         assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
+
+
+# --------------------------------------------------------------------------- review 61: replay oracle
+async def _replay_dumps(conn: psycopg.AsyncConnection) -> dict[str, dict[str, list[str]]]:
+    """The three replay dumps that compare the jobs projection."""
+    from tests.integration._w2b_fixtures import dump_w2b
+
+    return {
+        "projections": await dump_projections(conn),
+        "full": await dump_full_jobs_and_questions(conn),
+        "w2b": await dump_w2b(conn),
+    }
+
+
+async def _enqueue_one(connect, world, key: str, op: str) -> None:  # noqa: ANN001
+    from hlmemo.librarian.jobs import enqueue, job_spec
+
+    async with await connect() as conn:
+        spec = job_spec(kind="librarian_write", dedupe_key=f"librarian_write:{key}", payload={"op": op})
+        await enqueue(conn, project_id=world.main_id, trigger_device_id=world.dev_a, specs=[spec])
+        await conn.commit()
+
+
+async def test_review61_backoff_then_handback_passes_replay(db_dsn, connect, world) -> None:  # noqa: ANN001
+    """Review 61: a job-specific failure (a back-off: attempt consumed, recorded in a ``defer``
+    event) followed by a SYSTEMIC hand-back (job row only, no event). Live ends queued with the
+    hand-back's hints; replay restores the recorded back-off state. The pair is compared without
+    the two scheduling hints only, so the rebuild passes every replay dump; a wrong attempts count
+    in that same pair is still flagged."""
+    from hlmemo.librarian.errors import NotReady
+
+    class Flaky:  # attempt 1: a job-specific failure; attempt 2: inputs not ready (systemic)
+        op = "flaky"
+        calls = 0
+
+        async def plan(self, w, job):  # noqa: ANN001, ANN202
+            Flaky.calls += 1
+            if Flaky.calls == 1:
+                raise RuntimeError("job-specific failure")
+            raise NotReady("embeddings in flight", retry_after_s=60)
+
+    await _enqueue_one(connect, world, "flaky", "flaky")
+    provider = make_provider(db_dsn, ScriptedLLM(), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn), provider, connect, handlers={"flaky": Flaky()})
+    await worker.drain()
+    async with await connect() as conn:  # skip the back-off wait (overwritten by the hand-back)
+        await conn.execute("UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:flaky'")
+        await conn.commit()
+    await worker.drain()
+    await provider.aclose()
+    assert Flaky.calls == 2
+    select = "SELECT status, attempts, last_error FROM jobs WHERE dedupe_key = 'librarian_write:flaky'"
+    async with await connect() as conn:
+        cur = await conn.execute(select)
+        assert await cur.fetchone() == ("queued", 1, "E_NOT_READY")  # the live hand-back
+        live = await _replay_dumps(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        cur = await conn.execute(select)
+        assert await cur.fetchone() == ("queued", 1, "E_RuntimeError")  # the recorded back-off
+        replayed = await _replay_dumps(conn)
+        for name in live:
+            assert replayed[name] == live[name], name
+            assert live[name] == replayed[name], name
+            assert sorted(set(live[name]["jobs"]) ^ set(replayed[name]["jobs"])) == [], name
+        await conn.execute("UPDATE jobs SET attempts = 0 WHERE dedupe_key = 'librarian_write:flaky'")
+        await conn.commit()
+        wrong = await _replay_dumps(conn)
+        for name in ("full", "w2b"):  # (dump_projections never compared attempts)
+            assert wrong[name]["jobs"] != live[name]["jobs"], name
+
+
+async def test_review61_a_wrongly_replayed_run_after_of_a_pristine_queued_job_is_flagged(
+    db_dsn, connect, world
+) -> None:  # noqa: ANN001
+    """Review 61: a pristine queued job (never run, ``last_error`` NULL on both sides) is not a
+    hand-back: its ``run_after`` is the recording event's, so a replay that restores another one
+    is a divergence every replay dump flags (the old mask hid it). A correct rebuild is equal."""
+    await _enqueue_one(connect, world, "pristine", "boom")
+    async with await connect() as conn:
+        live = await _replay_dumps(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert await _replay_dumps(conn) == live  # NULL↔NULL, compared raw: identical
+        await conn.execute(  # a replay bug: the event-recorded run_after is not restored
+            "UPDATE jobs SET run_after = run_after + interval '1 hour'"
+            " WHERE dedupe_key = 'librarian_write:pristine'"
+        )
+        await conn.commit()
+        wrong = await _replay_dumps(conn)
+    for name in live:
+        assert wrong[name]["jobs"] != live[name]["jobs"], name
+        assert wrong[name] != live[name] and live[name] != wrong[name], name
+        assert sorted(set(live[name]["jobs"]) ^ set(wrong[name]["jobs"])) != [], name

@@ -21,8 +21,9 @@ token_budget?}`` → an ack, in ONE transaction (PHASE2-4-ROADMAP W2c, CC-3, D-0
    questions are applied through the normal ``apply_batch`` path with the full recheck.
    ``accept`` otherwise: every item the actions touch is locked (the write path's per-item lock),
    THEN the cross-project policy is rechecked on the items' CURRENT projects (``authority_lost``,
-   reason ``policy_excluded``: nothing applied; Sol 54/55), then every assessed subject is
-   compared with its head; a revision since the
+   reason ``policy_excluded``: nothing applied; Sol 54/55), THEN the TTL once more against a fresh
+   clock (those lock waits can outlast it: ``E_VERSION_CONFLICT {expired}``, nothing recorded;
+   review 61), then every assessed subject is compared with its head; a revision since the
    proposal makes the question ``superseded`` and NOTHING is applied (G-Q3). Otherwise the
    proposed actions are applied as the answering device's act: links and the bi-temporal close
    through the actor's materialize/apply (recorded ids, replayed like every librarian mutation);
@@ -32,6 +33,9 @@ token_budget?}`` → an ack, in ONE transaction (PHASE2-4-ROADMAP W2c, CC-3, D-0
 5. **Every answer** is stored as a ``librarian-rule`` fact (``memory.write_rule``, rule text +
    clue refs only; a note that reproduces item text is dropped from the rule, D-062 overlap
    guard).
+6. **D-095:** the TTL is judged at the linearization point: after the widen and rule writes (their
+   lock waits included), immediately before the answer event, against a fresh clock. Past it the
+   WHOLE transaction rolls back (``E_VERSION_CONFLICT {expired}``): nothing is recorded.
 
 The answer event (kind ``answer``, schema_version 2) records the verbatim arguments as
 ``payload.request`` and the applied effects in ``payload.resolved`` (``question_status`` with the
@@ -57,7 +61,7 @@ from hlmemo.core.write_models import SLUG_RE, _Strict, parse_request
 from hlmemo.core.write_service import payload_sha256
 from hlmemo.db import write_queries as q
 from hlmemo.librarian import actor
-from hlmemo.librarian.events import NS_LIBRARIAN, SCHEMA_VERSION_SYSTEM, insert_system_event
+from hlmemo.librarian.events import NS_LIBRARIAN, SCHEMA_VERSION_SYSTEM, insert_system_event, lock_event_refs
 from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.reserved import reserved_ids
@@ -212,7 +216,13 @@ async def answer(
             # the widened item) has committed and is read by policy_blocked (CURRENT project_ids),
             # and nothing can revise those items until this answer commits
             await q.lock_logical_ids(conn, actor.action_logical_ids(actions))
-            if await actor.policy_blocked(conn, actions, union):
+            blocked = await actor.policy_blocked(conn, actions, union)  # project rows FOR SHARE
+            # review 61: the item and policy waits above can outlast the TTL checked before them.
+            # The LAST policy lock is held: the TTL again against a FRESH clock, before the staleness
+            # verdict and the event id; past it nothing is recorded (the same refusal as above)
+            if expires_at is not None and expires_at <= await q.clock_now(conn):
+                raise ToolError("E_VERSION_CONFLICT", "the question is expired", status="expired")
+            if blocked:
                 # the cross-project policy NOW forbids this relation (Sol 54 #2): nothing applied,
                 # not even an approved widen_scope; the question is closed as authority_lost
                 new_status = "authority_lost"
@@ -274,6 +284,15 @@ async def answer(
         used = _meter().settle(ack, budget)
         if used > budget:
             raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold the ack", min=used)
+        # D-095: the TTL is judged at the linearization point: EVERY lock this answer needs is held
+        # now (items, policy rows, the question row, the widen/rule writes' locks, the answer
+        # event's FK rows), so this fresh clock is the last one that matters. Past it the WHOLE
+        # transaction rolls back — the widen and rule writes included — and nothing is recorded.
+        # NO lock wait from this check to the event insert below: the event id is a sequence value
+        # and the (project, device, request_id) key is serialized by the request-key lock above.
+        await lock_event_refs(conn, pid, ctx.device_id)
+        if expires_at is not None and expires_at <= await q.clock_now(conn):
+            raise ToolError("E_VERSION_CONFLICT", "the question is expired", status="expired")
         (event_id,) = await q.allocate_ids(conn, "events", 1)
         resolved = {
             "recorded_at": fmt_ts(T),

@@ -1,0 +1,68 @@
+{
+ "fixture": "tests/fixtures/risk",
+ "max_usd": "2",
+ "profiles": {
+  "openrouter-glm53": {
+   "calls": 89,
+   "catch_mean": 1.0,
+   "catch_min": 1.0,
+   "cost_usd": "0.1500995525",
+   "false_warn_max": 0.2,
+   "false_warn_mean": 0.2,
+   "latency_ms_p50": 825.0,
+   "latency_ms_p95": 1828.6,
+   "model_id": "z-ai/glm-5.3",
+   "outcomes": {
+    "ok": 70,
+    "schema_fail": 15,
+    "schema_retry_ok": 3,
+    "timeout": 1
+   },
+   "pass": false,
+   "reps": [
+    {
+     "cal": {
+      "catch": 1.0,
+      "false_warn": 0.15,
+      "n_neg": 20,
+      "n_pos": 20
+     },
+     "catch": 1.0,
+     "false_warn": 0.2,
+     "false_warns": [
+      "N02",
+      "N08",
+      "N09",
+      "N10",
+      "N11",
+      "N12",
+      "N18",
+      "N19"
+     ],
+     "judged_only": {
+      "catch": 1.0,
+      "false_warn": 0.08571428571428572,
+      "n_neg": 35,
+      "n_pos": 38
+     },
+     "misses": [],
+     "n_neg": 40,
+     "n_pos": 40,
+     "rep": 0,
+     "statuses": {
+      "ok": 73,
+      "retrieval_only": 7
+     },
+     "test": {
+      "catch": 1.0,
+      "false_warn": 0.25,
+      "n_neg": 20,
+      "n_pos": 20
+     }
+    }
+   ]
+  }
+ },
+ "reps": 1,
+ "spent_usd": "0.15009951"
+}

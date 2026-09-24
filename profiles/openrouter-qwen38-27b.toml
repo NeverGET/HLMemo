@@ -1,0 +1,20 @@
+# Phase 5 fallback candidate (D-066): `qwen/qwen3.8-27b` (open weights; the paid id, not :free)
+# routed through OpenRouter. Key from env only.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "qwen/qwen3.8-27b"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+# bench v2 2026-09-24 (hlm bench, 3 reps, adj-2): 95.0% (T9 84.4%), 0 schema fails, T11 injection
+# 0/30, p50/p95 6.2/38.8 s, $0.0020/correct. Reasoning off: 90.2%, T11 complied 3/29.
+HLM_LLM_REASONING = '{"effort":"low"}'
+# require_parameters: only endpoints that honour every request field serve the call (2 of 16
+# endpoints lack structured_outputs).
+extra = { response_format = { type = "json_object" }, temperature = 0, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# USD per 1M tokens. OpenRouter list 2026-09-24: 0.42 / 3.00; response_format-capable endpoints range
+# up to 0.45 / 4.40: the reservation uses that worst case; actual cost is settled from usage.
+price_in_per_m  = 0.45
+price_out_per_m = 4.40
+supports_json_schema = false
+# Not qualified for the risk judge (D-071): with reasoning on, G-LIVE-C 2026-09-24 FAIL: only 10/80
+# calls fit the 4 s cap (false-warn 0.475 from the retrieval-only verdicts). The reasoning-off
+# variant `openrouter-qwen38-27b-fast` is the one measured for risk_judge.
+disabled_tasks = ["risk_judge"]
