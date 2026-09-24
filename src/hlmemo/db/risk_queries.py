@@ -20,6 +20,7 @@ from typing import Any
 
 from psycopg import AsyncConnection
 
+from hlmemo.auth.resolve import lock_device_access
 from hlmemo.db.read_queries import TITLE_TSV, Candidate, vector_literal
 
 LESSON_KINDS = ("lesson", "experience")
@@ -200,6 +201,45 @@ async def project_slugs(conn: AsyncConnection, pids: list[int]) -> dict[int, str
     return {int(p): str(s) for p, s in await cur.fetchall()}
 
 
+@dataclass(slots=True)
+class DeviceNow:
+    status: str
+    token_generation: int
+    device_class: str
+    is_admin: bool
+    expired: bool
+
+
+async def device_now(conn: AsyncConnection, device_id: int) -> DeviceNow | None:
+    """The device under the same locks as ``auth.resolve`` (shared device-access advisory lock,
+    then the row FOR SHARE): the post-judge authority re-check (D-062)."""
+    await lock_device_access(conn, device_id)
+    cur = await conn.execute(
+        """
+        SELECT d.status, d.token_generation, d.class, d.is_admin,
+               COALESCE((to_jsonb(d)->>'expires_at')::timestamptz <= now(), false)
+          FROM devices d WHERE d.device_id = %s FOR SHARE
+        """,
+        (device_id,),
+    )
+    row = await cur.fetchone()
+    return (
+        None if row is None else DeviceNow(str(row[0]), int(row[1]), str(row[2]), bool(row[3]), bool(row[4]))
+    )
+
+
+async def visible_versions(conn: AsyncConnection, f: RiskFilter, version_ids: list[int]) -> set[int]:
+    """Which of ``version_ids`` are still current, active lessons/experiences visible under ``f``."""
+    if not version_ids:
+        return set()
+    cur = await conn.execute(
+        f"WITH {_UNIVERSE} SELECT version_id FROM lv WHERE version_id = ANY(%(vids)s)",
+        {**f.params(), "vids": version_ids},
+        prepare=False,
+    )
+    return {int(r[0]) for r in await cur.fetchall()}
+
+
 async def all_projects(conn: AsyncConnection) -> list[int]:
     """Every project id (the admin device reads all projects, §2)."""
     cur = await conn.execute("SELECT project_id FROM projects ORDER BY 1")
@@ -208,6 +248,7 @@ async def all_projects(conn: AsyncConnection) -> list[int]:
 
 __all__ = [
     "LESSON_KINDS",
+    "DeviceNow",
     "RiskFilter",
     "RiskRow",
     "all_projects",
@@ -216,6 +257,8 @@ __all__ = [
     "rows",
     "title",
     "trigram",
+    "device_now",
     "universe_size",
     "vector",
+    "visible_versions",
 ]

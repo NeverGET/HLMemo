@@ -11,11 +11,9 @@ Same guards as the librarian worker:
   and AGAIN before every provider attempt (retries and fallback included). Only the candidates it
   allows enter the prompt; ``device:*`` items, projects with ``policy.librarian=off`` and items
   co-owned by an ungranted project never leave the host. The gate uses its own short connections:
-  the request transaction is never used for it, and no transaction is held by the judge across
-  the call. Deviation from D-062's "no transaction across an LLM call" (which governs the worker's
-  apply path): the API middleware's read-only request transaction (device row FOR SHARE) stays
-  open while the judge runs. It is bounded by the cap (kept below the server's idle-in-transaction
-  timeout) and by ``MAX_IN_FLIGHT``; a revocation of that device waits at most that long.
+  the request transaction is never used for it, and no transaction is held across the call:
+  ``core/risk_service`` detaches (commits and returns) the API request transaction before the
+  judge and re-checks authority and item visibility in a fresh short transaction afterwards.
 * **Redaction** of the prompt (provider) and of every ``why`` returned (CC-5 free text).
 * **Spend guard**: the provider's atomic hour/day/month reservation (``llm_budget``) and the
   ``llm_calls`` ledger, exactly as for librarian jobs (no per-job lineage: a risk_check is no job).
@@ -26,7 +24,9 @@ Same guards as the librarian worker:
   out of the judge's chain (a model that fails the risk gate never judges; see D-066/G-LIVE-C).
 * A judge-level circuit breaker (3 consecutive timeouts/outages → skip the LLM for 30 s, doubling
   to 15 min) keeps a stalled provider from costing every call the full cap, and at most
-  ``MAX_IN_FLIGHT`` judged calls run at once (the rest answer deterministically, ``busy``).
+  ``MAX_IN_FLIGHT`` judged calls run at once (the rest answer retrieval-only, ``busy``).
+* A model ``warn`` whose matches ALL cite ids it was not shown is a judge failure (``guard``):
+  the result falls back to retrieval-only, it never turns into a judged "no matching evidence".
 """
 
 from __future__ import annotations
@@ -72,15 +72,13 @@ JUDGE_TIMEOUT_S = 4.0
 #: per-request HTTP timeout inside the cap, so a stalled attempt settles its reservation and writes
 #: its ledger row (instead of being cancelled mid-flight and swept later as worst case)
 HTTP_TIMEOUT_S = 3.5
-IDLE_MARGIN_S = 0.75
 MAX_CANDIDATES = 10
 LESSON_TEXT_CHARS = 1200
 WHY_MAX = 300
 MAX_MATCHES = 3
-#: judged calls in flight per process: each holds its API request's pooled connection for up to the
-#: cap, so a stalled provider can occupy at most this many connections (others answer
-#: deterministically with ``judge:"busy"``; risk_check runs about once per CLI session start)
-MAX_IN_FLIGHT = 2
+#: judged calls in flight per process (a provider-load bound; the API request's connection is
+#: released before the judge runs, D-062). Beyond it risk_check answers retrieval-only ("busy").
+MAX_IN_FLIGHT = 4
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
 BREAKER_MAX_OPEN_S = 900.0
@@ -97,8 +95,11 @@ BUDGET = "budget"
 SCHEMA_FAIL = "schema_fail"
 PRIVACY = "privacy"
 BUSY = "busy"
+GUARD = "guard"  # D-067: the model warned, but every match cited an id it was not shown
 ERROR = "error"
 JUDGED = frozenset({OK, OK_FALLBACK})
+#: the ``judge`` label of every result the LLM did not judge (the status becomes ``reason``)
+RETRIEVAL_ONLY = "retrieval_only"
 
 ConnectFactory = Callable[[], Any]  # () -> awaitable AsyncConnection (``async with await f()``)
 
@@ -200,10 +201,7 @@ class RiskJudge:
         cassette_dir: Path | None = None,
     ) -> None:
         self.settings = settings
-        # the API request transaction idles while the judge runs: stay clear of the server's
-        # idle_in_transaction_session_timeout (5 s by default), whatever the configured cap
-        idle_s = float(getattr(settings, "db_idle_in_transaction_timeout_ms", 5000)) / 1000
-        self.timeout_s = max(0.1, min(timeout_s, idle_s - IDLE_MARGIN_S))
+        self.timeout_s = timeout_s
         self.in_flight = 0
         self.clock = clock or Clock()
         self.breaker = Breaker(
@@ -263,6 +261,17 @@ class RiskJudge:
     async def aclose(self) -> None:
         if self.provider is not None:
             await self.provider.aclose()
+
+    def unavailable(self) -> str | None:
+        """Why a judge call would not reach the provider right now (None: it would try). Lets the
+        caller skip releasing its request transaction for a call that cannot happen."""
+        if not self.enabled:
+            return DISABLED
+        if self.in_flight >= MAX_IN_FLIGHT:
+            return BUSY
+        if self.breaker.remaining_s() > 0:
+            return UNAVAILABLE
+        return None
 
     # ------------------------------------------------------------------ judging
     async def judge(self, task: str, items: list[JudgeItem], capabilities: dict[str, Any]) -> JudgeResult:
@@ -353,6 +362,8 @@ class RiskJudge:
             seen.add(it.version_id)
             why = " ".join(self.provider.redactor.text(str(m.get("why", ""))).split())
             matches.append((it.version_id, why[:WHY_MAX]))
+        if res.output.get("matches") and not matches:  # D-067: every claim was uncited
+            return JudgeResult(GUARD, denied=denied, dropped=dropped, profile=res.profile)
         status = OK if res.profile == self.chain[0].name else OK_FALLBACK
         return JudgeResult(
             status, matches=matches[:MAX_MATCHES], denied=denied, dropped=dropped, profile=res.profile
@@ -378,6 +389,7 @@ async def close_app_judge(app: Any) -> None:
 __all__ = [
     "JUDGED",
     "JUDGE_TIMEOUT_S",
+    "RETRIEVAL_ONLY",
     "MAX_CANDIDATES",
     "TASK",
     "JudgeItem",

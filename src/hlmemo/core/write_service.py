@@ -317,6 +317,9 @@ class _Batch:
     occurred_at_raw: str | None
     expected_versions: list[tuple[int, int]]
     resolved_extra: dict[str, Any]
+    #: W2d write context: the librarian job priority this write asks for (None = the enqueue
+    #: path's default, 3). Recorded as ``payload.resolved.librarian_priority`` when set.
+    librarian_priority: int | None = None
 
 
 # --------------------------------------------------------------------------- public API
@@ -327,7 +330,10 @@ async def write(
     *,
     deps: WriteDeps | None = None,
     raw: dict[str, Any] | None = None,
+    librarian_priority: int | None = None,
 ) -> WriteResult:
+    """``librarian_priority`` is server-side write context, never a client argument (W2d:
+    ``memory.register_lesson`` sets 2 for the cross-project check)."""
     request_payload = verbatim_args(req, raw)
     request = parse_request(WriteRequest, req)
     deps = deps or default_deps()
@@ -356,6 +362,7 @@ async def write(
                         "items": [it.model_dump(mode="json", exclude_none=True) for it in request.items]
                     }
                 },
+                librarian_priority=librarian_priority,
             ),
         )
     return WriteResult.model_validate(result)
@@ -1063,6 +1070,8 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         "jobs": jobs,
         **batch.resolved_extra,
     }
+    if batch.librarian_priority is not None:  # W2d: replayable for the W2b enqueue (see lesson_service)
+        resolved["librarian_priority"] = batch.librarian_priority
 
     ack: dict[str, Any] = {
         "request_id": batch.request_id,

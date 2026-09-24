@@ -58,7 +58,7 @@ async def test_lesson_item_format_and_result(connect, world, deps) -> None:  # n
     assert title == a["mistake"] and tags == ["deploy", "ssh"]
     assert body == f"## Mistake\n{a['mistake']}\n\n## Fix\n{a['fix']}\n\n## Context\n{a['context']}"
     assert res["clue"] == f"v{res['version_id']}" and res["replayed"] is False
-    assert res["cross_project_check"] == "not_wired" and res["embedding_status"] == "queued"
+    assert res["embedding_status"] == "queued"
     assert res["budget"]["used"] <= res["budget"]["limit"] == 2000
     # no context -> no Context section; a long first line becomes a word-cut title with an ellipsis
     long = "word " * 60
@@ -80,7 +80,6 @@ async def test_idempotent_replay_and_conflicts(connect, world, deps) -> None:  #
         again = await ls.register_lesson(conn, world.ctx_a, dict(a), deps=deps)
         await conn.commit()
         assert again["replayed"] is True and again["version_id"] == first["version_id"]
-        assert again["cross_project_check"] == "replayed"
         with pytest.raises(ToolError) as ei:
             await ls.register_lesson(conn, world.ctx_a, {**a, "fix": "something else"}, deps=deps)
         assert ei.value.code == "E_REQUEST_ID_CONFLICT"
@@ -137,46 +136,36 @@ async def test_write_grant_required(connect, world, deps) -> None:  # noqa: ANN0
     assert res["replayed"] is False
 
 
-async def test_cross_project_hook_point(connect, world, deps, monkeypatch) -> None:  # noqa: ANN001
-    seen: list[ls.LessonRegistered] = []
-
-    async def hook(conn, ctx, ev: ls.LessonRegistered) -> bool:  # noqa: ANN001
-        cur = await conn.execute("SELECT kind FROM events WHERE event_id = %s", (ev.event_id,))
-        assert (await cur.fetchone())[0] == "write"  # same transaction: the event is visible
-        seen.append(ev)
-        return True
-
-    monkeypatch.setattr(ls, "CROSS_PROJECT_CHECK_HOOK", hook)
+async def test_librarian_priority_is_persisted_write_context(connect, world, deps) -> None:  # noqa: ANN001
+    """The priority-2 cross-project check is write context recorded in the lesson's own event
+    (``payload.resolved.librarian_priority``): atomic, replayable, never a client argument, absent on
+    ordinary writes. W2b's enqueue reads it (see core/lesson_service.py)."""
     a = args()
+    w = {
+        "project": MAIN,
+        "request_id": str(uuid.uuid4()),
+        "client": "pytest/0",
+        "items": [{"kind": "lesson", "title": "t", "body": "b"}],
+    }
     async with await connect() as conn:
-        res = await ls.register_lesson(conn, world.ctx_a, a, deps=deps)
+        await ls.register_lesson(conn, world.ctx_a, a, deps=deps)
+        await write(conn, world.ctx_a, w, deps=deps)
         await conn.commit()
-        again = await ls.register_lesson(conn, world.ctx_a, a, deps=deps)
-        await conn.commit()
-    assert res["cross_project_check"] == "queued" and again["cross_project_check"] == "replayed"
-    (ev,) = seen  # not called on the replay
-    assert ev.priority == 2 and ev.project_id == world.main_id and ev.version_id == res["version_id"]
-
-    async def declines(conn, ctx, ev) -> bool:  # noqa: ANN001
-        return False
-
-    monkeypatch.setattr(ls, "CROSS_PROJECT_CHECK_HOOK", declines)
-    async with await connect() as conn:
-        res = await ls.register_lesson(conn, world.ctx_a, args(), deps=deps)
-        await conn.commit()
-    assert res["cross_project_check"] == "skipped"
-
-    async def boom(conn, ctx, ev) -> bool:  # noqa: ANN001
-        raise RuntimeError("enqueue failed")
-
-    monkeypatch.setattr(ls, "CROSS_PROJECT_CHECK_HOOK", boom)
-    b = args()
-    async with await connect() as conn:
-        with pytest.raises(RuntimeError):
-            await ls.register_lesson(conn, world.ctx_a, b, deps=deps)
+        lesson_payload = await event_payload(conn, a["request_id"])
+        write_payload = await event_payload(conn, w["request_id"])
+        with pytest.raises(ToolError) as ei:  # clients cannot set it through register_lesson
+            await ls.register_lesson(conn, world.ctx_a, args(librarian_priority=1), deps=deps)
+        assert ei.value.code == "E_INVALID_ARG"
         await conn.rollback()
-        cur = await conn.execute("SELECT count(*) FROM events WHERE request_id = %s", (b["request_id"],))
-        assert (await cur.fetchone())[0] == 0  # the hook runs in the write transaction: all or nothing
+        before = await dump_projections(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert await dump_projections(conn) == before
+        again = await event_payload(conn, a["request_id"])
+    assert lesson_payload["resolved"]["librarian_priority"] == ls.PRIORITY == 2
+    assert "librarian_priority" not in write_payload["resolved"]
+    assert "librarian_priority" not in lesson_payload["request"]  # server-side context only
+    assert again == lesson_payload  # events are never rewritten by replay
 
 
 async def test_raw_provenance_and_replay_identical(connect, world, deps) -> None:  # noqa: ANN001
@@ -213,7 +202,6 @@ async def test_register_lesson_over_the_wire(db_dsn) -> None:  # noqa: ANN001
             "logical_id",
             "version_id",
             "embedding_status",
-            "cross_project_check",
             "budget",
         }
         again = json.loads(

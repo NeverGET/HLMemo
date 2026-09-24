@@ -9,6 +9,7 @@ short: ``tools/list`` must stay ≤ 3,000 o200k tokens with all nine CC-4 tools 
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -72,8 +73,16 @@ def _app_state(app: Any) -> Any:
 
 
 async def memory_risk_check(
-    conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any], *, app: Any = None
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    args: dict[str, Any],
+    *,
+    app: Any = None,
+    detach: Callable[[], Awaitable[bool]] | None = None,
 ) -> dict[str, Any]:
+    """D-062: the deterministic stage runs in the request transaction; ``detach`` then commits it
+    and returns the connection before the judge; the authority/visibility re-check afterwards
+    uses a fresh pooled connection for one short transaction."""
     from hlmemo.librarian.risk_judge import app_judge
 
     state = _app_state(app)
@@ -81,7 +90,16 @@ async def memory_risk_check(
     if deps is None:
         raise ToolError("E_UNAVAILABLE", "read dependencies are not initialized", retryable=True)
     judge = app_judge(app) if args.get("mode", "auto") != "deterministic" else None
-    return await risk_service.risk_check(conn, ctx, args, deps=deps, judge=judge)
+    pool = getattr(state, "pool", None)
+    return await risk_service.risk_check(
+        conn,
+        ctx,
+        args,
+        deps=deps,
+        judge=judge,
+        detach=detach,
+        reconnect=pool.connection if pool is not None else None,
+    )
 
 
 async def memory_register_lesson(

@@ -1,8 +1,9 @@
 """``memory.risk_check`` (PHASE2-4-ROADMAP W2d; report D.3 #7, D.4(b); D-014, D-062, D-067).
 
-``risk_check(conn, ctx, args, deps=, judge=)`` → ``{project, verdict, judged, judge, warnings,
-omitted, candidates_considered, budget}``; ``verdict ∈ {"warn", "no_matching_evidence"}``. Per
-D-014 it never says "no risk": the absence of a warning only means no stored lesson matched.
+``risk_check(conn, ctx, args, deps=, judge=, detach=, reconnect=)`` → ``{project, verdict, judged,
+judge, reason?, warnings, omitted, candidates_considered, guard_dropped?, budget}``;
+``verdict ∈ {"warn", "no_matching_evidence"}``. Per D-014 it never says "no risk": the absence of
+a warning only means no stored lesson matched.
 
 1. **Deterministic stage** (one read transaction, no LLM, ≤ 300 ms): the caller's CURRENT grants
    and device scope (``AuthContext``, resolved under FOR SHARE by the middleware) select every
@@ -19,7 +20,15 @@ D-014 it never says "no risk": the absence of a warning only means no stored les
    judge's matches, each citing a candidate clue (D-067 guard). Candidates the privacy gate
    withheld (``device:*``, ``policy.librarian=off``, co-owned by an ungranted project) are never
    sent; they warn only deterministically, at the stricter ``TAU_STRICT``. On any judge failure
-   the result is the deterministic verdict with ``judged:false`` and ``judge`` naming the reason.
+   (timeout, outage, disabled or unqualified fallback, budget, schema, an all-uncited ``warn``)
+   the result is the deterministic verdict: ``judged:false``, ``judge:"retrieval_only"``, and
+   ``reason`` names the cause. Judged results carry ``judge:"ok"`` (``"ok_fallback"``: the
+   fallback tier judged, D-066).
+4. **D-062**: the judge never runs inside a transaction. Over the API the request transaction
+   (device FOR SHARE) is committed and its connection returned (``detach``) before the judge;
+   afterwards ONE short transaction on a fresh connection re-checks the device (revoked / expired /
+   rebound → ``E_AUTH``, the result is discarded), the home-project read grant and the visibility
+   of every warned item (invisible → dropped).
 
 The output is packed like every read result: ``budget.used`` is the exact o200k count of the
 canonical JSON; warnings are added in order until the next one would not fit (``omitted`` counts
@@ -28,13 +37,17 @@ the rest); ``E_BUDGET_TOO_SMALL`` only if the envelope without warnings does not
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from psycopg import AsyncConnection
+from psycopg.pq import TransactionStatus
 from pydantic import Field
 
 from hlmemo.auth.context import AuthContext, Role
+from hlmemo.auth.errors import HlmError
 from hlmemo.core import MODEL_ID, MODEL_REVISION
 from hlmemo.core.budget import BudgetError, validate_budget
 from hlmemo.core.clues import encode_clue
@@ -54,6 +67,7 @@ from hlmemo.core.retrieval import (
     split_terms,
 )
 from hlmemo.core.write_models import SLUG_RE, _Strict, parse_request
+from hlmemo.db import auth_queries
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as q
 from hlmemo.librarian import risk_judge as rj
@@ -74,6 +88,7 @@ TAU_STRICT = 0.045
 
 VERDICT_WARN = "warn"
 VERDICT_NONE = "no_matching_evidence"
+NO_DETACH = "no_detach"  # reason: an API request transaction could not be released (D-062)
 
 
 Ranks = tuple[int | None, int | None, int | None, int | None]  # lexical, trigram, title, vector
@@ -196,7 +211,7 @@ def _warning(c: RiskCandidate, why: str) -> dict[str, Any]:
 
 def _det_why(c: RiskCandidate, reason: str) -> str:
     return (
-        f"Retrieval match on this {c.kind} ({c.lists} lists, score {c.det_score:.3f}); "
+        f"Retrieval-only match on this {c.kind} ({c.lists} lists, score {c.det_score:.3f}); "
         f"not checked by the librarian LLM ({reason}). Drill the clue before relying on it."
     )
 
@@ -204,9 +219,8 @@ def _det_why(c: RiskCandidate, reason: str) -> str:
 def deterministic_warnings(
     cands: list[RiskCandidate], reason: str, *, tau: float = TAU
 ) -> list[dict[str, Any]]:
-    hits = [c for c in cands if c.det_score >= tau]
-    hits.sort(key=lambda c: -c.det_score)
-    return [_warning(c, _det_why(c, reason)) for c in hits[:MAX_WARNINGS]]
+    """Retrieval-only warnings: candidates with ``det_score ≥ tau``, best first, at most 3."""
+    return [w for _, w in _det(cands, reason, tau)]
 
 
 def _pack(
@@ -229,6 +243,35 @@ def _pack(
     return envelope
 
 
+async def _recheck(conn: AsyncConnection, ctx: AuthContext, slug: str, version_ids: list[int]) -> set[int]:
+    """D-062: after the judge, ONE short transaction: the device is still trusted, unexpired and on
+    the same token generation (else ``E_AUTH``: the result is discarded), still reads the home
+    project (else ``E_FORBIDDEN_PROJECT``); returns which warned items it can still see now."""
+    async with conn.transaction():
+        dev = await q.device_now(conn, ctx.device_id)
+        if (
+            dev is None
+            or dev.status != "trusted"
+            or dev.expired
+            or dev.token_generation != ctx.token_generation
+        ):
+            raise HlmError("E_AUTH", "device revoked or rebound during the request")
+        grants = await auth_queries.select_active_grants(conn, ctx.device_id)
+        fresh = AuthContext(
+            device_id=ctx.device_id,
+            device_class=dev.device_class,
+            is_admin=dev.is_admin,
+            token_generation=dev.token_generation,
+            grants={pid: Role(role) for pid, role in grants},
+            client=ctx.client,
+        )
+        await _read_project(conn, fresh, slug)
+        pids = await q.all_projects(conn) if fresh.is_admin else sorted(fresh.grants)
+        pids = [p for p in pids if fresh.has(p, Role.READ)]
+        f = q.RiskFilter(pids=pids, scopes=list(fresh.scope_values()), at=await rq.clock_now(conn))
+        return await q.visible_versions(conn, f, version_ids)
+
+
 async def risk_check(
     conn: AsyncConnection,
     ctx: AuthContext,
@@ -236,7 +279,14 @@ async def risk_check(
     *,
     deps: ReadDeps,
     judge: rj.RiskJudge | None = None,
+    detach: Callable[[], Awaitable[bool]] | None = None,
+    reconnect: Callable[[], AbstractAsyncContextManager[AsyncConnection]] | None = None,
 ) -> dict[str, Any]:
+    """``conn`` is the caller's connection. Over the API it is the request transaction:
+    ``detach`` commits it and returns it to the pool before the judge, and ``reconnect`` yields a
+    fresh pooled connection for the post-judge re-check. A direct caller passes an idle ``conn``
+    (the deterministic stage then commits its own transaction and the re-check reuses ``conn``).
+    The judge never runs while a transaction of ``conn`` is open (D-062)."""
     request = parse_request(RiskRequest, req)
     try:
         budget = validate_budget(request.token_budget)
@@ -249,44 +299,75 @@ async def risk_check(
     judged = False
     guard_dropped = 0
     all_withheld = False
+    released = False
+    called = False
     if request.mode == "deterministic":
         status = rj.NOT_REQUESTED
     elif judge is None:
         status = rj.DISABLED
+    elif not cands:
+        status = rj.NO_CANDIDATES
+    elif (why_not := judge.unavailable()) is not None:
+        status = why_not
     else:
-        caps = {
-            "trigger_device_id": ctx.device_id,
-            "question": sorted({p for c in cands for p in c.project_ids if ctx.has(p, Role.READ)}),
-        }
-        res = await judge.judge(request.task, [rj.JudgeItem(c.version_id, c.project) for c in cands], caps)
-        status = res.status
-        all_withheld = bool(cands) and res.status == rj.NO_CANDIDATES and len(res.denied) == len(cands)
-        if res.judged:
-            judged = True
+        if detach is not None:
+            released = await detach()
+        if not released and (reconnect is not None or conn.info.transaction_status != TransactionStatus.IDLE):
+            # an API request whose transaction could not be released: never judge inside it
+            status = NO_DETACH
+        else:
+            called = True
+            caps = {
+                "trigger_device_id": ctx.device_id,
+                "question": sorted({p for c in cands for p in c.project_ids if ctx.has(p, Role.READ)}),
+            }
+            items = [rj.JudgeItem(c.version_id, c.project) for c in cands]
+            res = await judge.judge(request.task, items, caps)
+            status = res.status
             guard_dropped = res.dropped
-            by_vid = {c.version_id: c for c in cands}
-            warnings = [_warning(by_vid[vid], why or "Applies to this task.") for vid, why in res.matches]
-            # withheld from the LLM by the privacy gate: deterministic, stricter threshold
-            withheld = [c for c in cands if c.version_id in res.denied]
-            warnings += deterministic_warnings(withheld, "withheld by the privacy policy", tau=TAU_STRICT)
-            warnings = warnings[:MAX_WARNINGS]
-    if all_withheld:  # nothing could be sent: the privacy-withheld rule applies to every candidate
-        warnings = deterministic_warnings(cands, "withheld by the privacy policy", tau=TAU_STRICT)
-    elif not judged:
-        warnings = deterministic_warnings(cands, status.replace("_", " "))
+            all_withheld = res.status == rj.NO_CANDIDATES and len(res.denied) == len(cands)
+    by_vid = {c.version_id: c for c in cands}
+    warned: list[tuple[int, dict[str, Any]]]
+    if called and res.judged:
+        judged = True
+        warned = [(vid, _warning(by_vid[vid], why or "Applies to this task.")) for vid, why in res.matches]
+        # withheld from the LLM by the privacy gate: deterministic, stricter threshold
+        withheld = [c for c in cands if c.version_id in res.denied]
+        warned += _det(withheld, "withheld by the privacy policy", TAU_STRICT)
+        warned = warned[:MAX_WARNINGS]
+    elif all_withheld:  # nothing could be sent: the privacy-withheld rule applies to every candidate
+        warned = _det(cands, "withheld by the privacy policy", TAU_STRICT)
+    else:
+        warned = _det(cands, status.replace("_", " "), TAU)
+
+    if called:  # time passed without a transaction: authority and visibility are re-checked
+        if released:
+            assert reconnect is not None
+            async with reconnect() as fresh_conn:
+                visible = await _recheck(fresh_conn, ctx, request.project, [v for v, _ in warned])
+        else:
+            visible = await _recheck(conn, ctx, request.project, [v for v, _ in warned])
+        warned = [(v, w) for v, w in warned if v in visible]
 
     envelope: dict[str, Any] = {
         "project": project.slug,
-        "verdict": VERDICT_WARN if warnings else VERDICT_NONE,
+        "verdict": VERDICT_WARN if warned else VERDICT_NONE,
         "judged": judged,
-        "judge": status,
+        "judge": status if judged else rj.RETRIEVAL_ONLY,
         "warnings": [],
         "omitted": 0,
         "candidates_considered": considered,
     }
+    if not judged:
+        envelope["reason"] = "withheld" if all_withheld else status
     if guard_dropped:
         envelope["guard_dropped"] = guard_dropped
-    return _pack(deps, envelope, budget, warnings)
+    return _pack(deps, envelope, budget, [w for _, w in warned])
+
+
+def _det(cands: list[RiskCandidate], reason: str, tau: float) -> list[tuple[int, dict[str, Any]]]:
+    hits = sorted((c for c in cands if c.det_score >= tau), key=lambda c: -c.det_score)
+    return [(c.version_id, _warning(c, _det_why(c, reason))) for c in hits[:MAX_WARNINGS]]
 
 
 __all__ = [
