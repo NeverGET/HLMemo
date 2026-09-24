@@ -52,4 +52,13 @@ def proposal_actions(proposal: dict[str, Any]) -> list[dict[str, Any]]:
     return [proposal["mutation"]] if proposal.get("mutation") else []
 
 
-__all__ = ["OP", "ApplyBatch", "proposal_actions"]
+def legacy_close(proposal: dict[str, Any]) -> bool:
+    """A stored proposal that closes an item WITHOUT the v2 whole-item evidence (``close_ok``:
+    every statement quoted and outdated, verifier-confirmed; D-076). Questions raised before the
+    fact-level rule (R2 observer, v1 prompts) can carry whole-item closes of multi-fact items: they
+    are never applied — the question is superseded and its subjects re-reviewed (Sol 54j #2)."""
+    has_close = any(a.get("op") == "version_close" for a in proposal_actions(proposal))
+    return has_close and proposal.get("close_ok") is not True
+
+
+__all__ = ["OP", "ApplyBatch", "legacy_close", "proposal_actions"]

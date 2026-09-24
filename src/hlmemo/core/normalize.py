@@ -56,6 +56,18 @@ def extract_terms(s: str, *, max_terms: int = TERM_MAX) -> list[str]:
     return out
 
 
+def term_spans(normalized: str) -> list[tuple[int, int]]:
+    """Every term OCCURRENCE of an already normalised text as ``(start, end)`` offsets, in order:
+    the ``extract_terms`` regex, trailing-punctuation strip and length floor, but no dedupe and
+    no ``TERM_MAX`` cap (a scan of the whole text, e.g. the read side's out-of-span check)."""
+    out: list[tuple[int, int]] = []
+    for m in _TERM_RE.finditer(normalized):
+        term = m.group(0).rstrip(_TRAILING_PUNCT)
+        if len(term) >= TERM_MIN_LEN:
+            out.append((m.start(), m.start() + len(term)))
+    return out
+
+
 def is_identifier(term: str) -> bool:
     """§4.3: identifier terms contain ``_``, ``/``, ``.`` or a digit."""
     return bool(_IDENT_RE.search(term))
@@ -65,4 +77,4 @@ def identifier_terms(terms: list[str]) -> list[str]:
     return [t for t in terms if is_identifier(t)]
 
 
-__all__ = ["normalize", "extract_terms", "is_identifier", "identifier_terms", "TERM_MAX"]
+__all__ = ["normalize", "extract_terms", "term_spans", "is_identifier", "identifier_terms", "TERM_MAX"]

@@ -23,18 +23,27 @@ has no lexical hit is dropped, BEFORE the top-N cut. A lexical hit is ≥ 2 shar
 terms or ≥ 1 shared identifier term; "distinctive" is a pool-local document frequency (a term in
 more than ``POOL_DF_MAX`` of the retrieved pool is not distinctive): language-agnostic, no stop
 lists, like D-055. Every step is deterministic (the prompt, hence the cassette key, depends on it).
+
+``doc_chunk`` (e2e #3, D-076): document chunks take part in the contradiction review. They are
+candidates of fact / lesson / doc_chunk subjects in a list of their OWN (same project only, top
+``DOC_TOP`` = 3), so they never displace fact/lesson candidates from the top 8; a doc_chunk is a
+SUBJECT only when it carries dated or decision content (``reviewable``), otherwise it gets
+placement only. Pairs with a doc_chunk raise contradictions only (``guards.pre_verify``).
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from hlmemo.core.normalize import extract_terms, is_identifier
 
 K_RRF = 60
 SAME_TOP = 8
 CROSS_TOP = 5
+DOC_TOP = 3
 LIST_LIMIT = 40
 COS_MIN = 0.80
 LEX_TERMS = 24
@@ -46,9 +55,39 @@ COMPATIBLE: dict[str, tuple[str, ...]] = {
     "lesson": ("lesson", "experience", "fact"),
     "experience": ("experience", "lesson", "fact"),
     "episode": ("episode", "fact"),
+    "doc_chunk": ("fact", "lesson"),  # only when ``reviewable`` (dated/decision content)
 }
+#: subject kind -> the kinds of its reserved same-project document list (top ``DOC_TOP``)
+DOC_KINDS: dict[str, tuple[str, ...]] = {
+    "fact": ("doc_chunk",),
+    "lesson": ("doc_chunk",),
+    "doc_chunk": ("doc_chunk",),
+}
+#: subject kinds that never get a cross-project list (a document is project-local)
+SAME_PROJECT_ONLY = frozenset({"doc_chunk"})
 #: subject kinds that get placement only (no relation check)
-PLACEMENT_ONLY = frozenset({"project_card", "session_note", "doc_chunk"})
+PLACEMENT_ONLY = frozenset({"project_card", "session_note"})
+#: dated or decision content: an ISO date, a decision id, or a decision/supersession word (EN/TR/DE)
+_DATED = re.compile(
+    r"\b(?:19|20)\d{2}-\d{2}-\d{2}\b|\bD-\d{2,4}\b|\b(?:decided|decision|decisions|superseded|"
+    r"deprecated|replaced|no longer|karar\w*|entschied\w*|entscheidung\w*|ersetzt)\b",
+    re.IGNORECASE,
+)
+#: valid_from this far from recorded_at = an explicit evidence date (D-072 import rule)
+EVIDENCE_DATE_S = 300.0
+
+
+def reviewable(kind: str, title: str, body: str, valid_from: datetime, recorded_at: datetime) -> bool:
+    """Whether a subject gets the relation review: every compatible kind, a ``doc_chunk`` only
+    when it carries dated/decision content (text match, or a valid_from that is an explicit
+    evidence date rather than the write time)."""
+    if kind in PLACEMENT_ONLY or kind not in COMPATIBLE:
+        return False
+    if kind != "doc_chunk":
+        return True
+    if abs((recorded_at - valid_from).total_seconds()) > EVIDENCE_DATE_S:
+        return True
+    return bool(_DATED.search(f"{title}\n{body[:6000]}"))
 
 
 def relation_allowed(projects: Iterable[int], excluded: set[int]) -> bool:
@@ -135,6 +174,10 @@ __all__ = [
     "COS_MIN",
     "CROSS_KINDS",
     "CROSS_TOP",
+    "DOC_KINDS",
+    "DOC_TOP",
+    "SAME_PROJECT_ONLY",
+    "reviewable",
     "K_RRF",
     "LEX_TERMS",
     "LIST_LIMIT",

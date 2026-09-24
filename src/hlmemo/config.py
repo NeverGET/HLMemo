@@ -181,6 +181,12 @@ class Settings(BaseSettings):
     # W2b (D-067): who gives the second opinion on high-impact proposals: "cross" = the other
     # profile of the chain (primary <-> fallback), "self" = the answering profile again.
     librarian_verifier: str = Field(default="cross", pattern="^(cross|self)$")
+    # e2e #7: jobs processed concurrently by ONE librarian process (each with its own connection,
+    # lease keeper and fenced done; spend guard + lineage ceiling are atomic in the database).
+    librarian_concurrency: int = Field(default=3, ge=1, le=16)
+    # Sol 56 #5: every database connection of the librarian process (job connections, the shared
+    # lease renewer, the loop, the ledger/reservation pool); needs 2 x concurrency + 2.
+    librarian_db_connections: int = Field(default=8, ge=4, le=64)
     llm_mode: str = Field(default="live", pattern="^(live|record|replay|off)$")
     llm_cassette_dir: Path | None = None
     llm_timeout_s: float = Field(default=60.0, gt=0)

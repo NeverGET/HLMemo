@@ -113,17 +113,81 @@ async def head_at(
     return None if not rows else (rows[0][0], rows[0][1])
 
 
+class ReplayJobRow(str):
+    """One ``jobs`` row of a replay dump — its text — compared PAIRWISE with the other side's row
+    of the same job (the dumps are ordered by the unique dedupe key; review 61, D-086 §2).
+
+    Two rows are equal when their texts are, with ONE exception: a live SYSTEMIC hand-back (a
+    librarian job queued with ``last_error`` in ``worker.SYSTEMIC_HANDBACK_CODES``: scheduling
+    hints written without an event) against its replayed counterpart — the same job queued with
+    only its event-recorded state (``last_error`` NULL, or the code of a recorded back-off when
+    the hand-back followed one). Only that pair is compared without the two hints (``run_after``,
+    ``last_error``); attempts and every other column must still match. Every other pair is
+    compared on its raw fields: NULL↔NULL (a pristine queued job: its ``run_after`` is the
+    recording event's), a consumed back-off, a done or failed job. Replay never writes a systemic
+    code (no event records one), so the systemic side of a masked pair is always the live one."""
+
+    masked: str
+    handback: bool
+    counterpart: bool
+
+    def __new__(cls, raw: str, masked: str, *, handback: bool, counterpart: bool) -> ReplayJobRow:
+        row = super().__new__(cls, raw)
+        row.masked, row.handback, row.counterpart = masked, handback, counterpart
+        return row
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, str):
+            return NotImplemented
+        if str.__eq__(self, other):
+            return True
+        if not isinstance(other, ReplayJobRow):
+            return False
+        pair = (self.handback and other.counterpart) or (self.counterpart and other.handback)
+        return pair and self.masked == other.masked
+
+    def __ne__(self, other: object) -> bool:
+        eq = self.__eq__(other)
+        return eq if eq is NotImplemented else not eq
+
+    def __hash__(self) -> int:  # equal rows (raw or masked pair) share the masked text
+        return hash(self.masked)
+
+
+async def replay_job_rows(conn: psycopg.AsyncConnection, sql: str) -> list[ReplayJobRow]:
+    """``sql`` selects, per ``jobs`` row in dedupe-key order: its raw text, its text without the
+    two scheduling hints, whether it may be a hand-back at all (a librarian job, not a Phase-0
+    embed), ``status`` and ``last_error``."""
+    from hlmemo.librarian.worker import SYSTEMIC_HANDBACK_CODES
+
+    cur = await conn.execute(sql)
+    out: list[ReplayJobRow] = []
+    for raw, masked, librarian, status, last_error in await cur.fetchall():
+        queued = bool(librarian) and status == "queued"
+        systemic = last_error in SYSTEMIC_HANDBACK_CODES
+        out.append(
+            ReplayJobRow(raw, masked, handback=queued and systemic, counterpart=queued and not systemic)
+        )
+    return out
+
+
 async def dump_projections(conn: psycopg.AsyncConnection) -> dict[str, list[str]]:
-    """Primary-key-ordered text dumps of the four projection tables (pg_dump-free)."""
+    """Primary-key-ordered text dumps of the four projection tables (pg_dump-free).
+
+    D-086 §2: the ``run_after`` of a librarian job still QUEUED after a SYSTEMIC hand-back is a
+    non-authoritative scheduling hint (moved without an event); the jobs rows are compared
+    pairwise (``ReplayJobRow``): only such a live hand-back against its replayed counterpart
+    skips ``run_after``; every other job and column is compared raw (reviews 60, 61)."""
     out: dict[str, list[str]] = {}
     for table, pk in (("memory_versions", "version_id"), ("chunks", "chunk_id"), ("links", "link_id")):
         cur = await conn.execute(f"SELECT t::text FROM {table} t ORDER BY {pk}")
         out[table] = [r[0] for r in await cur.fetchall()]
-    cur = await conn.execute(
-        "SELECT (kind, dedupe_key, payload::text, source_event_id, status, run_after)::text"
-        " FROM jobs ORDER BY dedupe_key"
+    out["jobs"] = await replay_job_rows(
+        conn,
+        "SELECT (kind, dedupe_key, payload::text, source_event_id, status, run_after)::text,"
+        " (kind, dedupe_key, payload::text, source_event_id, status)::text,"
+        " kind NOT IN ('embed', 'reembed'), status, last_error FROM jobs ORDER BY dedupe_key",
     )
-    out["jobs"] = [r[0] for r in await cur.fetchall()]
     cur = await conn.execute("SELECT t::text FROM code_refs t ORDER BY version_id, path")  # W1.5
     out["code_refs"] = [r[0] for r in await cur.fetchall()]
     return out

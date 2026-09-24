@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -340,8 +341,10 @@ async def test_budget_denials_never_consume_the_lineage_ceiling(db_dsn) -> None:
 
 
 async def test_deferred_job_replays_its_run_after(db_dsn, connect, world, deps) -> None:  # noqa: ANN001
-    """Sol 38 #6: a job handed back (budget refusal) and not yet completed rebuilds with the
-    recorded status, attempts, run_after and last_error."""
+    """Sol 38 #6 as amended by Sol 56 #4: a job handed back for a SYSTEMIC reason (a budget refusal:
+    no attempt consumed) changes only its job row — status queued, attempts unchanged, run_after
+    and last_error as scheduling hints — and writes NO event; a rebuild restores it as queued with
+    the same attempts (its run_after/last_error hints are not event-recorded)."""
     await _pair(connect, world, deps, "deferred")
     llm = ScriptedLLM(default=CONTRADICTS_B)
     zero = Decimal(0)
@@ -351,15 +354,204 @@ async def test_deferred_job_replays_its_run_after(db_dsn, connect, world, deps) 
     assert llm.calls == 0
     async with await connect() as conn:
         cur = await conn.execute(
-            "SELECT status, last_error, run_after > created_at + interval '30 seconds' FROM jobs"
+            "SELECT status, attempts, last_error, run_after > created_at + interval '30 seconds' FROM jobs"
             " WHERE dedupe_key = 'librarian_write:deferred'"
         )
-        assert await cur.fetchone() == ("queued", "E_BUDGET_DEFERRED", True)
+        assert await cur.fetchone() == ("queued", 0, "E_BUDGET_DEFERRED", True)
         cur = await conn.execute(
             "SELECT count(*) FROM events WHERE kind = 'librarian' AND payload->'request'->>'op' = 'defer'"
         )
-        assert (await cur.fetchone())[0] == 1
+        assert (await cur.fetchone())[0] == 0  # a systemic hand-back is not an event
         before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
         await rebuild_projections(conn)
         await conn.commit()
         assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
+        cur = await conn.execute(
+            "SELECT status, attempts FROM jobs WHERE dedupe_key = 'librarian_write:deferred'"
+        )
+        assert await cur.fetchone() == ("queued", 0)
+    # D-086 §2: more hand-backs write nothing either; the completion is the ONE terminal event
+    for _ in range(2):
+        async with await connect() as conn:
+            await conn.execute(
+                "UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:deferred'"
+            )
+            await conn.commit()
+        provider = make_provider(db_dsn, llm, caps=Caps(zero, zero, zero))
+        await make_worker(lib_settings(db_dsn), provider, connect).drain()
+        await provider.aclose()
+    async with await connect() as conn:
+        await conn.execute("UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:deferred'")
+        await conn.commit()
+    provider = make_provider(db_dsn, llm, budget_disabled=True)
+    assert await make_worker(lib_settings(db_dsn), provider, connect).drain() == 1
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT request_id, payload->'resolved'->>'outcome' FROM events WHERE kind = 'librarian'"
+            " AND (payload->'request'->>'job_key' = 'librarian_write:deferred'"
+            "      OR payload->'resolved'->'done'->>'dedupe_key' = 'librarian_write:deferred')"
+        )
+        from hlmemo.librarian.events import NS_LIBRARIAN
+
+        [(rid, outcome)] = await cur.fetchall()
+        assert rid == uuid.uuid5(NS_LIBRARIAN, "job:librarian_write:deferred") and outcome == "proposed"
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
+
+
+async def test_one_terminal_event_per_job_and_compact_backoffs(db_dsn, connect, world, deps) -> None:  # noqa: ANN001
+    """Sol 56 #4 (D-062 "one event per job"): a job that fails on every attempt records one compact
+    non-terminal event per consumed attempt (back-off, at most MAX_ATTEMPTS - 1) and EXACTLY ONE
+    terminal event (outcome failed) under the job's own request id — the id its completion event
+    would carry — so no job can record two terminal events. Rebuild identical."""
+    from hlmemo.librarian.events import NS_LIBRARIAN
+    from hlmemo.librarian.jobs import enqueue, job_spec
+    from hlmemo.worker.lease import MAX_ATTEMPTS
+
+    class Boom:  # a job-specific failure on every attempt (not a systemic hand-back)
+        op = "boom"
+
+        async def plan(self, w, job):  # noqa: ANN001, ANN202
+            raise RuntimeError("job-specific failure")
+
+    async with await connect() as conn:
+        spec = job_spec(kind="librarian_write", dedupe_key="librarian_write:doomed", payload={"op": "boom"})
+        await enqueue(conn, project_id=world.main_id, trigger_device_id=world.dev_a, specs=[spec])
+        await conn.commit()
+    provider = make_provider(db_dsn, ScriptedLLM(), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn), provider, connect, handlers={"boom": Boom()})
+    for attempt in range(MAX_ATTEMPTS):
+        if attempt:
+            async with await connect() as conn:  # skip the back-off wait
+                await conn.execute(
+                    "UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:doomed'"
+                )
+                await conn.commit()
+        await worker.drain()
+        if attempt == 0:  # review 60: a consumed back-off is event-recorded: compared on RAW fields
+            async with await connect() as conn:
+                cur = await conn.execute(
+                    "SELECT status, attempts, last_error FROM jobs"
+                    " WHERE dedupe_key = 'librarian_write:doomed'"
+                )
+                assert await cur.fetchone() == ("queued", 1, "E_RuntimeError")
+                before = await dump_full_jobs_and_questions(conn)
+                row = next(r for r in before["jobs"] if "librarian_write:doomed" in r)
+                assert "E_RuntimeError" in row  # not masked: run_after/last_error are compared
+                await rebuild_projections(conn)
+                await conn.commit()
+                assert await dump_full_jobs_and_questions(conn) == before
+    await provider.aclose()
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT status, attempts FROM jobs WHERE dedupe_key = 'librarian_write:doomed'"
+        )
+        assert await cur.fetchone() == ("failed", MAX_ATTEMPTS)
+        cur = await conn.execute(
+            "SELECT request_id, payload->'resolved'->>'outcome' FROM events WHERE kind = 'librarian'"
+            " AND payload->'request'->>'job_key' = 'librarian_write:doomed' ORDER BY event_id"
+        )
+        rows = await cur.fetchall()
+        assert [o for _r, o in rows] == ["deferred"] * (MAX_ATTEMPTS - 1) + ["failed"]
+        assert rows[-1][0] == uuid.uuid5(NS_LIBRARIAN, "job:librarian_write:doomed")  # the terminal id
+        before = {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)}
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert {**await dump_projections(conn), **await dump_full_jobs_and_questions(conn)} == before
+
+
+# --------------------------------------------------------------------------- review 61: replay oracle
+async def _replay_dumps(conn: psycopg.AsyncConnection) -> dict[str, dict[str, list[str]]]:
+    """The three replay dumps that compare the jobs projection."""
+    from tests.integration._w2b_fixtures import dump_w2b
+
+    return {
+        "projections": await dump_projections(conn),
+        "full": await dump_full_jobs_and_questions(conn),
+        "w2b": await dump_w2b(conn),
+    }
+
+
+async def _enqueue_one(connect, world, key: str, op: str) -> None:  # noqa: ANN001
+    from hlmemo.librarian.jobs import enqueue, job_spec
+
+    async with await connect() as conn:
+        spec = job_spec(kind="librarian_write", dedupe_key=f"librarian_write:{key}", payload={"op": op})
+        await enqueue(conn, project_id=world.main_id, trigger_device_id=world.dev_a, specs=[spec])
+        await conn.commit()
+
+
+async def test_review61_backoff_then_handback_passes_replay(db_dsn, connect, world) -> None:  # noqa: ANN001
+    """Review 61: a job-specific failure (a back-off: attempt consumed, recorded in a ``defer``
+    event) followed by a SYSTEMIC hand-back (job row only, no event). Live ends queued with the
+    hand-back's hints; replay restores the recorded back-off state. The pair is compared without
+    the two scheduling hints only, so the rebuild passes every replay dump; a wrong attempts count
+    in that same pair is still flagged."""
+    from hlmemo.librarian.errors import NotReady
+
+    class Flaky:  # attempt 1: a job-specific failure; attempt 2: inputs not ready (systemic)
+        op = "flaky"
+        calls = 0
+
+        async def plan(self, w, job):  # noqa: ANN001, ANN202
+            Flaky.calls += 1
+            if Flaky.calls == 1:
+                raise RuntimeError("job-specific failure")
+            raise NotReady("embeddings in flight", retry_after_s=60)
+
+    await _enqueue_one(connect, world, "flaky", "flaky")
+    provider = make_provider(db_dsn, ScriptedLLM(), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn), provider, connect, handlers={"flaky": Flaky()})
+    await worker.drain()
+    async with await connect() as conn:  # skip the back-off wait (overwritten by the hand-back)
+        await conn.execute("UPDATE jobs SET run_after = now() WHERE dedupe_key = 'librarian_write:flaky'")
+        await conn.commit()
+    await worker.drain()
+    await provider.aclose()
+    assert Flaky.calls == 2
+    select = "SELECT status, attempts, last_error FROM jobs WHERE dedupe_key = 'librarian_write:flaky'"
+    async with await connect() as conn:
+        cur = await conn.execute(select)
+        assert await cur.fetchone() == ("queued", 1, "E_NOT_READY")  # the live hand-back
+        live = await _replay_dumps(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        cur = await conn.execute(select)
+        assert await cur.fetchone() == ("queued", 1, "E_RuntimeError")  # the recorded back-off
+        replayed = await _replay_dumps(conn)
+        for name in live:
+            assert replayed[name] == live[name], name
+            assert live[name] == replayed[name], name
+            assert sorted(set(live[name]["jobs"]) ^ set(replayed[name]["jobs"])) == [], name
+        await conn.execute("UPDATE jobs SET attempts = 0 WHERE dedupe_key = 'librarian_write:flaky'")
+        await conn.commit()
+        wrong = await _replay_dumps(conn)
+        for name in ("full", "w2b"):  # (dump_projections never compared attempts)
+            assert wrong[name]["jobs"] != live[name]["jobs"], name
+
+
+async def test_review61_a_wrongly_replayed_run_after_of_a_pristine_queued_job_is_flagged(
+    db_dsn, connect, world
+) -> None:  # noqa: ANN001
+    """Review 61: a pristine queued job (never run, ``last_error`` NULL on both sides) is not a
+    hand-back: its ``run_after`` is the recording event's, so a replay that restores another one
+    is a divergence every replay dump flags (the old mask hid it). A correct rebuild is equal."""
+    await _enqueue_one(connect, world, "pristine", "boom")
+    async with await connect() as conn:
+        live = await _replay_dumps(conn)
+        await rebuild_projections(conn)
+        await conn.commit()
+        assert await _replay_dumps(conn) == live  # NULL↔NULL, compared raw: identical
+        await conn.execute(  # a replay bug: the event-recorded run_after is not restored
+            "UPDATE jobs SET run_after = run_after + interval '1 hour'"
+            " WHERE dedupe_key = 'librarian_write:pristine'"
+        )
+        await conn.commit()
+        wrong = await _replay_dumps(conn)
+    for name in live:
+        assert wrong[name]["jobs"] != live[name]["jobs"], name
+        assert wrong[name] != live[name] and live[name] != wrong[name], name
+        assert sorted(set(live[name]["jobs"]) ^ set(wrong[name]["jobs"])) != [], name

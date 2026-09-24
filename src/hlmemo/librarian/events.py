@@ -33,6 +33,16 @@ def request_sha256(request: dict[str, Any]) -> str:
     return hashlib.sha256(canonical(request).encode("utf-8")).hexdigest()
 
 
+async def lock_event_refs(conn: AsyncConnection, project_id: int | None, device_id: int) -> None:
+    """Take the row locks an ``events`` insert's foreign keys take (``FOR KEY SHARE`` on its
+    project and device rows) NOW, so the insert itself cannot wait (D-095): an apply judges the
+    question TTL once every lock is held, and nothing may wait between that check and the event.
+    The same locks at the same place in the lock order (the insert took them last anyway)."""
+    if project_id is not None:
+        await conn.execute("SELECT 1 FROM projects WHERE project_id = %s FOR KEY SHARE", (project_id,))
+    await conn.execute("SELECT 1 FROM devices WHERE device_id = %s FOR KEY SHARE", (device_id,))
+
+
 async def insert_system_event(
     conn: AsyncConnection,
     *,
@@ -96,4 +106,11 @@ async def insert_system_event(
     return None if row is None else int(row[0])
 
 
-__all__ = ["CLIENT", "NS_LIBRARIAN", "SCHEMA_VERSION_SYSTEM", "insert_system_event", "request_sha256"]
+__all__ = [
+    "CLIENT",
+    "NS_LIBRARIAN",
+    "SCHEMA_VERSION_SYSTEM",
+    "insert_system_event",
+    "lock_event_refs",
+    "request_sha256",
+]
