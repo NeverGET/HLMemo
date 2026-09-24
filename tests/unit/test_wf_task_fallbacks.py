@@ -187,6 +187,13 @@ def test_unknown_profile_fails_fast_naming_the_variable(profiles_dir: Path) -> N
     assert chain_lines(pr.describe_chains(s))[0].startswith("chains      CONFIG ERROR HLM_FALLBACK_PROFILE=")
 
 
+def test_describe_chains_never_raises_without_llm_settings() -> None:
+    """ops status with a settings object that carries no LLM configuration (e.g. a minimal one)."""
+    desc = pr.describe_chains(SimpleNamespace(librarian_role="observer"))
+    assert desc == {"error": "no LLM configuration (AttributeError)"}
+    assert chain_lines(desc) == ["chains      CONFIG ERROR no LLM configuration (AttributeError)"]
+
+
 def test_unknown_task_only_warns(profiles_dir: Path, caplog) -> None:  # noqa: ANN001
     from hlmemo.server.app import check_llm_config
 

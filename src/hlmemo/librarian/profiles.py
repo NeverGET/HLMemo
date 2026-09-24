@@ -227,11 +227,14 @@ def check_chains(settings: Settings) -> list[str]:
 
 def describe_chains(settings: Settings) -> dict[str, Any]:
     """The effective primary and fallback per task, for ops status (D-094). Never raises: a
-    configuration error is reported as ``{"error": ...}`` (profile and variable names only)."""
+    configuration error (or a settings object without an LLM configuration) is reported as
+    ``{"error": ...}`` (profile and variable names only)."""
     try:
         chain = profile_chain(settings)
     except LlmConfigError as exc:
         return {"error": str(exc)}
+    except (AttributeError, TypeError, ValueError) as exc:  # no/partial LLM settings: say so, never fail
+        return {"error": f"no LLM configuration ({type(exc).__name__})"}
     head = chain[0]
     out: dict[str, Any] = {"default_fallback": settings.fallback_profile, "tasks": {}}
     for task in sorted(known_tasks() | set(head.task_fallbacks)):
