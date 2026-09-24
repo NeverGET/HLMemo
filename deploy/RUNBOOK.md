@@ -577,7 +577,8 @@ directory written by `first_deploy.sh`; production: `deploy/.local/153.92.1.166`
 STATE=deploy/.local/<host>
 REF=$(git rev-parse <R2 release ref>)        # full 40-character SHA, already pushed to origin
 # 1. llm.env on the host: HLM_LIBRARIAN_ENABLED=true, HLM_LIBRARIAN_ROLE=observer,
-#    HLM_PROFILE=openrouter-gpt6-luna, HLM_FALLBACK_PROFILE=openrouter, the template's spend caps.
+#    HLM_PROFILE=openrouter-gpt6-luna, the template's fallbacks (D-094: HLM_FALLBACK_PROFILE for
+#    librarian jobs plus HLM_FALLBACK_PROFILE__<TASK> per task) and its spend caps.
 #    OPENROUTER_API_KEY is read from ./.env (only that variable; --key-file FILE for another file)
 #    and travels on ssh stdin: never argv, a log or the output. 0600, deploy user; idempotent.
 bash deploy/scripts/install_llm_env.sh --state "$STATE"

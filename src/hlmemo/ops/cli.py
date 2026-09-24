@@ -258,9 +258,33 @@ async def _status(args: argparse.Namespace, settings: Any) -> int:
         f"spend_today_usd={lib['spend_today_usd']} spend_hour_usd={lib['spend_hour_usd']} "
         f"reserved_usd={lib['reserved_usd']}\n"
     )
+    for line in chain_lines(lib.get("chains") or {}):
+        sys.stdout.write(line + "\n")
     for j in st["jobs"]:
         sys.stdout.write(f"jobs        {j['kind']:<14} {j['status']:<8} {j['count']}\n")
     return rc
+
+
+def chain_lines(chains: dict[str, Any]) -> list[str]:
+    """The effective primary and fallback per task (D-094), one ``chain`` line each."""
+    if "error" in chains:
+        return [f"chains      CONFIG ERROR {chains['error']}"]
+    lines = [f"fallback    default={chains.get('default_fallback') or '-'}"]
+    for task, e in (chains.get("tasks") or {}).items():
+        notes = []
+        if e.get("source") == "task":
+            notes.append("task override")
+        if e.get("unqualified_fallback"):
+            notes.append(f"{e['unqualified_fallback']} not qualified")
+        if e.get("primary_qualified") is False:
+            notes.append("primary not qualified")
+        if e.get("unknown_task"):
+            notes.append("unknown task")
+        lines.append(
+            f"chain       {task:<14} primary={e['primary']} fallback={e['fallback'] or '-'}"
+            + (f" ({'; '.join(notes)})" if notes else "")
+        )
+    return lines
 
 
 def main(argv: list[str] | None = None) -> int:

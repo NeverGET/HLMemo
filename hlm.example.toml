@@ -5,6 +5,8 @@
 [hlm]
 profile          = "openrouter"            # profiles/<name>.toml or [profiles.<name>] below
 fallback_profile = "openrouter-luna"       # D-019 fallback via OpenRouter (or "openai" direct)
+# fallback_profile__risk_judge = "openrouter-qwen38-27b-fast"  # D-094 per-task fallback (env:
+#                                            # HLM_FALLBACK_PROFILE__RISK_JUDGE); any task name works
 HLM_DB_DSN       = "env:HLM_DB_DSN"        # e.g. postgresql://hlm:hlm@127.0.0.1:5432/hlm
 HLM_EMBED_MODEL  = "intfloat/multilingual-e5-small"
 HLM_EMBED_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"   # mirrored in models.lock
