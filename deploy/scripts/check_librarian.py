@@ -7,10 +7,12 @@ collect --service librarian|api [--probe]    INSIDE a release container, fed on 
     the value), the librarian heartbeat (librarian) or the risk-judge chain (api). --probe GETs
     each profile's base URL without credentials: reachability only. One JSON line on stdout.
 evaluate --llm-env present|absent --librarian FILE --api FILE     on the HOST (remote-deploy.sh,
-    after cutover). Exit 1 when llm.env enables the librarian but the heartbeat is not enabled
-    with the configured role (R2: observer), when the api does not see the same switch (the risk
-    judge and the W2b enqueue run there) or a provider key is missing. An unreachable provider
-    is REPORTED, never fatal (jobs wait, risk_check answers retrieval-only).
+    after cutover). llm.env present = the R2 configuration, validated strictly (Sol 48): exit 1
+    unless the api settings, the librarian settings AND the heartbeat all say enabled=true, role
+    observer, and both settings say HLM_LLM_MODE=live; unless the api's risk-judge chain loads
+    and is non-empty; and unless every profile key is set. llm.env absent = R1-style: PASS only
+    while everything idles. An unreachable provider is REPORTED, never fatal (jobs wait,
+    risk_check answers retrieval-only).
 job --version-id V [--wait S]                INSIDE the api container (remote_gates.sh
     --librarian): waits for the librarian_write job(s) of V's source event, then prints their
     status, each job's librarian event (role, outcome, mutation ops, questions) and whether V has
@@ -124,6 +126,42 @@ def _load(path: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) and "error" not in data else None
 
 
+#: The R2 configuration (D-058): every source must agree on exactly these values.
+R2_ENABLED, R2_MODE, R2_ROLE = True, "live", "observer"
+
+
+def _r2_failures(lib: dict[str, Any], api: dict[str, Any], hb: dict[str, Any]) -> list[str]:
+    """llm.env present: the api settings, the librarian settings and the heartbeat must all be
+    enabled/live/observer, the api's risk judge must load with a non-empty chain, keys set."""
+    failures = []
+    for name, rep in (("api", api), ("librarian", lib)):
+        if rep.get("enabled") is not R2_ENABLED:
+            failures.append(f"{name} settings: HLM_LIBRARIAN_ENABLED={rep.get('enabled')} (R2: true)")
+        if rep.get("llm_mode") != R2_MODE:
+            failures.append(f"{name} settings: HLM_LLM_MODE={rep.get('llm_mode')} (R2: {R2_MODE})")
+        if rep.get("role") != R2_ROLE:
+            failures.append(f"{name} settings: HLM_LIBRARIAN_ROLE={rep.get('role')} (R2: {R2_ROLE})")
+        if rep.get("profiles_error"):
+            failures.append(f"{name}: provider profiles do not load ({rep['profiles_error']})")
+        missing = [p.get("name") for p in rep.get("profiles") or [] if not p.get("key_set")]
+        if missing:
+            failures.append(
+                f"{name}: provider key missing for {','.join(map(str, missing))} (install_llm_env.sh)"
+            )
+    if "error" in hb:
+        failures.append(f"no librarian heartbeat ({hb['error']})")
+    else:
+        if hb.get("enabled") is not R2_ENABLED:
+            failures.append(f"heartbeat enabled={hb.get('enabled')} (R2: True)")
+        if hb.get("role") != R2_ROLE:
+            failures.append(f"heartbeat role={hb.get('role')} (R2: {R2_ROLE})")
+    if api.get("risk_judge_error"):
+        failures.append(f"api risk-judge configuration error ({api['risk_judge_error']})")
+    elif not api.get("risk_judge"):
+        failures.append("api risk-judge chain is empty (no qualified profile: risk_check would never judge)")
+    return failures
+
+
 def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
     lib, api = _load(librarian_path), _load(api_path)
     failures: list[str] = []
@@ -132,7 +170,6 @@ def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
         print(f"RESULT librarian FAIL no usable report from {'/'.join(missing)} (check_librarian.py collect)")
         return 1
     hb = lib.get("heartbeat") or {}
-    on = bool(lib.get("enabled")) and lib.get("llm_mode") != "off"
     print(
         f"librarian: llm.env={llm_env} enabled={str(lib.get('enabled')).lower()} role={lib.get('role')} "
         f"mode={lib.get('llm_mode')} profile={lib.get('profile')} fallback={lib.get('fallback')}"
@@ -148,9 +185,10 @@ def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
             "librarian spend: "
             + " ".join(f"{k}={hb.get(k)}" for k in ("spend_hour_usd", "spend_today_usd", "reserved_usd"))
         )
+    judge = api.get("risk_judge_error") and f"ERROR {api['risk_judge_error']}"
     print(
-        f"api: enabled={str(api.get('enabled')).lower()} mode={api.get('llm_mode')} "
-        f"risk_judge={','.join(api.get('risk_judge') or []) or '-'}"
+        f"api: enabled={str(api.get('enabled')).lower()} role={api.get('role')} mode={api.get('llm_mode')} "
+        f"risk_judge={judge or ','.join(api.get('risk_judge') or []) or '-'}"
         " (empty: risk_check answers retrieval-only)"
     )
     for profile in lib.get("profiles") or []:
@@ -163,44 +201,46 @@ def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
             state = f"UNREACHABLE ({pr.get('error')}); reported only: jobs wait, risk_check is retrieval-only"
         key = "set" if profile.get("key_set") else "MISSING"
         print(f"provider {profile.get('name')} {profile.get('base_url')}: key {key}, {state}")
-    if lib.get("profiles_error"):
-        failures.append(f"provider profiles do not load ({lib['profiles_error']})")
-    if bool(api.get("enabled")) != bool(lib.get("enabled")) or api.get("llm_mode") != lib.get("llm_mode"):
-        failures.append("api and librarian see different HLM_LIBRARIAN_ENABLED/HLM_LLM_MODE (llm.env mount)")
+    if (api.get("enabled"), api.get("llm_mode"), api.get("role")) != (
+        lib.get("enabled"),
+        lib.get("llm_mode"),
+        lib.get("role"),
+    ):
+        failures.append(
+            "api and librarian settings differ (HLM_LIBRARIAN_ENABLED/HLM_LLM_MODE/ROLE: llm.env mount)"
+        )
     if llm_env == "absent":
-        if on:
-            failures.append("librarian enabled without llm.env (the key and the budget guard live there)")
+        # R1-style: no key, no switch. PASS only while everything idles.
+        active = [
+            name
+            for name, on in (
+                ("api", api.get("enabled") is True and api.get("llm_mode") != "off"),
+                ("librarian", lib.get("enabled") is True and lib.get("llm_mode") != "off"),
+                ("heartbeat", hb.get("enabled") is True),
+            )
+            if on
+        ]
+        if active:
+            failures.append(
+                f"librarian enabled without llm.env ({','.join(active)};"
+                " the key and the budget guard live there)"
+            )
         else:
             print("librarian: idle (no llm.env): no job leased, no provider call, risk_check retrieval-only")
-    elif not on:
-        print("librarian: switched off in llm.env (HLM_LIBRARIAN_ENABLED=false or HLM_LLM_MODE=off): idle")
-        if hb.get("enabled") is True:
-            failures.append("heartbeat says enabled although llm.env switches the librarian off")
     else:
-        if "error" in hb:
-            failures.append("no librarian heartbeat")
-        else:
-            if hb.get("enabled") is not True:
-                failures.append(
-                    f"heartbeat enabled={hb.get('enabled')} although llm.env enables the librarian"
-                )
-            if hb.get("role") != lib.get("role"):
-                failures.append(f"heartbeat role={hb.get('role')}, configured {lib.get('role')}")
-        if lib.get("role") != "observer":
-            print(
-                f"librarian: role {lib.get('role')} is above observer:"
-                " it needs the owner's decision event (D-062)"
-            )
-        missing = [p.get("name") for p in lib.get("profiles") or [] if not p.get("key_set")]
-        if missing:
-            failures.append(f"provider key missing for {','.join(map(str, missing))} (install_llm_env.sh)")
+        # R2: llm.env present. Anything but enabled/live/observer everywhere is a failed release
+        # (to deploy with the librarian off, remove llm.env first: install_llm_env.sh --remove).
+        failures += _r2_failures(lib, api, hb)
     if failures:
         print("RESULT librarian FAIL " + "; ".join(failures))
         return 1
-    print(
-        f"RESULT librarian PASS llm.env={llm_env} enabled={str(on).lower()}"
-        f" role={hb.get('role') or lib.get('role')}"
-    )
+    if llm_env == "absent":
+        print("RESULT librarian PASS llm.env=absent enabled=false (idle)")
+    else:
+        print(
+            f"RESULT librarian PASS llm.env=present enabled=true mode={R2_MODE} role={R2_ROLE}"
+            f" risk_judge={','.join(api['risk_judge'])}"
+        )
     return 0
 
 
