@@ -44,6 +44,8 @@ Owner framing: the librarian's gradual supervised learning (observe → apply) h
 
 - 1x:xx D-088/D-089/D-090 recorded. Pivot hold-out: query rewrite passes all Sol 53 thresholds (Turkish 17→26, +8.3 pts); cap OFF; renditions (slice 2 + 0009) deferred out of R3 until translate ≥90% acceptance. J: review 60 fixes (legacy proposal NULL strand, SCC cycles, clause, dump mask, ordering property) + int-r3-j merge with main. L: D-088 fixes + pivot-s1 branch + translate reliability. R3 = int-r3-j + pivot-s1 (rewrite ON) after a delta dual review and a re-measure on final code.
 
+- 1x:xx D-091/D-092 (Nemotron free: not a reviewer, 0–1/12), D-093/D-094 (owner OK: per-task fallbacks glm53-flash / deepseek-flash / qwen-fast risk). int-r3-j @ 3cdeb61 (J + main) passed review 61 except 3 narrow items → fixing on int-r3-j-fix. In flight: int-r3-j-fix, L (D-088 fixes + pivot-s1 + translate), F (wf-fallback-per-task from 3cdeb61). R3 = int-r3-j-fix + pivot-s1 (rewrite ON) + F (if ready); then re-measure hold-out on final code → VM rehearsal → prod → e2e re-run; v3 librarian (D-089) after R3 base is on main.
+
 ## GOAL (D-051/D-058) — active
 Phases 2-5 per docs/decisions/PHASE2-4-ROADMAP.md → gates → incremental releases → final acceptance (HLMemo self-migration, then the corpus-A project) → delete local dev stack + lima VMs.
 State 2026-09-23 night: **R1 is LIVE in production** (ee6ce9c, D-068): D-055 retrieval, W0a access hardening (ops over SSH, closed registration), W2a librarian foundation (DISABLED). Owner device id 21 `cemals-mb-pro-3` (hlmemo:write); the three CLIs point to production; the repo hlm.toml points to production, project hlmemo. **Dogfood D1 starts in the next chat** (a restart is needed so the MCP connection uses device 21).
