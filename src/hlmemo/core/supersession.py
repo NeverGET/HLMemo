@@ -16,11 +16,13 @@ Two deterministic rules, applied after RRF fusion and the §4.9 dedupe:
    hidden. An ordering constraint "after the item that replaced the statement" exists ONLY when
    (i) the 6a96ba1 statement rule holds (the matched chunk contains the span and its statement(s)
    sharing the most query terms overlap it; no shared term at all: only if the span is most of the
-   chunk) AND (ii) every query term found in the chunk occurs inside the span and NOT outside it (a
-   term that also matches the valid part — "port" in "API uses port 8080 and backups use port
-   9090" — means no demotion). Constraints inside a cyclic component are all ignored (the original
-   interleaving stays). The hits are then placed so that every constraint holds and EVERY hit ranks
-   no worse than max(its baseline rank, its 6a96ba1 rank) (D-087: never worse than the
+   chunk) AND (ii) the span occurs exactly once, on term boundaries, and every query term found in
+   the chunk occurs inside it and NOT anywhere outside it, the whole chunk scanned (a term that
+   also matches the valid part — "port" in "API uses port 8080 and backups use port 9090" — or a
+   second copy of the span means no demotion; review 61). Constraints inside a cyclic component
+   are all ignored (the original interleaving stays). The hits are then placed so that every
+   constraint holds and EVERY hit ranks no worse than max(its baseline rank, its 6a96ba1 rank)
+   (D-087: never worse than the
    measured-neutral read side): each hit gets that deadline and Lawler's backward rule (place last,
    among the hits whose constraints allow it, the one with the latest deadline; ties: the later
    baseline rank) meets every deadline, because the 6a96ba1 order itself does. Runs on the fetched
@@ -34,7 +36,7 @@ import heapq
 import re
 from typing import Any
 
-from hlmemo.core.normalize import extract_terms, normalize
+from hlmemo.core.normalize import extract_terms, normalize, term_spans
 
 
 def _title_key(f: Any) -> str:
@@ -101,19 +103,40 @@ def _old_rule(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
     return _statement_rule(chunk_text, span, chunk, query_terms)
 
 
+def _span_starts(chunk: str, span: str) -> list[int]:
+    """Every start offset of ``span`` in ``chunk``, overlapping occurrences included."""
+    out: list[int] = []
+    i = chunk.find(span)
+    while i != -1:
+        out.append(i)
+        i = chunk.find(span, i + 1)
+    return out
+
+
 def matched_in_span(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
     """Did the query match the OUTDATED span (``quote``) of this chunk, and nothing else of it?
     Rule 3 (i) AND (ii), so it never demotes a hit the 6a96ba1 rule would keep. ``query_terms``:
-    the query's normalized terms (``extract_terms``)."""
+    the query's normalized terms (``extract_terms``).
+
+    (ii) is occurrence-aware and scans the WHOLE rest of the chunk (review 61): the span must
+    occur exactly once and on term boundaries (a second copy of the outdated statement, or a
+    term the span cuts in two, leaves it open which text the query matched: no demotion), and
+    no query term may occur anywhere outside that one occurrence (every term, no ``TERM_MAX``
+    cap). A query sharing no term with the chunk was already decided by the statement rule
+    (the span is most of the chunk)."""
     if not _old_rule(chunk_text, quote, query_terms):
         return False
     span = _flat(quote)
     chunk = _flat(chunk_text)
-    inside = query_terms & set(extract_terms(span))
-    outside = query_terms & set(extract_terms(chunk.replace(span, " | ")))  # the rest of the chunk
-    if not inside and not outside:  # a semantic match: the statement rule decided (span = most of it)
-        return True
-    return bool(inside) and not outside  # any evidence outside the span (mixed) = no demotion
+    starts = _span_starts(chunk, span)
+    if len(starts) != 1:
+        return False  # the outdated statement is quoted more than once: ambiguous
+    start, end = starts[0], starts[0] + len(span)
+    if any(s < start < e or s < end < e for s, e in term_spans(chunk)):
+        return False  # a term of the chunk straddles the span boundary: ambiguous
+    rest = f"{chunk[:start]} | {chunk[end:]}"  # everything outside the one occurrence
+    outside = {rest[s:e] for s, e in term_spans(rest)}
+    return not (query_terms & outside)  # any evidence outside the span (mixed) = no demotion
 
 
 def _edges(

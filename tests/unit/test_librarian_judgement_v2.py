@@ -305,6 +305,50 @@ def test_partial_demotion_needs_the_evidence_inside_the_span() -> None:
     assert [h.logical_id for h in demote_partially_superseded(hits, link, _terms("API port"))] == [2, 1]
 
 
+FILLER = (
+    "alpha bravo charlie delta echo foxtrot golf hotel india juliett kilo lima mike november oscar"
+    " papa quebec romeo sierra tango uniform victor whiskey xray yankee"
+)  # 25 distinct words
+
+
+def test_review61_the_whole_rest_of_the_chunk_is_scanned() -> None:
+    """Review 61 (a): the query term occurs outside the span only after "and" + 25 distinct filler
+    words, i.e. beyond the first TERM_MAX (24) outside terms. It is still found: no demotion."""
+    from hlmemo.core.normalize import TERM_MAX
+    from hlmemo.core.supersession import matched_in_span
+
+    span = "API uses port 8080"
+    text = f"{span} and {FILLER} backups use port 9090."
+    assert len(FILLER.split()) == 25 and len(_terms(f"and {FILLER}")) == TERM_MAX
+    assert not matched_in_span(text, span, set(_terms("port")))
+    assert matched_in_span(text, span, set(_terms("API 8080")))  # the outdated clause alone: demoted
+    hits = [_Hit(1, 0.9, _Row(text)), _Hit(2, 0.8, _Row("API now uses port 8765."))]
+    link = [(2, 1, span)]
+    assert [h.logical_id for h in demote_partially_superseded(hits, link, _terms("port"))] == [1, 2]
+    assert [h.logical_id for h in demote_partially_superseded(hits, link, _terms("API 8080"))] == [2, 1]
+
+
+def test_review61_an_ambiguous_span_occurrence_is_never_demoted() -> None:
+    """Review 61 (b): the exact outdated span occurs twice (or a term straddles its boundary):
+    which text the query matched is ambiguous, so no demotion."""
+    from hlmemo.core.supersession import matched_in_span
+
+    span = "API uses port 8080"
+    dup = "API uses port 8080. Backups: API uses port 8080 too."
+    assert not matched_in_span(dup, span, set(_terms("API 8080")))
+    assert not matched_in_span(dup, span, set(_terms("port")))
+    hits = [_Hit(1, 0.9, _Row(dup)), _Hit(2, 0.8, _Row("API now uses port 8765."))]
+    assert [h.logical_id for h in demote_partially_superseded(hits, [(2, 1, span)], _terms("API 8080"))] == [
+        1,
+        2,
+    ]
+    overlapping = "the cache the cache the cache TTL"  # "the cache the cache" twice, overlapping
+    assert not matched_in_span(overlapping, "the cache the cache", set(_terms("TTL")))
+    cut = "API uses port 80800 and backups retain 30 days."  # the span ends inside "80800"
+    assert not matched_in_span(cut, span, set(_terms("API port")))
+    assert matched_in_span("API uses port 8080. Backups retain 30 days.", span, set(_terms("API port")))
+
+
 def _rule_6a96ba1(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
     """A frozen copy of the read-side rule of 6a96ba1 (measured neutral on the hold-out, D-087)."""
     import re
