@@ -124,3 +124,19 @@ Why:
 - Larger caps improve reach (not-candidate pairs 4 → 1), but the newly reached pairs end judged-none or time-rejected.
 Proposal precision (blind judge, 40 C2 proposals): strict .175 (CI .09–.32), lenient .925; 36/40 are contradicts-only, most of them real updates proposed as bare contradictions (v2 was .48). Throughput: 5.1–5.2 jobs/min for C0–C2, 3.96 for C3, 1.82 for C4 (17.4 calls/job). Spend $2.56. Leaderboard merged; data in docs/private/realdata-{yt,hlmemo}/results-librarian-v3/.
 Consequences: (1) v3 is NOT promoted and the observer role stays (D-076). (2) The pair-level approach (link two whole items) cannot fix stale-first on multi-statement memories. The next step is a strategy decision (memory granularity, retrieval, or how the gate measures a supersession clue), taken with a design consult and the owner, not another v4 of the same approach. (3) R3 is unaffected.
+D-104 | 2026-09-25 | ACCEPTED (orchestrator; the architecture decision is reserved for the owner after the pilot) | **Stale-first strategy after D-103: a ceiling pilot first, then an owner decision between memory granularity (A) and span-bound revision (B).** Consult 68 compared three positions:
+- orchestrator: A then B (written before reading the consults);
+- gpt-5.6-sol: A, then C, then B;
+- astra-low: B, then A.
+All three agree that no pair-level v4 is built, G-E-TEMP stays ≤4/15 unchanged, production stays observer, and a ceiling pilot of ≤1–2 days runs before any architecture change. Any clue-aware answer metric (C) may only be ADDED, and only as an owner-approved second gate ("served stale error ≤4/15", false-current-clue ≤.02), never replacing the raw gate.
+**Pilot (disposable copies, prod-rule import, rewrite state fixed, budget 3000):**
+- Arm A0: atomic claim blocks from a FROZEN deterministic splitter built without seeing the hold-out. The parent is kept verbatim as provenance; children carry derived_from, span offsets and the splitter version.
+- Arm A-oracle: A0 plus a close of only the labelled stale child. This is an architectural ceiling, not a quality claim.
+- Arm A-v3: A0 plus the real v3 C2 librarian, approve-all.
+- Arm B-oracle: a span-bound revision of the stale item, replacing only the outdated span with the current value; unchanged spans are kept verbatim and the old version stays in history.
+Measures: A/B stale-first, G-E-W2b per category, G3 (≤1 pt drop), G4/G-L3 (p95 ≤500 ms), and a blind split audit (no fabrication or negation loss, coverage of the parent text).
+**Decision rules:**
+- If no oracle arm reaches ≤4/15, both are falsified; go to targeted retrieval (D) or accept observer (E).
+- If an oracle arm passes but its real arm fixes fewer than 2 cases, the bottleneck is judgement/direction and there is no full rollout.
+- Otherwise the owner chooses the architecture.
+Consults: docs/consults/68-*.
