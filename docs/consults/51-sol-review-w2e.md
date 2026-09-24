@@ -1,0 +1,18 @@
+## Verdict
+
+**DO-NOT-MERGE.** Sağlayıcıya gönderim öncesi gizlilik kapısı cihaz kapsamını ve ortak sahipli projeleri denetliyor; ancak çağrı sonrası denetim, okunamaz hâle gelen içeriğin yanıta taşınmasını her durumda önlemiyor. İnceleme statiktir; test çalıştırmadım.
+
+## Findings
+
+| Önem | Bulgu |
+|---|---|
+| Kritik | [Çağrı sonrası süzme](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/core/synthesis_service.py:303) görünmez bir alıntıyı çıkarıp başka alıntısı kalan **cümlenin tamamını** koruyor. Cümle, artık okunamayan kaynaktaki bilgiyi sızdırabilir. `hits` ve kart da çağrı sonrasında yeniden süzülmüyor. Görünürlüğü kaybolan herhangi bir kaynağa dayanan cümleyi tümüyle düşürün; döndürülen içeriği yeniden denetleyin. |
+| Yüksek | [Yeniden denetim](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/core/synthesis_service.py:137) tüm ortak sahipli proje izinlerini aramıyor: kullandığı [sorgu](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/db/risk_queries.py:28) tek proje eşleşmesini yeterli sayıyor. Ayrıca sağlayıcı öncesi [kapı](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/librarian/privacy.py:90) isteğin token neslini karşılaştırmıyor. D-062’nin güncel yetki koşullarını her denetimde uygulayın. |
+| Yüksek | [Alıntı doğrulayıcı](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/librarian/tasks/synthesis.py:162) yalnızca alıntı kimliğinin gösterilmiş olmasını doğruluyor; tersini söyleyen bir cümle de geçer. Ucuz ilk koruma: sayı, kimlik, yol ve komutların alıntılanan metinde aynen bulunmasını şart koşup uyumsuz cümlede abstain edin. Bu, anlamsal doğruluk garantisi değildir. |
+| Orta | [Paketleme](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/core/synthesis_service.py:145) düşen hit’in alıntısını silip çoklu alıntılı cümleyi tutabiliyor; yukarıdaki destek açığını büyütüyor. Buna karşılık son nesne `Meter.settle` ile yeniden sayılıyor. Bayraksız yol eski sorgu işleyicisini çağırıyor ve [bayt karşılaştırması](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/tests/integration/test_w2e_synthesis.py:731) mevcut. |
+| Orta | `detach` havuzu LLM sırasında serbest bırakıyor; fakat [dört çağrı sınırı](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/librarian/tasks/synthesis.py:76) süreç başına. Altı saniyelik sınır toplam isteği kapsamıyor ve başarısız sentez bile [yeniden havuz bağlantısı](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/core/synthesis_service.py:291) bekliyor. Sekiz bağlantı dolduğunda hızlı yol yerine istek hatası çıkabilir; 2 vCPU eşzamanlı yük kapısı gerekli. |
+| Orta | **τ_s=0.0434** yalnızca uygulayıcının yazdığı [doküman sorularıyla](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/tests/fixtures/synthesis/README.md) kalibre edilmiş. G-LIVE-D’de anahtarın yanıtta geçmesi başarı sayılıyor; alıntı desteği ve W-E’nin A∪B kategori/eski iddia koşulları ölçülmüyor. Bildirilen artışlar bu eşik için bağımsız doğrulama sayılmaz. |
+
+## Recommendation for the default (on/off) of the preflight wrapper
+
+**Off.** Mevcut `auto` [varsayılanını](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/src/hlmemo/cli/preflight.py:178) kapatın. Gizlilik düzeltmeleri ve [W-E varsayılan açma kapısı](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a5e00c21c8c7b2440/docs/decisions/PHASE2-4-ROADMAP.md:105) geçilene kadar sentez açık seçimle kullanılmalı.
