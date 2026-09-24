@@ -1,8 +1,9 @@
 """``hlm import`` / ``hlm export`` over the real MCP wire (ASGI app + the official SDK client).
 
-``hlm.export`` is dispatched but never advertised (CC-4): ``tools/list`` still has the five agent
-tools, while the CLI's session (``MemoryClient.session``) calls it and ``memory.write`` with the
-W1.5 item fields through the same transport the CLI uses.
+``hlm.export`` is dispatched but never advertised (CC-4): ``tools/list`` has only the agent
+tools (five + W2d risk_check/register_lesson + W2c answer), while the CLI's session
+(``MemoryClient.session``) calls it and ``memory.write`` with the W1.5 item fields through the same
+transport the CLI uses.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ async def test_export_tool_is_unlisted_but_callable_and_the_cli_session_imports(
         async with sdk_client(client.app, token) as sdk:
             listed = await sdk.list_tools()
             assert sorted(t.name for t in listed.tools) == [
+                "memory.answer",  # W2c
                 "memory.call_the_day",
                 "memory.drilldown",
                 "memory.query",

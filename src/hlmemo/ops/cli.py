@@ -7,6 +7,7 @@ Run inside the api container (it has the app DSN), normally through `deploy/scri
     python -m hlmemo.ops device grant REF SLUG ROLE | ungrant REF SLUG
     python -m hlmemo.ops project create SLUG [--name N] [--exists-ok] | project list
     python -m hlmemo.ops status [--json]
+    python -m hlmemo.ops librarian audit|questions list|approve-batch|role set|expire (ops/librarian.py)
 
 `device mint` and `device rotate` print ONLY the token on stdout (so it can be piped into
 `hlm device login --token-stdin`); their metadata goes to stderr as one JSON line. Every command
@@ -28,7 +29,7 @@ from psycopg import Error as DatabaseError
 from hlmemo.auth.errors import HlmError
 from hlmemo.config import get_settings
 from hlmemo.core.errors import ToolError
-from hlmemo.ops import service
+from hlmemo.ops import librarian, service
 
 EX_REFUSED = 1
 EX_USAGE = 2
@@ -84,6 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
         "status", help="jobs ledger, worker progress, librarian heartbeat, devices, migration"
     )
     st.add_argument("--json", action="store_true")
+    librarian.add_parser(sub)  # W2b/W2c: librarian audit|questions|approve-batch|role|expire
     return ap
 
 
@@ -192,6 +194,8 @@ async def _dispatch(conn: AsyncConnection, args: argparse.Namespace, settings: A
             raise HlmError("E_INVALID_ARG", "close-duplicates closes items (validity ends): pass --yes")
         _print(await service.close_source_duplicates(conn))
         return 0
+    if group == "librarian":
+        return await librarian.dispatch(conn, args)
     raise HlmError("E_INVALID_ARG", f"unknown command {group} {action}")
 
 

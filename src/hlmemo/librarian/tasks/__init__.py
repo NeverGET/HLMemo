@@ -17,6 +17,9 @@ JOB_NAMES = {
     "contradiction": "contradiction",
     "summary": "summarization",
     "risk": "risk_check",
+    "place": "placement",
+    "relate": "relation",
+    "relate_verify": "relation_check",
 }
 
 
@@ -33,6 +36,24 @@ def user_message(task: str, payload: dict[str, Any], rules: list[dict[str, Any]]
 
 
 @dataclass(slots=True)
+class Proposal:
+    """One proposal (W2b): the unmaterialized ``actions`` that belong together (e.g. contradicts +
+    supersedes links + the bi-temporal close of the older item), applied or asked as ONE question.
+
+    ``auto_ok``: the proposal is in the W2b auto-rule class (only then may ``autonomous`` apply it
+    without an owner decision). ``assessed`` maps every subject logical id (str) to the version the
+    model assessed (the apply-time staleness check). ``project_ids``: every project it touches."""
+
+    kind: str  # contradiction | link | widen_scope (librarian_questions.kind)
+    actions: list[dict[str, Any]]
+    auto_ok: bool
+    assessed: dict[str, int]
+    subject_clues: list[str]
+    project_ids: list[int]
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class Plan:
     op: str
     outcome: (
@@ -40,10 +61,12 @@ class Plan:
     )
     capabilities: dict[str, Any]
     calls: list[dict[str, Any]] = field(default_factory=list)
-    #: candidate mutations (unmaterialized) with their proposal metadata
-    mutations: list[dict[str, Any]] = field(default_factory=list)
-    auto_ok: list[bool] = field(default_factory=list)
-    meta: list[dict[str, Any]] = field(default_factory=list)
+    #: proposals (questions, or direct mutations in the auto-rule class under ``autonomous``)
+    proposals: list[Proposal] = field(default_factory=list)
+    #: placement signals (``signal_upsert``): written in EVERY role, never a proposal (W2b)
+    signals: list[dict[str, Any]] = field(default_factory=list)
+    #: ``apply_batch``: the owner-approved questions ``[(question_id, proposal row dict)]``
+    approved: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     request_extra: dict[str, Any] = field(default_factory=dict)
     #: follow-up jobs to enqueue with the result event (recorded in resolved.jobs)
     jobs: list[dict[str, Any]] = field(default_factory=list)
@@ -55,4 +78,4 @@ class Handler(Protocol):
     async def plan(self, w: Any, job: Any) -> Plan: ...
 
 
-__all__ = ["JOB_NAMES", "Handler", "Plan", "user_message"]
+__all__ = ["JOB_NAMES", "Handler", "Plan", "Proposal", "user_message"]

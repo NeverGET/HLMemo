@@ -68,10 +68,11 @@ async def make_device(
 class Caller:
     """``call(tool, args)`` over the services; ToolError → ToolCallError like the MCP client."""
 
-    def __init__(self, connect, ctx: AuthContext) -> None:  # noqa: ANN001
+    def __init__(self, connect, ctx: AuthContext, *, write_deps: Any = None) -> None:  # noqa: ANN001
         self.connect = connect
         self.ctx = ctx
         self.deps = default_read_deps()
+        self.write_deps = write_deps  # None = write_service.default_deps() (librarian per settings)
         self.calls: list[str] = []
 
     async def __call__(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -79,9 +80,11 @@ class Caller:
         async with await self.connect() as conn:
             try:
                 if tool == "memory.write":
-                    res = as_result_dict(await write(conn, self.ctx, args, raw=args))
+                    res = as_result_dict(await write(conn, self.ctx, args, raw=args, deps=self.write_deps))
                 elif tool == "memory.call_the_day":
-                    res = as_result_dict(await call_the_day(conn, self.ctx, args, raw=args))
+                    res = as_result_dict(
+                        await call_the_day(conn, self.ctx, args, raw=args, deps=self.write_deps)
+                    )
                 elif tool == "hlm.export":
                     res = await export(conn, self.ctx, args, deps=self.deps)
                 elif tool == "memory.raw":

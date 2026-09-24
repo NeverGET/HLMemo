@@ -140,7 +140,7 @@ async def test_pair_check_replays_recorded_model_output(db_dsn, connect, world: 
     assert call["output"]["contradicts"] is True and call["output"]["supersedes"] == "B"
     resolved = payload["resolved"]
     assert resolved["outcome"] == "proposed" and resolved["mutations"] == []
-    assert {qn["proposal"]["mutation"]["rel"] for qn in resolved["questions"]} == {
+    assert {qn["proposal"]["actions"][0]["rel"] for qn in resolved["questions"]} == {
         "contradicts",
         "supersedes",
     }

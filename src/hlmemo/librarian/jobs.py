@@ -13,7 +13,7 @@ recorded in that event's ``payload.resolved.jobs``; ``run_after``/``created_at``
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -83,14 +83,16 @@ async def insert_job_row(
     priority: int,
     at: datetime,
     job_id: int | None = None,
+    run_after: datetime | None = None,
 ) -> bool:
+    run_after = at if run_after is None else run_after
     if job_id is None:  # events recorded before job ids were (none in W2a's own paths)
         cur = await conn.execute(
             """
             INSERT INTO jobs (kind, dedupe_key, source_event_id, payload, run_after, created_at, priority)
             VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING
             """,
-            (kind, dedupe_key, source_event_id, Jsonb(payload), at, at, priority),
+            (kind, dedupe_key, source_event_id, Jsonb(payload), run_after, at, priority),
         )
     else:
         cur = await conn.execute(
@@ -100,7 +102,7 @@ async def insert_job_row(
             OVERRIDING SYSTEM VALUE
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedupe_key) DO NOTHING
             """,
-            (job_id, kind, dedupe_key, source_event_id, Jsonb(payload), at, at, priority),
+            (job_id, kind, dedupe_key, source_event_id, Jsonb(payload), run_after, at, priority),
         )
     return cur.rowcount == 1
 
@@ -125,9 +127,12 @@ def job_spec(
 async def insert_recorded_jobs(
     conn: AsyncConnection, jobs: list[dict[str, Any]], event_id: int, at: datetime
 ) -> int:
-    """Insert the job descriptors recorded in an event (live path and replay share this)."""
+    """Insert the job descriptors recorded in an event (live path and replay share this). A
+    descriptor's optional ``delay_s`` puts its first ``run_after`` that far after the event's T
+    (W2b: a review waits for the embed worker instead of being handed back right away)."""
     n = 0
     for j in jobs:
+        delay = float(j.get("delay_s") or 0)
         n += await insert_job_row(
             conn,
             kind=j["kind"],
@@ -137,6 +142,7 @@ async def insert_recorded_jobs(
             priority=int(j.get("priority", DEFAULT_PRIORITY)),
             at=at,
             job_id=j.get("job_id"),
+            run_after=at + timedelta(seconds=delay) if delay else None,
         )
     return n
 

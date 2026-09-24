@@ -3,7 +3,8 @@
 Upgrade from 0006 with a pre-existing user project: the W1.5 columns, constraints (validated),
 index and ``code_refs`` exist; the user project gets its D-015 skeleton card, the reserved system
 projects do not; an upgrade interrupted before the backfill completes when re-run; a downgrade
-round-trips while no row carries a source and refuses once one does.
+round-trips while no row carries a source and refuses once one does. Every upgrade targets
+``0007_import`` itself (pinned: 0008_librarian_tasks follows it on the chain, D-069).
 """
 
 from __future__ import annotations
@@ -81,10 +82,10 @@ def test_migration_0007_upgrade_backfill_recovery_and_downgrade(fresh_dsn: str) 
     with psycopg.connect(fresh_dsn) as conn:
         conn.execute("INSERT INTO projects (slug, name) VALUES ('legacy', 'Legacy project')")
     # an upgrade that dies after the DDL (before the backfill) leaves a state a re-run completes
-    failed = _alembic(fresh_dsn, "upgrade", "main@head", fault="0007:backfill")
+    failed = _alembic(fresh_dsn, "upgrade", "0007_import", fault="0007:backfill")
     assert failed.returncode != 0 and "injected fault at backfill" in failed.stderr
     assert _version(fresh_dsn) == [("0006_librarian",)]
-    ok = _alembic(fresh_dsn, "upgrade", "main@head")
+    ok = _alembic(fresh_dsn, "upgrade", "0007_import")
     assert ok.returncode == 0, ok.stderr[-2000:]
     assert _version(fresh_dsn) == [("0007_import",)]
     assert _cards(fresh_dsn) == [("hlm-global", 0), ("hlm-librarian", 0), ("legacy", 1)]
@@ -126,7 +127,7 @@ def test_migration_0007_upgrade_backfill_recovery_and_downgrade(fresh_dsn: str) 
     # round trip while no source exists: the backfilled card stays (plain Phase-0 data), no second card
     down = _alembic(fresh_dsn, "downgrade", "0006_librarian")
     assert down.returncode == 0, down.stderr[-2000:]
-    assert _alembic(fresh_dsn, "upgrade", "main@head").returncode == 0
+    assert _alembic(fresh_dsn, "upgrade", "0007_import").returncode == 0
     assert _cards(fresh_dsn) == [("hlm-global", 0), ("hlm-librarian", 0), ("legacy", 1)]
     # a version carrying a source makes the downgrade refuse (projection data only replay restores)
     with psycopg.connect(fresh_dsn) as conn:
@@ -194,7 +195,7 @@ def test_migration_0007_never_blocks_writers_for_a_second(fresh_dsn: str) -> Non
         t.start()
     time.sleep(0.3)
     t_up = time.monotonic()
-    up = _alembic(fresh_dsn, "upgrade", "main@head")
+    up = _alembic(fresh_dsn, "upgrade", "0007_import")
     up_s = time.monotonic() - t_up
     time.sleep(0.2)
     stop.set()
@@ -213,7 +214,7 @@ def test_migration_0007_duplicate_open_sources_fail_clearly_and_reconcile(fresh_
     leaves no INVALID index; ``ops sources close-duplicates --yes`` reconciles; the re-run is clean."""
     assert _alembic(fresh_dsn, "upgrade", "0006_librarian").returncode == 0
     # the DDL ran but the index did not: duplicates can exist (as rows written before 0007 finished)
-    early = _alembic(fresh_dsn, "upgrade", "main@head", fault="0007:index")
+    early = _alembic(fresh_dsn, "upgrade", "0007_import", fault="0007:index")
     assert early.returncode != 0 and "injected fault at index" in early.stderr
     with psycopg.connect(fresh_dsn) as conn:
         pid = conn.execute(
@@ -235,14 +236,14 @@ def test_migration_0007_duplicate_open_sources_fail_clearly_and_reconcile(fresh_
                 (pid, pid, f"dup {n}", n, eid, GOOD),
             )
     # (a) the pre-check names the group and the ops command; nothing half-built is left behind
-    failed = _alembic(fresh_dsn, "upgrade", "main@head")
+    failed = _alembic(fresh_dsn, "upgrade", "0007_import")
     assert failed.returncode != 0
     assert "hold more than one open current item" in failed.stderr
     assert f"({pid}, 'a:b') x2" in failed.stderr and "sources close-duplicates --yes" in failed.stderr
     assert _owner_index(fresh_dsn) == [] and _version(fresh_dsn) == [("0006_librarian",)]
     # (b) without the pre-check the concurrent build dies on 23505; the INVALID index it leaves is
     # dropped on the spot (a re-run never trips over it)
-    raw = _alembic(fresh_dsn, "upgrade", "main@head", fault="0007:skip-duplicate-check")
+    raw = _alembic(fresh_dsn, "upgrade", "0007_import", fault="0007:skip-duplicate-check")
     assert raw.returncode != 0 and "could not create unique index" in raw.stderr
     assert _owner_index(fresh_dsn) == []
     # (c) ops lists the group, refuses to close without --yes, then closes all but the newest
@@ -264,6 +265,6 @@ def test_migration_0007_duplicate_open_sources_fail_clearly_and_reconcile(fresh_
         ).fetchall()
     assert heads == [(older, False), (newer, True)]  # validity ended, nothing deleted
     # (d) the re-run completes with a valid unique index
-    ok = _alembic(fresh_dsn, "upgrade", "main@head")
+    ok = _alembic(fresh_dsn, "upgrade", "0007_import")
     assert ok.returncode == 0, ok.stderr[-2000:]
     assert _owner_index(fresh_dsn) == [(True, True)] and _version(fresh_dsn) == [("0007_import",)]

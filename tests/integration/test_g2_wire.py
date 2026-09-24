@@ -42,6 +42,7 @@ PROJECT = "g2-wire"
 FIVE = {"memory.query", "memory.drilldown", "memory.raw", "memory.write", "memory.call_the_day"}
 W2D = {"memory.risk_check", "memory.register_lesson"}  # W2d (CC-4); the name FIVE is kept for the diff
 FIVE = FIVE | W2D
+ADVERTISED = FIVE | {"memory.answer"}  # W2c (CC-4: 9 tools after Phase 4)
 ENVELOPE_KEYS = {"code", "message", "retryable", "details"}
 READ_TOOLS = ("memory.query", "memory.drilldown", "memory.raw")
 
@@ -119,7 +120,7 @@ async def test_tools_list_has_five_tools_no_output_schema(db_dsn) -> None:
         r = await mcp_rpc(client, token, "tools/list")
         assert r.status_code == 200, r.text
         tools = r.json()["result"]["tools"]
-        assert {t["name"] for t in tools} == FIVE == set(TOOL_NAMES)
+        assert {t["name"] for t in tools} == ADVERTISED == set(TOOL_NAMES)
         for t in tools:
             assert "outputSchema" not in t, t["name"]
             assert t["inputSchema"] == TOOL_BY_NAME[t["name"]].input_schema
@@ -134,10 +135,11 @@ async def test_tools_list_has_five_tools_no_output_schema(db_dsn) -> None:
         assert req["memory.call_the_day"] == {"project", "request_id", "session_id", "client", "notes"}
         assert req["memory.risk_check"] == {"project", "task", "token_budget"}
         assert req["memory.register_lesson"] == {"project", "request_id", "mistake", "fix"}
+        assert req["memory.answer"] == {"project", "request_id", "question_id", "decision"}
 
         async with sdk_client(client.app, token) as sdk:  # type: ignore[attr-defined]
             listed = await sdk.list_tools()
-            assert {t.name for t in listed.tools} == FIVE
+            assert {t.name for t in listed.tools} == ADVERTISED
             assert all(t.output_schema is None for t in listed.tools)
 
 

@@ -20,7 +20,7 @@ from hlmemo.auth.context import AuthContext, Role
 from hlmemo.core.errors import ToolError
 from hlmemo.core.temporal import fmt_ts
 from hlmemo.db import write_queries as q
-from hlmemo.librarian.actor import set_question_status
+from hlmemo.librarian.actor import apply_batch_changes, set_question_status
 from hlmemo.librarian.errors import RoleNotAuthorized
 from hlmemo.librarian.events import CLIENT, NS_LIBRARIAN, insert_system_event
 from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs, job_spec
@@ -33,6 +33,14 @@ def lower(a: str, b: str | None) -> str:
     if b not in _RANK:
         return a
     return a if _RANK[a] <= _RANK[b] else b
+
+
+async def lock_role_order(conn: AsyncConnection, *, exclusive: bool) -> None:
+    """Serialize role decisions with librarian applies (Sol 44 #4): every apply holds the SHARED
+    lock while it reads the role and commits; a role decision takes it EXCLUSIVE. A demotion that
+    commits first is seen by the next apply; an apply in flight commits before the demotion."""
+    fn = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+    await conn.execute(f"SELECT {fn}(4, 0)")
 
 
 async def latest_role_decision(conn: AsyncConnection, project_id: int | None = None) -> str | None:
@@ -64,6 +72,7 @@ async def record_role_decision(
         raise ToolError("E_FORBIDDEN", "the deployment role is set by the operator (admin device) only")
     if project_id is not None and not decided_by.has(project_id, Role.ADMIN):
         raise ToolError("E_FORBIDDEN_PROJECT", "project role override needs admin on the project")
+    await lock_role_order(conn, exclusive=True)
     at = await q.clock_now(conn)
     event_id = await insert_system_event(
         conn,
@@ -109,17 +118,31 @@ async def effective_role(conn: AsyncConnection, configured: str, project_id: int
 async def batch_questions(
     conn: AsyncConnection, batch_id: str, status: str | None = None
 ) -> list[dict[str, Any]]:
-    """The question rows of ``batch_id`` (optionally only one status), locked for update."""
+    """The question rows of ``batch_id`` (optionally only one status), locked for update. An open
+    question past its ``expires_at`` is never returned as open: it cannot be approved (Sol 44 #2)."""
     cur = await conn.execute(
         """
         SELECT question_id::text, project_id, project_ids, status, proposal FROM librarian_questions
          WHERE batch_id = %s AND (%s::text IS NULL OR status = %s)
+           AND NOT (status = 'open' AND expires_at IS NOT NULL AND expires_at <= clock_timestamp())
          ORDER BY question_id FOR UPDATE
         """,
         (batch_id, status, status),
     )
     keys = ("question_id", "project_id", "project_ids", "status", "proposal")
     return [dict(zip(keys, r, strict=True)) for r in await cur.fetchall()]
+
+
+async def decision_round(conn: AsyncConnection, batch_id: str) -> int:
+    """How many decisions of ``batch_id`` already reached an ``apply_batch`` job (each records one
+    ``librarian`` event). An observer hand-back (``role_denied``) reopens the questions; the next
+    decision is round n+1, with its own answer ``request_id`` and apply job key (Sol 46 #7)."""
+    cur = await conn.execute(
+        "SELECT count(*) FROM events WHERE kind = 'librarian'"
+        " AND payload->'request'->>'op' = 'apply_batch' AND payload->'request'->>'batch_id' = %s",
+        (batch_id,),
+    )
+    return int((await cur.fetchone())[0])
 
 
 async def record_batch_decision(
@@ -152,6 +175,8 @@ async def record_batch_decision(
     if unknown:
         raise ToolError("E_INVALID_ARG", f"unknown question ids {sorted(unknown)}")
     at = await q.clock_now(conn)
+    n = await decision_round(conn, batch_id)
+    rnd = f":r{n}" if n else ""  # round 0 keeps the W2a keys
     decided: dict[str, str] = {}
     approved = 0
     for i, r in enumerate(rows):
@@ -163,18 +188,22 @@ async def record_batch_decision(
             jobs = [
                 job_spec(
                     kind="librarian_write",
-                    dedupe_key=f"librarian_apply:{batch_id}",
+                    dedupe_key=f"librarian_apply:{batch_id}{rnd}",
                     priority=4,
                     payload={
                         "op": "apply_batch",
                         "batch_id": batch_id,
                         "project_id": project_id,
                         "capabilities": rows[0]["proposal"].get("capabilities") or {},
-                        "lineage": str(uuid.uuid5(NS_LIBRARIAN, f"lineage:librarian_apply:{batch_id}")),
+                        "lineage": str(uuid.uuid5(NS_LIBRARIAN, f"lineage:librarian_apply:{batch_id}{rnd}")),
                     },
                 )
             ]
         await assign_job_ids(conn, jobs)
+        last = i == len(rows) - 1
+        batches = (
+            [{"batch_id": batch_id, "status": "decided", "decided_by": approver.device_id}] if last else []
+        )
         change = {"question_id": r["question_id"], "status": status, "decided_by": approver.device_id}
         event_id = await insert_system_event(
             conn,
@@ -182,19 +211,27 @@ async def record_batch_decision(
             project_id=project_id,
             device_id=approver.device_id,
             client=approver.client,
-            request_id=uuid.uuid5(NS_LIBRARIAN, f"answer:{r['question_id']}:{approver.device_id}:{status}"),
+            request_id=uuid.uuid5(
+                NS_LIBRARIAN, f"answer:{r['question_id']}:{approver.device_id}:{status}{rnd}"
+            ),
             request={
                 "op": "batch_decision",
                 "batch_id": batch_id,
                 "question_id": r["question_id"],
                 "decision": status,
             },
-            resolved={"recorded_at": fmt_ts(at), "question_status": [change], "jobs": jobs},
+            resolved={
+                "recorded_at": fmt_ts(at),
+                "question_status": [change],
+                "jobs": jobs,
+                "batches": batches,
+            },
             at=at,
         )
         if event_id is None:
             continue
         await set_question_status(conn, [change], at)
+        await apply_batch_changes(conn, batches, event_id, at)
         if jobs:
             await insert_recorded_jobs(conn, jobs, event_id, at)
     return {
@@ -209,6 +246,7 @@ __all__ = [
     "ROLES",
     "batch_questions",
     "check_role_at_start",
+    "decision_round",
     "effective_role",
     "latest_role_decision",
     "lower",
