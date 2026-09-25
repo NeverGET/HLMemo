@@ -385,3 +385,12 @@ D-128 | 2026-09-26 | ACCEPTED | **Prod pre-deploy state for R3.** The owner edit
 - The old-key llm.env.bak-* on the VPS still contains the dev key. The owner may delete it after R3.
 Network: registry-1.docker.io and ghcr.io answer (401, the auth challenge), and huggingface.co answers 200. No HLMemo backup timer exists on the VPS (only dpkg's), so there is nothing to pause.
 The Hostinger snapshot of VM 2002259 was started (action 116674684). It was the first snapshot on this VPS; no prior snapshot existed, so nothing was overwritten.
+D-129 | 2026-09-26 | ACCEPTED | **Release R3 is LIVE in production (805f4cd).** R3 = J (librarian judgement v2, concurrency, stranding fix, D-086/087/095) + F (per-task fallbacks, D-094) + env-aware release tooling (D-111/D-119/D-121). The query rewrite is not included (shelved, D-116). The deploy was attended, behind Hostinger snapshot 377499 of VM 2002259 only (24 h expiry), in the D-108/D-119 order; no rollback was needed. Record: docs/status/R3-PROD-DEPLOY.md, with logs in docs/bakeoff/production-r3/.
+- **Deploy:** the interim cutover check PASSed on the unlabelled env; public downtime 36.1 s.
+- **Env install:** install_llm_env under the deploy lock preserved the operator's prod key (sha prefix 32fe76f56a2b) and the caps 1/2/10. `check_librarian --release r3` PASS, with the exact manifest.
+- **Gates:** remote gates 11/11, with WAN p50 132 / p95 145 ms, risk-check judged=true, and a 21 s restore in the backup-restore drill.
+- **Light e2e:** 8 tools; a write landed; the query found it; risk_check returned judged=true.
+- **Observer:** 0 links, supersessions or closes; items 407 → 411 (the gate and e2e markers only).
+- **Deploy LLM spend:** $0.0014.
+- **Independent orchestrator check:** all services run 805f4cd, current-ref 805f4cd, previous-ref 6902f91, env marker r3, the prod key sha matches, MONTH cap 10, rewrite and cap absent, the librarian is an observer.
+- **Open:** `--accept-release` (deletes the pre-W0 backups) needs a separate owner OK. The old-key llm.env.bak copies on the VPS can be deleted once R3 is accepted. The full e2e re-run is folded into the D-125 dogfooding.
