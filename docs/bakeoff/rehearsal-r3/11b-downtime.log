@@ -1,0 +1,3 @@
+# R3 cutover downtime: host poller on https://localhost:19443/ready every ~0.25 s (CA-verified)
+samples=333 codes={200: 295, 0: 38}
+longest outage: first-non200=1790343843.91 next200=1790343853.65 -> 9.7s (upper bound 10.0s, 38 non-200 samples)

@@ -1,0 +1,7 @@
+# 2026-09-25T17:00:36Z RESUME: VM clock 9703 s behind the host (the Mac slept ~2.7 h; chrony had not noticed: 0.0005 s). Restart the VM (R3 stays deployed) + re-pin.
+time="2026-09-25T20:00:38+03:00" level=info msg="The instance hlm-2604 has shut down"
+start rc=0
+re-pinned SHA256:OpIj6nDTmhQi0KfDLZ8hbCcqkJIPuRJ5bl2cy2Hfa1M (keyscan == guest key via limactl shell)
+/ready 200; clock host 17:00:48 vm 17:00:47
+checkout 805f4cd2955b; api image revision 805f4cd2955b; llm.env=present; release marker: HLM_ENV_RELEASE=r3
+RESULT librarian PASS llm.env=present release=r3 manifest=r3 enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast

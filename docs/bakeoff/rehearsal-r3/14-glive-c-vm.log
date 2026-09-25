@@ -1,0 +1,32 @@
+# 2026-09-25T13:46:19Z §4.1 force the PRIMARY down for the api only: api.env += HLM_LLM_BASE_URL=http://127.0.0.1:9/v1 (backup api.env.r3glc), recreate api; GLC_T0(vm)=2026-09-25 13:46:19.631387+00
+ Container hlmemo-prod-api-1 Healthy 
+api risk-judge chain: [('openrouter-gpt6-luna', 'http://127.0.0.1:9/v1'), ('openrouter-qwen38-27b-fast', 'https://openrouter.ai/api/v1')]
+# 2026-09-25T13:46:33Z §4.2 uv run --frozen python scripts/glive_c_vm.py run --repo <main> --reader rk-reader --world <rk-world.json> --reps 4
+rep 0: catch=0.975 false_warn=0.075 statuses={'ok_fallback': 73, 'retrieval_only:timeout': 7}
+rep 1: catch=1.000 false_warn=0.050 statuses={'ok_fallback': 75, 'retrieval_only:timeout': 5}
+rep 2: catch=1.000 false_warn=0.075 statuses={'ok_fallback': 73, 'retrieval_only:timeout': 7}
+rep 3: catch=1.000 false_warn=0.025 statuses={'ok_fallback': 76, 'retrieval_only:timeout': 4}
+{"catch_min": 0.975, "catch_mean": 0.99375, "false_warn_max": 0.075, "false_warn_mean": 0.05625, "statuses_total": {"ok_fallback": 297, "retrieval_only:timeout": 23}, "risk_check_ms_p50": 1773.4552499605343, "risk_check_ms_p95": 4031.218527338933, "pass": true}
+RESULT G-LIVE-C-VM PASS
+rc=0
+# §4.3 llm_calls since GLC_T0 (VM clock) by task/profile/outcome
+    task    |          profile           |   outcome    | count |  usd   | p50_ms | p95_ms 
+------------+----------------------------+--------------+-------+--------+--------+--------
+ risk_judge | openrouter-gpt6-luna       | breaker_open |   313 | 0.0000 |        |       
+ risk_judge | openrouter-gpt6-luna       | http_error   |     7 | 0.0049 |      5 |     28
+ risk_judge | openrouter-qwen38-27b-fast | ok           |   297 | 0.1073 |   1627 |   3327
+ risk_judge | openrouter-qwen38-27b-fast | timeout      |    23 | 0.0672 |   3986 |   3991
+(4 rows)
+
+ real_usd_glc 
+--------------
+       0.1744
+(1 row)
+
+librarian   ready=0 in_flight=0 role=observer breaker=closed (ledger, 646 calls/15m) failed_24h=0 spend_today_usd=0.729588 spend_hour_usd=0.180402 reserved_usd=0.0
+# §4.4 restore api.env and recreate api
+api.env-restored
+ Container hlmemo-prod-api-1 Healthy 
+api: enabled=true role=observer mode=live risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast (empty: risk_check answers retrieval-only)
+RESULT librarian PASS llm.env=present release=r3 manifest=r3 enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast
+api risk-judge chain: [('openrouter-gpt6-luna', 'https://openrouter.ai/api/v1'), ('openrouter-qwen38-27b-fast', 'https://openrouter.ai/api/v1')]

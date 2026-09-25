@@ -1,0 +1,36 @@
+# 2026-09-25T17:09:04Z §5.2 HLM_TEST_DSN=<own clone hlm_r3reh_gate of hlm_r3reh_world> make gate-release   (805f4cd code; flags off = the R3 config)
+## host before: 20:09  up 33 days,  4:32, 4 users, load averages: 2.52 3.05 3.26
+ %CPU COMM
+ 59.2 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine
+ 36.4 /Applications/CleanMyMac_5.app/Contents/Library/LoginItems/CleanMyMac_5_HealthMonitor.app/Contents/MacOS/CleanMyMac_5_HealthMonitor
+ 36.1 com.macpaw.CleanMyMac5.HealthMonitor
+ 25.0 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/153.1.95.104/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)
+HLM_GL3=1 uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_g3_recall.py tests/integration/test_g4_latency.py tests/integration/test_gl3_llm_down.py
+
+[G3] overall: Recall@5 = 0.980 (98/100)
+  MISS q001 [de] gold=fx-main:01819 rank=24 q='Wie läuft die Inbetriebnahme im svc-yeb-Dienst mit Compose?'
+  MISS q098 [de ident] gold=fx-main:01579 rank=7 q='src/hlmemo/auth/docker-compose.yml E1228 CACHE_SMTP_SECRET'
+.
+[G3] TR: Recall@5 = 1.000 (34/34)
+      TR light=1.000 (25) heavy=1.000 (9)
+
+[G3] DE: Recall@5 = 0.939 (31/33)
+      DE light=0.960 (25) heavy=0.875 (8)
+
+[G3] EN: Recall@5 = 1.000 (33/33)
+      EN light=1.000 (25) heavy=1.000 (8)
+.
+[G3] identifier-heavy: Recall@5 = 0.960 (24/25)
+
+[G3] non-identifier: Recall@5 = 0.987 (74/75)
+.
+[G4] 300 queries / 3 callers: p50=157.5 ms p95=251.0 ms p99=443.4 ms mean=174.2 ms max=470.5 ms wall=17.5s (17.2 q/s) on Apple M3 Pro, 12 (6 performance + 6 efficiency) cores, 36 GB RAM, Darwin 25.6.0 (arm64)
+.
+G-L3 [identifier bodies] (real api + librarian processes): 77 queries during 100 writes: p50 200.8 ms p95 358.1 ms max 518.1 ms; write p50 45.6 ms p95 84.5 ms; stub requests 509; reference without writes: 60 queries p50 175.3 ms p95 271.9 ms; degraded provider requests overlapping the timed window: stall 3 503 6 (5.8 s window)
+.
+G-L3 [neutral bodies] (real api + librarian processes): 74 queries during 100 writes: p50 218.5 ms p95 417.1 ms max 588.8 ms; write p50 47.7 ms p95 98.2 ms; stub requests 509; reference without writes: 60 queries p50 199.0 ms p95 293.9 ms; degraded provider requests overlapping the timed window: stall 3 503 6 (5.9 s window)
+.
+6 passed in 138.24s (0:02:18)
+rc=0
+## host after: 20:11  up 33 days,  4:34, 4 users, load averages: 3.09 3.12 3.25
+# end 2026-09-25T17:11:22Z
