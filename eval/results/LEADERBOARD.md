@@ -52,6 +52,7 @@ History (append-only):
 | corpus_a | 28 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 1.0, paced prewarm, replicate | 63bc041 | c6beb4175aa0 | 0.826 | 8.41e-05 | - | False | True |
 | corpus_a | 29 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.7, paced prewarm | 63bc041 | 7c5255420f64 | 0.804 | 8.41e-05 | - | False | True |
 | corpus_a | 30 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.5, paced prewarm | 63bc041 | 0491a1718a03 | 0.783 | 8.41e-05 | - | False | True |
+| corpus_a | 31 | 2026-09-25 | D-110 B-real: librarian v3 C2 + REVISE_SPAN (D-113 kinds), assistant, approve-all x1 — 2 revisions applied (A), 0 on labelled stale pairs | ed8deda | 2345691b507f | 0.793 | 0.002501 | - | False | True |
 | corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
@@ -82,6 +83,7 @@ History (append-only):
 | corpus_b_dev | 28 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 1.0, paced prewarm, replicate | 63bc041 | c6beb4175aa0 | 0.465 | 8.41e-05 | - | False | True |
 | corpus_b_dev | 29 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.7, paced prewarm | 63bc041 | 7c5255420f64 | 0.465 | 8.41e-05 | - | False | True |
 | corpus_b_dev | 30 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.5, paced prewarm | 63bc041 | 0491a1718a03 | 0.438 | 8.41e-05 | - | False | True |
+| corpus_b_dev | 31 | 2026-09-25 | D-110 B-real: librarian v3 C2 + REVISE_SPAN (D-113 kinds), assistant, approve-all x1 — 2 revisions applied (A), 0 on labelled stale pairs | ed8deda | 2345691b507f | 0.451 | 0.002501 | - | False | True |
 
 ## Librarian: bench_v2 (score = macro mean of per-task mean scores, %)
 
