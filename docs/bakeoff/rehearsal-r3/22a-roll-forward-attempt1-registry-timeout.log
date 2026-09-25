@@ -1,0 +1,28 @@
+# 2026-09-25T17:03:18Z §8.3 roll forward: deploy.sh hlm-deploy 805f4cd2955b (R2 env on disk = Order B interim)
+llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f91e7a79
+ Image pgvector/pgvector:0.8.6-pg17 Error failed to resolve reference "docker.io/pgvector/pgvector:0.8.6-pg17": failed to do request: Head "https://registry-1.docker.io/v2/pgvector/pgvector/manifests/0.8.6-pg17": dial tcp 98.87.240.167:443: i/o timeout
+Error response from daemon: failed to resolve reference "docker.io/pgvector/pgvector:0.8.6-pg17": failed to do request: Head "https://registry-1.docker.io/v2/pgvector/pgvector/manifests/0.8.6-pg17": dial tcp 98.87.240.167:443: i/o timeout
+deploy rc=1
+# install the R3 env under the lock
+install_llm_env (remote): the deployed release predates R3; deploy R3 first, then install its llm.env (D-108 Order B); nothing changed
+install rc=3
+checkout 6902f91e7a79; api image revision 6902f91e7a79; llm.env=present; release marker: none
+{'current_ref': '6902f91e7a79', 'previous_ref': None, 'previous_llm_env': None, 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': ['/etc/hlmemo/llm.env.release-6902f91e7a79']}
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 17:02 llm.env
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:44 llm.env.bak-20260925T134454Z
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 17:03 llm.env.release-6902f91e7a79
+# remote gates after the FAILED roll-forward attempt: the VM still runs R2 (6902f91), so these gates ran against R2
+GATE                   RESULT DETAIL
+health-ready           PASS  /health=200 /ready=200
+unknown-path-404       PASS  status=404
+tls-issuer             PASS  internal CA as requested (rehearsal): CN=Caddy Local Authority - ECC Intermediate
+postgres-closed        PASS  tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+probe                  PASS  smoke + write/read marker gates-a-20260925T170412Z-18522
+routes                 PASS  RESULT routes PASS base=https://localhost:19443 failures=0
+hlm-cli                PASS  init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-4020
+wan-latency            PASS  n=20 errors=0 p50=19ms p95=43ms max=47ms (ceiling p95<=3000ms)
+risk-check             PASS  verdict=warn judged=false judge=retrieval_only reason=timeout warnings=1 candidates=1 (librarian ON, yet retrieval-only: see reason)
+librarian              PASS  v1136 1 job(s) done in 26.1s; role=observer outcome=annotated; mutations signal_upsert=1 links/closes=0; version_signals=yes; audit proposals=0 (none), applied=0
+backup-restore         SKIP  --no-drill
+total 42s (gates 42s); log: /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260925T170412Z.log
+RESULT PASS

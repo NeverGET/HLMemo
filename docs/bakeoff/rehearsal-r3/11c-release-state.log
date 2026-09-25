@@ -1,0 +1,34 @@
+# 2026-09-25T13:44:39Z §1.4 release state after the R3 cutover (R2 env still installed)
+{
+    "accepted": false,
+    "current_ref": "805f4cd2955b",
+    "env_backups": {},
+    "pending_cleanup": [],
+    "previous_dump": "/var/backups/hlmemo/pre-upgrade/6902f91e7a79-2026-09-25T134404Z-mOXc1s.dump",
+    "previous_image": "hlmemo:6902f91e7a79",
+    "previous_image_id": "sha256:4e3eb71981bae2d420177d9fad04d6baf746",
+    "previous_llm_env": "/etc/hlmemo/llm.env.release-6902f91e7a79",
+    "previous_ref": "6902f91e7a79",
+    "retired_backups": []
+}
+total 44
+drwxr-x---   2 hlmdeploy hlmdeploy 4096 Sep 25 13:44 .
+drwxr-xr-x 113 root      root      4096 Sep 25 13:42 ..
+-rw-------   1 hlmdeploy hlmdeploy  351 Sep 23 18:36 api.env
+-rw-------   1 hlmdeploy hlmdeploy  521 Sep 23 06:50 api.env.pre-w0-20260923T183410Z
+-rw-------   1 hlmdeploy hlmdeploy  616 Sep 23 06:50 app.env
+-rw-------   1 hlmdeploy hlmdeploy  458 Sep 23 06:50 backup.env
+-rw-r--r--   1 root      root         4 Sep 23 06:54 bootstrap-ssh-cidr
+-rw-------   1 hlmdeploy hlmdeploy  239 Sep 23 06:50 db.env
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:41 llm.env
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:43 llm.env.release-6902f91e7a79
+-rw-------   1 hlmdeploy hlmdeploy  877 Sep 25 13:44 prod.env
+hlmemo-prod-worker-1 hlmemo:805f4cd2955b Up 31 seconds (healthy)
+hlmemo-prod-api-1 hlmemo:805f4cd2955b Up 31 seconds (healthy)
+hlmemo-prod-librarian-1 hlmemo:805f4cd2955b Up 31 seconds (healthy)
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 25 seconds (healthy)
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 2 minutes (healthy)
+llm.env manifest: env_release=- (code r3, check mode r2-env interim) HLM_FALLBACK_PROFILE=openrouter HLM_FALLBACK_PROFILE__QUERY_REWRITE=- HLM_FALLBACK_PROFILE__RISK_JUDGE=- HLM_FALLBACK_PROFILE__SYNTHESIS=- HLM_LLM_BUDGET_DAY_USD=2 HLM_LLM_BUDGET_DISABLED=false HLM_LLM_BUDGET_HOUR_USD=1 HLM_LLM_BUDGET_MONTH_USD=10 HLM_PROFILE=openrouter-gpt6-luna HLM_QUERY_REWRITE=- HLM_RETRIEVAL_SOURCE_CAP=-
+provider openrouter-gpt6-luna https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+RESULT librarian PASS llm.env=present release=r2-env (D-108 interim: install the R3 llm.env, recreate librarian api, then evaluate --release r3) enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna

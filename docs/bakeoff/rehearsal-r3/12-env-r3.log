@@ -1,0 +1,83 @@
+# 2026-09-25T13:44:54Z §2.1 bash deploy/scripts/install_llm_env.sh --state $S   (local main = 805f4cd tooling; key and the owner caps are kept)
+install_llm_env: /etc/hlmemo/llm.env on hlm-deploy (/Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/ssh_config): profile=openrouter-gpt6-luna fallback=openrouter-glm53-flash role=observer enabled=true
+backup /etc/hlmemo/llm.env.bak-20260925T134454Z (0600)
+installed /etc/hlmemo/llm.env (0600 hlmdeploy)
+  HLM_LIBRARIAN_ENABLED=true
+  HLM_LIBRARIAN_ROLE=observer
+  HLM_LIBRARIAN_CONCURRENCY=3
+  HLM_LIBRARIAN_DB_CONNECTIONS=8
+  HLM_PROFILE=openrouter-gpt6-luna
+  HLM_FALLBACK_PROFILE=openrouter-glm53-flash
+  HLM_FALLBACK_PROFILE__SYNTHESIS=openrouter
+  HLM_FALLBACK_PROFILE__QUERY_REWRITE=openrouter
+  HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast
+  OPENROUTER_API_KEY=<set>
+  HLM_ENV_RELEASE=r3
+  HLM_LLM_MODE=live
+  HLM_LLM_TIMEOUT_S=60
+  HLM_LLM_BUDGET_HOUR_USD=1
+  HLM_LLM_BUDGET_DAY_USD=2
+  HLM_LLM_BUDGET_MONTH_USD=10
+  HLM_LLM_JOB_CALL_CAP=20
+  HLM_LLM_BUDGET_DISABLED=false
+  HLM_LLM_REDACT_EMAIL=false
+  HLM_LLM_REDACT_PHONE=false
+install_llm_env (remote): recreating librarian and api with this llm.env (deploy lock held)
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreated 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-librarian-1 Starting 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-librarian-1 Started 
+ Container hlmemo-prod-api-1 Started 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-librarian-1 Waiting 
+ Container hlmemo-prod-librarian-1 Healthy 
+ Container hlmemo-prod-api-1 Healthy 
+librarian: llm.env=present enabled=true role=observer mode=live profile=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+per-task fallbacks: query_rewrite=openrouter risk_judge=openrouter-qwen38-27b-fast synthesis=openrouter
+librarian heartbeat: enabled=True role=observer breaker_state=closed age_s=7.8 ready=0 (max age 30s, waited 0.0s)
+librarian spend: spend_hour_usd=0.0 spend_today_usd=0.549186 reserved_usd=0.0
+api: enabled=true role=observer mode=live risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast (empty: risk_check answers retrieval-only)
+llm.env manifest: env_release=r3 (code r3, check mode r3) HLM_FALLBACK_PROFILE=openrouter-glm53-flash HLM_FALLBACK_PROFILE__QUERY_REWRITE=openrouter HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast HLM_FALLBACK_PROFILE__SYNTHESIS=openrouter HLM_LLM_BUDGET_DAY_USD=2 HLM_LLM_BUDGET_DISABLED=false HLM_LLM_BUDGET_HOUR_USD=1 HLM_LLM_BUDGET_MONTH_USD=10 HLM_PROFILE=openrouter-gpt6-luna HLM_QUERY_REWRITE=- HLM_RETRIEVAL_SOURCE_CAP=-
+provider openrouter-gpt6-luna https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter-glm53-flash https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter-qwen38-27b-fast https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+RESULT librarian PASS llm.env=present release=r3 manifest=r3 enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast
+install_llm_env (remote): switch complete (both services run this llm.env, the check passed)
+Done. On a deployed R3 host the switch (both services recreated + the --release r3 check) ran under the deploy lock; re-run this command if it was interrupted (RUNBOOK "R3 release").
+rc=0
+# §2.2 independent re-check with --release r3
+checkout 805f4cd2955b; api image revision 805f4cd2955b; llm.env=present; release marker: HLM_ENV_RELEASE=r3
+librarian: llm.env=present enabled=true role=observer mode=live profile=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+per-task fallbacks: query_rewrite=openrouter risk_judge=openrouter-qwen38-27b-fast synthesis=openrouter
+librarian heartbeat: enabled=True role=observer breaker_state=closed age_s=0.9 ready=0 (max age 30s, waited 0.0s)
+librarian spend: spend_hour_usd=0.0 spend_today_usd=0.549186 reserved_usd=0.0
+api: enabled=true role=observer mode=live risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast (empty: risk_check answers retrieval-only)
+llm.env manifest: env_release=r3 (code r3, check mode r3) HLM_FALLBACK_PROFILE=openrouter-glm53-flash HLM_FALLBACK_PROFILE__QUERY_REWRITE=openrouter HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast HLM_FALLBACK_PROFILE__SYNTHESIS=openrouter HLM_LLM_BUDGET_DAY_USD=2 HLM_LLM_BUDGET_DISABLED=false HLM_LLM_BUDGET_HOUR_USD=1 HLM_LLM_BUDGET_MONTH_USD=10 HLM_PROFILE=openrouter-gpt6-luna HLM_QUERY_REWRITE=- HLM_RETRIEVAL_SOURCE_CAP=-
+provider openrouter-gpt6-luna https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter-glm53-flash https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter-qwen38-27b-fast https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+RESULT librarian PASS llm.env=present release=r3 manifest=r3 enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast
+# effective settings in the api and librarian containers
+api query_rewrite (no field) source_cap (no field) observer concurrency 3 caps h/d/m 1.0 2.0 10.0 fallback openrouter-glm53-flash
+librarian query_rewrite (no field) source_cap (no field) observer concurrency 3 caps h/d/m 1.0 2.0 10.0 fallback openrouter-glm53-flash
+release-state env_switch: None pending_cleanup: []
+-rw-------   1 hlmdeploy hlmdeploy 4773 Sep 25 13:44 llm.env
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:44 llm.env.bak-20260925T134454Z
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:43 llm.env.release-6902f91e7a79
+librarian   ready=0 in_flight=0 role=observer breaker=closed (ledger, 0 calls/15m) failed_24h=0 spend_today_usd=0.549186 spend_hour_usd=0.0 reserved_usd=0.0
+fallback    default=openrouter-glm53-flash
+chain       contradiction  primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       place          primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       placement      primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       query_rewrite  primary=openrouter-gpt6-luna fallback=openrouter (task override; unknown task)
+chain       relate         primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       relate_verify  primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       risk           primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       risk_judge     primary=openrouter-gpt6-luna fallback=openrouter-qwen38-27b-fast (task override)
+chain       summary        primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       synthesis      primary=openrouter-gpt6-luna fallback=openrouter (task override)

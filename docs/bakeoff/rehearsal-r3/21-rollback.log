@@ -1,0 +1,74 @@
+# 2026-09-25T17:01:59Z §8.1 drill (a): PATH=$S/bin:$PATH deploy.sh --rollback hlm-deploy   (NO manual env change; env before: HLM_FALLBACK_PROFILE=openrouter-glm53-flash HLM_ENV_RELEASE=r3 )
+rollback start epoch 1790355719.065228000
+Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.pCjBGiC0/log (final exit code: /opt/hlmemo/.deploy-runs/run.pCjBGiC0/status)
+Rollback validated: 805f4cd2955b -> 6902f91e7a79 (image hlmemo:6902f91e7a79 = sha256:4e3eb71981bae2d420177d9fad04d6baf746, dump /var/backups/hlmemo/pre-upgrade/6902f91e7a79-2026-09-25T134404Z-mOXc1s.dump)
+ Container hlmemo-prod-caddy-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopping 
+ Container hlmemo-prod-caddy-1 Stopped 
+ Container hlmemo-prod-api-1 Stopping 
+ Container hlmemo-prod-worker-1 Stopped 
+ Container hlmemo-prod-api-1 Stopped 
+327468930f21
+Backup completed: /var/backups/hlmemo/daily/hlmemo-2026-09-25T170201Z-xqLYAI.dump (7 daily / 4 weekly retention)
+Saved the current database before replacing it: /var/backups/hlmemo/daily/hlmemo-2026-09-25T170201Z-xqLYAI.dump
+Warning: you are leaving 147 commits behind, not connected to
+any of your branches:
+
+  805f4cd D-123: owner accepts R3 behind VPS snapshot; T gates R4
+  dc2687a Merge r3-tooling: env-aware release state, manifest cutover check, crash journals, prod budget 10/2/1 (reviews 75/77; residual per D-122)
+  faf1593 D-122 (PROPOSED): tooling crash-safety deeper than one round; R3 behind a VPS-snapshot safety net
+  404c0da consult 77 prompt: release-gating review of r3-tooling fixes
+ ... and 143 more.
+
+If you want to keep them by creating a new branch, this may be a good time
+to do so with:
+
+ git branch <new-branch-name> 805f4cd
+
+HEAD is now at 6902f91 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
+llm.env: restored /etc/hlmemo/llm.env from llm.env.release-6902f91e7a79
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-db-1 Running 
+ Container hlmemo-prod-api-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreate 
+ Container hlmemo-prod-worker-1 Recreate 
+ Container hlmemo-prod-librarian-1 Recreated 
+ Container hlmemo-prod-api-1 Recreated 
+ Container hlmemo-prod-worker-1 Recreated 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-librarian-1 Starting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-worker-1 Starting 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-api-1 Starting 
+ Container hlmemo-prod-librarian-1 Started 
+ Container hlmemo-prod-worker-1 Started 
+ Container hlmemo-prod-api-1 Started 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-caddy-1 Starting 
+ Container hlmemo-prod-caddy-1 Started 
+ Container hlmemo-prod-caddy-1 Waiting 
+ Container hlmemo-prod-db-1 Waiting 
+ Container hlmemo-prod-librarian-1 Waiting 
+ Container hlmemo-prod-worker-1 Waiting 
+ Container hlmemo-prod-api-1 Waiting 
+ Container hlmemo-prod-api-1 Healthy 
+ Container hlmemo-prod-db-1 Healthy 
+ Container hlmemo-prod-worker-1 Healthy 
+ Container hlmemo-prod-librarian-1 Healthy 
+ Container hlmemo-prod-caddy-1 Healthy 
+deleted llm.env.release-6902f91e7a79 (journalled secret-bearing copy)
+deleted llm.env.release-805f4cd2955b (journalled secret-bearing copy)
+Rollback complete: 6902f91e7a79 is running again (image sha256:4e3eb71981bae2d420177d9fad04d6baf746). Saved database of 805f4cd2955b: /var/backups/hlmemo/daily/hlmemo-2026-09-25T170201Z-xqLYAI.dump
+
+rc=0
+rollback end epoch 1790355737.407496000
+# rollback downtime (host poller /ready every ~0.25 s)
+samples=102 codes={200: 58, 0: 44}
+longest outage: first-non200=1790355720.28 next200=1790355731.55 -> 11.3s (upper bound 11.5s, 44 non-200 samples)

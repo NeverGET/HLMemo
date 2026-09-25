@@ -1,0 +1,16 @@
+# 2026-09-25T13:41:51Z §0.2 clock: host 13:41:51.582 vm 13:41:51.948; caffeinate -dimsu running
+# §0.3 VM state
+{'current_ref': '6902f91e7a79aab3ff4791ae443d7371b7cca5d7', 'previous_ref': '3535bcc9bf661e05e40b27a9784a3f789231ceee', 'accepted': False}
+0
+migration   0008_librarian_tasks
+worker      ready=0 oldest_ready_age_s=None last_done_at=2026-09-25T01:56:21.714104+00:00 expired_leases=0
+librarian   ready=0 in_flight=0 role=observer breaker=idle (ledger) failed_24h=0 spend_today_usd=0.549186 spend_hour_usd=0.0 reserved_usd=0.0
+# §0.4 owner D-121 edit mirrored on the R2 env: caps HOUR=1 DAY=2 MONTH=10 (before: HLM_LLM_BUDGET_HOUR_USD=3 HLM_LLM_BUDGET_DAY_USD=10 HLM_LLM_BUDGET_MONTH_USD=60 )
+HLM_LLM_BUDGET_HOUR_USD=1 HLM_LLM_BUDGET_DAY_USD=2 HLM_LLM_BUDGET_MONTH_USD=10 
+600 hlmdeploy /etc/hlmemo/llm.env
+ Container hlmemo-prod-librarian-1 Healthy 
+ Container hlmemo-prod-api-1 Healthy 
+api: enabled=true role=observer mode=live risk_judge=openrouter-gpt6-luna (empty: risk_check answers retrieval-only)
+provider openrouter-gpt6-luna https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+RESULT librarian PASS llm.env=present enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna

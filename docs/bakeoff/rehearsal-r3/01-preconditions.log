@@ -1,0 +1,49 @@
+# 2026-09-25T13:41:37Z §0.1 preconditions
+state dir targets the VM only (127.0.0.1:2223)
+HEAD 52e652c585b7edf807c60e353d287bcfdef96879
+805f4cd2955b83c258678cf901a32a605ea88f9c D-123: owner accepts R3 behind VPS snapshot; T gates R4
+on origin: origin/HEAD->origin/main origin/main 
+-- code-only check vs R2 6902f91 (alembic, compose, Dockerfile, pyproject, uv.lock, models.lock, deploy.sh) [empty = unchanged]:
+compose sha256 99fecbf403cf64031f339986b5bf1289d4da2a32a47ddfad3af43dc11a710a7a; alembic head alembic/versions/0008_librarian_tasks.py
+-- release tooling diff vs R2:
+ deploy/RUNBOOK.md                        |  67 +++++++-
+ deploy/llm.env.example                   |  50 ++++--
+ deploy/scripts/check_librarian.py        | 277 ++++++++++++++++++++++++++----
+ deploy/scripts/install_llm_env.sh        | 114 +++++++++++--
+ deploy/scripts/llm_env_release.py        | 183 ++++++++++++++++++++
+ deploy/scripts/release_state.py          | 190 ++++++++++++++++++++-
+ deploy/scripts/remote-deploy.sh          | 281 +++++++++++++++++++++++--------
+ deploy/scripts/rollback.sh               |  95 ++++++++++-
+ profiles/openrouter-deepseek-v4-pro.toml |  20 +++
+ profiles/openrouter-glm53-flash.toml     |  18 ++
+ profiles/openrouter-glm53.toml           |  18 ++
+ profiles/openrouter-gpt6-luna-pro.toml   |  18 ++
+ profiles/openrouter-gpt6-luna.toml       |   4 +-
+ profiles/openrouter-kimi-k26.toml        |  18 ++
+ profiles/openrouter-nemotron3-ultra.toml |  18 ++
+ profiles/openrouter-qwen38-27b-fast.toml |  17 ++
+ profiles/openrouter-qwen38-27b.toml      |  20 +++
+ profiles/openrouter.toml                 |   4 +-
+ 18 files changed, 1261 insertions(+), 151 deletions(-)
+-- R3 llm.env template (non-comment):
+HLM_LIBRARIAN_ENABLED=false
+HLM_LIBRARIAN_ROLE=observer
+HLM_LIBRARIAN_CONCURRENCY=3
+HLM_LIBRARIAN_DB_CONNECTIONS=8
+HLM_PROFILE=openrouter-gpt6-luna
+HLM_FALLBACK_PROFILE=openrouter-glm53-flash
+HLM_FALLBACK_PROFILE__SYNTHESIS=openrouter
+HLM_FALLBACK_PROFILE__QUERY_REWRITE=openrouter
+HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast
+OPENROUTER_API_KEY=
+HLM_ENV_RELEASE=r3
+HLM_LLM_MODE=live
+HLM_LLM_TIMEOUT_S=60
+HLM_LLM_BUDGET_HOUR_USD=1
+HLM_LLM_BUDGET_DAY_USD=2
+HLM_LLM_BUDGET_MONTH_USD=10
+HLM_LLM_JOB_CALL_CAP=20
+HLM_LLM_BUDGET_DISABLED=false
+HLM_LLM_REDACT_EMAIL=false
+HLM_LLM_REDACT_PHONE=false
+-- rewrite/cap code:  (0/empty = not shipped)

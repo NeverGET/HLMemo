@@ -1,0 +1,9 @@
+# 2026-09-25T13:42:20Z §0.6 pre-deploy snapshot (Hostinger-snapshot analog, D-123)
+time="2026-09-25T16:42:22+03:00" level=info msg="The instance hlm-2604 has shut down"
+cloned: hlm-2604-predeploy.disk hlm-2604-predeploy.vz-efi hlm-2604-r2state.disk hlm-2604-r2state.vz-efi 
+start rc=0
+re-pinned SHA256:ssoa4SJmKLyhP9fXJSAedJ5FwZBmZsyGY/fAer2LpRU (keyscan == guest key via limactl shell)
+/ready 200; stop->ready 13 s; clock host 13:42:33 vm 13:42:33
+provider openrouter https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+RESULT librarian PASS llm.env=present enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna
+removed the superseded PHASE-1 clones hlm-2604-r2state.*

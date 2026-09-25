@@ -1,0 +1,57 @@
+# 2026-09-25T17:02:36Z §8.2 R2 health after the script rollback
+{
+    "accepted": true,
+    "current_ref": "6902f91e7a79",
+    "env_backups": {},
+    "pending_cleanup": [],
+    "retired_backups": [],
+    "rolled_back_from": "805f4cd2955b"
+}
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 17:02 llm.env
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:44 llm.env.bak-20260925T134454Z
+HLM_PROFILE=openrouter-gpt6-luna
+HLM_FALLBACK_PROFILE=openrouter
+HLM_LLM_BUDGET_HOUR_USD=1
+HLM_LLM_BUDGET_DAY_USD=2
+HLM_LLM_BUDGET_MONTH_USD=10
+marker lines: 0
+hlmemo-prod-worker-1 4e3eb71981ba Up 31 seconds (healthy)
+hlmemo-prod-librarian-1 4e3eb71981ba Up 31 seconds (healthy)
+hlmemo-prod-api-1 4e3eb71981ba Up 31 seconds (healthy)
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 25 seconds (healthy)
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up About a minute (healthy)
+librarian heartbeat: enabled=True role=observer breaker_state=closed age_s=1.2 ready=0 (max age 30s, waited 0.0s)
+librarian spend: spend_hour_usd=0.0 spend_today_usd=0.549186 reserved_usd=0.0
+api: enabled=true role=observer mode=live risk_judge=openrouter-gpt6-luna (empty: risk_check answers retrieval-only)
+provider openrouter-gpt6-luna https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+provider openrouter https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
+RESULT librarian PASS llm.env=present enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna
+   slug    | count 
+-----------+-------
+ r3-base   |   248
+ r3-load   |   163
+ rk-main   |    46
+ rk-secret |     2
+ rk-shell  |     6
+(5 rows)
+
+       alembic        | max_event 
+----------------------+-----------
+ 0008_librarian_tasks |      1843
+(1 row)
+
+# remote gates on R2 (--librarian --no-drill)
+GATE                   RESULT DETAIL
+health-ready           PASS  /health=200 /ready=200
+unknown-path-404       PASS  status=404
+tls-issuer             PASS  internal CA as requested (rehearsal): CN=Caddy Local Authority - ECC Intermediate
+postgres-closed        PASS  tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+probe                  PASS  smoke + write/read marker gates-a-20260925T170238Z-2729
+routes                 PASS  RESULT routes PASS base=https://localhost:19443 failures=0
+hlm-cli                PASS  init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-1787
+wan-latency            PASS  n=20 errors=0 p50=20ms p95=34ms max=40ms (ceiling p95<=3000ms)
+risk-check             PASS  verdict=warn judged=true judge=ok reason=- warnings=1 candidates=1
+librarian              PASS  v1133 1 job(s) done in 10.0s; role=observer outcome=annotated; mutations signal_upsert=1 links/closes=0; version_signals=yes; audit proposals=0 (none), applied=0
+backup-restore         SKIP  --no-drill
+total 27s (gates 27s); log: /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260925T170238Z.log
+RESULT PASS

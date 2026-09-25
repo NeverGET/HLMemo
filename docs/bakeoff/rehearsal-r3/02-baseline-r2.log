@@ -1,0 +1,99 @@
+# 2026-09-25T13:42:09Z §0.5 baseline on R2 (after the owner edit), BASE_EVENT=1843
+              at               |       alembic        
+-------------------------------+----------------------
+ 2026-09-25 13:42:10.164692+00 | 0008_librarian_tasks
+
+ links_total | links_superseded | links_valid_closed 
+-------------+------------------+--------------------
+           0 |                0 |                  0
+
+ versions_total | versions_superseded | versions_valid_closed 
+----------------+---------------------+-----------------------
+           1130 |                   0 |                     0
+
+       kind        | count 
+-------------------+-------
+ call_the_day      |     4
+ device_approved   |     5
+ device_minted     |    27
+ device_registered |     6
+ device_revoked    |    20
+ grant_added       |    40
+ grant_revoked     |     9
+ librarian         |   905
+ project_created   |    13
+ write             |   814
+
+    job_kind     | status | priority | count 
+-----------------+--------+----------+-------
+ embed           | done   |        5 |  1130
+ librarian_write | done   |        2 |    49
+ librarian_write | done   |        3 |   321
+ librarian_write | done   |        6 |   454
+
+ version_signals 
+-----------------
+            1060
+
+ status |     kind      | count 
+--------+---------------+-------
+ open   | contradiction |    79
+ open   | link          |   977
+ open   | widen_scope   |     1
+
+ batches | batches_applied 
+---------+-----------------
+      45 |               0
+
+ llm_calls | cost_usd 
+-----------+----------
+      2218 |   1.1844
+
+    slug     | count 
+-------------+-------
+ gates       |     2
+ gates-cli   |     5
+ gates-probe |     7
+ hlm-global  |     3
+ r1-seed     |    22
+ r2-import   |   208
+ r2-load     |   371
+ r2-seed     |    45
+ r3-base     |   248
+ r3-load     |   163
+ reboot      |     2
+ rk-main     |    46
+ rk-secret   |     2
+ rk-shell    |     6
+(14 rows)
+
+ since_event_id | max_event_id | librarian_events 
+----------------+--------------+------------------
+              0 |         1843 |              905
+
+      op       |   role   |  n   
+---------------+----------+------
+ <none>        | observer |    4
+ <none>        |          |   81
+ signal_upsert | observer | 1060
+
+ links_by_librarian | versions_by_librarian | signals_by_librarian_allowed 
+--------------------+-----------------------+------------------------------
+                  0 |                     0 |                         1060
+
+ versions_superseded | versions_valid_closed 
+---------------------+-----------------------
+                   0 |                     0
+
+ links_total | links_closed 
+-------------+--------------
+           0 |            0
+
+ batches_decided_or_applied | batches_total 
+----------------------------+---------------
+                          0 |            45
+
+ status | questions 
+--------+-----------
+ open   |      1057
+
