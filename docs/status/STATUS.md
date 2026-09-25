@@ -72,6 +72,8 @@ Owner framing: the librarian's gradual supervised learning (observe → apply) h
 
 - **2026-09-26 ~01:45 OVERNIGHT (D-133): the owner is asleep; autonomous work toward the D-130 gate.** Plan: W-B result → Memory Map (tree + L2 summaries) → research tool in the server → gate on a dev replica of the migrated memory (sealed B + fresh blind questions) → if it passes: VM rehearsal, a fresh snapshot, self-certified prod release. Dev spend ≤ $6 tonight. Morning report in Turkish with measured results.
 
+- 0x:xx (09-26, overnight) W-B: the map-guided loop is close to the gate (correct .72–.78, source recall .70–.77, faithful .93–.95, p95 ~11 s, $0.002–0.003/q), so it gets BUILT (D-136). Running: the implementer builds `memory.ask` on wf-memory-ask (Memory Map + L2 summaries + completeness pass; ~8 h timebox); the evaluator prepares the gate-v1 harness (judge deepseek-v4-pro pinned) + a current-tree replica `hlm_research_cur`. The PR set (60, blind) is ready; the sealed B is untouched. D-118 is fully green and parked. Dev spend so far tonight about $1.5 of $6.
+
 ## GOAL (D-051/D-058) — active
 Phases 2-5 per docs/decisions/PHASE2-4-ROADMAP.md → gates → incremental releases → final acceptance (HLMemo self-migration, then the corpus-A project) → delete local dev stack + lima VMs.
 State 2026-09-23 night: **R1 is LIVE in production** (ee6ce9c, D-068): D-055 retrieval, W0a access hardening (ops over SSH, closed registration), W2a librarian foundation (DISABLED). Owner device id 21 `cemals-mb-pro-3` (hlmemo:write); the three CLIs point to production; the repo hlm.toml points to production, project hlmemo. **Dogfood D1 starts in the next chat** (a restart is needed so the MCP connection uses device 21).
