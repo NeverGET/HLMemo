@@ -14,6 +14,19 @@ async "librarian" LLM for placement/contradiction/consolidation.
 - **Source of truth for design:** `docs/research/00-deep-research-report.md` (deep-research report, Turkish).
   Deviations from it must be logged as a decision with rationale.
 
+## Product goal and working rules (D-125, D-130)
+- **The goal is the RESEARCH LIBRARIAN (D-130).** The caller sends a question with its project context. The librarian uses the project's Memory Map, runs several internal queries, and answers LLM-to-LLM with a refined answer, its primary sources and related sources. Every source is a handle the caller can drill into or pull raw.
+- **Production Ready is self-certified.** When the Production Ready gate in D-130 passes on REAL migrated memory, the release certifies itself; no owner OK is needed.
+- **Engineering depth goes into LLM performance**, the product's core job, not into infrastructure polish.
+- **Ceiling first.** Before building any LLM-quality feature, spend at most one day on an oracle run or prototype on real data. If the ceiling is low, do not build it.
+- **Reviews.**
+  - Dual review is only for one-way doors: data, security, release.
+  - Write the threat model and the severity rubric before the review starts.
+  - At most 2 rounds; after that, the owner accepts or rejects the remaining risk explicitly.
+  - A HIGH finding needs a test that reproduces it.
+- **Parallelism and timeboxes.** Run at most 2–3 workstreams, and finish one before starting another. Timebox every workstream and check in with the owner when the timebox expires. Call a strategic pause after the first failed measurement.
+- **Dogfooding.** HLMemo is used as the memory of this project itself.
+
 ## Product principle (D-017): provider-agnostic
 Librarian model, embedding model, DB and hosting are configuration, never code. Never hard-code a vendor, model id or model-specific prompt quirk outside a provider profile. `bench/` is a user-facing tool for choosing a model.
 
