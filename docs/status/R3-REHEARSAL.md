@@ -1,6 +1,6 @@
 # R3 VM rehearsal — checklist and results (D-099 criterion 2, as amended by D-116/D-123)
 
-Status: **PHASE 2 resumed 17:00Z (see RESUME below).** Target: **R3 = main `805f4cd2955b83c258678cf901a32a605ea88f9c`** (pushed), i.e. J (D-096) + F (D-098) + the
+Status: **PHASE 2 COMPLETE 2026-09-25 18:45Z.** All items PASS except the VM G-L3 bound (FAIL as measured; an identical-data A/B shows R2 = R3, so it is not an R3 regression). Recommendation: see "Verdict" at the end. Target: **R3 = main `805f4cd2955b83c258678cf901a32a605ea88f9c`** (pushed), i.e. J (D-096) + F (D-098) + the
 env-aware release tooling (D-111/D-119, merged as-is per D-123). **The query rewrite is SHELVED (D-116): rewrite and per-source cap
 stay OFF/absent**; slice 2 renditions absent. Baseline: R2 `6902f91e7a79aab3ff4791ae443d7371b7cca5d7`.
 VM: lima `hlm-2604` (vz, aarch64, Ubuntu 26.04, 2 vCPU / 8 GiB, 7913 MiB visible), state dir `deploy/.local/127.0.0.1-2223`,
@@ -35,6 +35,9 @@ the host G-LIVE-C reference runs only if the VM run fails or is ambiguous. Tally
 | §3 remote gates + §4 G-LIVE-C on the VM (VM ledger 13:41→14:00Z; G-LIVE-C real $0.1745) | 0.1804 | 0.7296 |
 | §5.3 G-LIVE-B first run, killed at the pause after luna rep0 (estimate) | ≤ 0.03 | ≤ 0.76 |
 | §5.4 G-LIVE-D (luna $0.0469 + openrouter $0.1424) | 0.1893 | ≤ 0.95 |
+| §5.3 G-LIVE-B re-run (luna 0.0529 + glm53-flash 0.0504 + chain 0.0445) | 0.1478 | ≤ 1.10 |
+| VM 17:00–17:44Z (rollback / roll-forward gates; this ledger was discarded by the snapshot restore; estimate) | ≤ 0.02 | ≤ 1.12 |
+| VM since the final deploy 17:44Z (gates + 5 G-L3 runs = 500 writes + 160 pre-seed: relate 0.92, place 0.10, verify 0.06) | 1.0842 | **≤ 2.20** |
 
 ## D-099 criterion 2 (amended by D-116: rewrite OFF) — results
 
@@ -43,13 +46,13 @@ the host G-LIVE-C reference runs only if the VM run fails or is ambiguous. Tally
 | 1 | gate-release G3 (final SHA, flags off) | Recall@5 ≥ 0.90 | 0.980 (98/100) | PASS | §5.2, 17 |
 | 2 | gate-release G4 | warm p95 ≤ 500 ms, 3 callers | p95 251.0 ms (host load 2.5–3.1) | PASS | §5.2, 17 |
 | 2b | gate-release G-L3 (local, LLM stalled/503) | p95 ≤ 500 ms, both bodies | 358.1 / 417.1 ms | PASS | §5.2, 17 |
-| 3 | G-L3 on the 2 vCPU VM, librarian ON (observer, concurrency 3), rewrite OFF, quiet host | query p95 ≤ 500 ms during 100 writes, 100/100 acked, neutral AND identifier | | | §6 |
+| 3 | G-L3 on the 2 vCPU VM, librarian ON (observer, concurrency 3), rewrite OFF, quiet host | query p95 ≤ 500 ms during 100 writes, 100/100 acked, neutral AND identifier | neutral 575.6 (cold) / 584.7 / 1405.7 (fresh project); identifier 954.2 / 1509.0 ms; 100/100 acked, 0 errors; host load1 1.7–2.9. **A/B on identical data: R2 p95 725/588 vs R3 755/660 ms** | **FAIL as measured, not an R3 regression** | §6, 15, 15b, 15c |
 | 4 | Remote gates: the 8 base (health-ready, unknown-path-404, tls-issuer, postgres-closed, probe, routes, hlm-cli, wan-latency) + risk-check + librarian + backup-restore drill | all PASS | 11/11 on R3 (WAN p95 45 ms, librarian job 10 s, restore 16 s) | PASS | §3, 13 |
 | 4b | Cutover checks: interim (R3 image + R2 env) and `--release r3` after the env switch | RESULT librarian PASS | interim PASS (release=r2-env); r3 PASS (release=r3 manifest=r3) | PASS | §1, §2, 11, 12 |
 | 5 | G-LIVE-C through the D-094 wiring on the VM, primary forced down | catch ≥ 0.85, false-warn ≤ 0.10 every rep; judged only `ok_fallback` | catch min .975, false-warn max .075; 297 ok_fallback / 23 timeout / 0 primary | PASS | §4, 14 |
-| 6 | G-LIVE-B as in R2, on the D-094 mapping | run_w2b verdict PASS per config | | | §5 |
+| 6 | G-LIVE-B as in R2, on the D-094 mapping | run_w2b verdict PASS per config | luna PASS, glm53-flash PASS, chain luna+glm53-flash PASS (false supersede .000; contradiction exact ≥ .989) | PASS | §5.3, 19 |
 | 7 | G-LIVE-D as in R2 (luna, openrouter) | synthesis − fast path ≥ +0.03 every rep | Δ min +0.129 (luna) / +0.145 (openrouter) | PASS | §5.4, 20 |
-| 8 | Observer = 0 librarian mutations | links/versions by librarian 0, close delta 0, 0 decided/applied | | | §7 |
+| 8 | Observer = 0 librarian mutations | links/versions by librarian 0, close delta 0, 0 decided/applied | #1: 3 events / 2 signal_upsert; #2 (final state): 541 events / 661 signal_upsert; 0 links, 0 versions, 0 closes, 0/70 batches applied | PASS | §7, 16-observer-1/2 |
 | 9a | Drill (a) script rollback R3 → R2 (env restored automatically), R2 healthy, roll forward | rc 0 both ways, gates PASS | rollback rc 0, env auto-restored, 11.3 s downtime, R2 10/10; roll-forward rc 0 (attempt 2, via the registry proxy), 9.8 s, R3 10/10 | PASS | §8, 21, 21b, 22b |
 | 9b | Drill (b) VM snapshot restore (pre-deploy disk clone, the Hostinger-snapshot analog, D-123) → R2 healthy → back to R3 | R2 healthy, gates PASS | restore → /ready in 13 s, exact pre-deploy state, R2 10/10 PASS; back-to-R3 blocked by the network (see §9.2) | restore PASS | §9, 23, 24a |
 
@@ -152,22 +155,22 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
   `psql $PG/postgres -c 'CREATE DATABASE hlm_r3reh_gate TEMPLATE hlm_r3reh_world'`.
 - [x] 5.2 `HLM_TEST_DSN=$PG/hlm_r3reh_gate make gate-release` (flags off: the R3 config) → G3 ≥ 0.90, G4 p95 ≤ 500 ms, local G-L3 p95 ≤ 500 ms
   both bodies; `quiet` again; `DROP DATABASE hlm_r3reh_gate`; `git checkout -- HARDWARE.md` if the G4 test rewrote it. → 17-gate-release.log
-- [ ] 5.3 G-LIVE-B (D-094 mapping): `uv run --frozen python eval/live/run_w2b.py --profile openrouter-gpt6-luna --fallback openrouter-glm53-flash --chain openrouter-gpt6-luna+openrouter-glm53-flash --reps 3 --max-usd 1.0 --env-file $REPO/.env --out $R3/glive-b`
+- [x] 5.3 G-LIVE-B (D-094 mapping): `uv run --frozen python eval/live/run_w2b.py --profile openrouter-gpt6-luna --fallback openrouter-glm53-flash --chain openrouter-gpt6-luna+openrouter-glm53-flash --reps 3 --max-usd 1.0 --env-file $REPO/.env --out $R3/glive-b`
   → Verdict PASS per config (R2: luna / openrouter / chain luna+openrouter PASS). → 19-glive-b.log
 - [x] 5.4 G-LIVE-D: `psql $PG/postgres -c 'CREATE DATABASE hlm_r3reh_live'`; `HLM_GLIVE_D=1 HLM_GLIVE_D_MAX_USD=0.5 HLM_W2E_ENV_FILE=$REPO/.env HLM_GLIVE_D_OUT=$R3/glive-d HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_w2e_glive_d.py`
   → PASS per profile (R2: luna +0.161, openrouter +0.194 min Δ). → 20-glive-d.log
-- [ ] 5.5 (only if §4 fails/ambiguous) host G-LIVE-C reference: `HLM_GLIVE_C_WIRING=1 HLM_GLIVE_C_MAX_USD=0.6 HLM_GLIVE_C_KEY_FILE=$REPO/.env HLM_GLIVE_C_OUT=$R3/glive-c-host HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s tests/integration/test_wf_glive_c_wiring.py`.
+- [x] 5.5 NOT RUN (§4 passed unambiguously; budget) (only if §4 fails/ambiguous) host G-LIVE-C reference: `HLM_GLIVE_C_WIRING=1 HLM_GLIVE_C_MAX_USD=0.6 HLM_GLIVE_C_KEY_FILE=$REPO/.env HLM_GLIVE_C_OUT=$R3/glive-c-host HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s tests/integration/test_wf_glive_c_wiring.py`.
 
 ### §6 G-L3 on the 2 vCPU VM (librarian ON observer, rewrite OFF, quiet host)
-- [ ] 6.0 `quiet` (load1 < 3, nothing heavy), clock ≤ 2 s, `$OPS status`: worker/librarian ready=0 and `spend_hour_usd` ≤ 0.3 (HOUR cap 1:
+- [x] 6.0 `quiet` (load1 < 3, nothing heavy), clock ≤ 2 s, `$OPS status`: worker/librarian ready=0 and `spend_hour_usd` ≤ 0.3 (HOUR cap 1:
   a tripped cap would pause the librarian and soften the test); `$VSSH 'cat > /tmp/r3-backlog.sql' < $SC/backlog.sql`.
-- [ ] 6.1 `$SC/sampler.sh $R3/sampler-gl3.log & SAMP=$!`
-- [ ] 6.2 Neutral: `uv run --frozen python $SC/gl3_vm_r3.py --device r3-load-mac --project r3-load --body neutral --run gl3n` → q_p95 ≤ 500, 100/100, 0 errors.
-- [ ] 6.3 Drain (`$OPS status` ready=0; record time), `quiet`, then identifier: `… --body identifier --run gl3i --offset 100`.
-- [ ] 6.4 `kill $SAMP`; `python3 $SC/analyze.py $R3/sampler-gl3.log <t_start> <t_end>` per run. R2 reference: p95 268 / 375 ms. → 15-gl3-vm.log
+- [x] 6.1 `$SC/sampler.sh $R3/sampler-gl3.log & SAMP=$!`
+- [x] 6.2 Neutral: `uv run --frozen python $SC/gl3_vm_r3.py --device r3-load-mac --project r3-load --body neutral --run gl3n` → q_p95 ≤ 500, 100/100, 0 errors.
+- [x] 6.3 Drain (`$OPS status` ready=0; record time), `quiet`, then identifier: `… --body identifier --run gl3i --offset 100`.
+- [x] 6.4 `kill $SAMP`; `python3 $SC/analyze.py $R3/sampler-gl3.log <t_start> <t_end>` per run. R2 reference: p95 268 / 375 ms. → 15-gl3-vm.log
 
 ### §7 Observer = 0 librarian mutations (after §3–§6, drained)
-- [ ] 7.1 `{ echo "\\set since $BASE_EVENT"; cat $SC/observer.sql; } | $SC/vmsql.sh` → only signal_upsert, links/versions by librarian 0,
+- [x] 7.1 `{ echo "\\set since $BASE_EVENT"; cat $SC/observer.sql; } | $SC/vmsql.sh` → only signal_upsert, links/versions by librarian 0,
   superseded/closed = baseline, 0 batches decided/applied, 0 applied questions; `$OPS librarian audit --project P --json` applied 0 for
   r3-base, r3-load, rk-main, gates-probe. → 16-observer.log
 
@@ -184,15 +187,15 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
 - [x] 9.1 `limactl stop hlm-2604 && cp -c ~/.lima/_snapshots/hlm-2604-predeploy.disk ~/.lima/hlm-2604/disk && cp -c ~/.lima/_snapshots/hlm-2604-predeploy.vz-efi ~/.lima/hlm-2604/vz-efi && limactl start hlm-2604 && repin`
   → `/ready` 200; release-state current 6902f91 (no R3 trace), R2 env (caps 10/2/1), `$SC/libcheck.sh` PASS, counts = §0.5,
   `remote_gates.sh … --librarian --no-drill` all PASS. Time from stop to healthy recorded. → 23-snapshot-restore.log
-- [ ] 9.2 Back to R3 (final state): `deploy.sh hlm-deploy "$SHA"` (image rebuilt: the snapshot predates it) → `install_llm_env.sh --state $S`
+- [x] 9.2 Back to R3 (final state): `deploy.sh hlm-deploy "$SHA"` (image rebuilt: the snapshot predates it) → `install_llm_env.sh --state $S`
   → libcheck `--release r3` → `remote_gates.sh … --librarian --no-drill` all PASS. → 24-final-r3.log
 
 ### §10 End state and cleanup
-- [ ] 10.1 Final `$OPS status`, `snap.sql`, VM spend (`llm_calls` since PHASE 2 start), `docker stats --no-stream`; tally closed.
-- [ ] 10.2 VM stays at R3 ($SHA, R3 env, dev key, caps 10/2/1), then `limactl stop hlm-2604` (restart = `limactl start` + repin).
+- [x] 10.1 Final `$OPS status`, `snap.sql`, VM spend (`llm_calls` since PHASE 2 start), `docker stats --no-stream`; tally closed.
+- [x] 10.2 VM stays at R3 ($SHA, R3 env, dev key, caps 10/2/1), then `limactl stop hlm-2604` (restart = `limactl start` + repin).
   Snapshot `hlm-2604-predeploy.*` kept until the prod release is accepted.
-- [ ] 10.3 `kill $CAF`; drop own DBs `hlm_r3reh_gate`/`hlm_r3reh_live`/`hlm_r3reh_world`; shred `$R3/cfg/credentials.toml`.
-- [ ] 10.4 `gitleaks dir` over `docs/bakeoff/rehearsal-r3` and this file (image tags abbreviated to 12 hex); commit on main; NO push.
+- [x] 10.3 `kill $CAF`; drop own DBs `hlm_r3reh_gate`/`hlm_r3reh_live`/`hlm_r3reh_world`; shred `$R3/cfg/credentials.toml`.
+- [x] 10.4 `gitleaks dir` over `docs/bakeoff/rehearsal-r3` and this file (image tags abbreviated to 12 hex); commit on main; NO push.
 
 ## PHASE 2 results (2026-09-25, SHA 805f4cd; times UTC)
 - §0 (13:41–13:42Z): 01-preconditions.log: code-only vs R2 confirmed (no alembic/compose/Dockerfile/pyproject/uv.lock/models.lock/deploy.sh diff; compose 99fecbf4…, head 0008; `query_rewrite`/`retrieval_source_cap` absent from src/hlmemo/config.py). Clock host/VM within 0.4 s, caffeinate on. VM = R2 6902f91, drained. No hlmemo-backup.timer on the VM. Owner D-121 edit mirrored on the R2 env (3/10/60 → HOUR=1 DAY=2 MONTH=10) + recreate, R2 check PASS (02a). Baseline BASE_EVENT=1843; projects r3-base 248, r3-load 163, rk-main 46, rk-shell 6, rk-secret 2; links 0, closed/superseded 0 (02). **Pre-deploy snapshot** `~/.lima/_snapshots/hlm-2604-predeploy.{disk,vz-efi}` at 13:42:20Z; stop → /ready 200 in 13 s, host key re-pinned `SHA256:ssoa4SJm…`, R2 check PASS (03).
@@ -225,16 +228,47 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
 - **§9.1 drill (b) snapshot restore: PASS** (23-snapshot-restore.log, 17:20:13Z): stop → `cp -c` pre-deploy disk + vz-efi back → start → re-pin (`SHA256:uGVxTqfr…`) → **/ready 200 13 s after the stop**. Exactly the pre-deploy state: release-state current 6902f91 (previous 3535bcc; no R3 trace), the R2 env (fallback openrouter, caps 1/2/10, no marker), no dockerd drop-in, no R3 image; R2's check PASS; data = §0.5 (max event 1843; same project counts); remote gates 10/10 PASS (drill skipped).
 - **§9.2 back to R3, attempt 1: failed SAFELY, environment issue** (24a-*.log, 17:21–17:30Z): the proxy drop-in was re-applied (the snapshot predates it). `deploy.sh` then had to REBUILD the image (the snapshot predates it). The build's model bake (`models` stage, `FROM builder`, so every src change re-downloads) failed after 489 s: `CAS Client Error … https://cas-server.xethub.hf.co/v2/reconstructions/…`. Hugging Face's xet CAS is an AWS endpoint without IPv6 and is unreachable from the Mac too (same IPv4 black hole), and a build RUN step does not use dockerd's proxy. "Deployment failed before writers stopped; previous stack remains running", rc 1; `install_llm_env.sh` refused correctly (rc 3). The gates in that log ran against R2 (10/10 + drill PASS). **Production note:** every R3+ image build needs Docker Hub, ghcr and Hugging Face (xet CAS) reachable from the VPS, because the model is re-baked on every release. A registry or HF outage blocks a deploy or roll-forward (safely), and an already-built image is reused only on the same host.
 - Lesson: take a snapshot of the R3 state before drill (b), so the final "back to R3" does not depend on the network (the R3 image existed only on the discarded disk).
-- **Now (17:33Z): waiting for Docker Hub over IPv4 and the HF xet CAS**, to rebuild R3 on the VM (the official path) → R3 env → gates → G-L3 → observer #2 → cleanup. G-LIVE-B is running (luna PASS; glm53-flash, then the chain).
 
-## Review-77 residuals (D-122/D-123) — watched during PHASE 2
+### G-L3 on the VM (§6): numbers, diagnosis, conclusion
+Runs (15-gl3-vm.log; same harness and bodies as R2; all 100/100 acked, 0 errors):
+| run | corpus / state | host load1 | quiet p50 / p95 | during writes p50 / p95 / max | write p95 |
+|---|---|---|---|---|---|
+| gl3n (cold) | r3-load, 61 s after the drill's pg_restore | 2.5 | 73.5 / 349.3 | 142.3 / **575.6** / 1027 | 300.7 |
+| gl3n2 | r3-load, drained, steady | 2.8 | 89.4 / 448.5 | 159.7 / **584.7** / 1135 | 278.6 |
+| gl3i | r3-load (+100 identifier bodies) | 2.6–3.0 | 86.1 / 424.6 | 158.1 / **954.2** / 2272 | 292.5 |
+| f1n | fresh project r3-gl3 (160 pre-seed, R2 protocol) | 1.7 | 75.7 / 804.0 | 141.6 / **1405.7** / 2724 | 250.2 |
+| f2i | r3-gl3 (+100 neutral), identifier | 2.8 | 90.8 / 782.4 | 169.6 / **1509.0** / 3102 | 244.4 |
+| R2 reference (2026-09-24, 08b) | r2-load, no G-L3 bodies anywhere | — | 94.1 / 140.8 | 162.4 / 268.0 / 403 | 305.3 |
+Diagnosis (15b-gl3-diagnosis-ab.log): the medians match R2; the tail is the identifier-like queries (`svc-qx7 APP_DB_DSN`, `E4193 retry with backoff`, `Load note 42`, `note-17-3`) at 0.8–1.5 s even WITHOUT writes, from the Mac and from inside the VM alike (so not the port forward). **A/B on identical data at the same moment** (throwaway api containers from the R2 and the R3 image, the prod api's limits, the same DB): quiet p95 **R2 725 / 588 ms vs R3 755 / 660 ms**, p50 78/75 vs 81/86 ms, the same slowest queries. So R3 does not regress the read path (its only read change, the partial-supersession demotion, is a no-op without links). Cause: `read_queries.trigram_candidates` (unchanged since R2, by design) matches identifier terms against EVERY chunk through the trigram GIN (`matches AS MATERIALIZED`) before the project/scope filter. The VM has accumulated synthetic G-L3 bodies in several projects: r2-load from the R2 rehearsal (100 neutral + 100 identifier) and today's runs (neutral bodies also carry `note-<i>-<k>` identifier terms). Every run makes every project's identifier queries slower, including a fresh project (f1n/f2i), and the DB core peaks at 100 % (R2: 56 %). R2's reference run had none of this data. Resources stayed within limits (15c: api ≤ 1.28/2.5 GiB, worker ≤ 1.09/1.5 GiB, librarian ≤ 132/512 MiB). The librarian (concurrency 3) drained 100 jobs in 349–506 s (R2: 537 s at concurrency 1).
+**Conclusion: the D-099 G-L3 bound is missed on this VM's data by R2 and R3 alike.** For R3 this is a waiver question, not a regression. Two follow-ups: (1) a BACKLOG item: scope the trigram match by the caller's projects before materializing, or add a per-project trigram path, because identifier-heavy content in one project raises identifier-query latency everywhere, which matters at Phase-5 scale; (2) future G-L3 rehearsals need a VM without accumulated G-L3 bodies (fresh VM or a pre-G-L3 snapshot).
+- **§7 observer #2 (final state): PASS** (16-observer-2.log): since BASE_EVENT2 1895 (500 G-L3 writes + 160 pre-seed, drained): 541 librarian events, ops only `signal_upsert` (661), links_by_librarian 0, versions_by_librarian 0, superseded/closed 0/0, links 0, batches decided/applied 0/70, questions only `open`; audit applied 0 for r3-load (255 open), r3-gl3 (328), r3-base (224), rk-main (3), gates-probe.
+- **§5.3 G-LIVE-B re-run: PASS ×3** (19-glive-b.log, 17:01–18:34Z, live, `--max-usd 1.0`): luna (310 calls, 0 JSON-fail, p50/p95 3473/5182 ms, $0.0529); glm53-flash (313 calls, 0 JSON-fail, 7214/24850 ms, $0.0504; contradiction exact 1.000); **production chain luna + glm53-flash verifier** (313 calls, 0 JSON-fail, $0.0445: placement .969, contradiction exact .989, false supersede .000, positive recall/precision .944/.971, direction 1.000, false cross-project .000, every class ≥ .86, v2 false close .000, refines direction 1.000, duplicate precision 1.000).
+- **§9.2 back to R3, attempt 2: PASS** (24b-final-r3.log, 17:44:52Z; 32-workaround-removed.log). The network was back at 17:36Z, so the workaround was removed first (drop-in deleted, dockerd restarted, direct VM → Docker Hub 401 / xet CAS 404, the host proxy stopped). `deploy.sh`: the image was rebuilt with the model bake, rc 0 in 75 s, interim PASS, "Deployment ready"; `install_llm_env.sh` `release=r3 manifest=r3` PASS; `libcheck --release r3` PASS; release-state current 805f4cd / previous 6902f91 + `previous_llm_env`, no journal; **remote gates 11/11 PASS (drill ON)**. Docker Hub over IPv4 was down again at 18:13Z (a flapping home network).
+- **§10 end state** (25-final-cleanup.log): VM `hlm-2604` **STOPPED at R3 805f4cd with the R3 env** (dev key, caps 1/2/10, `--release r3` PASS, rollback pair to 6902f91 + env snapshot, no journal, no dockerd drop-in). Pre-deploy snapshot `~/.lima/_snapshots/hlm-2604-predeploy.*` kept until prod R3 is accepted. Own DBs dropped; the scratch credentials shredded; caffeinate, proxy, sampler and monitors stopped. Restart = `limactl start hlm-2604` + re-pin (the host key changes on every boot).
+
+
+## Review-77 residuals (D-122/D-123), as observed
 | Residual | Hit? | Note |
 |---|---|---|
-| resumed deploy publishes a half-switched stack | | no deploy was killed/resumed in the drills |
-| backup timer / restore race a rollback or recovery | | no hlmemo-backup.timer on the VM |
-| daily rotation deletes the rollback safety dump | | |
-| install and deploy/rollback journals deadlock | | |
-| persistent image selection not reverted on recovery | | |
-| provenance fingerprint ignores budget/guard fields, does not require both services | | |
-| extra fallback overrides / unreadable env fail open | | |
-| a preserved wrong key passes (probe does not authenticate) | | |
+| resumed deploy publishes a half-switched stack | no | no deploy was killed; both failed deploys failed BEFORE writers stopped ("previous stack remains running") |
+| backup timer / restore race a rollback or recovery | n/a | the VM has no hlmemo-backup.timer (prod: pause it, D-123) |
+| daily rotation deletes the rollback safety dump | exposure seen, not hit | the rollback saved the current DB to `/var/backups/hlmemo/daily/…` (the rotated tier); no rotation ran |
+| install and deploy/rollback journals deadlock | no | `install_llm_env.sh` refused cleanly twice on R2 ("predates R3 … nothing changed", rc 3); every journal was cleared |
+| persistent image selection not reverted on recovery | no | no in-deploy recovery ran |
+| provenance ignores budget/guard fields | consistent | the §0.4 cap edit + recreate did not affect provenance; the budget still reached the manifest check (caps shown and checked in R3 mode) |
+| extra fallback overrides / unreadable env fail open | not exercised | |
+| a preserved wrong key passes (the probe does not authenticate) | consistent | every provider shows "key set, reachable (HTTP 404)"; the probe cannot tell a valid key |
+
+## Anomalies (not R3 code)
+1. **The home network lost its IPv4 path to AWS-hosted Docker Hub and the HF xet CAS** (≈17:03–17:36Z, again at 18:13Z; IPv6 fine). The IPv4-only VM could not pull or build; both affected deploys failed safely. A VM-only CONNECT proxy (dockerd `HTTPS_PROXY`, removed afterwards) enabled the roll-forward. **Prod dependency:** every build re-bakes the model (the `models` stage is `FROM builder`), so each deploy needs Docker Hub, ghcr and Hugging Face from the VPS. Check reachability before the prod snapshot and deploy.
+2. VM clock skew after host sleep (9,703 s; chrony slews only) → restart + re-pin before timed steps.
+3. The host key of the lima VM changes on every boot (re-pinned each time after comparing with the guest key via `limactl shell`).
+4. Cosmetic: `rolled_back_from` stays in release-state after the roll-forward; `ops status` lists the `query_rewrite` task override as "unknown task" (rewrite shelved); release-state showed `accepted: true` after the rollback.
+5. G-LIVE-C: 23/320 risk_checks fell back to retrieval-only on the 4 s cap (qwen timeouts), as in D-098 (21/320); relate_verify on glm53-flash had 2 schema_fail + 2 schema_retry_ok in 118 calls.
+6. `*.log` is gitignored: the evidence logs are force-added (as rehearsal-r2).
+
+## Verdict (rehearsal engineer)
+- PASS: gate-release (G3 0.980, G4 p95 251 ms, local G-L3 358/417 ms); remote gates 11/11 (and 10/10 after every drill step); both cutover checks (interim + `--release r3`); G-LIVE-C on the VM through the D-094 wiring (catch min .975, false-warn max .075, 0 primary); G-LIVE-B ×3; G-LIVE-D ×2; observer 0 mutations (twice); drill (a) script rollback with automatic env restore + roll-forward; drill (b) snapshot restore (/ready in 13 s, exact pre-deploy state).
+- MISS: VM G-L3 p95 ≤ 500 ms (576–1509 ms), proven NOT an R3 regression (identical-data A/B R2 ≈ R3). The cause is pre-existing (global trigram matching) plus the rehearsal VM's accumulated synthetic identifier data.
+- **Recommendation: GO for prod only with an explicit owner waiver of the G-L3 item under D-099** (the rule says any miss → stop and report), on the grounds that the regression A/B is clean. Prod preconditions: (1) `/etc/hlmemo/llm.env` caps MONTH ≤ 10 (D-121 owner edit) BEFORE the R3 env install, else the install fails its own manifest check; (2) Docker Hub, ghcr and Hugging Face (xet CAS) reachable from the VPS before the Hostinger snapshot; (3) the D-123 procedure (snapshot of VM 2002259 only, timer paused, D-108 order, gates + `--release r3` check). Without the waiver: NO-GO.
+- Spend ≈ **$2.20 of $3** (≤ $2.70 stop not reached).

@@ -1,0 +1,14 @@
+# 2026-09-25T18:23:41Z G-L3 diagnosis (VM, R3 805f4cd deployed; r3-load corpus = 163 R2-era items + 100 neutral + 100 neutral + 100 identifier 6-7.5 kB G-L3 bodies)
+## quiet probe (no writes; the gl3 query mix, 3 rounds x 22 queries, 3 callers), scripts/quiet_probe.py:
+Mac via lima port forward (1): p50 118.0 p95 868.8 max 1562.8; slowest: svc-qx7 APP_DB_DSN x3, E4193 retry with backoff, Load note 42
+inside the VM via Caddy:       p50 130.6 p95 985.1 max 1378.3 (same slowest queries) -> the port forward is NOT the cause
+Mac via lima port forward (2): p50 123.3 p95 892.0 max 1371.4
+## A/B, same DB and moment: throwaway api containers from the R2 image (6902f91) and the R3 image (805f4cd), same limits as the prod api (1 CPU, 2560m, read-only, tmpfs), app.env + api.env, on the internal backend network; probed alternately from a separate client container
+ab-r2 ready after ~6s
+ab-r3 ready after ~3s
+ab-r2 round1 {"n": 66, "p50": 78.0, "p95": 725.4, "max": 1485.1, "slowest": [[1485, "svc-qx7 APP_DB_DSN"], [966, "svc-qx7 APP_DB_DSN"], [820, "E4193 retry with backoff"], [817, "svc-qx7 APP_DB_DSN"], [451, "E4193 retry with backoff"], [445, "E4193 retry with backoff"]]}
+ab-r3 round1 {"n": 66, "p50": 81.4, "p95": 755.1, "max": 1118.9, "slowest": [[1119, "svc-qx7 APP_DB_DSN"], [939, "svc-qx7 APP_DB_DSN"], [871, "svc-qx7 APP_DB_DSN"], [840, "E4193 retry with backoff"], [500, "E4193 retry with backoff"], [463, "E4193 retry with backoff"]]}
+ab-r2 round2 {"n": 66, "p50": 74.9, "p95": 587.8, "max": 1083.2, "slowest": [[1083, "svc-qx7 APP_DB_DSN"], [1038, "svc-qx7 APP_DB_DSN"], [800, "svc-qx7 APP_DB_DSN"], [624, "E4193 retry with backoff"], [478, "E4193 retry with backoff"], [475, "E4193 retry with backoff"]]}
+ab-r3 round2 {"n": 66, "p50": 85.9, "p95": 659.5, "max": 1123.8, "slowest": [[1124, "svc-qx7 APP_DB_DSN"], [1005, "svc-qx7 APP_DB_DSN"], [820, "svc-qx7 APP_DB_DSN"], [716, "E4193 retry with backoff"], [490, "Load note 42"], [483, "E4193 retry with backoff"]]}
+stopped-and-cleaned
+## conclusion: R2 and R3 read paths are equivalent on identical data (p95 725/588 vs 755/660 ms; p50 78/75 vs 81/86 ms); the tail is the identifier queries against 100 identifier-heavy bodies (trigram worst case) plus today's host, not R3 code.
