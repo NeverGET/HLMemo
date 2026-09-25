@@ -356,3 +356,9 @@ The core server works and safety never broke. The waste was direction, not effor
 - at most 2–3 parallel workstreams, finish before starting;
 - timeboxes with owner checkpoints.
 The CLAUDE.md working agreement is to be updated when the owner confirms.
+D-126 | 2026-09-25 | ACCEPTED (orchestrator) | **D-118 write-time supersession is review-closed within the D-125 cap.** Branch wf-write-updates @ 8919355.
+- Critical review 76 (2 HIGH + 3 MEDIUM) led to 5 fixes. Each has a regression test that fails on 8b54800 and passes now, live and replay.
+- The single capped verification (consult 78, astra-low) returned OK: all 5 findings FIXED, no in-scope regression.
+- Gates so far: unit 858, targeted integration 63. The FULL integration suite on the final code is pending; it waits for the R3 rehearsal to free the host.
+- No open HIGH, so no owner risk call is needed.
+- It stays on its branch until R4. Per D-125, R4 is a MINIMAL port of this feature onto main rather than the whole v3/B-real/pilot stack. The port plan comes after R3 ships.
