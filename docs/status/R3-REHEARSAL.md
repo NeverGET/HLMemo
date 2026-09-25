@@ -33,6 +33,8 @@ the host G-LIVE-C reference runs only if the VM run fails or is ambiguous. Tally
 |---|---|---|
 | PHASE 1 R2 backlog (import 247 + seeds, 345 jobs) | 0.5492 | 0.5492 |
 | §3 remote gates + §4 G-LIVE-C on the VM (VM ledger 13:41→14:00Z; G-LIVE-C real $0.1745) | 0.1804 | 0.7296 |
+| §5.3 G-LIVE-B first run, killed at the pause after luna rep0 (estimate) | ≤ 0.03 | ≤ 0.76 |
+| §5.4 G-LIVE-D (luna $0.0469 + openrouter $0.1424) | 0.1893 | ≤ 0.95 |
 
 ## D-099 criterion 2 (amended by D-116: rewrite OFF) — results
 
@@ -46,7 +48,7 @@ the host G-LIVE-C reference runs only if the VM run fails or is ambiguous. Tally
 | 4b | Cutover checks: interim (R3 image + R2 env) and `--release r3` after the env switch | RESULT librarian PASS | interim PASS (release=r2-env); r3 PASS (release=r3 manifest=r3) | PASS | §1, §2, 11, 12 |
 | 5 | G-LIVE-C through the D-094 wiring on the VM, primary forced down | catch ≥ 0.85, false-warn ≤ 0.10 every rep; judged only `ok_fallback` | catch min .975, false-warn max .075; 297 ok_fallback / 23 timeout / 0 primary | PASS | §4, 14 |
 | 6 | G-LIVE-B as in R2, on the D-094 mapping | run_w2b verdict PASS per config | | | §5 |
-| 7 | G-LIVE-D as in R2 (luna, openrouter) | synthesis − fast path ≥ +0.03 every rep | | | §5 |
+| 7 | G-LIVE-D as in R2 (luna, openrouter) | synthesis − fast path ≥ +0.03 every rep | Δ min +0.129 (luna) / +0.145 (openrouter) | PASS | §5.4, 20 |
 | 8 | Observer = 0 librarian mutations | links/versions by librarian 0, close delta 0, 0 decided/applied | | | §7 |
 | 9a | Drill (a) script rollback R3 → R2 (env restored automatically), R2 healthy, roll forward | rc 0 both ways, gates PASS | | | §8 |
 | 9b | Drill (b) VM snapshot restore (pre-deploy disk clone, the Hostinger-snapshot analog, D-123) → R2 healthy → back to R3 | R2 healthy, gates PASS | | | §9 |
@@ -152,7 +154,7 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
   both bodies; `quiet` again; `DROP DATABASE hlm_r3reh_gate`; `git checkout -- HARDWARE.md` if the G4 test rewrote it. → 17-gate-release.log
 - [ ] 5.3 G-LIVE-B (D-094 mapping): `uv run --frozen python eval/live/run_w2b.py --profile openrouter-gpt6-luna --fallback openrouter-glm53-flash --chain openrouter-gpt6-luna+openrouter-glm53-flash --reps 3 --max-usd 1.0 --env-file $REPO/.env --out $R3/glive-b`
   → Verdict PASS per config (R2: luna / openrouter / chain luna+openrouter PASS). → 19-glive-b.log
-- [ ] 5.4 G-LIVE-D: `psql $PG/postgres -c 'CREATE DATABASE hlm_r3reh_live'`; `HLM_GLIVE_D=1 HLM_GLIVE_D_MAX_USD=0.5 HLM_W2E_ENV_FILE=$REPO/.env HLM_GLIVE_D_OUT=$R3/glive-d HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_w2e_glive_d.py`
+- [x] 5.4 G-LIVE-D: `psql $PG/postgres -c 'CREATE DATABASE hlm_r3reh_live'`; `HLM_GLIVE_D=1 HLM_GLIVE_D_MAX_USD=0.5 HLM_W2E_ENV_FILE=$REPO/.env HLM_GLIVE_D_OUT=$R3/glive-d HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_w2e_glive_d.py`
   → PASS per profile (R2: luna +0.161, openrouter +0.194 min Δ). → 20-glive-d.log
 - [ ] 5.5 (only if §4 fails/ambiguous) host G-LIVE-C reference: `HLM_GLIVE_C_WIRING=1 HLM_GLIVE_C_MAX_USD=0.6 HLM_GLIVE_C_KEY_FILE=$REPO/.env HLM_GLIVE_C_OUT=$R3/glive-c-host HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s tests/integration/test_wf_glive_c_wiring.py`.
 
@@ -217,6 +219,7 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
 - **§8.3 roll-forward, attempt 1 (17:03Z): failed SAFELY, environment issue.** `deploy.sh hlm-deploy 805f4cd…` recorded the R2 env for rollback, then `dc pull db caddy` could not resolve `pgvector/pgvector:0.8.6-pg17` (`dial tcp …:443: i/o timeout`) → "Deployment failed before writers stopped; previous stack remains running", rc 1; R2 kept serving, the env copy was queued in `pending_cleanup`; `install_llm_env.sh` then refused correctly ("the deployed release predates R3 … nothing changed", rc 3). Cause: **the owner's network currently has no IPv4 path to Docker Hub** (every registry-1.docker.io IPv4 address times out from the Mac as well; the Mac reaches it over IPv6, 401 in 0.5 s; the lima VM is IPv4-only; OpenRouter and GitHub are fine from the VM). The runner pulls db/caddy unconditionally and builds with `--pull`, so a deploy needs the registry even when every image is cached. Production (Vilnius VPS) has normal IPv4, but a Docker Hub outage would block a prod deploy or roll-forward the same (safe) way. The gate lines in 22-roll-forward.log therefore ran against **R2**, not R3.
 - **§5.2 gate-release: PASS** (17-gate-release.log; 17:09–17:11Z, quiet host: load1 2.52 before, 3.09 after; nothing heavy running): `make gate-release` on 805f4cd, own clone `hlm_r3reh_gate` of `hlm_r3reh_world`, flags off (the R3 config): **G3 Recall@5 0.980** (98/100; TR 1.000, DE 0.939, EN 1.000, identifier-heavy 0.960); **G4 p95 251.0 ms** (p50 157.5, p99 443.4, 300 queries / 3 callers, M3 Pro); **local G-L3** (real api + librarian processes, stalled/503 provider, librarian concurrency 3) **p95 358.1 ms identifier / 417.1 ms neutral** during 100 writes (max 518 / 589 ms); 6 passed in 138 s. The clone was dropped and HARDWARE.md restored. D-098 reference: G3 0.980, G4 p95 274, G-L3 378/417.
 - Evidence logs: `*.log` is gitignored (as for rehearsal-r2, which force-added its logs), so the earlier commits carried only the scripts. From 714951b on, the logs are force-added after a gitleaks scan.
+- **§5.4 G-LIVE-D: PASS** (20-glive-d.log; 17:01–17:16Z, own DB `hlm_r3reh_live`, $0.5 guard): 62 weak-evidence questions × 3 reps per profile, fast path 0.435. **luna: synthesis acc 0.565 min / 0.597 mean, Δ +0.129 min / +0.161 mean**, 0 negatives answered, p50/p95 1610/2853 ms, $0.0469. **openrouter (deepseek v4.1-flash, the D-094 synthesis fallback): 0.581 / 0.597, Δ +0.145 / +0.161**, 1 negative answered, 841/2413 ms, $0.1424. R2: luna +0.161 min, openrouter +0.194 min. Lower minimums, still far above the +0.03 bar.
 - Waiting for the IPv4 path, then: roll-forward retry → drill (b) → back to R3 → G-L3 → observer #2. gate-release runs as soon as the host is quiet.
 
 ## Review-77 residuals (D-122/D-123) — watched during PHASE 2

@@ -1,0 +1,190 @@
+# 2026-09-25T17:01:28Z §5.4 G-LIVE-D: HLM_GLIVE_D=1 HLM_GLIVE_D_MAX_USD=0.5 HLM_W2E_ENV_FILE=.env HLM_TEST_DSN=<own hlm_r3reh_live> uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_w2e_glive_d.py  (profiles openrouter-gpt6-luna, openrouter = the D-094 synthesis primary/fallback; 3 reps)
+
+G-LIVE-D openrouter-gpt6-luna rep 0: {"rep": 0, "synthesis_accuracy": 0.613, "fast_path_accuracy": 0.435, "delta": 0.177, "system_accuracy": 0.645, "statuses": {"answered": 43, "insufficient_evidence": 19}, "negatives_weak": 8, "negatives_answered": 0, "negatives_abstained": 8, "wins": ["q001", "q002", "q050", "q059", "q060", "q083", "q088", "q106", "q115", "q141", "q164", "q168", "q181", "q212"], "losses": ["q077", "q089", "q090"]}
+
+G-LIVE-D openrouter-gpt6-luna rep 1: {"rep": 1, "synthesis_accuracy": 0.565, "fast_path_accuracy": 0.435, "delta": 0.129, "system_accuracy": 0.645, "statuses": {"answered": 43, "insufficient_evidence": 19}, "negatives_weak": 8, "negatives_answered": 0, "negatives_abstained": 8, "wins": ["q001", "q002", "q050", "q059", "q060", "q083", "q088", "q106", "q115", "q141", "q164", "q168", "q181", "q212"], "losses": ["q022", "q023", "q077", "q089", "q090", "q157"]}
+
+G-LIVE-D openrouter-gpt6-luna rep 2: {"rep": 2, "synthesis_accuracy": 0.613, "fast_path_accuracy": 0.435, "delta": 0.177, "system_accuracy": 0.645, "statuses": {"answered": 46, "insufficient_evidence": 16}, "negatives_weak": 8, "negatives_answered": 0, "negatives_abstained": 8, "wins": ["q001", "q002", "q045", "q050", "q059", "q060", "q083", "q088", "q106", "q115", "q141", "q168", "q181", "q212"], "losses": ["q089", "q090", "q157"]}
+
+G-LIVE-D openrouter rep 0: {"rep": 0, "synthesis_accuracy": 0.597, "fast_path_accuracy": 0.435, "delta": 0.161, "system_accuracy": 0.694, "statuses": {"answered": 43, "insufficient_evidence": 12, "unavailable:schema_fail": 1, "unavailable:timeout": 6}, "negatives_weak": 8, "negatives_answered": 1, "negatives_abstained": 7, "wins": ["q001", "q002", "q018", "q050", "q059", "q060", "q081", "q088", "q106", "q115", "q119", "q141", "q156", "q164", "q168", "q181", "q182"], "losses": ["q003", "q021", "q031", "q089", "q090", "q123", "q201"]}
+
+G-LIVE-D openrouter rep 1: {"rep": 1, "synthesis_accuracy": 0.581, "fast_path_accuracy": 0.435, "delta": 0.145, "system_accuracy": 0.677, "statuses": {"answered": 46, "insufficient_evidence": 11, "unavailable:timeout": 5}, "negatives_weak": 8, "negatives_answered": 1, "negatives_abstained": 7, "wins": ["q001", "q002", "q018", "q050", "q059", "q060", "q081", "q083", "q088", "q115", "q141", "q156", "q164", "q168", "q181", "q182"], "losses": ["q003", "q021", "q031", "q089", "q090", "q125", "q201"]}
+
+G-LIVE-D openrouter rep 2: {"rep": 2, "synthesis_accuracy": 0.613, "fast_path_accuracy": 0.435, "delta": 0.177, "system_accuracy": 0.677, "statuses": {"answered": 47, "insufficient_evidence": 10, "unavailable:timeout": 5}, "negatives_weak": 8, "negatives_answered": 1, "negatives_abstained": 7, "wins": ["q001", "q002", "q018", "q050", "q059", "q060", "q081", "q083", "q088", "q106", "q115", "q119", "q141", "q156", "q164", "q168"], "losses": ["q003", "q031", "q089", "q090", "q201"]}
+
+# G-LIVE-D (memory.query synthesis) 2026-09-25
+
+Fixture `tests/fixtures/synthesis`: the 62 weak-evidence questions (top RRF < τ_s = 0.0434) of the held-out `test` split, plus the weak negatives; 3 reps per profile, each profile alone, production path with the 6 s cap. Fast path only (answer key in one drilldown of the top-3 clues): 0.435. Pass: synthesis accuracy (answer key in the synthesis text) − fast path ≥ 0.03 on every rep. Spent $0.18931897 of the $0.5 guard.
+
+| profile | model | synthesis acc min / mean | Δ vs fast path min / mean | system acc min | negatives answered (max) | p50 / p95 ms | cost $ | pass |
+|---|---|---|---|---|---|---|---|---|
+| openrouter-gpt6-luna | openai/gpt-6-luna | 0.565 / 0.597 | +0.129 / +0.161 | 0.645 | 0 | 1609.5 / 2853.2 | 0.0469 | PASS |
+| openrouter | deepseek/deepseek-v4.1-flash | 0.581 / 0.597 | +0.145 / +0.161 | 0.677 | 1 | 841.0 / 2413.2 | 0.1424 | PASS |
+.
+1 passed in 869.70s (0:14:29)
+rc=0
+# end 2026-09-25T17:15:59Z
+
+## results.json (aggregates)
+{
+ "fast_path_accuracy": 0.435,
+ "fixture": "tests/fixtures/synthesis",
+ "max_usd": "0.5",
+ "negatives": 10,
+ "profiles": {
+  "openrouter": {
+   "calls": 213,
+   "cost_usd": "0.1424263368",
+   "delta_mean": 0.161,
+   "delta_min": 0.145,
+   "latency_ms_p50": 841.0,
+   "latency_ms_p95": 2413.2,
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "negatives_answered_max": 1,
+   "outcomes": {
+    "ok": 192,
+    "schema_fail": 4,
+    "schema_retry_ok": 1,
+    "timeout": 16
+   },
+   "pass": true,
+   "reps": [
+    {
+     "delta": 0.161,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q003",
+      "q021",
+      "q031",
+      "q089",
+      "q090",
+      "q123",
+      "q201"
+     ],
+     "negatives_abstained": 7,
+     "negatives_answered": 1,
+     "negatives_weak": 8,
+     "rep": 0,
+     "statuses": {
+      "answered": 43,
+      "insufficient_evidence": 12,
+      "unavailable:schema_fail": 1,
+      "unavailable:timeout": 6
+     },
+     "synthesis_accuracy": 0.597,
+     "system_accuracy": 0.694,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q050",
+      "q059",
+      "q060",
+      "q081",
+      "q088",
+      "q106",
+      "q115",
+      "q119",
+      "q141",
+      "q156",
+      "q164",
+      "q168",
+      "q181",
+      "q182"
+     ]
+    },
+    {
+     "delta": 0.145,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q003",
+      "q021",
+      "q031",
+      "q089",
+      "q090",
+      "q125",
+      "q201"
+     ],
+     "negatives_abstained": 7,
+     "negatives_answered": 1,
+     "negatives_weak": 8,
+     "rep": 1,
+     "statuses": {
+      "answered": 46,
+      "insufficient_evidence": 11,
+      "unavailable:timeout": 5
+     },
+     "synthesis_accuracy": 0.581,
+     "system_accuracy": 0.677,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q050",
+      "q059",
+      "q060",
+      "q081",
+      "q083",
+      "q088",
+      "q115",
+      "q141",
+      "q156",
+      "q164",
+      "q168",
+      "q181",
+      "q182"
+     ]
+    },
+    {
+     "delta": 0.177,
+     "fast_path_accuracy": 0.435,
+     "losses": [
+      "q003",
+      "q031",
+      "q089",
+      "q090",
+      "q201"
+     ],
+     "negatives_abstained": 7,
+     "negatives_answered": 1,
+     "negatives_weak": 8,
+     "rep": 2,
+     "statuses": {
+      "answered": 47,
+      "insufficient_evidence": 10,
+      "unavailable:timeout": 5
+     },
+     "synthesis_accuracy": 0.613,
+     "system_accuracy": 0.677,
+     "wins": [
+      "q001",
+      "q002",
+      "q018",
+      "q050",
+      "q059",
+      "q060",
+      "q081",
+      "q083",
+      "q088",
+      "q106",
+      "q115",
+      "q119",
+      "q141",
+      "q156",
+      "q164",
+      "q168"
+     ]
+    }
+   ],
+   "synthesis_accuracy_mean": 0.597,
+   "synthesis_accuracy_min": 0.581,
+   "system_accuracy_min": 0.677
+  },
+  "openrouter-gpt6-luna": {
+   "calls": 210,
+   "cost_usd": "0.046892930",
+   "delta_mean": 0.161,
+   "delta_min": 0.129,
+   "latency_ms_p50": 1609.5,
+   "latency_ms_p95": 2853.2,
+   "model_id": "openai/gp
