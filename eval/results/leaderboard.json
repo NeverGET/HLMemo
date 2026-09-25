@@ -1429,6 +1429,57 @@
      "confirmation": false,
      "complete": true,
      "source": "cand-d104-boracle.json"
+    },
+    {
+     "id": 26,
+     "corpus": "corpus_a",
+     "label": "D-110 B-real: librarian v3 C2 + REVISE_SPAN (D-113 kinds), assistant, approve-all x1 — 2 revisions applied (A), 0 on labelled stale pairs",
+     "date": "2026-09-25",
+     "commit": "ed8deda",
+     "config": {
+      "system": "D-104 harness, arm b-real (D-110)",
+      "flags": {
+       "HLM_LIBRARIAN_V3_TEMPORAL": true,
+       "HLM_LIBRARIAN_V3_CLOSE": true,
+       "HLM_LIBRARIAN_REVISE_SPAN": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod (0d7a1a8 tree, identical write path)",
+      "query_rewrite": false,
+      "harness": "run_eval.py + D-104 title patch (no-op here)",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree)",
+      "latency": "query p95 from a sequential latency re-pass (same scores)"
+     },
+     "config_hash": "2345691b507f",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3",
+      "revise_span": "v1"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.002501,
+     "fixture_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
+     "score": 0.793,
+     "secondary": {
+      "mrr": 0.66,
+      "l2_key_top3": 0.75,
+      "temporal_l2_stale_first_top3": 0.533,
+      "temporal_l2_key_top3": 0.4,
+      "stale_claim_l1_top3": 0.2,
+      "query_p95_ms": 104.7,
+      "revisions_applied": 2,
+      "revision_precision_judge": 0.0
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-d110-b-real.json"
     }
    ],
    "best": 9
@@ -2757,6 +2808,55 @@
      "confirmation": false,
      "complete": true,
      "source": "cand-d104-boracle.json"
+    },
+    {
+     "id": 26,
+     "corpus": "corpus_b_dev",
+     "label": "D-110 B-real: librarian v3 C2 + REVISE_SPAN (D-113 kinds), assistant, approve-all x1 — 2 revisions applied (A), 0 on labelled stale pairs",
+     "date": "2026-09-25",
+     "commit": "ed8deda",
+     "config": {
+      "system": "D-104 harness, arm b-real (D-110)",
+      "flags": {
+       "HLM_LIBRARIAN_V3_TEMPORAL": true,
+       "HLM_LIBRARIAN_V3_CLOSE": true,
+       "HLM_LIBRARIAN_REVISE_SPAN": true
+      },
+      "drill_top": 5,
+      "budget": 3000,
+      "import": "import_corpus.py --temporal-rule prod (0d7a1a8 tree, identical write path)",
+      "query_rewrite": false,
+      "harness": "run_eval.py + D-104 title patch (no-op here)",
+      "db": "fresh disposable DB at 0008 (pinned git-archive tree)",
+      "latency": "query p95 from a sequential latency re-pass (same scores)"
+     },
+     "config_hash": "2345691b507f",
+     "prompt_versions": {
+      "place": "v1",
+      "relate": "v3",
+      "relate_verify": "v3",
+      "revise_span": "v1"
+     },
+     "schema_versions": null,
+     "model_id": "openai/gpt-6-luna (verifier deepseek)",
+     "embedder": "intfloat/multilingual-e5-small@614241f622f5",
+     "usd_per_query": 0.002501,
+     "fixture_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
+     "score": 0.451,
+     "secondary": {
+      "hit@5": 0.625,
+      "mrr": 0.397,
+      "temporal_l2_stale_first": 0.375,
+      "stale_claim_l1_top3": 0.25,
+      "query_p95_ms": 110.8,
+      "revisions_applied": 0
+     },
+     "decision": null,
+     "rule_exceptions": [],
+     "merge": false,
+     "confirmation": false,
+     "complete": true,
+     "source": "cand-d110-b-real.json"
     }
    ],
    "best": 9
