@@ -180,3 +180,18 @@ D-108 | 2026-09-25 | ACCEPTED (orchestrator) | **R3 release order for llm.env (f
 3. Switch to the D-094 llm.env (`HLM_QUERY_REWRITE=true`, per-task fallbacks) and restart.
 4. Verify again, including a status check that rewrite is ON.
 Before any rollback to R2, reinstall the R2 llm.env FIRST, then roll back the image. The VM `hlm-2604` is at R2 = 6902f91 with realistic data (the 51 HLMemo docs → 247 items in `r3-base`; `r3-load`; the G-LIVE-C risk world). The rehearsal checklist is docs/status/R3-REHEARSAL.md (f74148f). main was pushed to origin (f74148f) after a gitleaks scan of the 81 new commits (clean); docs/private is gitignored.
+D-109 | 2026-09-25 | PROPOSED (orchestrator → owner decision per D-104) | **D-104 pilot result: B (span-bound revision) has the best ceiling at near-zero collateral. A (atomic children) is rejected on collateral. Rule 2 fires: the bottleneck is judgement, not representation.** All arms ran on disposable copies with a prod-rule import, rewrite OFF and budget 3000. Base reproduces D-087/D-103 question by question.
+| Arm | A stale-first | B stale-first | Temporal L2 | G-E-W2b | Worst category | A hit@5 | B evidence R@5 |
+|---|---|---|---|---|---|---|---|
+| Base | 8/15 | 6/16 | .400 | ±0 | – | .793 | .451 |
+| A0 (split only) | 4/15 | 5/16 | .467 | −7.9 | B decision_rationale −40.6 | .750 | .326 |
+| A-oracle | 1/15 | 1/16 | .467 | −7.6 | −34.4 | .728 | .361 |
+| A-v3 (real, partial: OpenRouter credits ran out after 1,103/1,564 A jobs, none of B) | 4/15 | – | – | – | – | – | – |
+| **B-oracle** | **0/15** | **0/16** | **.867** | **+0.3** | −9.4 (partly a scoring artefact) | .793 | .458 |
+A0's apparent 4/15 comes from the stale key dropping out of the drill window, not from the current value surfacing.
+- **A-v3:** 0 closes. All 36 whole-supersede proposals were dropped: 17 for missing time evidence, since children inherit an un-evidenced valid_from; 7 verifier rejections; 11 downgraded to partial. In 8 stale pairs the two sides never met in the same candidate list (siblings crowd it).
+- **Atomicized G3 world:** 2,400 items → 125,713 children. Parent-credited R@5 .980, raw .930, G4-shaped p95 1,158 ms (FAIL vs 500).
+- **Split audit:** 1–2 of 40 lose meaning (.025–.05); coverage .9997.
+- **B-oracle:** 108 span revisions, byte check 108/108, no index growth, latency ≈ base.
+- Pilot spend: $2.28.
+**Proposal:** adopt B as the stale-first mechanism and do NOT pursue A (−7.9 W2b, 21× items, G4 fail). Next, build and measure **B-real**: the librarian proposes a span revision {stale span quoted verbatim from the old item, replacement quoted VERBATIM from the newer item, evidence}. Deterministic guards check both quotes byte-exact. The owner approves (assistant role); the observer never mutates. It is measured on the same pilot harness against the B-oracle ceiling (0/15). This needs the owner's OK, per D-104.

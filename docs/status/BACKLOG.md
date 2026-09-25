@@ -20,6 +20,8 @@ Updated 2026-09-23. Source of each item in parentheses.
 
 - **Recurring footgun: pytest without HLM_TEST_DSN** (3 agents on 2026-09-24 fell back to the shared `hlm_test`). Make tests/conftest.py REQUIRE an explicit HLM_TEST_DSN (fail fast with a clear message) instead of falling back to `hlm_test`.
 
+- **OpenRouter credits exhausted 2026-09-25 ~02:32Z (HTTP 402; $200.21 used of $200 purchased).** The same key serves local agents AND production. Prod spend today is $0 and retrieval is unaffected; the prod librarian, risk judge and synthesis fall back (D-071: retrieval-only risk). **Spend reconciliation needed:** the account usage rose from $134.16 (2026-09-24 afternoon) to $200.21, about $66, while agents reported only about $18 in the same window. Check whether the HLMemo ledger undercounts real billed cost (reasoning tokens? `usage.cost` vs reservation price?), and use a separate key per environment (prod vs dev/agents) so dev work can never starve production.
+
 ## Correctness / ops
 - Marker write failure after cutover leaves current-ref behind → later deploys refuse (consults/20, D5 Low).
 - Card survivor-link load still grows with links overlapping the interval (N5 residual, consults/20).
