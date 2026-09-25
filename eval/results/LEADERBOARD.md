@@ -42,6 +42,11 @@ History (append-only):
 | corpus_a | 18 | 2026-09-25 | interim-97344eb (R3 candidate, pivot-s1-r3) flags off | 97344eb | 21db780f382e | 0.793 | 0.0 | - | False | True |
 | corpus_a | 19 | 2026-09-25 | interim-97344eb query rewrite ON (D-102 gates), paced prewarm, D-094 chain | 97344eb | 03eb12a6e3ce | 0.826 | 5.83e-05 | - | False | True |
 | corpus_a | 20 | 2026-09-25 | interim-97344eb query rewrite ON, paced prewarm, replicate | 97344eb | 03eb12a6e3ce | 0.837 | 6.28e-05 | - | False | True |
+| corpus_a | 21 | 2026-09-25 | D-104 pilot Base: prod-rule import, no atomicize (fast path, rewrite off) | 16e0a2d | dbd7d4d79470 | 0.793 | 0.0 | - | False | True |
+| corpus_a | 22 | 2026-09-25 | D-104 pilot A0: atomicize/1 claim children, parents excluded (HLM_PILOT_ATOMIC_EXCLUDE_PARENTS) | 16e0a2d | 98fe5f232e8b | 0.750 | 0.0 | - | False | True |
+| corpus_a | 23 | 2026-09-25 | D-104 pilot A-oracle (CEILING, not a quality claim): A0 + oracle close of the labelled stale children | 16e0a2d | 167eda1cdb15 | 0.728 | 0.0 | - | False | True |
+| corpus_a | 24 | 2026-09-25 | D-104 pilot A-v3: A0 + librarian v3 C2 (TEMPORAL+CLOSE), assistant, approve-all x1 — PARTIAL: OpenRouter credits exhausted (HTTP 402) after 1103/1564 corpus-A child-subject review jobs; corpus B unreviewed; 0 closes | c794456 | d59f361ac718 | 0.750 | 0.011948 | - | False | False |
+| corpus_a | 25 | 2026-09-25 | D-104 pilot B-oracle (CEILING, not a quality claim): span-bound revision of the labelled stale spans | 16e0a2d | 3407072c7eb9 | 0.793 | 0.0 | - | False | True |
 | corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
@@ -62,6 +67,11 @@ History (append-only):
 | corpus_b_dev | 18 | 2026-09-25 | interim-97344eb (R3 candidate, pivot-s1-r3) flags off | 97344eb | 21db780f382e | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 19 | 2026-09-25 | interim-97344eb query rewrite ON (D-102 gates), paced prewarm, D-094 chain | 97344eb | 03eb12a6e3ce | 0.486 | 5.83e-05 | - | False | True |
 | corpus_b_dev | 20 | 2026-09-25 | interim-97344eb query rewrite ON, paced prewarm, replicate | 97344eb | 03eb12a6e3ce | 0.514 | 6.28e-05 | - | False | True |
+| corpus_b_dev | 21 | 2026-09-25 | D-104 pilot Base: prod-rule import, no atomicize (fast path, rewrite off) | 16e0a2d | dbd7d4d79470 | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 22 | 2026-09-25 | D-104 pilot A0: atomicize/1 claim children, parents excluded (HLM_PILOT_ATOMIC_EXCLUDE_PARENTS) | 16e0a2d | 98fe5f232e8b | 0.326 | 0.0 | - | False | True |
+| corpus_b_dev | 23 | 2026-09-25 | D-104 pilot A-oracle (CEILING, not a quality claim): A0 + oracle close of the labelled stale children | 16e0a2d | 167eda1cdb15 | 0.361 | 0.0 | - | False | True |
+| corpus_b_dev | 24 | 2026-09-25 | D-104 pilot A-v3: A0 + librarian v3 C2 (TEMPORAL+CLOSE), assistant, approve-all x1 — PARTIAL: OpenRouter credits exhausted (HTTP 402) after 1103/1564 corpus-A child-subject review jobs; corpus B unreviewed; 0 closes | c794456 | d59f361ac718 | 0.326 | 0.011948 | - | False | False |
+| corpus_b_dev | 25 | 2026-09-25 | D-104 pilot B-oracle (CEILING, not a quality claim): span-bound revision of the labelled stale spans | 16e0a2d | 3407072c7eb9 | 0.458 | 0.0 | - | False | True |
 
 ## Librarian: bench_v2 (score = macro mean of per-task mean scores, %)
 
