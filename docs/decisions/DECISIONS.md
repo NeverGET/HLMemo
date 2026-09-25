@@ -279,3 +279,19 @@ D-117 | 2026-09-25 | ACCEPTED (orchestrator; direction decision to the owner) | 
 - a per-statement prompt: 0/6;
 - even ORACLE windows centred on the labelled statements: conflicts found in 9/12 calls, but only 2/6 pairs became correct partial supersedes and 1/6 survived the guards (no direction evidence, or judged compatible).
 Estimated gain from statement-level relate + fixing the quote rule + a guaranteed candidate slot for vector-only hits: about 2–4 A pairs. That still misses ≤4/15 unless the direction rules are relaxed, which trades against safety. Directions for the owner are listed in the next decision.
+D-118 | 2026-09-25 | ACCEPTED (owner) | **Stale-first moves to WRITE-TIME supersession by the writing agent. The post-hoc librarian judgement is no longer the primary mechanism.**
+When an agent writes a memory that updates or corrects something it saw (typically in a memory.query result it just read), `memory.write` may carry `updates`: [{`item` (logical id), `expected_version`, `old_span` (verbatim quote from that version), `mode` ∈ {revise, supersede}}].
+- **revise:** replace `old_span` with a `replacement` that must be a verbatim quote of the NEW memory being written. This is the D-110 invariant, now grounded in the writer's own text.
+- **supersede:** a whole-item close plus a link.
+**Server rules:**
+- Deterministic validation inside the SAME write transaction: capability and project scope, D-083 policy, the version matches `expected_version` (else `E_VERSION_CONFLICT`, and the new memory is written without the update, with a hint), `old_span` occurs exactly once with word boundaries and is not the whole item, and the replacement is found in the new body.
+- The D-113 kinds rule applies: historical kinds (episodes, ADR/decision rows) get only a supersedes link, never a text revision.
+- The apply path is B-real's (a new version, question/event tagged, replayable, reversible by a compensating event). The locks and linearization follow J/D-095.
+- A write comes from the owner's authenticated device, so this is an OWNER action. No librarian autonomy is involved, and the observer still only labels.
+- Tool guidance and schema must fit G-SURF (≤ 3000 tokens).
+The imported legacy documents that the hold-out measures stay a Phase 3 (consolidation) problem.
+**Measurement:**
+- deterministic integration tests for the server path;
+- a small synthetic benchmark of client-LLM behaviour: given the query results and a new fact, does the client fill `updates` correctly (precision/recall)?
+- the stale-first metric for this regime, on a synthetic write-sequence set.
+**Builds on:** wf-b-real (ed8deda), which stacks on wf-librarian-v3. The stack merges after R3 (R4).
