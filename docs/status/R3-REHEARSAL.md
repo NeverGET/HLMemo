@@ -1,6 +1,6 @@
 # R3 VM rehearsal — checklist and results (D-099 criterion 2, as amended by D-116/D-123)
 
-Status: **PHASE 2 in progress.** Target: **R3 = main `805f4cd2955b83c258678cf901a32a605ea88f9c`** (pushed), i.e. J (D-096) + F (D-098) + the
+Status: **PHASE 2 PAUSED at a safe point, 2026-09-25 ~14:12Z (owner leaving; the Mac may sleep).** Resume at §5 (see "PAUSE" below). Target: **R3 = main `805f4cd2955b83c258678cf901a32a605ea88f9c`** (pushed), i.e. J (D-096) + F (D-098) + the
 env-aware release tooling (D-111/D-119, merged as-is per D-123). **The query rewrite is SHELVED (D-116): rewrite and per-source cap
 stay OFF/absent**; slice 2 renditions absent. Baseline: R2 `6902f91e7a79aab3ff4791ae443d7371b7cca5d7`.
 VM: lima `hlm-2604` (vz, aarch64, Ubuntu 26.04, 2 vCPU / 8 GiB, 7913 MiB visible), state dir `deploy/.local/127.0.0.1-2223`,
@@ -32,6 +32,7 @@ the host G-LIVE-C reference runs only if the VM run fails or is ambiguous. Tally
 | Step | Real $ | Cumulative $ |
 |---|---|---|
 | PHASE 1 R2 backlog (import 247 + seeds, 345 jobs) | 0.5492 | 0.5492 |
+| §3 remote gates + §4 G-LIVE-C on the VM (VM ledger 13:41→14:00Z; G-LIVE-C real $0.1745) | 0.1804 | 0.7296 |
 
 ## D-099 criterion 2 (amended by D-116: rewrite OFF) — results
 
@@ -101,47 +102,47 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
 ## PHASE 2
 
 ### §0 Preconditions
-- [ ] 0.1 `git rev-parse HEAD` = $SHA; `git branch -r --contains $SHA` = origin/main. Code-only check (empty):
+- [x] 0.1 `git rev-parse HEAD` = $SHA; `git branch -r --contains $SHA` = origin/main. Code-only check (empty):
   `git diff --stat 6902f91 $SHA -- alembic deploy/compose.prod.yaml Dockerfile pyproject.toml uv.lock models.lock deploy/scripts/deploy.sh`;
   the tooling diff (`git diff --stat 6902f91 $SHA -- deploy`) recorded. → 01-preconditions.log
-- [ ] 0.2 `caffeinate -dimsu & CAF=$!`; clock: host `date -u` vs `$VSSH date -u` ≤ 2 s (else `sudo chronyc makestep` or restart + repin).
-- [ ] 0.3 VM = R2 6902f91, drained (`$OPS status`: librarian ready=0), `$SC/libcheck.sh` PASS. No `hlmemo-backup.timer` exists on the
+- [x] 0.2 `caffeinate -dimsu & CAF=$!`; clock: host `date -u` vs `$VSSH date -u` ≤ 2 s (else `sudo chronyc makestep` or restart + repin).
+- [x] 0.3 VM = R2 6902f91, drained (`$OPS status`: librarian ready=0), `$SC/libcheck.sh` PASS. No `hlmemo-backup.timer` exists on the
   VM (only dpkg-db-backup): the prod step "pause the backup timer" has no VM analog (noted).
-- [ ] 0.4 Mirror the owner's D-121 edit on the R2 env (finding 6): `$VSSH "sed -i 's/^HLM_LLM_BUDGET_HOUR_USD=.*/HLM_LLM_BUDGET_HOUR_USD=1/; s/^HLM_LLM_BUDGET_DAY_USD=.*/HLM_LLM_BUDGET_DAY_USD=2/; s/^HLM_LLM_BUDGET_MONTH_USD=.*/HLM_LLM_BUDGET_MONTH_USD=10/' /etc/hlmemo/llm.env"`,
+- [x] 0.4 Mirror the owner's D-121 edit on the R2 env (finding 6): `$VSSH "sed -i 's/^HLM_LLM_BUDGET_HOUR_USD=.*/HLM_LLM_BUDGET_HOUR_USD=1/; s/^HLM_LLM_BUDGET_DAY_USD=.*/HLM_LLM_BUDGET_DAY_USD=2/; s/^HLM_LLM_BUDGET_MONTH_USD=.*/HLM_LLM_BUDGET_MONTH_USD=10/' /etc/hlmemo/llm.env"`,
   then "restart" like the owner: `$VSSH 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh up -d --no-deps --wait librarian api'`; `$SC/libcheck.sh` PASS.
-- [ ] 0.5 Baseline: `$SC/vmsql.sh < $SC/snap.sql`, project counts, `BASE_EVENT=$(printf '\\pset tuples_only on\n\\pset format unaligned\nSELECT max(event_id) FROM events;\n' | $SC/vmsql.sh)`,
+- [x] 0.5 Baseline: `$SC/vmsql.sh < $SC/snap.sql`, project counts, `BASE_EVENT=$(printf '\\pset tuples_only on\n\\pset format unaligned\nSELECT max(event_id) FROM events;\n' | $SC/vmsql.sh)`,
   `{ echo "\\set since 0"; cat $SC/observer.sql; } | $SC/vmsql.sh`. → 02-baseline-r2.log
-- [ ] 0.6 **Pre-deploy snapshot** (the prod Hostinger snapshot analog, D-123): `limactl stop hlm-2604 && cp -c ~/.lima/hlm-2604/disk ~/.lima/_snapshots/hlm-2604-predeploy.disk && cp -c ~/.lima/hlm-2604/vz-efi ~/.lima/_snapshots/hlm-2604-predeploy.vz-efi && limactl start hlm-2604 && repin`;
+- [x] 0.6 **Pre-deploy snapshot** (the prod Hostinger snapshot analog, D-123): `limactl stop hlm-2604 && cp -c ~/.lima/hlm-2604/disk ~/.lima/_snapshots/hlm-2604-predeploy.disk && cp -c ~/.lima/hlm-2604/vz-efi ~/.lima/_snapshots/hlm-2604-predeploy.vz-efi && limactl start hlm-2604 && repin`;
   `/ready` 200, `$SC/libcheck.sh` PASS, clock check; then remove the superseded PHASE-1 clones `hlm-2604-r2state.*`. → 03-predeploy-snapshot.log
 
 ### §1 R3 image with the R2 env (D-108 steps 1–2)
-- [ ] 1.1 `python3 $SC/poller.py $R3/poll-cutover.txt $SSL_CERT_FILE & POLL=$!`
-- [ ] 1.2 `PATH="$S/bin:$PATH" bash deploy/scripts/deploy.sh hlm-deploy "$SHA"` (no `--accept-compose-change`) → rc 0,
+- [x] 1.1 `python3 $SC/poller.py $R3/poll-cutover.txt $SSL_CERT_FILE & POLL=$!`
+- [x] 1.2 `PATH="$S/bin:$PATH" bash deploy/scripts/deploy.sh hlm-deploy "$SHA"` (no `--accept-compose-change`) → rc 0,
   `RESULT librarian PASS llm.env=present release=r2-env (D-108 interim …)`, routes PASS, "Deployment ready". → 11-cutover-r3.log
-- [ ] 1.3 `kill $POLL; python3 $SC/downtime.py $R3/poll-cutover.txt` (R2 cutover: 12.0 s). → 11b-downtime.log
-- [ ] 1.4 `$VSSH 'python3 -m json.tool /opt/hlmemo/release-state.json; ls -la /etc/hlmemo'`: current_ref=$SHA, previous_ref=6902f91,
+- [x] 1.3 `kill $POLL; python3 $SC/downtime.py $R3/poll-cutover.txt` (R2 cutover: 12.0 s). → 11b-downtime.log
+- [x] 1.4 `$VSSH 'python3 -m json.tool /opt/hlmemo/release-state.json; ls -la /etc/hlmemo'`: current_ref=$SHA, previous_ref=6902f91,
   `previous_llm_env` = `llm.env.release-6902f91…` (0600), no open journal; `$SC/libcheck.sh --llm-env-file /etc/hlmemo/llm.env` PASS (interim).
 
 ### §2 Install the R3 env under the deploy lock (D-108 steps 3–4)
-- [ ] 2.1 `bash deploy/scripts/install_llm_env.sh --state $S` (local main = $SHA; the installed key and the §0.4 caps are kept) →
+- [x] 2.1 `bash deploy/scripts/install_llm_env.sh --state $S` (local main = $SHA; the installed key and the §0.4 caps are kept) →
   "kept the operator's …", backup, "recreating librarian and api … (deploy lock held)", `RESULT librarian PASS … release=r3`,
   "switch complete". → 12-env-r3.log
-- [ ] 2.2 Independent re-check: `$SC/libcheck.sh --llm-env-file /etc/hlmemo/llm.env --release r3` PASS (per-task fallbacks
+- [x] 2.2 Independent re-check: `$SC/libcheck.sh --llm-env-file /etc/hlmemo/llm.env --release r3` PASS (per-task fallbacks
   risk_judge=openrouter-qwen38-27b-fast, synthesis=openrouter, query_rewrite=openrouter; fallback glm53-flash);
   `$VSSH 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api python -c "from hlmemo.config import get_settings as g; s=g(); print(s.query_rewrite, s.retrieval_source_cap, s.librarian_role, s.librarian_concurrency, s.llm_budget_hour_usd, s.llm_budget_day_usd, s.llm_budget_month_usd)"'`
   → `False False observer 3 1 2 10`; release-state has no `env_switch`; `$OPS status` chains.
 
 ### §3 Remote gates on R3 (R3 env active)
-- [ ] 3.1 `bash deploy/scripts/remote_gates.sh --url $URL --state $S --insecure --librarian` (drill ON: rehearsal VM) → the 8 base
+- [x] 3.1 `bash deploy/scripts/remote_gates.sh --url $URL --state $S --insecure --librarian` (drill ON: rehearsal VM) → the 8 base
   gates + risk-check (`judged=true`) + librarian (observer, 0 links/closes/applied) + backup-restore: all PASS. → 13-remote-gates-r3.log
 
 ### §4 G-LIVE-C on the VM, primary forced unavailable in the api (D-098 method, deployed)
-- [ ] 4.1 `$VSSH 'cp -p /etc/hlmemo/api.env /etc/hlmemo/api.env.r3glc && echo HLM_LLM_BASE_URL=http://127.0.0.1:9/v1 >> /etc/hlmemo/api.env && cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh up -d --no-deps --wait api'`
+- [x] 4.1 `$VSSH 'cp -p /etc/hlmemo/api.env /etc/hlmemo/api.env.r3glc && echo HLM_LLM_BASE_URL=http://127.0.0.1:9/v1 >> /etc/hlmemo/api.env && cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh up -d --no-deps --wait api'`
   (api.env is api-only and not part of the llm.env fingerprint); `GLC_T0` = VM `now()`.
-- [ ] 4.2 `uv run --frozen python $SC/glive_c_vm.py run --repo $REPO --reader rk-reader --world $R3/rk-world.json --reps 4 --out $R3/glive-c-vm`
+- [x] 4.2 `uv run --frozen python $SC/glive_c_vm.py run --repo $REPO --reader rk-reader --world $R3/rk-world.json --reps 4 --out $R3/glive-c-vm`
   → `RESULT G-LIVE-C-VM`. → 14-glive-c-vm.log
-- [ ] 4.3 Ledger since GLC_T0 by profile/outcome (only luna errors + qwen38-27b-fast); spend added to the tally.
-- [ ] 4.4 Restore: `$VSSH 'mv -f /etc/hlmemo/api.env.r3glc /etc/hlmemo/api.env && ! grep -q HLM_LLM_BASE_URL /etc/hlmemo/api.env && cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh up -d --no-deps --wait api'`;
+- [x] 4.3 Ledger since GLC_T0 by profile/outcome (only luna errors + qwen38-27b-fast); spend added to the tally.
+- [x] 4.4 Restore: `$VSSH 'mv -f /etc/hlmemo/api.env.r3glc /etc/hlmemo/api.env && ! grep -q HLM_LLM_BASE_URL /etc/hlmemo/api.env && cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh up -d --no-deps --wait api'`;
   `$SC/libcheck.sh --llm-env-file /etc/hlmemo/llm.env --release r3` PASS.
 
 ### §5 Host gates on the final SHA (sequential; quiet host; never during §6)
@@ -190,6 +191,22 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
   Snapshot `hlm-2604-predeploy.*` kept until the prod release is accepted.
 - [ ] 10.3 `kill $CAF`; drop own DBs `hlm_r3reh_gate`/`hlm_r3reh_live`/`hlm_r3reh_world`; shred `$R3/cfg/credentials.toml`.
 - [ ] 10.4 `gitleaks dir` over `docs/bakeoff/rehearsal-r3` and this file (image tags abbreviated to 12 hex); commit on main; NO push.
+
+## PHASE 2 results (2026-09-25, SHA 805f4cd; times UTC)
+- §0 (13:41–13:42Z): 01-preconditions.log: code-only vs R2 confirmed (no alembic/compose/Dockerfile/pyproject/uv.lock/models.lock/deploy.sh diff; compose 99fecbf4…, head 0008; `query_rewrite`/`retrieval_source_cap` absent from src/hlmemo/config.py). Clock host/VM within 0.4 s, caffeinate on. VM = R2 6902f91, drained. No hlmemo-backup.timer on the VM. Owner D-121 edit mirrored on the R2 env (3/10/60 → HOUR=1 DAY=2 MONTH=10) + recreate, R2 check PASS (02a). Baseline BASE_EVENT=1843; projects r3-base 248, r3-load 163, rk-main 46, rk-shell 6, rk-secret 2; links 0, closed/superseded 0 (02). **Pre-deploy snapshot** `~/.lima/_snapshots/hlm-2604-predeploy.{disk,vz-efi}` at 13:42:20Z; stop → /ready 200 in 13 s, host key re-pinned `SHA256:ssoa4SJm…`, R2 check PASS (03).
+- §1 (13:43–13:44Z) R3 cutover with the R2 env: rc 0, "Deployment ready: 805f4cd…", `RESULT librarian PASS llm.env=present release=r2-env (D-108 interim …)`; **downtime 9.7 s** (R2 cutover 12.0 s); the image was built on the VM (~1 min, layer cache). release-state: current 805f4cd, previous 6902f91, `previous_llm_env=/etc/hlmemo/llm.env.release-6902f91…` (0600), previous_dump + image id recorded, no open journal (11, 11b, 11c).
+- §2 (13:44:54Z) `install_llm_env.sh --state $S` under the deploy lock: backup of the R2 env, both services recreated, **`RESULT librarian PASS llm.env=present release=r3 manifest=r3`**, "switch complete", rc 0. Independent `libcheck.sh --llm-env-file … --release r3` PASS; per-task fallbacks risk_judge=qwen38-27b-fast, synthesis=openrouter, query_rewrite=openrouter; librarian fallback glm53-flash; api and librarian both: observer, concurrency 3, caps 1/2/10, no rewrite/cap field in the code; `env_switch` cleared, `pending_cleanup` [] (12).
+- §3 (13:45Z) remote gates with `--librarian` and the drill: **11/11 PASS**: health-ready, unknown-path-404, tls-issuer, postgres-closed, probe, routes, hlm-cli, wan-latency (p50 16 / p95 45 ms), risk-check (judged=true, judge=ok), librarian (1 job in 10.0 s, observer, signal_upsert=1, links/closes 0, applied 0), backup-restore (restore 16 s) (13).
+- §4 (13:46–14:00Z) G-LIVE-C on the VM, api primary forced to `http://127.0.0.1:9/v1` (api risk-judge chain printed with the dead URL): **PASS**. Catch per rep .975 / 1.000 / 1.000 / 1.000 (min .975), false-warn .075 / .050 / .075 / .025 (max .075); 297/320 `ok_fallback`, 23 `retrieval_only:timeout` (4 s cap), **0 answered by the primary**; risk_check p50 1773 / p95 4031 ms. Ledger: luna 7 http_error then 313 breaker_open (the breaker skipped the dead primary); qwen38-27b-fast 297 ok (p50 1627 / p95 3327 ms) + 23 timeout. Real cost $0.1745. api.env restored, primary URL back, R3 check PASS (14). (D-098 host reference: catch 1.000, false-warn max .075, 21 timeouts/320.)
+
+### PAUSE 2026-09-25 ~14:12Z (coordinator request, at a safe point)
+- **Done (all PASS):** §0 preconditions + pre-deploy snapshot; §1 R3 cutover with the R2 env (interim PASS, 9.7 s downtime); §2 R3 env install under the lock (`release=r3 manifest=r3` PASS); §3 remote gates 11/11 PASS; §4 G-LIVE-C on the VM PASS (catch min .975, false-warn max .075, 0 answered by the primary).
+- **Interrupted, to redo:** §5.3 G-LIVE-B was killed mid-run: luna rep0 had finished (placement .984, contradiction exact .994, false supersede .000, positive recall/precision .972/.972, direction 1.000), and nothing was written to the result dir. Re-run §5.3 from the start. Its partial spend is only in the provider account, estimated < $0.03.
+- **Not started:** §5.2 gate-release (the host was never quiet: another agent's integration suite used 2 cores for 20+ minutes, load 3.1–4.0), §5.4 G-LIVE-D, §6 VM G-L3, §7 observer, §8 drill (a) script rollback, §9 drill (b) snapshot restore, §10 cleanup.
+- **VM state (left as is, running):** R3 805f4cd with the R3 env (`HLM_ENV_RELEASE=r3`, D-094 mapping, caps 1/2/10, dev key); api.env restored (no forced-down primary); `libcheck --release r3` PASS; release-state current 805f4cd / previous 6902f91 + `previous_llm_env` snapshot; no open journal; librarian idle (ready 0). Pre-deploy snapshot `~/.lima/_snapshots/hlm-2604-predeploy.*` kept. The own host DB `hlm_r3reh_world` is kept (G3 world template).
+- **Background jobs:** all killed (G-LIVE-B, monitors, caffeinate). No deploy, rollback or install was running.
+- **On resume:** start `caffeinate` again and check the clock (host sleep skews the VM clock; restart the VM + re-pin if it is off by more than 2 s). Then re-run §5.3 G-LIVE-B, §5.4 G-LIVE-D, §5.2 gate-release and §6 G-L3 (quiet host only), §7, §8, §9, §10.
+- **Spend so far:** VM ledger $0.7296 (PHASE 1 $0.5492 + §3/§4 $0.1804) + G-LIVE-B partial (< $0.03, est.) ≈ **$0.76 of $3**.
 
 ## Review-77 residuals (D-122/D-123) — watched during PHASE 2
 | Residual | Hit? | Note |
