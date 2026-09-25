@@ -1,21 +1,33 @@
 #!/usr/bin/env python3
-"""R2 librarian checks (D-058 observer, D-062, D-071). One file, four modes; never prints a key.
+"""R2/R3 librarian checks (D-058 observer, D-062, D-071, D-111, D-116). One file, four modes; never
+prints a key.
 
 collect --service librarian|api [--probe] [--wait-heartbeat S]    INSIDE a release container,
     fed on stdin like check_edge.py (`docker compose exec -T SERVICE python - collect ... <
     check_librarian.py`): the effective switch/role/mode/profiles, whether each profile's key is
     SET (a boolean, never the value), the librarian heartbeat with its age and bound (3 x
     HLM_LIBRARIAN_HEARTBEAT_S; a missing/stale one is re-read for up to S seconds, for the first
-    heartbeat after cutover) or the api's risk-judge chain. --probe GETs each profile's base URL
-    without credentials: reachability only. One JSON line on stdout.
-evaluate --llm-env present|absent --librarian FILE --api FILE     on the HOST (remote-deploy.sh,
-    after cutover). llm.env present = the R2 configuration, validated strictly (Sol 48): exit 1
-    unless the api settings, the librarian settings AND the heartbeat all say enabled=true, role
-    observer, and both settings say HLM_LLM_MODE=live; unless the heartbeat is fresh (Sol 49: not
-    older than 3 heartbeat intervals, 30 s by default); unless the api's risk-judge chain loads
-    and is non-empty; and unless every profile key is set. llm.env absent = R1-style: PASS only
-    while everything idles. An unreachable provider is REPORTED, never fatal (jobs wait,
-    risk_check answers retrieval-only).
+    heartbeat after cutover) or the api's risk-judge chain, the llm.env release marker and the
+    RELEASE MANIFEST keys (flags and profile names only) the container runs with. --probe GETs each
+    profile's base URL without credentials: reachability only. One JSON line on stdout.
+evaluate --llm-env present|absent --librarian FILE --api FILE [--release r3] [--llm-env-file F]  on the HOST
+    (remote-deploy.sh, after cutover). llm.env present = the R2 configuration, validated strictly
+    (Sol 48): exit 1 unless the api settings, the librarian settings AND the heartbeat all say
+    enabled=true, role observer, and both settings say HLM_LLM_MODE=live; unless the heartbeat is
+    fresh (Sol 49: not older than 3 heartbeat intervals, 30 s by default); unless the api's
+    risk-judge chain loads and is non-empty; and unless every profile key is set. An unreachable
+    provider is REPORTED, never fatal (jobs wait, risk_check answers retrieval-only).
+    R3 (D-108/D-111/D-116/D-121, this checkout is CODE_RELEASE r3): llm.env ABSENT always fails
+    (the R1-style idle pass is gone). The llm.env is validated against the RELEASE MANIFEST
+    (``RELEASE_MANIFESTS``), never a hard-coded flag: its "off" keys (R3: HLM_QUERY_REWRITE and
+    HLM_RETRIEVAL_SOURCE_CAP) must be absent or false in every env; api and librarian must run the
+    same value for EVERY manifest key and the release marker; with ``--llm-env-file`` the file on
+    disk must be what both run. R3 MODE — ``--release r3`` (the post-switch verification, D-108
+    step 4) or a service running an llm.env with HLM_ENV_RELEASE=r3 (install_llm_env.sh writes it)
+    — additionally requires the R3 env (env_release=r3) with the EXACT D-094 profile mapping and
+    the spend guard (D-121: every cap present, HLM_LLM_BUDGET_DISABLED=false, month <= 10, day and
+    hour <= month). Only an UNLABELLED llm.env is the R2 env of the D-108 interim (R3 image, R2
+    env, steps 1-2): it passes the R2 checks and the result line says so; an unknown label fails.
 job --version-id V [--wait S]                INSIDE the api container (remote_gates.sh
     --librarian): waits for the librarian_write job(s) of V's source event, then prints their
     status, each job's librarian event (role, outcome, mutation ops, questions) and whether V has
@@ -30,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections import Counter
@@ -53,6 +66,69 @@ OBSERVER_ALLOWED_OPS = {"signal_upsert"}
 #: Sol 49: a heartbeat older than this many heartbeat intervals is stale (default 3 x 10 s = 30 s).
 HEARTBEAT_STALE_FACTOR = 3.0
 DEFAULT_HEARTBEAT_INTERVAL_S = 10.0
+#: D-111 (6): the release this checkout (and the image built from it) belongs to, and the llm.env
+#: marker the R3 install_llm_env.sh writes; collect reports the marker each container runs with
+CODE_RELEASE = "r3"
+ENV_RELEASE_KEY = "HLM_ENV_RELEASE"
+#: D-116: the RELEASE MANIFEST — what the llm.env of each release must say, EXACTLY (review 75
+#: #7). R3 ships WITHOUT the query rewrite and the per-source cap ("off": absent or false in every
+#: env) and with the D-094 profile mapping ("exact": these profile names and no others). A new
+#: release adds its own entry; an env label no entry knows fails.
+RELEASE_MANIFESTS: dict[str, dict[str, Any]] = {
+    "r3": {
+        "off": ("HLM_QUERY_REWRITE", "HLM_RETRIEVAL_SOURCE_CAP"),
+        "exact": {
+            "HLM_PROFILE": "openrouter-gpt6-luna",
+            "HLM_FALLBACK_PROFILE": "openrouter-glm53-flash",
+            "HLM_FALLBACK_PROFILE__SYNTHESIS": "openrouter",
+            "HLM_FALLBACK_PROFILE__QUERY_REWRITE": "openrouter",
+            "HLM_FALLBACK_PROFILE__RISK_JUDGE": "openrouter-qwen38-27b-fast",
+        },
+        # D-121: the spend guard stays ON; the operator may lower (or edit) the caps, never lift the
+        # month above the owner's target; day and hour never above the month
+        "budgets": {
+            "keys": ("HLM_LLM_BUDGET_HOUR_USD", "HLM_LLM_BUDGET_DAY_USD", "HLM_LLM_BUDGET_MONTH_USD"),
+            "disabled_key": "HLM_LLM_BUDGET_DISABLED",
+            "month_max_usd": 10.0,
+        },
+    },
+}
+MANIFEST_KEYS = tuple(
+    sorted(
+        {
+            key
+            for m in RELEASE_MANIFESTS.values()
+            for key in (*m["off"], *m["exact"], *m["budgets"]["keys"], m["budgets"]["disabled_key"])
+        }
+    )
+)
+_FALSE = frozenset({"", "0", "false", "no", "off"})
+
+
+def _norm(key: str, value: object) -> object:
+    """One comparable value: a switch by whether it is on, anything else as given (None: absent)."""
+    if any(key in m["off"] for m in RELEASE_MANIFESTS.values()):
+        return value is not None and str(value).strip().lower() not in _FALSE
+    return None if value in (None, "") else str(value)
+
+
+def _disk_env(path: str | None) -> dict[str, str] | None:
+    """The manifest keys and the release marker of the llm.env FILE (never any other value)."""
+    if not path:
+        return None
+    out: dict[str, str] = {}
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        key, sep, value = line.strip().removeprefix("export ").partition("=")
+        key, value = key.strip(), value.strip()
+        if sep and not line.lstrip().startswith("#") and (key in MANIFEST_KEYS or key == ENV_RELEASE_KEY):
+            out[key] = (
+                value[1:-1] if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"" else value
+            )
+    return out
 
 
 def emit(obj: dict[str, Any]) -> None:
@@ -115,6 +191,10 @@ def collect(service: str, with_probe: bool, wait_heartbeat_s: float = 0.0) -> in
         llm_mode=s.llm_mode,
         profile=s.profile,
         fallback=s.fallback_profile,
+        # D-111: the release marker of the llm.env this container was created with; D-116: the
+        # manifest keys it runs with (flags and profile names, never a secret)
+        env_release=os.environ.get(ENV_RELEASE_KEY) or None,
+        manifest_env={key: os.environ.get(key) for key in MANIFEST_KEYS},
     )
     try:
         chain = profile_chain(s)
@@ -214,7 +294,107 @@ def _r2_failures(lib: dict[str, Any], api: dict[str, Any], hb: dict[str, Any]) -
     return failures
 
 
-def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
+def _budget_problems(env: dict[str, Any], budgets: dict[str, Any]) -> list[str]:
+    """D-121: every cap present and positive, the guard enabled (HLM_LLM_BUDGET_DISABLED=false),
+    month <= the owner's target, day and hour <= month."""
+    problems = []
+    disabled = str(env.get(budgets["disabled_key"]) or "").strip().lower()
+    if disabled != "false":
+        problems.append(
+            f"{budgets['disabled_key']}={env.get(budgets['disabled_key']) or '-'} (must be false)"
+        )
+    caps: dict[str, float] = {}
+    for key in budgets["keys"]:
+        try:
+            caps[key] = float(str(env.get(key)))
+        except ValueError:
+            problems.append(f"{key}={env.get(key) or '-'} (a positive amount is required)")
+            continue
+        if not caps[key] > 0:
+            problems.append(f"{key}={env.get(key)} (a positive amount is required)")
+    hour, day, month = (caps.get(key) for key in budgets["keys"])
+    if month is not None and month > budgets["month_max_usd"]:
+        problems.append(f"{budgets['keys'][2]}={month:g} (at most {budgets['month_max_usd']:g})")
+    for key, value in ((budgets["keys"][1], day), (budgets["keys"][0], hour)):
+        if value is not None and month is not None and value > month:
+            problems.append(f"{key}={value:g} (at most the month cap {month:g})")
+    return problems
+
+
+def _running(rep: dict[str, Any]) -> dict[str, Any]:
+    """A report's manifest keys plus its release marker."""
+    return {**(rep.get("manifest_env") or {}), ENV_RELEASE_KEY: rep.get("env_release")}
+
+
+def _manifest_failures(
+    lib: dict[str, Any], api: dict[str, Any], r3_mode: bool, disk: dict[str, str] | None
+) -> list[str]:
+    """D-111/D-116 on an R3 checkout with llm.env present, against ``RELEASE_MANIFESTS[r3]``: the
+    "off" keys are absent or false in the api's and the librarian's env; api and librarian match
+    on EVERY manifest key and the release marker; the llm.env file on disk is what both run; in R3
+    mode both run the R3 env with the EXACT manifest values."""
+    manifest = RELEASE_MANIFESTS[CODE_RELEASE]
+    failures = []
+    for name, rep in (("api", api), ("librarian", lib)):
+        env = rep.get("manifest_env") or {}
+        for key in manifest["off"]:
+            if _norm(key, env.get(key)):
+                failures.append(
+                    f"{name} runs {key}={env.get(key)} ({CODE_RELEASE} manifest: absent or false, D-116; install_llm_env.sh)"
+                )
+    run_api, run_lib = _running(api), _running(lib)
+    for key in (*MANIFEST_KEYS, ENV_RELEASE_KEY):
+        if _norm(key, run_api.get(key)) != _norm(key, run_lib.get(key)):
+            failures.append(
+                f"api and librarian run different llm.env values for {key} (api={run_api.get(key) or '-'},"
+                f" librarian={run_lib.get(key) or '-'}): stack.sh up -d --no-deps librarian api"
+            )
+    if disk is not None:  # the file on disk is what both services were created with
+        for name, run in (("api", run_api), ("librarian", run_lib)):
+            for key in (*MANIFEST_KEYS, ENV_RELEASE_KEY):
+                if key in ("HLM_PROFILE", "HLM_FALLBACK_PROFILE") and key not in disk:
+                    continue  # another env file (app.env) may set it
+                if _norm(key, disk.get(key)) != _norm(key, run.get(key)):
+                    failures.append(
+                        f"llm.env on disk differs from what the {name} runs: {key} disk={disk.get(key) or '-'}"
+                        f" running={run.get(key) or '-'} (recreate librarian api: install_llm_env.sh)"
+                    )
+    if not r3_mode:
+        return failures
+    if api.get("env_release") != CODE_RELEASE:
+        failures.append(
+            f"api runs llm.env release={api.get('env_release') or '-'}"
+            f" ({ENV_RELEASE_KEY}; {CODE_RELEASE} manifest: {CODE_RELEASE}): install the R3 llm.env"
+            " (install_llm_env.sh), then stack.sh up -d --no-deps librarian api"
+        )
+    for name, rep in (("api", api), ("librarian", lib)):
+        problems = _budget_problems(rep.get("manifest_env") or {}, manifest["budgets"])
+        if problems:
+            failures.append(
+                f"{name} spend guard violates the {CODE_RELEASE} manifest (D-121): {'; '.join(problems)}"
+            )
+    for name, rep in (("api", api), ("librarian", lib)):
+        env = rep.get("manifest_env") or {}
+        wrong = [
+            f"{key}={env.get(key) or '-'} (expected {value})"
+            for key, value in manifest["exact"].items()
+            if env.get(key) != value
+        ]
+        if wrong:
+            failures.append(
+                f"{name} llm.env differs from the {CODE_RELEASE} manifest (the D-094 mapping): {', '.join(wrong)}"
+                "; install_llm_env.sh"
+            )
+    return failures
+
+
+def evaluate(
+    llm_env: str,
+    librarian_path: str,
+    api_path: str,
+    release: str | None = None,
+    llm_env_file: str | None = None,
+) -> int:
     lib, api = _load(librarian_path), _load(api_path)
     failures: list[str] = []
     if lib is None or api is None:
@@ -227,7 +407,9 @@ def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
         f"mode={lib.get('llm_mode')} profile={lib.get('profile')} fallback={lib.get('fallback')}"
     )
     if lib.get("fallbacks"):  # D-094 per-task overrides (HLM_FALLBACK_PROFILE__<TASK>)
-        print("per-task fallbacks: " + " ".join(f"{t}={p or '-'}" for t, p in sorted(lib["fallbacks"].items())))
+        print(
+            "per-task fallbacks: " + " ".join(f"{t}={p or '-'}" for t, p in sorted(lib["fallbacks"].items()))
+        )
     if "error" in hb:
         print(f"librarian heartbeat: unreadable ({hb['error']})")
     else:
@@ -245,6 +427,14 @@ def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
         f"api: enabled={str(api.get('enabled')).lower()} role={api.get('role')} mode={api.get('llm_mode')} "
         f"risk_judge={judge or ','.join(api.get('risk_judge') or []) or '-'}"
         " (empty: risk_check answers retrieval-only)"
+    )
+    # D-111: R3 mode = the explicit post-switch check, or an api that runs the R3 env
+    r3_mode = release == CODE_RELEASE or CODE_RELEASE in (api.get("env_release"), lib.get("env_release"))
+    env = api.get("manifest_env") or {}
+    print(
+        f"llm.env manifest: env_release={api.get('env_release') or '-'}"
+        f" (code {CODE_RELEASE}, check mode {CODE_RELEASE if r3_mode else 'r2-env interim'}) "
+        + " ".join(f"{key}={env.get(key) or '-'}" for key in MANIFEST_KEYS)
     )
     for profile in lib.get("profiles") or []:
         pr = profile.get("probe")
@@ -265,36 +455,35 @@ def evaluate(llm_env: str, librarian_path: str, api_path: str) -> int:
             "api and librarian settings differ (HLM_LIBRARIAN_ENABLED/HLM_LLM_MODE/ROLE: llm.env mount)"
         )
     if llm_env == "absent":
-        # R1-style: no key, no switch. PASS only while everything idles.
-        active = [
-            name
-            for name, on in (
-                ("api", api.get("enabled") is True and api.get("llm_mode") != "off"),
-                ("librarian", lib.get("enabled") is True and lib.get("llm_mode") != "off"),
-                ("heartbeat", hb.get("enabled") is True),
-            )
-            if on
-        ]
-        if active:
-            failures.append(
-                f"librarian enabled without llm.env ({','.join(active)};"
-                " the key and the budget guard live there)"
-            )
-        else:
-            print("librarian: idle (no llm.env): no job leased, no provider call, risk_check retrieval-only")
+        # D-111 (6) / D-116: the R1-style idle pass is gone for R3 — its llm.env is release state
+        failures.append(
+            f"R3 release: llm.env is required (the {CODE_RELEASE} manifest, D-111/D-116; install_llm_env.sh)"
+        )
     else:
         # R2: llm.env present. Anything but enabled/live/observer everywhere is a failed release
-        # (to deploy with the librarian off, remove llm.env first: install_llm_env.sh --remove).
+        # (the librarian cannot be switched off for an R3 deployment: its llm.env is release state).
         failures += _r2_failures(lib, api, hb)
+        # D-116 #8: only an UNLABELLED env is the D-108 interim; a label no manifest knows fails
+        labels = {api.get("env_release"), lib.get("env_release")} - {None}
+        unknown = sorted(str(label) for label in labels if label not in RELEASE_MANIFESTS)
+        if unknown:
+            failures.append(
+                f"unknown llm.env release label {','.join(unknown)} ({ENV_RELEASE_KEY}; known:"
+                f" {','.join(sorted(RELEASE_MANIFESTS))}; only an unlabelled env is the D-108 interim)"
+            )
+        failures += _manifest_failures(lib, api, r3_mode, _disk_env(llm_env_file))
     if failures:
         print("RESULT librarian FAIL " + "; ".join(failures))
         return 1
-    if llm_env == "absent":
-        print("RESULT librarian PASS llm.env=absent enabled=false (idle)")
+    common = f"enabled=true mode={R2_MODE} role={R2_ROLE} risk_judge={','.join(api['risk_judge'])}"
+    if r3_mode:
+        print(
+            f"RESULT librarian PASS llm.env=present release={CODE_RELEASE} manifest={CODE_RELEASE} {common}"
+        )
     else:
         print(
-            f"RESULT librarian PASS llm.env=present enabled=true mode={R2_MODE} role={R2_ROLE}"
-            f" risk_judge={','.join(api['risk_judge'])}"
+            "RESULT librarian PASS llm.env=present release=r2-env (D-108 interim: install the R3 llm.env,"
+            f" recreate librarian api, then evaluate --release {CODE_RELEASE}) {common}"
         )
     return 0
 
@@ -456,6 +645,15 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--llm-env", choices=("present", "absent"), required=True)
     e.add_argument("--librarian", required=True)
     e.add_argument("--api", required=True)
+    e.add_argument(
+        "--llm-env-file",
+        help="the llm.env on disk: it must be what both services run (manifest keys and marker only)",
+    )
+    e.add_argument(
+        "--release",
+        choices=(CODE_RELEASE,),
+        help="R3 mode regardless of the env marker: the post-switch verification (D-108 step 4)",
+    )
     j = sub.add_parser("job")
     j.add_argument("--version-id", type=int, required=True)
     j.add_argument("--wait", type=float, default=240.0)
@@ -467,7 +665,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "collect":
         return collect(args.service, args.probe, args.wait_heartbeat)
     if args.mode == "evaluate":
-        return evaluate(args.llm_env, args.librarian, args.api)
+        return evaluate(args.llm_env, args.librarian, args.api, args.release, args.llm_env_file)
     if args.mode == "job":
         return job(args.version_id, args.wait)
     return observer_gate(args.job, args.audit, args.version_id)

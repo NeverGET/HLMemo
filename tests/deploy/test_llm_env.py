@@ -100,12 +100,19 @@ class InstallLlmEnvTest(unittest.TestCase):
             "HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast",
             f"OPENROUTER_API_KEY={KEY_A}",
             "HLM_LLM_MODE=live",
-            "HLM_LLM_BUDGET_HOUR_USD=3",
-            "HLM_LLM_BUDGET_DAY_USD=10",
-            "HLM_LLM_BUDGET_MONTH_USD=60",
+            # D-121: the owner's production target, <= $10/month
+            "HLM_LLM_BUDGET_HOUR_USD=1",
+            "HLM_LLM_BUDGET_DAY_USD=2",
+            "HLM_LLM_BUDGET_MONTH_USD=10",
+            "HLM_LLM_BUDGET_DISABLED=false",
             "HLM_LLM_JOB_CALL_CAP=20",
+            # D-111/D-116: the release marker (the post-cutover check expects the R3 manifest)
+            "HLM_ENV_RELEASE=r3",
         ):
             self.assertIn(line + "\n", content)
+        # D-116: R3 ships without the query rewrite and the per-source cap
+        self.assertNotIn("\nHLM_QUERY_REWRITE=", content)
+        self.assertNotIn("\nHLM_RETRIEVAL_SOURCE_CAP=", content)
         self.assertNotIn("HLM_LIBRARIAN_ENABLED=false", content)
         self.assertNotIn(OTHER, content, "only the profile's key variable is read")
         self.assertTrue(content.endswith("# END llm.env (install_llm_env.sh)\n"))
@@ -129,7 +136,8 @@ class InstallLlmEnvTest(unittest.TestCase):
     def test_changed_key_backs_up_previous_file_and_keeps_three(self):
         self.assertEqual(0, self.run_install()[0].returncode)
         self.write_key(KEY_B)
-        result, output = self.run_install()
+        # D-121: replacing an installed key is explicit (the default keeps the operator's)
+        result, output = self.run_install("--reset-operator-values")
         self.assertEqual(0, result.returncode, output)
         self.assertIn(f"OPENROUTER_API_KEY={KEY_B}\n", self.target.read_text())
         (backup,) = self.backups()
@@ -139,14 +147,66 @@ class InstallLlmEnvTest(unittest.TestCase):
         self.assert_never_exposed(output, KEY_A, KEY_B)
         for i in range(4):  # rotations: only the newest three backups stay
             self.write_key(f"fake-or-rotation{i}-" + "K5" * 10)
-            self.assertEqual(0, self.run_install()[0].returncode)
+            self.assertEqual(0, self.run_install("--reset-operator-values")[0].returncode)
         self.assertEqual(3, len(self.backups()))
         self.assertTrue(all(stat.S_IMODE(p.stat().st_mode) == 0o600 for p in self.backups()))
+
+    def test_install_preserves_operator_set_budgets_and_key(self):
+        """D-121: the owner edits the key and the caps on the server by hand; a later install keeps
+        them (names reported, values never) unless --reset-operator-values is given."""
+        self.assertEqual(0, self.run_install()[0].returncode)
+        operator_key = "fake-or-" + "OP" * 16
+        edited = self.target.read_text()
+        for old, new in (
+            (f"OPENROUTER_API_KEY={KEY_A}", f"OPENROUTER_API_KEY={operator_key}"),
+            ("HLM_LLM_BUDGET_MONTH_USD=10", "HLM_LLM_BUDGET_MONTH_USD=7"),
+            ("HLM_LLM_BUDGET_DAY_USD=2", "HLM_LLM_BUDGET_DAY_USD=1"),
+            ("HLM_LLM_BUDGET_HOUR_USD=1", "HLM_LLM_BUDGET_HOUR_USD=0.5"),
+        ):
+            self.assertIn(old + "\n", edited)
+            edited = edited.replace(old + "\n", new + "\n")
+        self.target.write_text(edited)
+        self.write_key(KEY_B)
+        result, output = self.run_install()
+        self.assertEqual(0, result.returncode, output)
+        content = self.target.read_text()
+        for line in (
+            f"OPENROUTER_API_KEY={operator_key}",
+            "HLM_LLM_BUDGET_MONTH_USD=7",
+            "HLM_LLM_BUDGET_DAY_USD=1",
+            "HLM_LLM_BUDGET_HOUR_USD=0.5",
+            "HLM_LLM_BUDGET_DISABLED=false",  # the guard itself is never the operator's to drop here
+        ):
+            self.assertIn(line + "\n", content)
+        self.assertNotIn(KEY_B, content)
+        for key in (
+            "OPENROUTER_API_KEY",
+            "HLM_LLM_BUDGET_MONTH_USD",
+            "HLM_LLM_BUDGET_DAY_USD",
+            "HLM_LLM_BUDGET_HOUR_USD",
+        ):
+            self.assertIn(f"kept the operator's {key}", output)
+        self.assert_never_exposed(output, KEY_A, KEY_B, operator_key)
+        result, output = self.run_install()  # idempotent with the operator's values
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("unchanged", output)
+        # explicit: the template's caps and the --key-file key replace the operator's values
+        result, output = self.run_install("--reset-operator-values")
+        self.assertEqual(0, result.returncode, output)
+        content = self.target.read_text()
+        for line in (
+            f"OPENROUTER_API_KEY={KEY_B}",
+            "HLM_LLM_BUDGET_MONTH_USD=10",
+            "HLM_LLM_BUDGET_DAY_USD=2",
+        ):
+            self.assertIn(line + "\n", content)
+        self.assertNotIn(operator_key, content)
+        self.assert_never_exposed(output, KEY_A, KEY_B, operator_key)
 
     def test_remove_deletes_file_and_backups(self):
         self.assertEqual(0, self.run_install()[0].returncode)
         self.write_key(KEY_B)
-        self.assertEqual(0, self.run_install()[0].returncode)
+        self.assertEqual(0, self.run_install("--reset-operator-values")[0].returncode)
         self.assertEqual(1, len(self.backups()))
         result = subprocess.run(
             ["bash", str(SCRIPT), "--state", str(self.state), "--remove"],

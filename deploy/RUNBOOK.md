@@ -609,7 +609,7 @@ default; a missing or stale one is re-read for up to 45 s after cutover), the ap
 chain loads and is non-empty, and every profile key is set. The heartbeat is written between jobs,
 so one job running longer than that window also fails the check: see `stack.sh logs librarian`. An unreachable provider is **reported only** (`UNREACHABLE ...; reported only`): jobs wait
 with backoff and risk_check answers retrieval-only until it returns. Without `llm.env` (R1-style)
-the check passes only while everything idles.
+the R2 check passes only while everything idles; from R3 on a missing `llm.env` fails (below).
 
 `remote_gates.sh` then adds two gates. `risk-check` (always): one registered lesson plus a task
 that repeats its mistake; PASS when the tool returns a verdict, reporting `judged=true|false` and
@@ -652,6 +652,59 @@ defaults, not a budget: `HLM_LLM_BUDGET_HOUR_USD=3`, `HLM_LLM_BUDGET_DAY_USD=10`
 (`breaker=budget`) and risk_check falls back to retrieval-only until the window rolls over. Check
 the spend after the gates, daily during the Phase 5 migration, and against the provider's own
 activity page; change a cap in `llm.env` and recreate `librarian api` as above.
+
+### R3 release (D-108 order, D-111, D-116: no query rewrite)
+
+R3 ships WITHOUT the query rewrite and the per-source cap (D-116). The post-cutover check validates
+`llm.env` against the **release manifest** in `check_librarian.py` (`RELEASE_MANIFESTS`): for R3,
+`HLM_QUERY_REWRITE` and `HLM_RETRIEVAL_SOURCE_CAP` absent or false in the api's and the librarian's
+env, and the D-094 fallback mapping (`HLM_PROFILE`, `HLM_FALLBACK_PROFILE`,
+`HLM_FALLBACK_PROFILE__SYNTHESIS`, `HLM_FALLBACK_PROFILE__RISK_JUDGE`) present.
+Order B (D-108) stays: deploy the R3 ref while the R2 `llm.env` is still installed; its librarian
+check passes as the **interim** (`RESULT librarian PASS llm.env=present release=r2-env (D-108
+interim ...)`: the R2 checks and the manifest's "off" keys). Then install the R3 env with the R3
+checkout's `install_llm_env.sh` (it writes the release marker `HLM_ENV_RELEASE=r3`), recreate
+`librarian api` and run the check again with `--release r3` (the same collect/evaluate the runner
+uses, `evaluate --llm-env present ... --release r3`): R3 mode fails unless both services run the R3
+env and it satisfies the R3 manifest. An api that already runs the R3 env is checked in R3 mode by
+every deployment; an R3 deployment without `llm.env` fails.
+`llm.env` is part of the release state: the runner snapshots the env the previous release runs with
+(`llm.env.release-<ref>`, 0600, `previous_llm_env` in `release-state.json`), and `--rollback`
+renders the previous model with it and restores it atomically before the previous image starts
+(a failed rollback step puts the newer env back first). Reinstalling the R2 env by hand before a
+rollback is no longer needed, but harmless.
+
+**Convergence (D-116, review 75).** Every step is journalled in `release-state.json` first, so a
+kill anywhere converges on a re-run of the same command:
+- The snapshot is taken only when its provenance is proven: the non-secret fingerprint of the file
+  on disk (release marker, D-094 mapping, rewrite/cap switches) must equal what the api AND the
+  librarian containers were created with; otherwise deploy and rollback stop before anything
+  changes ("finish the env switch").
+- `install_llm_env.sh` on a deployed host is ONE step under the deploy lock: journal
+  (`env_switch`), write `llm.env`, recreate `librarian api` together, `evaluate --release r3`
+  against the file, clear the journal. If it is interrupted, deploy and rollback refuse until the
+  same `install_llm_env.sh` command is re-run; the re-run finishes the step. It refuses on a
+  checkout that predates R3 (Order B). It keeps the operator's hand-edited caps and key in the
+  installed `llm.env` (D-121); `--reset-operator-values` replaces them with the template's caps and
+  the `--key-file` key.
+- A deploy re-run of the published ref (same ref) only verifies: the rollback pair and its llm.env
+  snapshot stay. A pair of a release to itself is never published.
+- The deploy-attempt journal (`deploy_attempt`, with a 0600 copy of the rendered previous model)
+  is written after the quiesced dump, before migration and the new stack. A re-run of the same ref
+  after a kill verifies a running new stack and completes the publish with the recorded tuple, or
+  recovers the previous stack with it. Deploying another ref, or a rollback, is refused meanwhile.
+- A rollback journals its FIRST safety dump and the start of the destructive phase before the
+  database changes; a retry reuses that dump. `--accept-release` refuses while a rollback is
+  unfinished and always checks that the running api is the current release.
+- Secret-bearing copies (`llm.env.release-*`, the attempt's model) are journalled in
+  `pending_cleanup` in the same write that stops needing them and deleted by the next lock holder,
+  idempotently.
+
+**Spend (D-121).** The owner's production target is at most $10/month: the template sets
+`HLM_LLM_BUDGET_MONTH_USD=10`, `DAY=2`, `HOUR=1`, the guard on. The R3 manifest requires every cap
+present, `HLM_LLM_BUDGET_DISABLED=false`, month at most 10 and day/hour at most month; the operator
+may edit the caps and the key in `/etc/hlmemo/llm.env` by hand (then re-run `install_llm_env.sh`,
+which keeps them and recreates both services).
 
 ### Application releases
 
@@ -697,7 +750,8 @@ Both first verify that the **running** api's image revision label equals `releas
 validates the previous commit (W0+), its quiesced dump and its image (by recorded ID) and renders
 the previous Compose model pinned to that ID, all before stopping anything. It then records the
 attempt in the state, stops writers, saves the current database (`backup.sh`), checks out the
-previous commit, publishes its image, restores its dump and starts it. If a step fails, the saved
+previous commit, publishes its image, restores its `llm.env` snapshot (D-111) and its dump and
+starts it. If a step fails, the saved
 database is restored and the current release restarted (the saved dump is used only for that; it
 then ages out with the daily tier). If the runner is killed, the recorded attempt lets the same
 `--rollback` command be re-run to completion. Success consumes the pair in one atomic state write

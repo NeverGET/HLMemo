@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # R2 (D-058, D-066): install the librarian/risk-judge llm.env on the production host.
 #
-#   deploy/scripts/install_llm_env.sh --state DIR [--key-file FILE] [--profile P] [--fallback F]
+#   deploy/scripts/install_llm_env.sh --state DIR [--key-file FILE] [--profile P] [--fallback F] [--reset-operator-values]
 #   deploy/scripts/install_llm_env.sh --state DIR --remove
 #
 # Builds llm.env from deploy/llm.env.example with HLM_LIBRARIAN_ENABLED=true,
@@ -13,10 +13,21 @@
 # read from --key-file (default: the repository's .env). The key travels to the host on ssh STDIN,
 # never in argv, a log or this script's output, and is written atomically to <env dir>/llm.env
 # (default /etc/hlmemo/llm.env, next to $HLM_REMOTE_ENV), 0600, owned by the deploy user.
+# D-121: an install PRESERVES what the operator set by hand in the installed llm.env: the spend caps
+# (HLM_LLM_BUDGET_HOUR/DAY/MONTH_USD) and every key variable (*_API_KEY, *_TOKEN, ...) keep their
+# installed values (names are printed, never values); --reset-operator-values replaces them with the
+# template's caps and the --key-file key. The guard itself stays on (HLM_LLM_BUDGET_DISABLED=false).
 # Idempotent: identical content is left alone ("unchanged", no backup); a different previous file
 # is first copied to llm.env.bak-<UTC stamp> (0600; the newest 3 are kept). --remove deletes
-# llm.env and its backups (they hold keys). Containers read the file only when (re)created: deploy
-# the R2 release, or `stack.sh up -d --no-deps librarian api` (RUNBOOK "R2 release").
+# llm.env and its backups (they hold keys). Containers read the file only when (re)created.
+# D-116 #3 (review 75): on a host with a deployed release (release-state.json next to the app
+# checkout, $HLM_REMOTE_DIR, default /opt/hlmemo/app) the install is ONE durable, resumable step
+# under the SAME deploy lock as deploy/rollback: journal (release-state.json env_switch) -> write
+# llm.env -> recreate librarian AND api together -> check_librarian.py evaluate --release r3 against
+# the file on disk -> clear the journal. A kill at any point leaves the journal: deploy and rollback
+# refuse until install_llm_env.sh is re-run, which finishes the step (the same file is "unchanged",
+# both services are recreated again and checked), so api and librarian never stay on different
+# env releases. A checkout that predates R3 is refused (D-108: deploy R3 first, then its env).
 # SSH: host alias hlm-deploy from <state>/ssh_config (written by first_deploy.sh), like hlm_ops.sh.
 set -Eeuo pipefail
 
@@ -24,7 +35,7 @@ REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 usage() { sed -n '4,5p' "${BASH_SOURCE[0]}" | sed 's/^# *//'; }
 die() { printf 'install_llm_env: %s\n' "$*" >&2; exit "${2:-64}"; }
 
-state='' key_file=$REPO_ROOT/.env profile=openrouter-gpt6-luna fallback='' mode=install
+state='' key_file=$REPO_ROOT/.env profile=openrouter-gpt6-luna fallback='' mode=install operator=keep
 while (($#)); do
   case $1 in
     --state|--key-file|--profile|--fallback)
@@ -34,6 +45,7 @@ while (($#)); do
       esac
       shift 2 ;;
     --remove) mode=remove; shift ;;
+    --reset-operator-values) operator=reset; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "unknown argument: $1" ;;
   esac
@@ -43,8 +55,10 @@ done
 ssh_config=${HLM_OPS_SSH_CONFIG:-$state/ssh_config}
 [[ -f $ssh_config ]] || die "no SSH config at $ssh_config (run first_deploy.sh first)"
 remote_env=${HLM_REMOTE_ENV:-/etc/hlmemo/prod.env}
+remote_dir=${HLM_REMOTE_DIR:-/opt/hlmemo/app}
 target=${HLM_REMOTE_LLM_ENV:-$(dirname "$remote_env")/llm.env}
 [[ $target =~ ^/[a-zA-Z0-9_./-]+$ && $target != *..* ]] || die 'remote llm.env path must be absolute and contain no shell metacharacters'
+[[ $remote_dir =~ ^/[a-zA-Z0-9_./-]+$ && $remote_env =~ ^/[a-zA-Z0-9_./-]+$ ]] || die 'remote paths must be absolute and contain no shell metacharacters'
 for name in "$profile" "$fallback"; do
   [[ $name =~ ^[a-z0-9][a-z0-9_-]*$ && -f $REPO_ROOT/profiles/$name.toml ]] || die "unknown profile: $name (profiles/*.toml)"
 done
@@ -53,7 +67,9 @@ done
 # previous file, replaces atomically and prints key NAMES (values of secret-named keys never).
 read -r -d '' remote_py <<'PY' || true
 import datetime, os, pwd, re, stat, sys
-mode, target = sys.argv[1], sys.argv[2]
+mode, target, operator = sys.argv[1], sys.argv[2], sys.argv[3]
+PRESERVE = ("HLM_LLM_BUDGET_HOUR_USD", "HLM_LLM_BUDGET_DAY_USD", "HLM_LLM_BUDGET_MONTH_USD")
+SECRET = re.compile(r"(API_KEY|TOKEN|SECRET|PASSWORD)$")
 KEEP, END = 3, "# END llm.env (install_llm_env.sh)"
 directory, name = os.path.dirname(target), os.path.basename(target)
 user = pwd.getpwuid(os.getuid()).pw_name
@@ -93,6 +109,27 @@ except UnicodeDecodeError:
     fail("llm.env on stdin is not UTF-8")
 if text.rstrip("\n").rsplit("\n", 1)[-1] != END or "HLM_LIBRARIAN_ENABLED=" not in text:
     fail("incomplete llm.env on stdin (no end marker)")
+if exists and operator != "reset":
+    # D-121: the operator's hand edits in the INSTALLED file win (caps and keys), unless reset
+    installed = {}
+    with open(target, encoding="utf-8", errors="replace") as fh:
+        for line in fh.read().splitlines():
+            key, sep, value = line.partition("=")
+            if sep and not line.startswith("#"):
+                installed[key.strip()] = value
+    merged, kept = [], []
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if sep and not line.startswith("#") and (key in PRESERVE or SECRET.search(key)):
+            if installed.get(key) and installed[key] != value:
+                line = f"{key}={installed[key]}"
+                kept.append(key)
+        merged.append(line)
+    text = "\n".join(merged) + "\n"
+    data = text.encode("utf-8")
+    for key in kept:
+        print(f"kept the operator's {key} from the installed llm.env (--reset-operator-values replaces it)")
 if exists:
     with open(target, "rb") as fh:
         old = fh.read()
@@ -137,7 +174,44 @@ if stat.S_IMODE(final.st_mode) != 0o600 or final.st_uid != os.getuid():
 print(f"installed {target} (0600 {user})")
 summary(text)
 PY
-printf -v remote_cmd 'umask 077; exec python3 -c %q %q %q' "$remote_py" "$mode" "$target"
+# D-116 #3: the remote step, in bash, under the deploy lock when a release is deployed there.
+read -r -d '' remote_sh <<'SH' || true
+set -Eeuo pipefail
+umask 077
+mode=$1 target=$2 app_dir=$3 remote_env=$4 remote_py=$5 operator=$6
+parent=$(dirname "$app_dir")
+deployed=0
+[[ -f $parent/release-state.json && -f $app_dir/deploy/scripts/release_state.py ]] && deployed=1
+if ((deployed)); then
+  exec 9>"$parent/.deploy.lock"
+  flock -n 9 || { echo 'install_llm_env (remote): another deployment is running; nothing changed' >&2; exit 3; }
+fi
+apply=0
+if ((deployed)) && [[ $mode == install ]]; then
+  grep -q RELEASE_MANIFESTS "$app_dir/deploy/scripts/check_librarian.py" || {
+    echo 'install_llm_env (remote): the deployed release predates R3; deploy R3 first, then install its llm.env (D-108 Order B); nothing changed' >&2
+    exit 3
+  }
+  apply=1
+  python3 "$app_dir/deploy/scripts/release_state.py" begin-env-switch "$parent" </dev/null
+fi
+python3 -c "$remote_py" "$mode" "$target" "$operator"
+((apply)) || exit 0
+cd "$app_dir"
+export HLM_ENV_FILE=$remote_env HLM_LLM_ENV_FILE=$target
+echo 'install_llm_env (remote): recreating librarian and api with this llm.env (deploy lock held)'
+bash deploy/scripts/stack.sh up -d --no-deps --wait --wait-timeout 300 librarian api </dev/null
+reports=$(mktemp -d)
+trap 'rm -rf -- "$reports"' EXIT
+bash deploy/scripts/stack.sh exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
+  < deploy/scripts/check_librarian.py > "$reports/l.json" || true
+bash deploy/scripts/stack.sh exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$reports/a.json" || true
+python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file "$target" --release r3 \
+  --librarian "$reports/l.json" --api "$reports/a.json" </dev/null
+python3 deploy/scripts/release_state.py end-env-switch "$parent" </dev/null
+echo 'install_llm_env (remote): switch complete (both services run this llm.env, the check passed)'
+SH
+printf -v remote_cmd 'exec bash -c %q install_llm_env %q %q %q %q %q %q' "$remote_sh" "$mode" "$target" "$remote_dir" "$remote_env" "$remote_py" "$operator"
 rssh() { ssh -F "$ssh_config" -o BatchMode=yes hlm-deploy "$@"; }
 
 if [[ $mode == remove ]]; then
@@ -196,6 +270,9 @@ settings = {
     "HLM_LIBRARIAN_ROLE": "observer",
     "HLM_PROFILE": primary,
     "HLM_FALLBACK_PROFILE": fallback,
+    # D-111/D-116: the release marker (check_librarian.py evaluate checks this env against the R3
+    # manifest: no query rewrite, no per-source cap, the D-094 fallback mapping)
+    "HLM_ENV_RELEASE": "r3",
     **{name: found[name] for name in names},
 }
 out = [
@@ -218,4 +295,4 @@ PY
 echo "install_llm_env: $target on hlm-deploy ($ssh_config): profile=$profile fallback=$fallback role=observer enabled=true"
 printf '%s\n' "$content" | rssh "$remote_cmd"
 unset content
-echo "Next: deploy the R2 release (--accept-compose-change), or on a running R2 release: stack.sh up -d --no-deps librarian api (RUNBOOK \"R2 release\")."
+echo "Done. On a deployed R3 host the switch (both services recreated + the --release r3 check) ran under the deploy lock; re-run this command if it was interrupted (RUNBOOK \"R3 release\")."
