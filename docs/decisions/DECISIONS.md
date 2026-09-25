@@ -394,3 +394,25 @@ D-129 | 2026-09-26 | ACCEPTED | **Release R3 is LIVE in production (805f4cd).** 
 - **Deploy LLM spend:** $0.0014.
 - **Independent orchestrator check:** all services run 805f4cd, current-ref 805f4cd, previous-ref 6902f91, env marker r3, the prod key sha matches, MONTH cap 10, rewrite and cap absent, the librarian is an observer.
 - **Open:** `--accept-release` (deletes the pre-W0 backups) needs a separate owner OK. The old-key llm.env.bak copies on the VPS can be deleted once R3 is accepted. The full e2e re-run is folded into the D-125 dogfooding.
+D-130 | 2026-09-26 | ACCEPTED (owner) | **Product definition, and a self-certifying "Production Ready" gate: the RESEARCH LIBRARIAN.**
+**Owner's definition.** The librarian must not stay a mere observer; it must do the retrieval work.
+- For a request plus its project context, it uses a **Memory Map** (what is where), issues several internal queries, and answers LLM-to-LLM with (a) a refined answer, (b) primary sources, and (c) related sources. Each source is a path/handle the caller can drill into or pull raw: "the answer is X; for details see Y, Z, W, …".
+- When the system does this on REAL data, it is Production Ready and **certifies its own release**. No owner approval is needed for releases from now on.
+- The owner's lesson, recorded: the infrastructure was built more robust than needed. The fine-grained engineering effort belongs to the LLM performance, i.e. the product's core job.
+**Role.** "Research librarian". It is read-only: it never mutates memory, so it does not need the observer → assistant → autonomous write ladder. It runs with the CALLER's capabilities through the existing scoped retrieval, so scope and privacy hold by construction.
+**PR gate, v0, to be finalised after the ceiling prototype.** Measured on the real migrated HLMemo memory, using the SEALED hold-out questions for the final gate and B-dev plus real usage for development:
+| Criterion | Threshold |
+|---|---|
+| Answer correct and complete (blind judge) | ≥ 0.80 |
+| Correct abstention on unanswerable questions | ≥ 0.90 |
+| Faithfulness (every claim supported by the cited sources) | ≥ 0.95 |
+| Gold evidence among primary + related sources | ≥ 0.85 |
+| Cross-project or device-scope leak | 0 |
+| Latency | p95 ≤ 20 s |
+| Mean cost per question | ≤ $0.01 |
+Context: today's raw retrieval finds B evidence in the top-5 for only .451 of questions. The multi-query plus map loop must raise source recall substantially, and that is the crux.
+**Plan (D-125 rules: ceiling first, at most 2–3 workstreams, timeboxes):**
+- **W-A (timebox about 3 h):** migrate THIS project's memory into prod project `hlmemo`. Dry-run plan first, then apply. Exclude docs/private, deploy/.local, secrets, cassettes and bulk result data.
+- **W-B (timebox 1 day):** a ceiling prototype of the research loop outside the server (map + multi-query + answer with sources, luna), on a dev copy of the same import, measured on B-dev against the gate metrics. It compares no map vs a deterministic source map, and single-shot synthesis (W2e) vs an agentic loop.
+- Then build the chosen design into the server as a tool, with a routine review; a dual review only for the scope/privacy of the read path.
+- Parked: D-118 (write-time updates) after its running suite; tooling T; the trigram fix (it is re-gated when the research loop needs its latency).
