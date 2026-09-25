@@ -322,3 +322,10 @@ MEDIUM: extra fallback overrides or an unreadable env file fail open; secret orp
 4. Merge r3-tooling as it is, because it is strictly better than R2's tooling for the env-compatibility risk that R3 introduces, and record the review-77 findings as an accepted, time-boxed residual risk for R3 only.
 5. Tooling hardening (all of the review-77 HIGH/MEDIUM findings) becomes workstream T, and it gates R4.
 This amends D-099 criterion 3 for the tooling only, and therefore needs the owner's decision.
+D-123 | 2026-09-25 | ACCEPTED (owner) | **D-122 option (b) accepted: R3 ships behind a Hostinger VPS snapshot safety net; the tooling hardening (workstream T) gates R4.** r3-tooling (f9f5037) is merged into main. **R3 = main = J + F + env-aware release tooling**; no rewrite, no v3/B-real/write-updates/spend-reconcile (all held for R4). Release procedure:
+1. The LLM-free retrieval re-check on the final SHA shows no regression vs R2 (the D-116 criterion 1).
+2. Push after a gitleaks scan.
+3. VM rehearsal with the UPDATED checklist: rewrite OFF, caps 10/2/1, automatic env restore, G-L3 on a quiet host, G-LIVE-B/C/D within the $3 budget, a script-rollback drill AND a VM snapshot-restore drill.
+4. Prod: take a Hostinger snapshot of VM 2002259 ONLY (the other VPSs are never touched), pause the backup timer, deploy attended (D-108/D-119 order), run the remote gates and the cutover check, run the e2e re-check, resume the timer.
+5. Any failure: script rollback first; if that fails, restore the snapshot.
+The review-77 findings are an accepted residual for R3 only and are listed for workstream T.
