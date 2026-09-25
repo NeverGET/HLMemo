@@ -12,7 +12,18 @@
                                               # interrupted rollback re-runs); --llm-env: the copy of
                                               # the CURRENT llm.env, recorded only once per attempt
     release_state.py end-rollback DIR         # clear an aborted attempt
-    release_state.py get DIR KEY              # one field ('' if absent); env_backups: FILE=BACKUP lines
+    release_state.py rollback-mark DIR [--safety PATH] [--destructive]
+                                              # the attempt's FIRST safety dump / the start of its
+                                              # destructive phase (recorded before the DB changes)
+    release_state.py begin-deploy DIR --revision SHA --previous SHA --previous-dump PATH
+                     --previous-image REPO:SHA --previous-image-id ID --previous-llm-env PATH|absent
+                     --model PATH [--env-backup FILE=BACKUP ...]   # the deploy-attempt journal
+    release_state.py end-deploy DIR           # clear the journal (the attempt was recovered)
+    release_state.py begin-env-switch DIR / end-env-switch DIR    # install_llm_env.sh's journal
+    release_state.py record-pending DIR PATH...  # secret-bearing copies to delete (cleanup journal)
+    release_state.py cleanup DIR              # delete every journalled copy no state field needs
+    release_state.py get DIR KEY              # one field ('' if absent; "a.b" for a nested one);
+                                              # env_backups: FILE=BACKUP lines
 
 `publish` writes DIR/release-state.json through tmp + fsync + rename + directory fsync, then derives
 the legacy markers (current-ref, previous-ref, previous-dump) from it, each via tmp + rename. A crash
@@ -24,6 +35,15 @@ the previous release ran with (llm_env_release.py snapshot; "absent" when it had
 rollback.sh before the previous image starts; a new publication deletes the superseded snapshot
 (it holds the provider key). ``rollback_llm_env`` is the copy of the newer llm.env taken when a
 rollback begins, put back if a rollback step fails.
+
+D-116 (review 75): every multi-step operation is journalled in this ONE atomic document first, so a
+kill at any step converges on a re-run: ``deploy_attempt`` (written before the new stack starts: a
+re-run completes the publish or recovers with the recorded tuple), ``rollback_safety`` /
+``rollback_destructive`` (the first safety dump and the destructive phase, recorded before the
+database changes: a retry reuses that dump), ``env_switch`` (install_llm_env.sh: the env, both
+services and the check), and ``pending_cleanup`` (secret-bearing llm.env copies are journalled here
+in the same write that stops needing them, then deleted idempotently by ``cleanup``). A rollback
+pair of a release to itself is never published (a same-ref re-run keeps the pair it has).
 """
 
 import argparse
@@ -35,6 +55,8 @@ from pathlib import Path
 
 STATE = "release-state.json"
 ABSENT = "absent"
+#: the deploy-attempt journal's copy of the rendered previous model (it inlines env values)
+ATTEMPT_MODEL = "deploy-attempt-model.json"
 LEGACY = {"current-ref": "current_ref", "previous-ref": "previous_ref", "previous-dump": "previous_dump"}
 
 
@@ -61,6 +83,12 @@ def _atomic_write(path: Path, text: str) -> None:
         os.close(dir_fd)
 
 
+def _journal(directory: Path, state: dict) -> None:
+    """A journal-only write: the state file, atomically, WITHOUT deriving the legacy markers (a host
+    still on legacy markers has no current_ref in the state yet; deriving would delete them)."""
+    _atomic_write(directory / STATE, json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
 def store(directory: Path, state: dict) -> None:
     _atomic_write(directory / STATE, json.dumps(state, indent=2, sort_keys=True) + "\n")
     derive(directory)
@@ -77,17 +105,50 @@ def derive(directory: Path) -> None:
             (directory / marker).unlink(missing_ok=True)
 
 
+def _pending(state: dict, *paths: object) -> None:
+    """Journal secret-bearing copies for deletion (in the caller's next atomic write)."""
+    extra = [str(p) for p in paths if _snapshot_file(p) is not None]
+    state["pending_cleanup"] = sorted(set(state.get("pending_cleanup") or []) | set(extra))
+
+
+def cleanup(directory: Path) -> None:
+    """Delete every journalled copy that no live state field refers to; idempotent (a crash between
+    a state commit and its unlink is finished by the next lock holder)."""
+    state = load(directory)
+    pending = list(state.get("pending_cleanup") or [])
+    if not pending:
+        return
+    live = {state.get("previous_llm_env"), state.get("rollback_llm_env")}
+    attempt = state.get("deploy_attempt") or {}
+    live |= {attempt.get("previous_llm_env"), attempt.get("model")}
+    keep = []
+    for value in pending:
+        if value in live:  # still a rollback target: kept until a later write releases it
+            keep.append(value)
+            continue
+        path = _snapshot_file(value)
+        if path is not None:
+            path.unlink(missing_ok=True)
+            print(f"deleted {path.name} (journalled secret-bearing copy)")
+    state["pending_cleanup"] = sorted(keep)
+    _journal(directory, state)
+
+
 def _snapshot_file(value: object) -> Path | None:
     """A recorded llm.env snapshot/copy path (never the "absent" marker)."""
     if not isinstance(value, str) or not value or value == ABSENT:
         return None
     path = Path(value)
-    return path if path.is_absolute() and ".release-" in path.name else None
+    return path if path.is_absolute() and (".release-" in path.name or path.name == ATTEMPT_MODEL) else None
 
 
 def publish(directory: Path, args: argparse.Namespace) -> None:
     state = load(directory)
+    if args.previous and args.previous == args.current:
+        # D-116 #2: never R3 -> R3 (a same-ref re-run keeps its pair, and the R2 env snapshot)
+        raise SystemExit(f"release_state: refusing a rollback pair of {args.current} to itself")
     superseded = _snapshot_file(state.get("previous_llm_env"))
+    attempt = state.pop("deploy_attempt", None) or {}
     state["current_ref"] = args.current
     if args.previous:
         state.update(
@@ -105,10 +166,14 @@ def publish(directory: Path, args: argparse.Namespace) -> None:
     # Every retired-secret backup ever recorded stays listed until --accept-release deletes it.
     retired = set(state.get("retired_backups") or []) | set((state.get("env_backups") or {}).values())
     state["retired_backups"] = sorted(retired)
-    store(directory, state)
-    # D-111 #7: the older pair's llm.env snapshot is no rollback target any more (it holds the key)
+    # D-111 #7 / D-116 #9: the older pair's snapshot and the attempt's model copy are no rollback
+    # target any more (they hold the key): journalled in THIS write, deleted by cleanup
     if superseded is not None and str(superseded) != state.get("previous_llm_env"):
-        superseded.unlink(missing_ok=True)
+        _pending(state, str(superseded))
+    _pending(state, attempt.get("model"))
+    state["pending_cleanup"] = [p for p in state["pending_cleanup"] if p != state.get("previous_llm_env")]
+    store(directory, state)
+    cleanup(directory)
 
 
 def add_retired(directory: Path, paths: list[str]) -> None:
@@ -150,8 +215,36 @@ def main(argv: list[str]) -> int:
     p.add_argument("--previous-image-id")
     p.add_argument("--env-backup", action="append", default=[])
     p.add_argument("--previous-llm-env")
-    for name in ("rolled-back", "derive", "end-rollback"):
+    for name in (
+        "rolled-back",
+        "derive",
+        "end-rollback",
+        "end-deploy",
+        "begin-env-switch",
+        "end-env-switch",
+        "cleanup",
+    ):
         sub.add_parser(name).add_argument("dir", type=Path)
+    m = sub.add_parser("rollback-mark")
+    m.add_argument("dir", type=Path)
+    m.add_argument("--safety")
+    m.add_argument("--destructive", action="store_true")
+    d = sub.add_parser("begin-deploy")
+    d.add_argument("dir", type=Path)
+    for flag in (
+        "--revision",
+        "--previous",
+        "--previous-dump",
+        "--previous-image",
+        "--previous-image-id",
+        "--previous-llm-env",
+        "--model",
+    ):
+        d.add_argument(flag, required=True)
+    d.add_argument("--env-backup", action="append", default=[])
+    q = sub.add_parser("record-pending")
+    q.add_argument("dir", type=Path)
+    q.add_argument("paths", nargs="+")
     a = sub.add_parser("accept")
     a.add_argument("dir", type=Path)
     a.add_argument("--sweep-dir", type=Path, action="append", default=[])
@@ -172,7 +265,9 @@ def main(argv: list[str]) -> int:
     elif args.cmd == "derive":
         derive(directory)
     elif args.cmd == "get":
-        value = load(directory).get(args.key)
+        value: object = load(directory)
+        for part in args.key.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
         if isinstance(value, dict):
             print("\n".join(f"{k}={v}" for k, v in value.items()))
         elif value not in (None, ""):
@@ -188,11 +283,21 @@ def main(argv: list[str]) -> int:
         if args.llm_env and not state.get("rollback_llm_env"):
             state["rollback_llm_env"] = args.llm_env
         store(directory, state)
+    elif args.cmd == "rollback-mark":
+        state = load(directory)
+        if args.safety and not state.get("rollback_safety"):  # the FIRST safety dump only
+            state["rollback_safety"] = args.safety
+        if args.destructive:
+            state["rollback_destructive"] = True
+        _journal(directory, state)
     elif args.cmd == "end-rollback":
         state = load(directory)
         state.pop("rollback_in_progress", None)
-        state.pop("rollback_llm_env", None)
+        _pending(state, state.pop("rollback_llm_env", None))
+        state.pop("rollback_safety", None)
+        state.pop("rollback_destructive", None)
         store(directory, state)
+        cleanup(directory)
     elif args.cmd == "rolled-back":
         state = load(directory)
         new = {
@@ -201,10 +306,49 @@ def main(argv: list[str]) -> int:
             "accepted": True,
             "env_backups": {},
             "retired_backups": state.get("retired_backups") or [],
+            "pending_cleanup": state.get("pending_cleanup") or [],
         }
-        # ONE step: the new state (pair consumed, attempt cleared) and the derived markers; the
-        # consumed previous-ref/previous-dump markers disappear in derive.
+        # D-116 #9: both llm.env copies are spent (llm.env itself is the restored one)
+        _pending(new, state.get("rollback_llm_env"), state.get("previous_llm_env"))
+        # ONE step: the new state (pair consumed, attempt cleared, copies journalled) and the derived
+        # markers; the consumed previous-ref/previous-dump markers disappear in derive.
         store(directory, new)
+        cleanup(directory)
+    elif args.cmd == "begin-deploy":
+        state = load(directory)
+        state["deploy_attempt"] = {
+            "revision": args.revision,
+            "previous_ref": args.previous,
+            "previous_dump": args.previous_dump,
+            "previous_image": args.previous_image,
+            "previous_image_id": args.previous_image_id,
+            "previous_llm_env": args.previous_llm_env,
+            "model": args.model,
+            "env_backups": dict(pair.split("=", 1) for pair in args.env_backup),
+        }
+        _journal(directory, state)
+    elif args.cmd == "end-deploy":
+        state = load(directory)
+        attempt = state.pop("deploy_attempt", None) or {}
+        _pending(state, attempt.get("model"))
+        if attempt.get("previous_llm_env") != state.get("previous_llm_env"):
+            _pending(state, attempt.get("previous_llm_env"))
+        _journal(directory, state)
+        cleanup(directory)
+    elif args.cmd == "begin-env-switch":
+        state = load(directory)
+        state.setdefault("env_switch", {"started": True})
+        _journal(directory, state)
+    elif args.cmd == "end-env-switch":
+        state = load(directory)
+        state.pop("env_switch", None)
+        _journal(directory, state)
+    elif args.cmd == "record-pending":
+        state = load(directory)
+        _pending(state, *args.paths)
+        _journal(directory, state)
+    elif args.cmd == "cleanup":
+        cleanup(directory)
     return 0
 
 

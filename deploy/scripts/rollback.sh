@@ -17,6 +17,10 @@
 # (previous_llm_env, snapshotted by remote-deploy.sh) renders its model and is restored atomically
 # before the previous image starts; the newer llm.env is copied once per attempt (rollback_llm_env)
 # and put back before the current release restarts after a failed step.
+# D-116 (review 75): accept refuses during an unfinished rollback and always checks running ==
+# current_ref; the newer env is copied only when the disk env is what the current api AND librarian
+# run; the FIRST safety dump and the destructive phase are journalled before the database changes,
+# so a retry reuses that dump; secret-bearing copies are journalled and cleaned idempotently.
 # accept: verifies the running release, deletes every recorded env backup (retired secrets) and, for
 # a W0+ current release, sweeps any unrecorded *.pre-w0-* next to the env files.
 # shellcheck disable=SC2016,SC2217
@@ -61,6 +65,11 @@ done
 state() { python3 "$helpers/release_state.py" get "$parent_dir" "$1"; }
 # shellcheck source=deploy/scripts/common.sh
 source deploy/scripts/common.sh
+# D-116 #9: finish any journalled deletion of secret-bearing copies under this lock first.
+python3 "$helpers/release_state.py" cleanup "$parent_dir"
+# D-116 #3: an unfinished llm.env switch first (install_llm_env.sh re-run under the deploy lock).
+[[ -z $(state env_switch) ]] ||
+  refuse 'an llm.env switch is unfinished (install_llm_env.sh was interrupted): re-run install_llm_env.sh first'
 
 running_revision() {
   local id
@@ -70,12 +79,19 @@ running_revision() {
 }
 running=$(running_revision)
 in_progress=$(state rollback_in_progress)
+mismatch="the running api is ${running:-<none>}, but release-state.json says $current. Do not guess: inspect 'docker ps', /opt/hlmemo/.deploy-runs/*/log and release-state.json; re-run or finish the deployment first (deploy.sh REF), then retry."
+[[ -z $(state deploy_attempt) ]] ||
+  refuse "an unfinished deployment is recorded (deploy_attempt): re-run deploy.sh with its ref first; it completes or recovers it"
 if [[ -z $in_progress && $running != "$current" ]]; then
-  refuse "the running api is ${running:-<none>}, but release-state.json says $current. Do not guess: inspect 'docker ps', /opt/hlmemo/.deploy-runs/*/log and release-state.json; re-run or finish the deployment first (deploy.sh REF), then retry."
+  refuse "$mismatch"
 fi
 
 case $mode in
   accept)
+    # D-116 #5: never while a rollback is unfinished, and ALWAYS only for the release that runs.
+    [[ -z $in_progress ]] ||
+      refuse "an unfinished rollback to $in_progress is recorded: finish it (deploy.sh --rollback) before accepting anything"
+    [[ $running == "$current" ]] || refuse "$mismatch"
     # Defensive sweep of UNRECORDED *.pre-w0-* backups next to the env files, only when the
     # current release is W0+ (D-065 one-way door): pre-W0 code would still need those secrets.
     sweep=()
@@ -175,12 +191,25 @@ printf 'Rollback validated: %s -> %s (image %s = %s, dump %s)\n' "$current" "$pr
 # already restored and must keep the recorded copy).
 newer_llm_env=$(state rollback_llm_env)
 if [[ -n $previous_llm_env && -z $newer_llm_env ]]; then
+  # D-116 #1: the disk env must be what the current api AND librarian run, or its copy is no
+  # "newer env" a failed step could put back: refuse before anything stops.
+  running_fps=()
+  for service in api librarian; do
+    id=$(docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" --filter "label=com.docker.compose.service=$service" | head -1)
+    [[ -n $id ]] || continue
+    running_fps+=("$service=$(docker inspect --format '{{json .Config.Env}}' "$id" | python3 "$helpers/llm_env_release.py" fingerprint -)")
+  done
+  python3 "$helpers/llm_env_release.py" provenance "$llm_env_file" "${running_fps[@]}" ||
+    refuse "the llm.env on disk is not the env the running $current was created with (above): finish the env switch (install_llm_env.sh) first"
   newer_llm_env=$(python3 "$helpers/llm_env_release.py" snapshot "$llm_env_file" "$current")
+  [[ $newer_llm_env == absent ]] || python3 "$helpers/release_state.py" record-pending "$parent_dir" "$newer_llm_env"
 fi
 python3 "$helpers/release_state.py" begin-rollback "$parent_dir" "$previous" ${newer_llm_env:+--llm-env "$newer_llm_env"}
 newer_llm_env=$(state rollback_llm_env)
-safety=
+# D-116 #4: the FIRST safety dump of this attempt and whether its destructive phase began.
+safety=$(state rollback_safety)
 db_replaced=0
+[[ $(state rollback_destructive) != True ]] || db_replaced=1
 recover_current() {
   # A failed step (not a kill): put the CURRENT release back, with its own data.
   trap - ERR
@@ -209,8 +238,8 @@ recover_current() {
   fi
   read -ra up_services <<< "$(current_services)"
   if ((ok)) && dc up -d --no-deps --wait --wait-timeout 300 "${up_services[@]}" >&2; then
+    # D-116 #9: the attempt ends; its newer-env copy is journalled and deleted in that one step
     python3 "$helpers/release_state.py" end-rollback "$parent_dir" >&2
-    [[ -z ${newer_llm_env:-} || $newer_llm_env == absent ]] || rm -f -- "$newer_llm_env"
     echo "Current release $current restored${safety:+ (database from $safety)}; rollback aborted." >&2
   else
     echo "Automatic restore of $current FAILED; the recorded attempt lets 'deploy.sh --rollback' be re-run. Saved database: ${safety:-<none>}." >&2
@@ -222,8 +251,16 @@ dc stop caddy api worker
 # The librarian is a writer too; removed outright when the previous model does not define it.
 if [[ " ${previous_services[*]} " == *" librarian "* ]]; then stop_librarian; else stop_librarian rm; fi
 # The current database, saved before it is replaced: used by recover_current on a failed step.
-safety=$(bash deploy/backup/backup.sh)
-printf 'Saved the current database before replacing it: %s\n' "$safety"
+# D-116 #4: taken ONCE per attempt and journalled before any database change; a retry reuses it
+# and never re-snapshots a half-restored database.
+if [[ -z $safety ]]; then
+  safety=$(bash deploy/backup/backup.sh)
+  python3 "$helpers/release_state.py" rollback-mark "$parent_dir" --safety "$safety"
+  printf 'Saved the current database before replacing it: %s\n' "$safety"
+else
+  [[ -f $safety ]] || { echo "The recorded safety dump $safety is missing." >&2; false; }
+  printf 'Re-using the safety dump of the interrupted attempt: %s\n' "$safety"
+fi
 git checkout --detach "$previous"
 for mounted in deploy/Caddyfile deploy/scripts/worker_entrypoint.py deploy/scripts/worker_health.py; do
   [[ ! -e $mounted ]] || chmod go+r "$mounted"
@@ -233,8 +270,10 @@ python3 "$helpers/release_env.py" "$HLM_ENV_FILE" "$image"
 if [[ -n $previous_llm_env ]]; then
   python3 "$helpers/llm_env_release.py" restore "$previous_llm_env" "$llm_env_file"
 fi
-rb up -d --no-deps --wait --wait-timeout 180 db
+# D-116 #4: the destructive phase is journalled BEFORE the database changes
+python3 "$helpers/release_state.py" rollback-mark "$parent_dir" --destructive
 db_replaced=1
+rb up -d --no-deps --wait --wait-timeout 180 db
 rb exec -T db sh -eu -c '
   case "$POSTGRES_DB" in postgres|template0|template1|"") exit 64;; esac
   dropdb --username="$POSTGRES_USER" --if-exists --force -- "$POSTGRES_DB"
@@ -244,10 +283,7 @@ rb exec -T db sh -eu -c '
 rb up -d --no-deps --wait --wait-timeout 300 "${previous_services[@]}"
 rb exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()"
 trap - ERR
-# One atomic step: consume the pair, clear the attempt, derive (and prune) the legacy markers.
+# One atomic step: consume the pair, clear the attempt, derive (and prune) the legacy markers, and
+# journal both spent llm.env copies (they hold the provider key), deleted idempotently (D-116 #9).
 python3 "$helpers/release_state.py" rolled-back "$parent_dir"
-# both llm.env copies are spent (llm.env itself is the restored one); they hold the provider key
-for spent in "$newer_llm_env" "$previous_llm_env"; do
-  [[ -z $spent || $spent == absent ]] || rm -f -- "$spent"
-done
 printf 'Rollback complete: %s is running again (image %s). Saved database of %s: %s\n' "$previous" "$image_id" "$current" "$safety"
