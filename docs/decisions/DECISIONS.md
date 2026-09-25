@@ -265,3 +265,16 @@ D-116 | 2026-09-25 | ACCEPTED (owner) | **R3 ships WITHOUT the query rewrite, an
 | B-real | 8/15 | 6/16 | ±0.0 |
 | B-oracle | 0/15 | 0/16 | +0.3 |
 Only 2 revisions were applied, neither on a labelled stale pair, and both were judged wrong by a blind judge (precision 0/2). Upstream, v3 finalised only 9 (A) / 5 (B) partial supersedes. Outcomes of the A stale pairs: 6 judged none, 4 never candidates, 2 proposed (1 rejected by `replacement_in_judged_statement`), 1 time-rejected, 2 with no stale item. D-113 puts 3 of 14 A and 7 of 19 B stale items out of scope, because they are historical kinds or decision records. Spend $0.45. **This is the 4th librarian attempt that does not move stale-first. The mechanism (B-oracle 0/15) is proven, but the librarian does not find or judge the pairs.** Next: an offline diagnosis of the "judged none" and "never candidate" pairs from the v3 export (prompt inputs and outputs), before any new build.
+D-116 | 2026-09-25 | ACCEPTED (owner) | **R3 ships WITHOUT the query rewrite, and the rewrite is SHELVED. The B-real hold-out fails too.**
+**Owner decisions (answering D-115):**
+1. R3 = J (librarian fixes, D-096) + F (per-task fallbacks, D-098) + the env-aware release tooling from D-111: llm.env becomes part of the release state; rollback restores the previous env before starting the previous image; the cutover check validates llm.env against the release manifest, with rewrite expected OFF. The rewrite and cap code does NOT ship. Branch pivot-s1-r3 is archived, not merged.
+2. The rewrite is shelved. Resources go to the librarian (B-real) and Phase 3.
+**D-099 amended for this R3:**
+- Criterion 1 is replaced by "no retrieval regression vs R2 on the hold-out". The 63bc041 flags-off base already reproduced D-090 exactly (pooled .643), and J's read side is proven neutral (D-087). The final SHA gets an LLM-free retrieval re-check ($0).
+- Criteria 2 and 3 stand, with the rewrite OFF on the VM; criterion 3 now covers the ported tooling.
+**B-real hold-out (D-110 bar):** run on ed8deda (with the D-113 kinds default).
+| Arm | A stale-first | B stale-first | W2b |
+|---|---|---|---|
+| B-real | 8/15 | 6/16 | ±0.0 |
+| B-oracle | 0/15 | 0/16 | +0.3 |
+Only 2 revisions were applied, neither on a labelled stale pair, and both were judged wrong by a blind judge (0/2). Upstream, v3 finalised only 9 (A) / 5 (B) partial supersedes. Outcomes of the A stale pairs: 6 judged none, 4 never candidates, 2 proposed (1 rejected by `replacement_in_judged_statement`), 1 time-rejected, 2 with no stale item. D-113 puts 3/14 A and 7/19 B stale items out of scope (historical kinds or decision records). Spend $0.45. **This is the 4th librarian attempt that does not move stale-first. The mechanism (B-oracle 0/15) works, but the librarian does not find or judge the pairs.** Next: an offline diagnosis of the "judged none" and "never candidate" pairs from the v3 export, before any new build.
