@@ -204,3 +204,18 @@ Deterministic guards re-check both quotes byte-exact before a proposal is emitte
 Apply path: only after the owner's answer in the assistant role (the observer never mutates, D-074). Apply creates a new version of the old item that differs only in that span, plus a supersedes link from the new version to the old one; it is bi-temporal and replayable. The locks follow J/D-095. Reversal is a compensating event.
 Measured on the D-104 harness against the B-oracle ceiling (A 0/15). Pass needs A stale-first ≤ 4/15, G-E-W2b ≥ +3 with no category < −3, and precision tracked. The live measurement waits for OpenRouter credits.
 **Keys:** the owner creates a production-only key. It is installed on the VPS llm.env during the R3 deploy (D-108 order). The existing key stays for development and agents. BACKLOG: reconcile the spend, since billed cost was about $66 against about $18 reported.
+D-111 | 2026-09-25 | ACCEPTED (orchestrator, after release-gating review 72) | **Mask-and-translate holds as a design, but its boundaries leak. The implementation is hardened by canonicalization and strict boundaries, and the R3 release tooling gets env-aware rollback.** Review 72 (astra FIX-NEEDED, sol DO-NOT-MERGE) reproduced these holes:
+- payload leaks through apostrophe tails (`hata'myprivatevalue`), multi-line and unclosed quotes, quote-glued tokens (`XX"foo"hata`), and zero-width/homoglyph/spacing+leet credential obfuscation (`pa​rola çilek`, `p @ s s w 0 r d`);
+- restore accepts glued placeholder text (`⟦P1⟧production`) and repeats;
+- the breaker exemption triggers on any positive `queue_wait_s`;
+- check_librarian PASSes an R3 cutover with llm.env missing or rewrite off;
+- **rollback.sh starts the R2 image with the R3 llm.env**, whose R3-only profiles R2 cannot load. This affects ANY R3 deploy, because F added profiles.
+Fixes:
+1. Input canonicalization: NFC; any Cf/zero-width/bidi control character means no rewrite; mixed-script tokens are masked; the credential check runs on a fixed-point normalisation (collapse single-character runs, leetspeak, confusable folding).
+2. An apostrophe token is translatable only with a dictionary base plus a suffix from a closed Turkish suffix list; otherwise the whole token is masked.
+3. A stateful quote scanner masks multi-line spans, masks unclosed quotes to EOF, and masks glued tokens whole.
+4. Restore requires the same boundary class on each side of every placeholder, and rejects glued or repeated protected text.
+5. Breaker exemption only when the queue wait causally cut the attempt budget below the minimum.
+6. The R3 cutover check requires llm.env to be present and rewrite=true.
+7. llm.env becomes part of the release state: deploy.sh snapshots it, and rollback.sh restores the previous env atomically before starting the previous image.
+All reviewer inputs become regression tests, and the property generators are extended per class. The unit count must be reported exactly: collected, passed, skipped.
