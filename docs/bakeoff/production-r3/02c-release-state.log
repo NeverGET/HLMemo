@@ -1,0 +1,6 @@
+{'current_ref': '805f4cd2955b', 'previous_ref': '6902f91e7a79', 'previous_llm_env': '/etc/hlmemo/llm.env.release-6902f91e7a79', 'previous_image': 'hlmemo:6902f91e7a79', 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': []}
+hlmemo-prod-worker-1 hlmemo:805f4cd2955b Up 50 seconds (healthy)
+hlmemo-prod-librarian-1 hlmemo:805f4cd2955b Up 49 seconds (healthy)
+hlmemo-prod-api-1 hlmemo:805f4cd2955b Up 50 seconds (healthy)
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 31 seconds (healthy)
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 2 days (healthy)

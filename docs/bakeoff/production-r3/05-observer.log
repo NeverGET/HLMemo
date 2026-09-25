@@ -1,0 +1,107 @@
+# 2026-09-25T21:44:41Z STEP 5 observer check vs step 1 (BASE_EVENT=1178; step 1: versions 407, links 0, superseded/closed 0/0, batches applied 0/13, version_signals 384)
+              at               |       alembic        
+-------------------------------+----------------------
+ 2026-09-25 21:44:42.728428+00 | 0008_librarian_tasks
+
+ links_total | links_superseded | links_valid_closed 
+-------------+------------------+--------------------
+           0 |                0 |                  0
+
+ versions_total | versions_superseded | versions_valid_closed 
+----------------+---------------------+-----------------------
+            411 |                   0 |                     0
+
+       kind        | count 
+-------------------+-------
+ access            |   325
+ call_the_day      |     7
+ device_approved   |     9
+ device_minted     |    19
+ device_registered |     9
+ device_revoked    |    25
+ grant_added       |    26
+ grant_revoked     |    16
+ librarian         |   377
+ project_created   |     6
+ write             |   389
+
+    job_kind     | status | priority | count 
+-----------------+--------+----------+-------
+ embed           | done   |        5 |   411
+ librarian_write | done   |        2 |     1
+ librarian_write | done   |        3 |    13
+ librarian_write | done   |        6 |   363
+
+ version_signals 
+-----------------
+             386
+
+ status |     kind      | count 
+--------+---------------+-------
+ open   | contradiction |    56
+ open   | link          |   251
+ open   | widen_scope   |     3
+
+ batches | batches_applied 
+---------+-----------------
+      13 |               0
+
+ llm_calls | cost_usd 
+-----------+----------
+      1194 |   0.5108
+
+ since_event_id | max_event_id | librarian_events 
+----------------+--------------+------------------
+           1178 |         1208 |                4
+
+      op       |   role   | n 
+---------------+----------+---
+ <none>        | observer | 2
+ signal_upsert | observer | 2
+
+ links_by_librarian | versions_by_librarian | signals_by_librarian_allowed 
+--------------------+-----------------------+------------------------------
+                  0 |                     0 |                            2
+
+ versions_superseded | versions_valid_closed 
+---------------------+-----------------------
+                   0 |                     0
+
+ links_total | links_closed 
+-------------+--------------
+           0 |            0
+
+ batches_decided_or_applied | batches_total 
+----------------------------+---------------
+                          0 |            13
+
+ status | questions 
+--------+-----------
+ open   |       310
+
+    slug     | versions 
+-------------+----------
+ gates       |        5
+ gates-cli   |        8
+ gates-g7    |        7
+ gates-probe |        8
+ hlmemo      |        2
+ hlmemo-e2e  |      381
+(6 rows)
+
+    task    |       profile        | outcome | count |  usd   
+------------+----------------------+---------+-------+--------
+ place      | openrouter-gpt6-luna | ok      |     4 | 0.0004
+ relate     | openrouter-gpt6-luna | ok      |     3 | 0.0008
+ risk_judge | openrouter-gpt6-luna | ok      |     2 | 0.0001
+(3 rows)
+
+ prod_spend_since_step1 
+------------------------
+                 0.0014
+(1 row)
+
+gates-probe proposals 0 {} applied_batches 0
+hlmemo-e2e proposals 310 {'open': 310} applied_batches 0
+hlmemo proposals 0 {} applied_batches 0
+public /ready: {"status":"ready"} 200

@@ -6,7 +6,7 @@
 #   R3 checkout:  libcheck.sh --llm-env-file /etc/hlmemo/llm.env [--release r3]
 #                 (the R3 cutover check / the install_llm_env.sh post-switch check, D-108 step 4)
 # Prints the per-task fallbacks line and RESULT librarian PASS|FAIL. Read-only; no key or token is printed.
-S=/Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223
+S=${HLM_STATE_DIR:-/Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223}   # HLM_STATE_DIR selects another host (prod R3 deploy)
 extra=""; [ $# -gt 0 ] && extra=$(printf ' %q' "$@")
 exec /usr/bin/ssh -F $S/ssh_config hlm-deploy 'set -e; cd /opt/hlmemo/app; export HLM_ENV_FILE=/etc/hlmemo/prod.env
 source deploy/scripts/common.sh
