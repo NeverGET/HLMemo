@@ -69,8 +69,12 @@ class D108RollbackTest(unittest.TestCase):
         return root, env, result, output
 
     def install_r3_env(self, root):
+        """D-108 step 3 as install_llm_env.sh does it (D-116 #3): the file, then BOTH services
+        recreated with it (the fake docker records what each container was created with)."""
         (root / "llm.env").write_text(R3_ENV)
         (root / "llm.env").chmod(0o600)
+        for service in ("api", "librarian"):
+            (root / f"events.running-env.{service}").write_text(R3_ENV)
 
     @staticmethod
     def ups(root, since=0):

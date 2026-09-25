@@ -674,6 +674,38 @@ renders the previous model with it and restores it atomically before the previou
 (a failed rollback step puts the newer env back first). Reinstalling the R2 env by hand before a
 rollback is no longer needed, but harmless.
 
+**Convergence (D-116, review 75).** Every step is journalled in `release-state.json` first, so a
+kill anywhere converges on a re-run of the same command:
+- The snapshot is taken only when its provenance is proven: the non-secret fingerprint of the file
+  on disk (release marker, D-094 mapping, rewrite/cap switches) must equal what the api AND the
+  librarian containers were created with; otherwise deploy and rollback stop before anything
+  changes ("finish the env switch").
+- `install_llm_env.sh` on a deployed host is ONE step under the deploy lock: journal
+  (`env_switch`), write `llm.env`, recreate `librarian api` together, `evaluate --release r3`
+  against the file, clear the journal. If it is interrupted, deploy and rollback refuse until the
+  same `install_llm_env.sh` command is re-run; the re-run finishes the step. It refuses on a
+  checkout that predates R3 (Order B). It keeps the operator's hand-edited caps and key in the
+  installed `llm.env` (D-121); `--reset-operator-values` replaces them with the template's caps and
+  the `--key-file` key.
+- A deploy re-run of the published ref (same ref) only verifies: the rollback pair and its llm.env
+  snapshot stay. A pair of a release to itself is never published.
+- The deploy-attempt journal (`deploy_attempt`, with a 0600 copy of the rendered previous model)
+  is written after the quiesced dump, before migration and the new stack. A re-run of the same ref
+  after a kill verifies a running new stack and completes the publish with the recorded tuple, or
+  recovers the previous stack with it. Deploying another ref, or a rollback, is refused meanwhile.
+- A rollback journals its FIRST safety dump and the start of the destructive phase before the
+  database changes; a retry reuses that dump. `--accept-release` refuses while a rollback is
+  unfinished and always checks that the running api is the current release.
+- Secret-bearing copies (`llm.env.release-*`, the attempt's model) are journalled in
+  `pending_cleanup` in the same write that stops needing them and deleted by the next lock holder,
+  idempotently.
+
+**Spend (D-121).** The owner's production target is at most $10/month: the template sets
+`HLM_LLM_BUDGET_MONTH_USD=10`, `DAY=2`, `HOUR=1`, the guard on. The R3 manifest requires every cap
+present, `HLM_LLM_BUDGET_DISABLED=false`, month at most 10 and day/hour at most month; the operator
+may edit the caps and the key in `/etc/hlmemo/llm.env` by hand (then re-run `install_llm_env.sh`,
+which keeps them and recreates both services).
+
 ### Application releases
 
 Before an upgrade, verify recent off-host backup and disk headroom. Deploy a reviewed immutable

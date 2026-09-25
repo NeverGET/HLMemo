@@ -22,7 +22,12 @@ R3_LLM_ENV = (
     "HLM_PROFILE=openrouter-gpt6-luna\n"
     "HLM_FALLBACK_PROFILE=openrouter-glm53-flash\n"
     "HLM_FALLBACK_PROFILE__SYNTHESIS=openrouter\n"
+    "HLM_FALLBACK_PROFILE__QUERY_REWRITE=openrouter\n"
     "HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast\n"
+    "HLM_LLM_BUDGET_HOUR_USD=1\n"
+    "HLM_LLM_BUDGET_DAY_USD=2\n"
+    "HLM_LLM_BUDGET_MONTH_USD=10\n"
+    "HLM_LLM_BUDGET_DISABLED=false\n"
     "HLM_ENV_RELEASE=r3\n"
     "OPENROUTER_API_KEY=harness-dummy-r3-value\n"
 )
@@ -62,11 +67,69 @@ if "build" in args:
     labels_path.write_text(json.dumps(labels))
 if "run" in args and "migrate" in args:
     Path(os.environ["EVENTS"]+".migration-image").write_text(images.get(selected, selected))
+    # D-116 #6 fault: the runner is killed after the journal, before the new stack starts (once)
+    if fail == "kill-before-up" and not Path(os.environ["EVENTS"]+".migrate-killed").exists():
+        Path(os.environ["EVENTS"]+".migrate-killed").touch()
+        os.kill(os.getppid(), signal.SIGKILL)
+        sys.exit(137)
     if fail == "retag-during-migration":
         labels[selected] = "a"*40
         labels_path.write_text(json.dumps(labels))
 def llm_env_path():
     return Path(os.environ.get("HLM_LLM_ENV_FILE") or Path(os.environ["HLM_REMOTE_ENV"]).parent / "llm.env")
+# D-116: what each container was CREATED with (docker inspect .Config.Env), per service: written at
+# every `up` of that service (a rollback model: the env Compose inlined into it; otherwise the llm.env
+# file at that moment). Before the first `up` a service runs the file on disk. `rm` removes one.
+def running_env_path(svc):
+    return Path(os.environ["EVENTS"] + ".running-env." + svc)
+def removed_path(svc):
+    return Path(os.environ["EVENTS"] + ".removed." + svc)
+def running_env(svc):
+    path = running_env_path(svc)
+    if path.exists():
+        return path.read_text()
+    llm = llm_env_path()
+    return llm.read_text() if llm.is_file() else ""
+def service_of(cid):
+    return cid[4:] if cid.startswith("ctr-") else "api"
+def service_filter():
+    for a in args:
+        if a.startswith("label=com.docker.compose.service="):
+            return a.split("=", 2)[2]
+    return None
+MANIFEST_KEYS = ("HLM_PROFILE", "HLM_FALLBACK_PROFILE", "HLM_FALLBACK_PROFILE__SYNTHESIS",
+                 "HLM_FALLBACK_PROFILE__QUERY_REWRITE", "HLM_FALLBACK_PROFILE__RISK_JUDGE",
+                 "HLM_QUERY_REWRITE", "HLM_RETRIEVAL_SOURCE_CAP", "HLM_LLM_BUDGET_HOUR_USD",
+                 "HLM_LLM_BUDGET_DAY_USD", "HLM_LLM_BUDGET_MONTH_USD", "HLM_LLM_BUDGET_DISABLED")
+def dotenv(text):
+    out = {}
+    for line in text.splitlines():
+        key, sep, value = line.removeprefix("export ").partition("=")
+        if sep and not key.startswith("#"):
+            out[key.strip()] = value
+    return out
+if "up" in args and ("api" in args or "librarian" in args):
+    rollback_model = ".rollback-compose." in " ".join(args)
+    if rollback_model:
+        model = json.loads(Path(args[args.index("-f")+1]).read_text())
+        created = "".join(f"{k}={v}\n" for k, v in model["services"]["api"].get("environment", {}).items())
+    else:
+        llm = llm_env_path()
+        created = llm.read_text() if llm.is_file() else ""
+    for svc in ("librarian", "api"):
+        if svc in args:
+            running_env_path(svc).write_text(created)
+            removed_path(svc).unlink(missing_ok=True)
+            # D-116 #3 fault: killed between the librarian's and the api's recreation (once)
+            marker = Path(os.environ["EVENTS"]+".switch-killed")
+            if fail == "switch-kill" and not rollback_model and not marker.exists():
+                marker.touch()
+                os.kill(os.getppid(), signal.SIGKILL)
+                sys.exit(137)
+if args[0] == "rm" or ("compose" in args and "rm" in args):
+    for svc in ("librarian", "api"):
+        if any(a in (svc, "ctr-" + svc) for a in args):
+            removed_path(svc).touch()
 if "up" in args and "api" in args:
     # D-111 #7: which model starts, the llm.env file at that moment, and (a rollback model) the env
     # release the rendered model carries in the api environment
@@ -83,11 +146,22 @@ if "up" in args and "api" in args:
     tag = selected.rsplit(":", 1)[-1]
     revision = tag if len(tag) == 40 else labels.get(selected, "")
     Path(os.environ["EVENTS"]+".running-revision").write_text(revision)
+    # D-116 #6 fault: the runner is killed after the new stack started, before the state publish
+    if (fail == "kill-after-up" and not ".rollback-compose." in " ".join(args) and "caddy" in args
+            and not Path(os.environ["EVENTS"]+".up-killed").exists()):
+        Path(os.environ["EVENTS"]+".up-killed").touch()
+        os.kill(os.getppid(), signal.SIGKILL)
+        sys.exit(137)
 if "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
     captured=json.loads(Path(args[args.index("-f")+1]).read_text())
     assert captured["services"]["api"]["environment"]["TOKEN"] == "literal$$VAR"
 if args[0] == "ps":
-    if fail != "missing-baseline": print("old-container")
+    svc = service_filter()
+    if fail != "missing-baseline" and not (svc and removed_path(svc).exists()):
+        print(f"ctr-{svc}" if svc else "old-container")
+elif args[0] == "inspect" and ".Config.Env" in " ".join(args):
+    # docker inspect --format '{{json .Config.Env}}' ID: the env the container was created with
+    print(json.dumps([f"{k}={v}" for k, v in dotenv(running_env(service_of(args[-1]))).items()]))
 elif args[0] == "inspect" and "image.revision" in " ".join(args):
     marker = Path(os.environ["EVENTS"]+".running-revision")
     print(marker.read_text() if marker.exists() else "a"*40)
@@ -99,8 +173,10 @@ elif ("exec" in args and "dropdb" in args[-1] and fail == "rollback-kill"
     os.kill(os.getppid(), signal.SIGKILL)  # an uncatchable interruption mid-rollback
 elif "config" in args and "-f" in args and ".rollback-compose." in args[args.index("-f")+1]:
     print(Path(args[args.index("-f")+1]).read_text())  # the captured rollback model, as rendered
+elif "config" in args and "-q" in args:
+    pass  # like Compose: validate only, print nothing (a rendered model holds env values)
 elif "config" in args:
-    rendered = {"name":"bake-astra", "services":{
+    rendered ={"name":"bake-astra", "services":{
         s:{"image":"mutable:prod", "environment":{"TOKEN":"literal$$VAR"}}
         for s in ("api","worker","db","caddy")}}
     if "-f" in args and ".compose-previous." in args[args.index("-f")+1]:
@@ -114,6 +190,9 @@ elif "config" in args:
                     key, sep, value = line.removeprefix("export ").partition("=")
                     if sep and not key.startswith("#"):
                         rendered["services"]["api"]["environment"][key.strip()] = value
+    elif llm_env_path().is_file():
+        # D-116: every render inlines llm.env like Compose (the captured model runs what it says)
+        rendered["services"]["api"]["environment"].update(dotenv(llm_env_path().read_text()))
     print(json.dumps(rendered))
 elif "ps" in args:
     if os.environ.get("INITIAL") != "1": print("db-container")
@@ -131,12 +210,11 @@ elif "exec" in args and "collect" in args:
     assert "def collect" in sys.stdin.read(), "librarian check not fed on stdin"
     service = args[args.index("--service") + 1]
     override = os.environ.get("LIBRARIAN_REPORT_" + service.upper())
+    # D-116: the default report carries what THIS container was created with (its running env)
+    created = dotenv(running_env(service))
     report = {"service": service, "enabled": True, "role": "observer", "llm_mode": "live",
-              "profile": "openrouter", "fallback": None, "env_release": "r3",
-              "manifest_env": {"HLM_PROFILE": "openrouter-gpt6-luna",
-                               "HLM_FALLBACK_PROFILE": "openrouter-glm53-flash",
-                               "HLM_FALLBACK_PROFILE__SYNTHESIS": "openrouter",
-                               "HLM_FALLBACK_PROFILE__RISK_JUDGE": "openrouter-qwen38-27b-fast"},
+              "profile": "openrouter", "fallback": None, "env_release": created.get("HLM_ENV_RELEASE"),
+              "manifest_env": {k: created.get(k) for k in MANIFEST_KEYS},
               "profiles": [{"name": "openrouter", "base_url": "https://llm.invalid/v1", "key_set": True}]}
     if service == "librarian":
         report["heartbeat"] = {"enabled": True, "role": "observer", "breaker_state": "closed",
@@ -210,7 +288,10 @@ if args[:2] == ["checkout", "--detach"] and args[-1] == "b"*40 and os.environ.ge
     import shutil
     shutil.copyfile(os.environ["NEW_COMMON"], Path.cwd()/"deploy/scripts/common.sh")
 if args[:2] == ["remote", "get-url"]: print("https://example.invalid/repo.git")
-elif args[0] == "rev-parse": print("b"*40 if "FETCH_HEAD^{commit}" in args else "a"*40)
+elif args[0] == "rev-parse":
+    # the harness repository knows the three release commits a/b/c*40 (the fetched ref is b*40)
+    known = args[-1].removesuffix("^{commit}")
+    print("b"*40 if "FETCH_HEAD^{commit}" in args else known if known in ("a"*40, "b"*40, "c"*40) else "a"*40)
 """
 
 COMMON = r"""set -euo pipefail
