@@ -219,3 +219,18 @@ Fixes:
 6. The R3 cutover check requires llm.env to be present and rewrite=true.
 7. llm.env becomes part of the release state: deploy.sh snapshots it, and rollback.sh restores the previous env atomically before starting the previous image.
 All reviewer inputs become regression tests, and the property generators are extended per class. The unit count must be reported exactly: collected, passed, skipped.
+D-112 | 2026-09-25 | ACCEPTED (orchestrator) | **Spend reconciliation: the product ledger is exact per call; the ~$48 gap came from tooling and shared-key users.** wf-spend-reconcile @ 1025d37. Every answered call records OpenRouter's `usage.cost` exactly, reasoning tokens are already inside completion_tokens, and timeouts and cancellations are charged the worst case. Under-count paths found:
+- **`hlm bench`, eval/live run.py / run_w2b.py and the G-LIVE-C/D tests** kept their rows in memory and saved them only at the end, so killed, aborted or re-run runs left no record. This is the most likely bulk: $0.03–3.5 per lost run.
+- **Realdata evals** summed spend before run_eval, then dropped the DB, so API-side rewrite/prewarm/synthesis calls were lost: cents per run.
+- **The legacy bench** costed only the final attempt.
+- **Edge cases:** a $0 worst case with the guard off, and lost rows (a raising validator, a cancel between answer and settle).
+Other users of the same key (ad-hoc probes, embedding benches, the VM rehearsal's R2 librarian backlog) account for the rest; confirming the split needs the OpenRouter activity export (a management key).
+Fixes:
+- each ledger row records its cost source, with a billed-unknown flag;
+- the worst case is charged even with the guard off;
+- the lost-row paths are closed;
+- each profile names its cost field (`usage_cost_field`, D-017);
+- EVERY LLM-calling tool appends each attempt immediately to a JSONL spend log (`HLM_SPEND_LOG`).
+Test DSN guard: DB tests require HLM_TEST_DSN (collection stops with exit 4 before touching any DB), unit tests run without it, `make test` refuses without it, `make test-unit` is added.
+Tests: 26 spend-accounting tests and 6 guard tests. Gates: unit 626, integration 517/13 skipped.
+**Held OFF main until R3 ships** (D-099 scope). Still to do: a routine check, then a merge; the query_rewrite provider needs the same one-line ledger wiring after pivot-s1-r3 merges. Operational follow-up: separate keys per environment (D-110).
