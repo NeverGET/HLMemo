@@ -362,3 +362,19 @@ D-126 | 2026-09-25 | ACCEPTED (orchestrator) | **D-118 write-time supersession i
 - Gates so far: unit 858, targeted integration 63. The FULL integration suite on the final code is pending; it waits for the R3 rehearsal to free the host.
 - No open HIGH, so no owner risk call is needed.
 - It stays on its branch until R4. Per D-125, R4 is a MINIMAL port of this feature onto main rather than the whole v3/B-real/pilot stack. The port plan comes after R3 ships.
+D-127 | 2026-09-25 | ACCEPTED (owner waiver) | **The R3 VM rehearsal passed every D-099 criterion-2 item except the VM G-L3 latency bound, which the owner WAIVED for R3 because R2 fails it identically on the same data.** Rehearsal on 805f4cd (docs/status/R3-REHEARSAL.md, af97279):
+- G3 0.980; G4 p95 251 ms; host G-L3 358/417 ms.
+- Remote gates 11/11, and 10/10 after every drill step.
+- Cutover interim and `--release r3` PASS (caps 1/2/10, rewrite and cap absent); downtime 9.7 s.
+- G-LIVE-C with the primary down PASS (catch ≥ .975, false-warn ≤ .075).
+- G-LIVE-B PASS (luna, glm53-flash, chain; false supersede 0); G-LIVE-D PASS.
+- Observer: 0 links, versions or closes.
+- Drill (a) script rollback PASS: the R2 env was restored automatically, 11.3 s downtime, then roll-forward.
+- Drill (b) snapshot restore PASS: `/ready` in 13 s, exact R2 state.
+- None of the review-77 residuals were hit. Spend about $2.20.
+**VM G-L3:** neutral p95 576/585 ms, identifier 954 ms (bound 500). An A/B at the same moment on the same data gave R2 725/588 vs R3 755/660 ms, with the same slowest queries. Root cause, PRE-EXISTING: the trigram search matches across every project's text before the project filter, and the VM had accumulated 200+ synthetic identifier-heavy bodies from rehearsals. This is a real scalability issue for Phase 5 (many projects). Fix it with a project-filtered trigram search (workstream T/R4) and re-gate G-L3.
+**Prod preconditions:**
+- The owner edits /etc/hlmemo/llm.env FIRST: the prod key and caps MONTH ≤ 10 (10/2/1). Otherwise the R3 env install fails its own manifest check.
+- Docker Hub, ghcr and Hugging Face must be reachable from the VPS; every deploy re-downloads the model.
+- The Hostinger snapshot of VM 2002259 only.
+- The backup timer is paused during the attended deploy.
