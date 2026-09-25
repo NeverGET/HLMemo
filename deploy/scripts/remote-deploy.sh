@@ -150,6 +150,7 @@ rollback() {
   docker compose -p "$COMPOSE_PROJECT" -f "$rollback_config" "$@"
 }
 deployment_failed() {
+  # shellcheck disable=SC2320  # explicit calls pass the status; only the ERR trap relies on $?
   status=${1:-$?}
   (( BASH_SUBSHELL == 0 )) || exit "$status"
   trap - ERR
@@ -200,6 +201,9 @@ deployment_failed() {
     fi
     if [[ $recovery_ok == 1 ]] && rollback up -d --no-deps --wait --wait-timeout 300 "${rollback_services[@]}" </dev/null >&2; then
       echo "Previous stack restored: $previous" >&2
+      # D-116 #6: the recorded attempt is recovered; its journal (and its secret-bearing copies)
+      # go. The helper comes from the NEW revision: the working tree is the previous one now.
+      git show "$revision:deploy/scripts/release_state.py" </dev/null | python3 - end-deploy "$parent_dir" >&2 || true
     else
       echo "Automatic recovery failed; recovery ref=$previous dump=$pre_upgrade_dump (see $run_dir/log)." >&2
     fi
@@ -241,6 +245,173 @@ test -f deploy/compose.prod.yaml || { echo 'Requested ref has no production comp
 # shellcheck source=deploy/scripts/common.sh
 source deploy/scripts/common.sh
 dc config -q </dev/null
+# Use Compose's dotenv parser; never source a secrets file as executable shell.
+domain=$(env_value HLM_DOMAIN)
+[[ $domain =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'HLM_DOMAIN must be a DNS hostname' >&2; exit 1; }
+llm_env_file=${HLM_LLM_ENV_FILE:-$(dirname "$HLM_ENV_FILE")/llm.env}
+rs() { python3 deploy/scripts/release_state.py "$@" </dev/null; }
+# D-116 #9: finish any journalled deletion of secret-bearing copies (a crash between a state commit
+# and its unlink) under this lock, before anything else.
+rs cleanup "$parent_dir"
+# D-116 #3: never deploy over an unfinished llm.env switch (install_llm_env.sh journals it).
+if [[ -n $(rs get "$parent_dir" env_switch) ]]; then
+  echo 'An llm.env switch is unfinished (install_llm_env.sh was interrupted): re-run install_llm_env.sh (it recreates librarian api under the deploy lock and verifies), then deploy.' >&2
+  false
+fi
+running_api_revision() {
+  local id
+  id=$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" --filter label=com.docker.compose.service=api </dev/null | head -1)
+  [[ -n $id ]] || return 0
+  docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$id" </dev/null
+}
+# The new stack answers, internally (before the state is published).
+internal_checks() {
+  # Test application readiness and Caddy routing without public DNS/ACME. Only
+  # failures before this boundary may restore the snapshot automatically.
+  dc exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()" </dev/null
+  dc exec -T caddy wget -q -O /dev/null http://127.0.0.1:8081/ready </dev/null
+  # W2a librarian: fresh heartbeat (enabled by llm.env since R2; without it, it idles without
+  # provider calls). Liveness only: the provider is never contacted here, so an outage cannot fail it.
+  dc exec -T librarian python -m hlmemo.librarian.health 120 </dev/null
+  # W0a route table on the API's own loopback listener (the route filter applies to any listener).
+  # The checker mints a 10-minute ci device with hlmemo.ops inside the container and revokes it
+  # through the public self-revoke route. A failure here restores the previous stack.
+  dc exec -T api python - --routes --base http://127.0.0.1:8765 --mint-ops < deploy/scripts/check_edge.py
+}
+# Publishing the image and the state is the cutover (the journal, if any, is consumed with it).
+publish_release() {
+  # Publishing the image is part of cutover: if it fails, restore the baseline
+  # rather than leaving a healthy new checkout with an old image selection.
+  python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "$HLM_IMAGE" </dev/null
+  trap - ERR
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  # Once internally healthy, preserve accepted writes even on marker/disk or public
+  # network errors. Publish rollback markers only for this successful cutover.
+  # One atomic document (tmp + fsync + rename) holds the whole rollback tuple: previous ref, its
+  # quiesced dump, its image + verified ID, the llm.env it ran with and this run's env-file backups
+  # (retired secrets). The legacy current-ref/previous-ref/previous-dump files are derived from it.
+  state_args=(--current "$revision")
+  if [[ -n $previous ]]; then
+    state_args+=(--previous "$previous" --previous-dump "$pre_upgrade_dump" --previous-image "$previous_image" --previous-image-id "$previous_id")
+    state_args+=(--previous-llm-env "$previous_llm_env")
+    for pair in "${env_w0_restore[@]}"; do
+      state_args+=(--env-backup "${pair%%|*}=${pair#*|}")
+    done
+  fi
+  rs publish "$parent_dir" "${state_args[@]}"
+}
+# After the state publish: public readiness, public routes, the device inventory and the librarian
+# check. Like the public checks, a failure leaves the new stack running (no database rollback).
+post_publish_checks() {
+  if ! curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 \
+    --connect-timeout 10 --max-time 20 "https://$domain/ready" </dev/null; then
+    echo 'External HTTPS readiness failed; internally healthy new stack left running (no database rollback). Check DNS A/AAAA, firewall, ACME and Caddy logs; retry the public /ready probe.' >&2
+    exit 1
+  fi
+  printf '\n'
+  # W0a public route table through Caddy (RG-routes). Like the readiness probe above, a failure
+  # leaves the internally healthy stack running and fails the deployment without a DB rollback.
+  routes_token=$(dc exec -T api python -m hlmemo.ops device mint --name "deploy-routes-${revision:0:12}-$RANDOM" \
+    --class ci --expires 10m </dev/null)
+  if ! HLM_ROUTES_TOKEN=$routes_token python3 deploy/scripts/check_edge.py --routes --base "https://$domain" </dev/null; then
+    unset routes_token
+    echo 'Public route verification failed (see RESULT routes above); new stack left running. Check the Caddyfile @rest matcher and HLM_REGISTRATION_MODE/HLM_ADMIN_HTTP.' >&2
+    exit 1
+  fi
+  unset routes_token
+  # Cutover review (Sol 34): every device that still holds a token, with status, expiry and grants
+  # (never tokens). RUNBOOK: rotate g7-*, revoke stale gates-*/deploy-* with hlm_ops.sh.
+  echo 'Device inventory after cutover (python -m hlmemo.ops device list):'
+  dc exec -T api python -m hlmemo.ops device list </dev/null || echo 'WARNING: device inventory unavailable; run hlm_ops.sh device list' >&2
+  # R2 (D-058, Sol 48): the librarian's effective state. llm.env present: api settings, librarian
+  # settings and heartbeat must all be enabled/live/observer and the api's risk judge must load with a
+  # non-empty chain (it and the W2b enqueue run there). An unreachable provider is only reported.
+  # R3 (D-111/D-116): without llm.env it fails; the env is checked against the release manifest, on
+  # disk (--llm-env-file) and as the api and the librarian run it. Sol 49: the heartbeat must be
+  # fresh (<= 3 intervals, 30 s by default); a missing/stale one is re-read for up to 45 s first.
+  # Like the public checks above, a failure leaves the new stack running (no database rollback).
+  llm_env_state=absent
+  if [[ -f $llm_env_file ]]; then llm_env_state=present; fi
+  dc exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
+    < deploy/scripts/check_librarian.py > "$run_dir/librarian-report.json" || true
+  dc exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$run_dir/api-report.json" || true
+  if ! python3 deploy/scripts/check_librarian.py evaluate --llm-env "$llm_env_state" --llm-env-file "$llm_env_file" \
+    --librarian "$run_dir/librarian-report.json" --api "$run_dir/api-report.json" </dev/null; then
+    echo 'Librarian check failed (RESULT librarian above); new stack left running (no database rollback). Fix llm.env (deploy/scripts/install_llm_env.sh), then stack.sh up -d --no-deps librarian api.' >&2
+    exit 1
+  fi
+}
+# D-116 #2: a same-ref re-run (revision == the published current_ref) only VERIFIES: the rollback
+# pair (to the release before, with its llm.env snapshot) is kept; it never becomes R3 -> R3.
+same_ref_verify() {
+  trap - ERR
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  local running
+  running=$(running_api_revision)
+  [[ $running == "$revision" ]] || {
+    echo "Same-ref re-run of $revision, but the running api is ${running:-<none>}: refusing to guess. Inspect 'docker ps' and release-state.json." >&2
+    exit 1
+  }
+  echo "Same-ref re-run: $revision is already the published release; verifying only (its rollback pair and llm.env snapshot are kept, D-116)."
+  internal_checks
+  post_publish_checks
+  printf 'Deployment ready: %s (%s; same-ref verification, state unchanged)\n' "$revision" "$domain"
+  exit 0
+}
+# D-116 #6: an attempt journalled before its new stack started (killed before the state publish).
+# The new stack runs -> verify, then complete the publish with the RECORDED tuple; else (or when the
+# verification fails) recover the previous stack with the recorded tuple.
+resume_attempt() {
+  local model pair
+  previous=$(rs get "$parent_dir" deploy_attempt.previous_ref)
+  pre_upgrade_dump=$(rs get "$parent_dir" deploy_attempt.previous_dump)
+  previous_image=$(rs get "$parent_dir" deploy_attempt.previous_image)
+  previous_id=$(rs get "$parent_dir" deploy_attempt.previous_image_id)
+  previous_llm_env=$(rs get "$parent_dir" deploy_attempt.previous_llm_env)
+  model=$(rs get "$parent_dir" deploy_attempt.model)
+  [[ -n $previous && -f $model && -f $pre_upgrade_dump ]] || {
+    echo "The recorded deployment attempt of $revision is incomplete (model or dump missing): recover by hand (RUNBOOK)." >&2
+    exit 1
+  }
+  rollback_config=$(mktemp "$parent_dir/.rollback-compose.XXXXXX")
+  cp -- "$model" "$rollback_config"
+  read -ra rollback_services <<< "$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["services"]; print(" ".join(n for n in ("db","api","worker","librarian","caddy") if n in s))' "$rollback_config" </dev/null)"
+  env_w0_restore=()
+  while IFS= read -r pair; do
+    [[ -n $pair ]] && env_w0_restore+=("${pair%%=*}|${pair#*=}")
+  done < <(rs get "$parent_dir" deploy_attempt.env_backups)
+  writers_stopped=1
+  migration_started=1
+  configured_image=$(env_value HLM_IMAGE)
+  configured_image=${configured_image:-hlmemo:prod}
+  image_repository=${configured_image%%@*}
+  if [[ ${image_repository##*/} == *:* ]]; then image_repository=${image_repository%:*}; fi
+  export HLM_IMAGE="$image_repository:$revision" HLM_IMAGE_REVISION="$revision"
+  trap deployment_failed ERR
+  if [[ $(running_api_revision) == "$revision" ]]; then
+    echo "Resuming the recorded deployment of $revision: its stack runs; verifying, then publishing with the recorded tuple (D-116)."
+    internal_checks
+    publish_release
+    post_publish_checks
+    printf 'Deployment ready: %s (%s; the recorded attempt completed)\n' "$revision" "$domain"
+    exit 0
+  fi
+  echo "Resuming the recorded deployment of $revision: its stack never came up; recovering the previous stack $previous with the recorded tuple (D-116)." >&2
+  deployment_failed 1
+}
+attempt=$(rs get "$parent_dir" deploy_attempt.revision)
+if [[ -n $attempt ]]; then
+  [[ $attempt == "$revision" ]] || {
+    echo "An unfinished deployment of $attempt is recorded (release-state.json deploy_attempt): re-run deploy.sh $attempt first; it completes or recovers it." >&2
+    false
+  }
+  resume_attempt
+fi
+if [[ -n $previous && $revision == "$previous" ]]; then
+  same_ref_verify
+fi
 # The guard above proves this is also the previous release's Compose model.
 # Resolve it with current split env files, then pin the running images.
 rollback_config=$(mktemp "$parent_dir/.rollback-compose.XXXXXX")
@@ -304,6 +475,29 @@ PYIMAGE
   fi
   python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "$previous_image" </dev/null
 fi
+# D-108/D-111 #7: llm.env is part of the release state. Snapshot the llm.env the PREVIOUS release
+# runs with (D-108 order: the new release is deployed with it still installed; its own env comes
+# after the cutover), before anything stops; rollback.sh restores it before the previous image
+# starts. "absent" when the previous release ran without one.
+# D-116 #1: only after its PROVENANCE is proven: the file's non-secret fingerprint (release marker,
+# D-094 mapping, switches) must equal what the api AND the librarian containers run; else STOP.
+previous_llm_env=
+if [[ -n $previous ]]; then
+  running_fps=()
+  for service in api librarian; do
+    id=$(docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" --filter "label=com.docker.compose.service=$service" </dev/null | head -1)
+    [[ -n $id ]] || continue
+    running_fps+=("$service=$(docker inspect --format '{{json .Config.Env}}' "$id" </dev/null | python3 deploy/scripts/llm_env_release.py fingerprint -)")
+  done
+  python3 deploy/scripts/llm_env_release.py provenance "$llm_env_file" "${running_fps[@]}" </dev/null || {
+    echo "The llm.env on disk is not the env the running $previous was created with (above): refusing before anything stops. Finish the env switch (install_llm_env.sh recreates librarian api) or put the running release's env back, then deploy (D-116)." >&2
+    false
+  }
+  previous_llm_env=$(python3 deploy/scripts/llm_env_release.py snapshot "$llm_env_file" "$previous" </dev/null)
+  # D-116 #9: journalled at once; publish keeps it as the rollback target, else cleanup deletes it
+  [[ $previous_llm_env == absent ]] || rs record-pending "$parent_dir" "$previous_llm_env"
+  printf 'llm.env of %s recorded for rollback: %s\n' "${previous:0:12}" "$previous_llm_env"
+fi
 export HLM_IMAGE="$image_repository:$revision"
 export HLM_IMAGE_REVISION="$revision"
 verify_release_image() {
@@ -314,9 +508,6 @@ verify_release_image() {
     return 1
   }
 }
-# Use Compose's dotenv parser; never source a secrets file as executable shell.
-domain=$(env_value HLM_DOMAIN)
-[[ $domain =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'HLM_DOMAIN must be a DNS hostname' >&2; exit 1; }
 dc pull db caddy </dev/null
 if ! docker image inspect "$HLM_IMAGE" >/dev/null 2>&1 </dev/null; then
   # The librarian (W2a) runs the same ${HLM_IMAGE} tag as api/worker/migrate: no separate build.
@@ -354,78 +545,30 @@ if [[ -n $pre_upgrade_dump ]]; then
   rm -f -- "$live_dump" </dev/null
   printf 'Quiesced pre-upgrade dump: %s\n' "$pre_upgrade_dump"
 fi
+# D-116 #6: the deploy-attempt journal, durable BEFORE migration and the new stack: a re-run after a
+# kill completes the publish (its stack verified) or recovers with exactly this tuple.
+if [[ -n $previous ]]; then
+  attempt_model=$parent_dir/deploy-attempt-model.json
+  rs record-pending "$parent_dir" "$attempt_model"
+  cp -- "$rollback_config" "$attempt_model"
+  chmod 600 "$attempt_model"
+  attempt_args=(--revision "$revision" --previous "$previous" --previous-dump "$pre_upgrade_dump"
+    --previous-image "$previous_image" --previous-image-id "$previous_id" --previous-llm-env "$previous_llm_env"
+    --model "$attempt_model")
+  for pair in "${env_w0_restore[@]}"; do
+    attempt_args+=(--env-backup "${pair%%|*}=${pair#*|}")
+  done
+  rs begin-deploy "$parent_dir" "${attempt_args[@]}"
+fi
 dc up -d --wait --wait-timeout 180 db </dev/null
 verify_release_image
 migration_started=1
 dc run --rm --no-deps migrate </dev/null
 verify_release_image
 dc up -d --no-deps --wait --wait-timeout 300 db api worker librarian caddy </dev/null
-# Test application readiness and Caddy routing without public DNS/ACME. Only
-# failures before this boundary may restore the snapshot automatically.
-dc exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/ready', timeout=8).read()" </dev/null
-dc exec -T caddy wget -q -O /dev/null http://127.0.0.1:8081/ready </dev/null
-# W2a librarian: fresh heartbeat (enabled by llm.env since R2; without it, it idles without
-# provider calls). Liveness only: the provider is never contacted here, so an outage cannot fail it.
-dc exec -T librarian python -m hlmemo.librarian.health 120 </dev/null
-# W0a route table on the API's own loopback listener (the route filter applies to any listener).
-# The checker mints a 10-minute ci device with hlmemo.ops inside the container and revokes it
-# through the public self-revoke route. A failure here restores the previous stack.
-dc exec -T api python - --routes --base http://127.0.0.1:8765 --mint-ops < deploy/scripts/check_edge.py
-# Publishing the image is part of cutover: if it fails, restore the baseline
-# rather than leaving a healthy new checkout with an old image selection.
-python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "$HLM_IMAGE" </dev/null
-trap - ERR
-trap 'exit 130' INT
-trap 'exit 143' TERM
-# Once internally healthy, preserve accepted writes even on marker/disk or public
-# network errors. Publish rollback markers only for this successful cutover.
-# One atomic document (tmp + fsync + rename) holds the whole rollback tuple: previous ref, its
-# quiesced dump, its image + verified ID and this run's env-file backups (retired secrets). The
-# legacy current-ref/previous-ref/previous-dump files are derived from it for compatibility.
-state_args=(--current "$revision")
-if [[ -n $previous ]]; then
-  state_args+=(--previous "$previous" --previous-dump "$pre_upgrade_dump" --previous-image "$previous_image" --previous-image-id "$previous_id")
-  for pair in "${env_w0_restore[@]}"; do
-    state_args+=(--env-backup "${pair%%|*}=${pair#*|}")
-  done
-fi
-python3 deploy/scripts/release_state.py publish "$parent_dir" "${state_args[@]}" </dev/null
-if ! curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 \
-  --connect-timeout 10 --max-time 20 "https://$domain/ready" </dev/null; then
-  echo 'External HTTPS readiness failed; internally healthy new stack left running (no database rollback). Check DNS A/AAAA, firewall, ACME and Caddy logs; retry the public /ready probe.' >&2
-  exit 1
-fi
-printf '\n'
-# W0a public route table through Caddy (RG-routes). Like the readiness probe above, a failure
-# leaves the internally healthy stack running and fails the deployment without a DB rollback.
-routes_token=$(dc exec -T api python -m hlmemo.ops device mint --name "deploy-routes-${revision:0:12}-$RANDOM" \
-  --class ci --expires 10m </dev/null)
-if ! HLM_ROUTES_TOKEN=$routes_token python3 deploy/scripts/check_edge.py --routes --base "https://$domain" </dev/null; then
-  unset routes_token
-  echo 'Public route verification failed (see RESULT routes above); new stack left running. Check the Caddyfile @rest matcher and HLM_REGISTRATION_MODE/HLM_ADMIN_HTTP.' >&2
-  exit 1
-fi
-unset routes_token
-# Cutover review (Sol 34): every device that still holds a token, with status, expiry and grants
-# (never tokens). RUNBOOK: rotate g7-*, revoke stale gates-*/deploy-* with hlm_ops.sh.
-echo 'Device inventory after cutover (python -m hlmemo.ops device list):'
-dc exec -T api python -m hlmemo.ops device list </dev/null || echo 'WARNING: device inventory unavailable; run hlm_ops.sh device list' >&2
-# R2 (D-058, Sol 48): the librarian's effective state. llm.env present: api settings, librarian
-# settings and heartbeat must all be enabled/live/observer and the api's risk judge must load with a
-# non-empty chain (it and the W2b enqueue run there). An unreachable provider is only reported.
-# Without llm.env (R1-style) it passes only while everything idles. Sol 49: the heartbeat must be
-# fresh (<= 3 intervals, 30 s by default); a missing/stale one is re-read for up to 45 s first.
-# Like the public checks above, a failure leaves the new stack running (no database rollback).
-llm_env_state=absent
-if [[ -f ${HLM_LLM_ENV_FILE:-$(dirname "$HLM_ENV_FILE")/llm.env} ]]; then llm_env_state=present; fi
-dc exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
-  < deploy/scripts/check_librarian.py > "$run_dir/librarian-report.json" || true
-dc exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$run_dir/api-report.json" || true
-if ! python3 deploy/scripts/check_librarian.py evaluate --llm-env "$llm_env_state" \
-  --librarian "$run_dir/librarian-report.json" --api "$run_dir/api-report.json" </dev/null; then
-  echo 'Librarian check failed (RESULT librarian above); new stack left running (no database rollback). Fix llm.env (deploy/scripts/install_llm_env.sh), then stack.sh up -d --no-deps librarian api.' >&2
-  exit 1
-fi
+internal_checks
+publish_release
+post_publish_checks
 # Release the operation lock before the pruning helper acquires it again.
 exec 8>&-
 if ! bash deploy/backup/backup.sh --prune-pre-upgrade </dev/null; then
