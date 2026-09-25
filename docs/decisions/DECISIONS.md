@@ -416,3 +416,9 @@ Context: today's raw retrieval finds B evidence in the top-5 for only .451 of qu
 - **W-B (timebox 1 day):** a ceiling prototype of the research loop outside the server (map + multi-query + answer with sources, luna), on a dev copy of the same import, measured on B-dev against the gate metrics. It compares no map vs a deterministic source map, and single-shot synthesis (W2e) vs an agentic loop.
 - Then build the chosen design into the server as a tool, with a routine review; a dual review only for the scope/privacy of the read path.
 - Parked: D-118 (write-time updates) after its running suite; tooling T; the trigram fix (it is re-gated when the research loop needs its latency).
+D-131 | 2026-09-26 | ACCEPTED (orchestrator, within the owner's D-130 instruction "start by migrating this project's memory") | **HLMemo self-migration into prod project `hlmemo`: dry run approved, and the test project is isolated.**
+- **Dry run:** 551 new items, 0 changed or closed (the 2 existing items have no source, so the import cannot touch them), about 355k tokens.
+- **Per source:** decisions 198 (130 decision rows), status 46, research 34, consults 192, bakeoff results 12, USAGE/README/RUNBOOK/HARDWARE 28, CLAUDE.md 1, auto-memory 40 (34 lessons). No serena memories.
+- **Exclusions verified:** 208 files, none under docs/private, deploy/.local, .env*, *.key, tests/, src/, eval/results, raw outputs or cassettes. gitleaks on the exact file set: clean. The auto-memory holds pointers only (key-file locations and VPS IPs), no credential values.
+- **Expected librarian spend:** about $0.7–0.9 (551 observer jobs); the hour cap may pause it.
+**Policy:** `hlmemo-e2e` (the TEST project, 381 near-duplicate items) is set to librarian_cross_project=exclude, following the D-083 test isolation. This is reversible, and it stops the librarian from treating the e2e duplicates as cross-project candidates (noise and spend).
