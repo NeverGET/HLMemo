@@ -39,6 +39,9 @@ History (append-only):
 | corpus_a | 15 | 2026-09-25 | Librarian v3@0757c4b C2 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True), assistant, approve-all x1 | 0757c4b | b09748a8bc4a | 0.793 | 0.002339 | - | False | True |
 | corpus_a | 16 | 2026-09-25 | Librarian v3@0757c4b C3 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True), assistant, approve-all x1 | 0757c4b | 76bfbaee8885 | 0.793 | 0.00216 | - | False | True |
 | corpus_a | 17 | 2026-09-25 | Librarian v3@0757c4b C4 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True, LIBRARIAN_SAME_TOP=24, LIBRARIAN_DOC_TOP=8, LLM_JOB_CALL_CAP=60), assistant, approve-all x1 | 0757c4b | 4205012b88e6 | 0.793 | 0.00605 | - | False | True |
+| corpus_a | 18 | 2026-09-25 | interim-97344eb (R3 candidate, pivot-s1-r3) flags off | 97344eb | 21db780f382e | 0.793 | 0.0 | - | False | True |
+| corpus_a | 19 | 2026-09-25 | interim-97344eb query rewrite ON (D-102 gates), paced prewarm, D-094 chain | 97344eb | 03eb12a6e3ce | 0.826 | 5.83e-05 | - | False | True |
+| corpus_a | 20 | 2026-09-25 | interim-97344eb query rewrite ON, paced prewarm, replicate | 97344eb | 03eb12a6e3ce | 0.837 | 6.28e-05 | - | False | True |
 | corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
@@ -56,6 +59,9 @@ History (append-only):
 | corpus_b_dev | 15 | 2026-09-25 | Librarian v3@0757c4b C2 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True), assistant, approve-all x1 | 0757c4b | b09748a8bc4a | 0.451 | 0.002339 | - | False | True |
 | corpus_b_dev | 16 | 2026-09-25 | Librarian v3@0757c4b C3 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True), assistant, approve-all x1 | 0757c4b | 76bfbaee8885 | 0.451 | 0.00216 | - | False | True |
 | corpus_b_dev | 17 | 2026-09-25 | Librarian v3@0757c4b C4 (LIBRARIAN_V3_TEMPORAL=True, LIBRARIAN_V3_CLOSE=True, LIBRARIAN_SECTION_TOP=4, LIBRARIAN_DOC_EPISODE=True, LIBRARIAN_SAME_TOP=24, LIBRARIAN_DOC_TOP=8, LLM_JOB_CALL_CAP=60), assistant, approve-all x1 | 0757c4b | 4205012b88e6 | 0.451 | 0.00605 | - | False | True |
+| corpus_b_dev | 18 | 2026-09-25 | interim-97344eb (R3 candidate, pivot-s1-r3) flags off | 97344eb | 21db780f382e | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 19 | 2026-09-25 | interim-97344eb query rewrite ON (D-102 gates), paced prewarm, D-094 chain | 97344eb | 03eb12a6e3ce | 0.486 | 5.83e-05 | - | False | True |
+| corpus_b_dev | 20 | 2026-09-25 | interim-97344eb query rewrite ON, paced prewarm, replicate | 97344eb | 03eb12a6e3ce | 0.514 | 6.28e-05 | - | False | True |
 
 ## Librarian: bench_v2 (score = macro mean of per-task mean scores, %)
 
