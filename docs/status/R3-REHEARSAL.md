@@ -38,13 +38,13 @@ the host G-LIVE-C reference runs only if the VM run fails or is ambiguous. Tally
 
 | # | Item | Bound | Measured | Result | Evidence |
 |---|---|---|---|---|---|
-| 1 | gate-release G3 (final SHA, flags off) | Recall@5 ≥ 0.90 | | | §5 |
-| 2 | gate-release G4 | warm p95 ≤ 500 ms, 3 callers | | | §5 |
-| 2b | gate-release G-L3 (local, LLM stalled/503) | p95 ≤ 500 ms, both bodies | | | §5 |
+| 1 | gate-release G3 (final SHA, flags off) | Recall@5 ≥ 0.90 | 0.980 (98/100) | PASS | §5.2, 17 |
+| 2 | gate-release G4 | warm p95 ≤ 500 ms, 3 callers | p95 251.0 ms (host load 2.5–3.1) | PASS | §5.2, 17 |
+| 2b | gate-release G-L3 (local, LLM stalled/503) | p95 ≤ 500 ms, both bodies | 358.1 / 417.1 ms | PASS | §5.2, 17 |
 | 3 | G-L3 on the 2 vCPU VM, librarian ON (observer, concurrency 3), rewrite OFF, quiet host | query p95 ≤ 500 ms during 100 writes, 100/100 acked, neutral AND identifier | | | §6 |
-| 4 | Remote gates: the 8 base (health-ready, unknown-path-404, tls-issuer, postgres-closed, probe, routes, hlm-cli, wan-latency) + risk-check + librarian + backup-restore drill | all PASS | | | §3 |
-| 4b | Cutover checks: interim (R3 image + R2 env) and `--release r3` after the env switch | RESULT librarian PASS | | | §1, §2 |
-| 5 | G-LIVE-C through the D-094 wiring on the VM, primary forced down | catch ≥ 0.85, false-warn ≤ 0.10 every rep; judged only `ok_fallback` | | | §4 |
+| 4 | Remote gates: the 8 base (health-ready, unknown-path-404, tls-issuer, postgres-closed, probe, routes, hlm-cli, wan-latency) + risk-check + librarian + backup-restore drill | all PASS | 11/11 on R3 (WAN p95 45 ms, librarian job 10 s, restore 16 s) | PASS | §3, 13 |
+| 4b | Cutover checks: interim (R3 image + R2 env) and `--release r3` after the env switch | RESULT librarian PASS | interim PASS (release=r2-env); r3 PASS (release=r3 manifest=r3) | PASS | §1, §2, 11, 12 |
+| 5 | G-LIVE-C through the D-094 wiring on the VM, primary forced down | catch ≥ 0.85, false-warn ≤ 0.10 every rep; judged only `ok_fallback` | catch min .975, false-warn max .075; 297 ok_fallback / 23 timeout / 0 primary | PASS | §4, 14 |
 | 6 | G-LIVE-B as in R2, on the D-094 mapping | run_w2b verdict PASS per config | | | §5 |
 | 7 | G-LIVE-D as in R2 (luna, openrouter) | synthesis − fast path ≥ +0.03 every rep | | | §5 |
 | 8 | Observer = 0 librarian mutations | links/versions by librarian 0, close delta 0, 0 decided/applied | | | §7 |
@@ -146,9 +146,9 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
   `$SC/libcheck.sh --llm-env-file /etc/hlmemo/llm.env --release r3` PASS.
 
 ### §5 Host gates on the final SHA (sequential; quiet host; never during §6)
-- [ ] 5.1 `quiet` → load1 < 3 and no other heavy job (else wait; report after 30 min). DB (own):
+- [x] 5.1 `quiet` → load1 < 3 and no other heavy job (else wait; report after 30 min). DB (own):
   `psql $PG/postgres -c 'CREATE DATABASE hlm_r3reh_gate TEMPLATE hlm_r3reh_world'`.
-- [ ] 5.2 `HLM_TEST_DSN=$PG/hlm_r3reh_gate make gate-release` (flags off: the R3 config) → G3 ≥ 0.90, G4 p95 ≤ 500 ms, local G-L3 p95 ≤ 500 ms
+- [x] 5.2 `HLM_TEST_DSN=$PG/hlm_r3reh_gate make gate-release` (flags off: the R3 config) → G3 ≥ 0.90, G4 p95 ≤ 500 ms, local G-L3 p95 ≤ 500 ms
   both bodies; `quiet` again; `DROP DATABASE hlm_r3reh_gate`; `git checkout -- HARDWARE.md` if the G4 test rewrote it. → 17-gate-release.log
 - [ ] 5.3 G-LIVE-B (D-094 mapping): `uv run --frozen python eval/live/run_w2b.py --profile openrouter-gpt6-luna --fallback openrouter-glm53-flash --chain openrouter-gpt6-luna+openrouter-glm53-flash --reps 3 --max-usd 1.0 --env-file $REPO/.env --out $R3/glive-b`
   → Verdict PASS per config (R2: luna / openrouter / chain luna+openrouter PASS). → 19-glive-b.log
@@ -215,6 +215,8 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
 - **§8.1 drill (a) script rollback: PASS** (21-rollback.log). `deploy.sh --rollback hlm-deploy` with NO manual env change: "Rollback validated: 805f4cd… -> 6902f91…", **`llm.env: restored /etc/hlmemo/llm.env from llm.env.release-6902f91…`**, R2 stack started, "Rollback complete", both secret-bearing env copies deleted from `pending_cleanup`; rc 0; **downtime 11.3 s**. The current DB was saved to `/var/backups/hlmemo/daily/…` (the review-77 residual "daily rotation can delete the rollback safety dump" is visible in this path; nothing was rotated).
 - **§8.2 R2 healthy: PASS** (21b): release-state current 6902f91, `rolled_back_from` 805f4cd, pair consumed; api image = R2's id; llm.env = the R2 env (no `HLM_ENV_RELEASE`, fallback `openrouter`, caps 1/2/10 as snapshotted); R2's own check PASS; data = the pre-upgrade dump (max event 1843; r3-base 248, r3-load 163, rk-main 46, rk-shell 6, rk-secret 2 = the §0.5 baseline); remote gates 10/10 PASS (drill skipped; risk-check judged=true).
 - **§8.3 roll-forward, attempt 1 (17:03Z): failed SAFELY, environment issue.** `deploy.sh hlm-deploy 805f4cd…` recorded the R2 env for rollback, then `dc pull db caddy` could not resolve `pgvector/pgvector:0.8.6-pg17` (`dial tcp …:443: i/o timeout`) → "Deployment failed before writers stopped; previous stack remains running", rc 1; R2 kept serving, the env copy was queued in `pending_cleanup`; `install_llm_env.sh` then refused correctly ("the deployed release predates R3 … nothing changed", rc 3). Cause: **the owner's network currently has no IPv4 path to Docker Hub** (every registry-1.docker.io IPv4 address times out from the Mac as well; the Mac reaches it over IPv6, 401 in 0.5 s; the lima VM is IPv4-only; OpenRouter and GitHub are fine from the VM). The runner pulls db/caddy unconditionally and builds with `--pull`, so a deploy needs the registry even when every image is cached. Production (Vilnius VPS) has normal IPv4, but a Docker Hub outage would block a prod deploy or roll-forward the same (safe) way. The gate lines in 22-roll-forward.log therefore ran against **R2**, not R3.
+- **§5.2 gate-release: PASS** (17-gate-release.log; 17:09–17:11Z, quiet host: load1 2.52 before, 3.09 after; nothing heavy running): `make gate-release` on 805f4cd, own clone `hlm_r3reh_gate` of `hlm_r3reh_world`, flags off (the R3 config): **G3 Recall@5 0.980** (98/100; TR 1.000, DE 0.939, EN 1.000, identifier-heavy 0.960); **G4 p95 251.0 ms** (p50 157.5, p99 443.4, 300 queries / 3 callers, M3 Pro); **local G-L3** (real api + librarian processes, stalled/503 provider, librarian concurrency 3) **p95 358.1 ms identifier / 417.1 ms neutral** during 100 writes (max 518 / 589 ms); 6 passed in 138 s. The clone was dropped and HARDWARE.md restored. D-098 reference: G3 0.980, G4 p95 274, G-L3 378/417.
+- Evidence logs: `*.log` is gitignored (as for rehearsal-r2, which force-added its logs), so the earlier commits carried only the scripts. From 714951b on, the logs are force-added after a gitleaks scan.
 - Waiting for the IPv4 path, then: roll-forward retry → drill (b) → back to R3 → G-L3 → observer #2. gate-release runs as soon as the host is quiet.
 
 ## Review-77 residuals (D-122/D-123) — watched during PHASE 2
