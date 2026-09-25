@@ -1,0 +1,32 @@
+# 2026-09-25T18:45:22Z §10 end state and cleanup
+chain       query_rewrite  primary=openrouter-gpt6-luna fallback=openrouter (task override; unknown task)
+chain       relate         primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       relate_verify  primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       risk           primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       risk_judge     primary=openrouter-gpt6-luna fallback=openrouter-qwen38-27b-fast (task override)
+chain       summary        primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash
+chain       synthesis      primary=openrouter-gpt6-luna fallback=openrouter (task override)
+jobs        embed          done     1800
+jobs        librarian_write done     1374
+checkout 805f4cd2955b; api image revision 805f4cd2955b; llm.env=present; release marker: HLM_ENV_RELEASE=r3
+RESULT librarian PASS llm.env=present release=r3 manifest=r3 enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast
+{'current_ref': '805f4cd2955b', 'previous_ref': '6902f91e7a79', 'previous_llm_env': '/etc/hlmemo/llm.env.release-6902f91e7a79', 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': []}
+no dockerd drop-in (registry workaround removed)
+hlmemo-prod-api-1 1.231GiB / 2.5GiB
+hlmemo-prod-librarian-1 130.8MiB / 512MiB
+hlmemo-prod-worker-1 1.026GiB / 1.5GiB
+hlmemo-prod-caddy-1 14.68MiB / 256MiB
+hlmemo-prod-db-1 162.2MiB / 2GiB
+/dev/vda1        58G   21G   37G  36% /
+## host DBs (own only)
+DROP DATABASE
+DROP DATABASE
+DROP DATABASE
+## scratch credentials
+credentials.toml overwritten and removed
+caffeinate stopped
+no own background jobs left
+## snapshots kept: hlm-2604-predeploy.disk
+hlm-2604-predeploy.vz-efi
+time="2026-09-25T21:45:30+03:00" level=info msg="The instance hlm-2604 has shut down"
+hlm-2604    Stopped    127.0.0.1:2223    vz        aarch64    2       8GiB      60GiB    ~/.lima/hlm-2604

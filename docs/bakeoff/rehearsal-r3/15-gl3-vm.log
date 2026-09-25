@@ -1,0 +1,43 @@
+# 2026-09-25T17:47:41Z §6 G-L3 on the 2 vCPU VM, R3 805f4cd, R3 env (librarian ON observer, concurrency 3, rewrite not shipped), from the Mac through Caddy (CA-verified). Same load shape/bodies as R2 (gl3_vm.py): warm-up 20, quiet 60 (3 callers), then 3 query callers timed DURING 100 sequential ~6 kB writes (each enqueues a librarian_write job) into r3-load (pre-seeded 160 on R2).
+## host before: 20:47  up 33 days,  5:11, 4 users, load averages: 2.32 2.33 2.34
+ 34.0 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine
+ 19.0 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/153.1.95.104/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)
+ 15.6 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+ 12.8 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/153.1.95.104/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper
+## run 1: neutral bodies
+{"run": "gl3n", "body": "neutral", "writes_acked": 100, "writes": 100, "body_bytes": 5869, "t_start": 1790358464.859, "t_end": 1790358481.216, "window_s": 16.4, "queries_during": 247, "q_p50": 142.3, "q_p95": 575.6, "q_max": 1027.2, "write_p50": 142.5, "write_p95": 300.7, "write_max": 436.9, "quiet_n": 60, "quiet_p50": 73.5, "quiet_p95": 349.3, "query_rewrite_during": {"-": 247}, "prime": {}, "errors": 0, "error_samples": []}
+## host after: 20:48  up 33 days,  5:11, 4 users, load averages: 2.52 2.37 2.35
+
+## run 1b: neutral bodies, STEADY STATE (after the backlog drained, 8 min after the restore; run 1 started 61 s after the drill restore + autoanalyze)
+## host before: 20:54  up 33 days,  5:18, 4 users, load averages: 2.75 2.77 2.58
+ 27.1 /usr/bin/top
+ 22.9 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+ 16.5 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/153.1.95.104/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)
+{"run": "gl3n2", "body": "neutral", "writes_acked": 100, "writes": 100, "body_bytes": 5869, "t_start": 1790358889.545, "t_end": 1790358906.825, "window_s": 17.3, "queries_during": 238, "q_p50": 159.7, "q_p95": 584.7, "q_max": 1134.7, "write_p50": 155.1, "write_p95": 278.6, "write_max": 334.1, "quiet_n": 60, "quiet_p50": 89.4, "quiet_p95": 448.5, "query_rewrite_during": {"-": 238}, "prime": {}, "errors": 0, "error_samples": []}
+## host after: 20:55  up 33 days,  5:18, 4 users, load averages: 3.40 2.92 2.64
+
+## run 2: identifier bodies (steady state, backlog drained)
+## host before: 21:02  up 33 days,  5:25, 4 users, load averages: 2.55 2.82 2.71
+102.7 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine
+ 16.0 /usr/bin/top
+ 15.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+{"run": "gl3i", "body": "identifier", "writes_acked": 100, "writes": 100, "body_bytes": 7539, "t_start": 1790359338.831, "t_end": 1790359352.23, "window_s": 13.4, "queries_during": 145, "q_p50": 158.1, "q_p95": 954.2, "q_max": 2271.7, "write_p50": 119.8, "write_p95": 292.5, "write_max": 341.7, "quiet_n": 60, "quiet_p50": 86.1, "quiet_p95": 424.6, "query_rewrite_during": {"-": 145}, "prime": {}, "errors": 0, "error_samples": []}
+## host after: 21:02  up 33 days,  5:26, 4 users, load averages: 2.98 2.90 2.74
+# 2026-09-25T18:12:51Z like-for-like G-L3 (R2 protocol 08a/08b): fresh project r3-gl3, pre-seed 4 x 40 items, drain, then neutral and identifier runs
+{"card_clue":"v1440","created":true,"project":{"archived_at":null,"created_at":"2026-09-25T18:12:52.023435+00:00","id":17,"name":"R3 rehearsal G-L3 fresh (R2 protocol)","slug":"r3-gl3"}}
+{"grant":{"device":33,"project":"r3-gl3","role":"write"}}
+pre-seed batch 0: err=False versions=40 86ms
+pre-seed batch 1: err=False versions=40 83ms
+pre-seed batch 2: err=False versions=40 78ms
+pre-seed batch 3: err=False versions=40 75ms
+drained after 823 s (18:26:57)
+host load1=1.66 < 3
+clock host 18:26:57 vm 18:26:58
+## fresh run F1: neutral bodies, r3-gl3 (160 pre-seed, drained); host before: 21:27  up 33 days,  5:50, 4 users, load averages: 1.76 2.05 2.24
+{"run": "f1n", "body": "neutral", "writes_acked": 100, "writes": 100, "body_bytes": 5869, "t_start": 1790360827.303, "t_end": 1790360838.858, "window_s": 11.6, "queries_during": 115, "q_p50": 141.6, "q_p95": 1405.7, "q_max": 2724.3, "write_p50": 84.2, "write_p95": 250.2, "write_max": 520.1, "quiet_n": 60, "quiet_p50": 75.7, "quiet_p95": 804.0, "query_rewrite_during": {"-": 115}, "prime": {}, "errors": 0, "error_samples": []}
+## host after: 21:27  up 33 days,  5:50, 4 users, load averages: 2.12 2.11 2.26
+drained after 506 s (18:35:44)
+host load1=2.76 < 3
+## fresh run F2: identifier bodies, r3-gl3 (160 + 100 neutral, drained); host before: 21:35  up 33 days,  5:59, 4 users, load averages: 2.76 2.34 2.30
+{"run": "f2i", "body": "identifier", "writes_acked": 100, "writes": 100, "body_bytes": 7539, "t_start": 1790361349.624, "t_end": 1790361363.747, "window_s": 14.1, "queries_during": 122, "q_p50": 169.6, "q_p95": 1509.0, "q_max": 3101.5, "write_p50": 114.9, "write_p95": 244.4, "write_max": 362.2, "quiet_n": 60, "quiet_p50": 90.8, "quiet_p95": 782.4, "query_rewrite_during": {"-": 122}, "prime": {}, "errors": 0, "error_samples": []}
+## host after: 21:36  up 33 days,  5:59, 4 users, load averages: 2.87 2.40 2.33

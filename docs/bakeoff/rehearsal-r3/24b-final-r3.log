@@ -1,0 +1,37 @@
+# 2026-09-25T17:44:52Z §9.2 back to R3, attempt 2 (direct network, no workaround): deploy.sh hlm-deploy 805f4cd2955b (R2 env installed = Order B; image rebuilt incl. the model bake)
+deploy rc=0 in 75 s
+deleted llm.env.release-6902f91e7a79 (journalled secret-bearing copy)
+llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f91e7a79
+RESULT routes PASS base=http://127.0.0.1:8765 failures=0
+RESULT routes PASS base=https://localhost failures=0
+librarian: llm.env=present enabled=true role=observer mode=live profile=openrouter-gpt6-luna fallback=openrouter
+llm.env manifest: env_release=- (code r3, check mode r2-env interim) HLM_FALLBACK_PROFILE=openrouter HLM_FALLBACK_PROFILE__QUERY_REWRITE=- HLM_FALLBACK_PROFILE__RISK_JUDGE=- HLM_FALLBACK_PROFILE__SYNTHESIS=- HLM_LLM_BUDGET_DAY_USD=2 HLM_LLM_BUDGET_DISABLED=false HLM_LLM_BUDGET_HOUR_USD=1 HLM_LLM_BUDGET_MONTH_USD=10 HLM_PROFILE=openrouter-gpt6-luna HLM_QUERY_REWRITE=- HLM_RETRIEVAL_SOURCE_CAP=-
+RESULT librarian PASS llm.env=present release=r2-env (D-108 interim: install the R3 llm.env, recreate librarian api, then evaluate --release r3) enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna
+Deployment ready: 805f4cd2955b (localhost)
+# install the R3 env under the lock
+backup /etc/hlmemo/llm.env.bak-20260925T174608Z (0600)
+RESULT librarian PASS llm.env=present release=r3 manifest=r3 enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast
+install_llm_env (remote): switch complete (both services run this llm.env, the check passed)
+install rc=0
+checkout 805f4cd2955b; api image revision 805f4cd2955b; llm.env=present; release marker: HLM_ENV_RELEASE=r3
+per-task fallbacks: query_rewrite=openrouter risk_judge=openrouter-qwen38-27b-fast synthesis=openrouter
+RESULT librarian PASS llm.env=present release=r3 manifest=r3 enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast
+{'current_ref': '805f4cd2955b', 'previous_ref': '6902f91e7a79', 'previous_llm_env': '/etc/hlmemo/llm.env.release-6902f91e7a79', 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': []}
+-rw-------   1 hlmdeploy hlmdeploy 4773 Sep 25 17:46 llm.env
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 17:46 llm.env.bak-20260925T174608Z
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 17:44 llm.env.release-6902f91e7a79
+# remote gates on the final R3 (--librarian, drill ON)
+GATE                   RESULT DETAIL
+health-ready           PASS  /health=200 /ready=200
+unknown-path-404       PASS  status=404
+tls-issuer             PASS  internal CA as requested (rehearsal): CN=Caddy Local Authority - ECC Intermediate
+postgres-closed        PASS  tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+probe                  PASS  smoke + write/read marker gates-a-20260925T174619Z-10777
+routes                 PASS  RESULT routes PASS base=https://localhost:19443 failures=0
+hlm-cli                PASS  init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-4292
+wan-latency            PASS  n=20 errors=0 p50=16ms p95=47ms max=47ms (ceiling p95<=3000ms)
+risk-check             PASS  verdict=warn judged=true judge=ok reason=- warnings=1 candidates=1
+librarian              PASS  v1139 1 job(s) done in 12.0s; role=observer outcome=annotated; mutations signal_upsert=1 links/closes=0; version_signals=yes; audit proposals=0 (none), applied=0
+backup-restore         PASS  backup hlmemo-2026-09-25T174643Z-0BxbY2.dump -> restore 16s; marker A survives, post-backup marker B gone
+total 51s (gates 51s); log: /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260925T174619Z.log
+RESULT PASS

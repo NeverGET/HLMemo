@@ -1,0 +1,53 @@
+# 2026-09-25T18:44:31Z §7 observer check #2 on the FINAL R3 state (since BASE_EVENT2=1895 = after the final deploy + gates: 5 G-L3 runs = 500 writes + 160 pre-seed, all librarian jobs drained)
+worker      ready=0 oldest_ready_age_s=None last_done_at=2026-09-25T18:44:26.788850+00:00 expired_leases=0
+librarian   ready=0 in_flight=0 role=observer breaker=closed (ledger, 576 calls/15m) failed_24h=0 spend_today_usd=1.635256 spend_hour_usd=0.829895 reserved_usd=0.0
+ since_event_id | max_event_id | librarian_events 
+----------------+--------------+------------------
+           1895 |         2944 |              541
+
+      op       |   role   |  n  
+---------------+----------+-----
+ signal_upsert | observer | 661
+
+ links_by_librarian | versions_by_librarian | signals_by_librarian_allowed 
+--------------------+-----------------------+------------------------------
+                  0 |                     0 |                          661
+
+ versions_superseded | versions_valid_closed 
+---------------------+-----------------------
+                   0 |                     0
+
+ links_total | links_closed 
+-------------+--------------
+           0 |            0
+
+ batches_decided_or_applied | batches_total 
+----------------------------+---------------
+                          0 |            70
+
+ status | questions 
+--------+-----------
+ open   |      1640
+
+## ops librarian audit
+r3-load proposals 255 {'open': 255} applied_batches 0
+r3-gl3 proposals 328 {'open': 328} applied_batches 0
+r3-base proposals 224 {'open': 224} applied_batches 0
+rk-main proposals 3 {'open': 3} applied_batches 0
+gates-probe proposals 0 {} applied_batches 0
+## VM llm_calls since the final deploy (17:44Z) by task/profile/outcome
+     task      |        profile         |     outcome     | count |  usd   
+---------------+------------------------+-----------------+-------+--------
+ place         | openrouter-gpt6-luna   | ok              |   544 | 0.0977
+ relate        | openrouter-gpt6-luna   | ok              |  1322 | 0.9215
+ relate_verify | openrouter-glm53-flash | ok              |   114 | 0.0634
+ relate_verify | openrouter-glm53-flash | schema_fail     |     2 | 0.0012
+ relate_verify | openrouter-glm53-flash | schema_retry_ok |     2 | 0.0003
+ risk_judge    | openrouter-gpt6-luna   | ok              |     1 | 0.0001
+(6 rows)
+
+ total_usd_since_final_deploy 
+------------------------------
+                       1.0842
+(1 row)
+

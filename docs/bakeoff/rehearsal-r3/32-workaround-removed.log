@@ -1,0 +1,6 @@
+# 2026-09-25T17:44:24Z network back (17:36:18Z: Docker Hub IPv4 401, xet CAS reachable). Remove the VM-only registry workaround: drop-in deleted, dockerd restarted, direct registry check from the VM
+dockerd https proxy: []
+vm direct https://registry-1.docker.io/v2/ 401 0.518990s
+vm direct https://cas-server.xethub.hf.co 404 0.515611s
+/ready 200 (R2) after dockerd restart
+host proxy stopped
