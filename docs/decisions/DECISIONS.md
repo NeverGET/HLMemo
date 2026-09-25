@@ -174,3 +174,9 @@ Every hit lost vs D-090 comes from guard rejections ("protected token": 13/8 on 
 - configurable concurrency, default 4;
 - a tunable `HLM_QUERY_REWRITE_BRANCH_WEIGHT` (default 1.0) so the English branch's RRF weight can be tested at 0.5–0.8 against the q002-type rank loss.
 The final gate is the re-measure on the D-106 code. Leaderboard eval-r3-rewrite merged (interim labels).
+D-108 | 2026-09-25 | ACCEPTED (orchestrator) | **R3 release order for llm.env (found in the rehearsal prep).** R2 code cannot load the D-094 llm.env: `profile_chain` fails with "profile 'openrouter-glm53-flash' not found", because the new profiles ship only in the R3 image. The R2 librarian would not start. Order for the VM rehearsal AND production:
+1. Deploy the R3 image with the R2 llm.env still installed.
+2. Verify.
+3. Switch to the D-094 llm.env (`HLM_QUERY_REWRITE=true`, per-task fallbacks) and restart.
+4. Verify again, including a status check that rewrite is ON.
+Before any rollback to R2, reinstall the R2 llm.env FIRST, then roll back the image. The VM `hlm-2604` is at R2 = 6902f91 with realistic data (the 51 HLMemo docs → 247 items in `r3-base`; `r3-load`; the G-LIVE-C risk world). The rehearsal checklist is docs/status/R3-REHEARSAL.md (f74148f). main was pushed to origin (f74148f) after a gitleaks scan of the 81 new commits (clean); docs/private is gitignored.
