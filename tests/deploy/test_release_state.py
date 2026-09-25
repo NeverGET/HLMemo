@@ -1,6 +1,7 @@
 """Sol 36 M1: the rollback tuple is published atomically (release-state.json); partial writes."""
 
 import importlib.util
+import io
 import json
 import os
 import tempfile
@@ -179,6 +180,64 @@ class ReleaseStateTests(unittest.TestCase):
         self.assertEqual(self.markers()["previous-ref"], OLD)  # stale until derived again
         rs.main(["derive", str(self.dir)])
         self.assertEqual(self.markers(), {"current-ref": OLD})
+
+    # ------------------------------------------------------------------ D-111 #7: llm.env in the state
+    def publish_llm(self, current, previous, llm_env):
+        args = [
+            "publish",
+            str(self.dir),
+            "--current",
+            current,
+            "--previous",
+            previous,
+            "--previous-dump",
+            "/d",
+        ]
+        rs.main(args + (["--previous-llm-env", llm_env] if llm_env is not None else []))
+        return json.loads((self.dir / rs.STATE).read_text())
+
+    def test_publish_records_the_previous_llm_env_and_deletes_the_superseded_snapshot(self):
+        first = self.dir / f"llm.env.release-{OLD}"
+        first.write_text("OPENROUTER_API_KEY=old\n")
+        state = self.publish_llm(NEW, OLD, str(first))
+        self.assertEqual(str(first), state["previous_llm_env"])
+        self.assertEqual(str(first), self.get("previous_llm_env"))
+        second = self.dir / f"llm.env.release-{NEW}"
+        second.write_text("OPENROUTER_API_KEY=new\n")
+        state = self.publish_llm(NEWER, NEW, str(second))
+        self.assertEqual(str(second), state["previous_llm_env"])
+        self.assertFalse(first.exists(), "the superseded snapshot (it holds the key) is deleted")
+        self.assertTrue(second.exists())
+        # re-publishing the same pair keeps its snapshot; "absent" is recorded as such
+        self.assertEqual(str(second), self.publish_llm(NEWER, NEW, str(second))["previous_llm_env"])
+        self.assertTrue(second.exists())
+        self.assertEqual("absent", self.publish_llm(NEWER, NEW, "absent")["previous_llm_env"])
+        self.assertFalse(second.exists())
+        # an older runner's publication records no llm.env for its pair
+        self.assertNotIn("previous_llm_env", self.publish_llm(NEWER, NEW, None))
+
+    def get(self, key):
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            rs.main(["get", str(self.dir), key])
+        return out.getvalue().strip()
+
+    def test_rollback_llm_env_is_recorded_once_per_attempt_and_dropped_after_it(self):
+        self.publish_llm(NEW, OLD, str(self.dir / f"llm.env.release-{OLD}"))
+        newer = str(self.dir / f"llm.env.release-{NEW}")
+        rs.main(["begin-rollback", str(self.dir), OLD, "--llm-env", newer])
+        self.assertEqual(newer, self.get("rollback_llm_env"))
+        # a re-run of an interrupted attempt never replaces the recorded copy of the NEWER env
+        rs.main(["begin-rollback", str(self.dir), OLD, "--llm-env", "/somewhere/else"])
+        self.assertEqual(newer, self.get("rollback_llm_env"))
+        rs.main(["end-rollback", str(self.dir)])
+        state = json.loads((self.dir / rs.STATE).read_text())
+        self.assertNotIn("rollback_llm_env", state)
+        self.assertEqual(str(self.dir / f"llm.env.release-{OLD}"), state["previous_llm_env"])
+        rs.main(["begin-rollback", str(self.dir), OLD, "--llm-env", newer])
+        rs.main(["rolled-back", str(self.dir)])
+        state = json.loads((self.dir / rs.STATE).read_text())
+        self.assertNotIn("rollback_llm_env", state)
+        self.assertNotIn("previous_llm_env", state, "the consumed pair takes its llm.env along")
 
 
 if __name__ == "__main__":

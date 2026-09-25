@@ -304,6 +304,16 @@ PYIMAGE
   fi
   python3 deploy/scripts/release_env.py "$HLM_ENV_FILE" "$previous_image" </dev/null
 fi
+# D-108/D-111 #7: llm.env is part of the release state. Snapshot the llm.env the PREVIOUS release
+# runs with (D-108 order: the new release is deployed with it still installed; its own env comes
+# after the cutover), before anything stops; rollback.sh restores it before the previous image
+# starts. "absent" when the previous release ran without one.
+previous_llm_env=
+if [[ -n $previous ]]; then
+  previous_llm_env=$(python3 deploy/scripts/llm_env_release.py snapshot \
+    "${HLM_LLM_ENV_FILE:-$(dirname "$HLM_ENV_FILE")/llm.env}" "$previous" </dev/null)
+  printf 'llm.env of %s recorded for rollback: %s\n' "${previous:0:12}" "$previous_llm_env"
+fi
 export HLM_IMAGE="$image_repository:$revision"
 export HLM_IMAGE_REVISION="$revision"
 verify_release_image() {
@@ -385,6 +395,7 @@ trap 'exit 143' TERM
 state_args=(--current "$revision")
 if [[ -n $previous ]]; then
   state_args+=(--previous "$previous" --previous-dump "$pre_upgrade_dump" --previous-image "$previous_image" --previous-image-id "$previous_id")
+  state_args+=(--previous-llm-env "$previous_llm_env")
   for pair in "${env_w0_restore[@]}"; do
     state_args+=(--env-backup "${pair%%|*}=${pair#*|}")
   done

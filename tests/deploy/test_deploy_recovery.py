@@ -15,6 +15,17 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 PREVIOUS = "a" * 40
 NEXT = "b" * 40
+#: the harness host's default llm.env: the R3 env (D-111 #6 / D-116 manifest: the D-094 mapping, no
+#: query rewrite; a dummy key value, never a real one)
+R3_LLM_ENV = (
+    "HLM_LIBRARIAN_ENABLED=true\n"
+    "HLM_PROFILE=openrouter-gpt6-luna\n"
+    "HLM_FALLBACK_PROFILE=openrouter-glm53-flash\n"
+    "HLM_FALLBACK_PROFILE__SYNTHESIS=openrouter\n"
+    "HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast\n"
+    "HLM_ENV_RELEASE=r3\n"
+    "OPENROUTER_API_KEY=harness-dummy-r3-value\n"
+)
 
 DOCKER = r"""#!/usr/bin/env python3
 import json, os, signal, sys, time
@@ -54,7 +65,19 @@ if "run" in args and "migrate" in args:
     if fail == "retag-during-migration":
         labels[selected] = "a"*40
         labels_path.write_text(json.dumps(labels))
+def llm_env_path():
+    return Path(os.environ.get("HLM_LLM_ENV_FILE") or Path(os.environ["HLM_REMOTE_ENV"]).parent / "llm.env")
 if "up" in args and "api" in args:
+    # D-111 #7: which model starts, the llm.env file at that moment, and (a rollback model) the env
+    # release the rendered model carries in the api environment
+    llm = llm_env_path()
+    model_env = None
+    if ".rollback-compose." in " ".join(args):
+        model = json.loads(Path(args[args.index("-f")+1]).read_text())
+        model_env = model["services"]["api"].get("environment", {}).get("HLM_ENV_RELEASE")
+    with open(os.environ["EVENTS"]+".llm-env-at-up", "a") as f:
+        f.write(json.dumps(["rollback" if ".rollback-compose." in " ".join(args) else "current",
+                            llm.read_text() if llm.is_file() else None, model_env])+"\n")
     Path(os.environ["EVENTS"]+".running-image").write_text(images.get(selected, selected))
     # The api container's org.opencontainers.image.revision label (rollback.sh checks it).
     tag = selected.rsplit(":", 1)[-1]
@@ -83,12 +106,14 @@ elif "config" in args:
     if "-f" in args and ".compose-previous." in args[args.index("-f")+1]:
         Path(os.environ["EVENTS"]+".previous-model").write_text(Path(args[args.index("-f")+1]).read_text())
         # Like Compose: the api service's env_file (HLM_API_ENV_FILE) lands in its environment.
+        # D-111 #7: and so does the llm.env named by HLM_LLM_ENV_FILE (default: next to prod.env).
         api_env = Path(os.environ.get("HLM_API_ENV_FILE") or "/nonexistent")
-        if api_env.is_file():
-            for line in api_env.read_text().splitlines():
-                key, sep, value = line.removeprefix("export ").partition("=")
-                if sep and not key.startswith("#"):
-                    rendered["services"]["api"]["environment"][key.strip()] = value
+        for env_path in (api_env, llm_env_path()):
+            if env_path.is_file():
+                for line in env_path.read_text().splitlines():
+                    key, sep, value = line.removeprefix("export ").partition("=")
+                    if sep and not key.startswith("#"):
+                        rendered["services"]["api"]["environment"][key.strip()] = value
     print(json.dumps(rendered))
 elif "ps" in args:
     if os.environ.get("INITIAL") != "1": print("db-container")
@@ -101,18 +126,23 @@ elif "exec" in args and "hlmemo.ops" in args:
         print("   2  g7-mac   personal trusted  expires=- grants=gates-g7:write")
 elif "exec" in args and "collect" in args:
     # R2: deploy/scripts/check_librarian.py collect, fed on stdin like check_edge.py. Default: the
-    # idle report of a host without llm.env; LIBRARIAN_REPORT_<SERVICE> overrides it (JSON).
+    # R3-live report of a host with the R3 llm.env (D-111: an R3 release needs one);
+    # LIBRARIAN_REPORT_<SERVICE> overrides it (JSON).
     assert "def collect" in sys.stdin.read(), "librarian check not fed on stdin"
     service = args[args.index("--service") + 1]
     override = os.environ.get("LIBRARIAN_REPORT_" + service.upper())
-    report = {"service": service, "enabled": False, "role": "observer", "llm_mode": "live",
-              "profile": "openrouter", "fallback": None,
-              "profiles": [{"name": "openrouter", "base_url": "https://llm.invalid/v1", "key_set": False}]}
+    report = {"service": service, "enabled": True, "role": "observer", "llm_mode": "live",
+              "profile": "openrouter", "fallback": None, "env_release": "r3",
+              "manifest_env": {"HLM_PROFILE": "openrouter-gpt6-luna",
+                               "HLM_FALLBACK_PROFILE": "openrouter-glm53-flash",
+                               "HLM_FALLBACK_PROFILE__SYNTHESIS": "openrouter",
+                               "HLM_FALLBACK_PROFILE__RISK_JUDGE": "openrouter-qwen38-27b-fast"},
+              "profiles": [{"name": "openrouter", "base_url": "https://llm.invalid/v1", "key_set": True}]}
     if service == "librarian":
-        report["heartbeat"] = {"enabled": False, "role": "observer", "breaker_state": "disabled",
+        report["heartbeat"] = {"enabled": True, "role": "observer", "breaker_state": "closed",
                                "age_s": 2.0}
     else:
-        report["risk_judge"] = []
+        report.update(risk_judge=["openrouter"])
     print(override if override is not None else json.dumps(report))
 elif "exec" in args and "--routes" in args:
     assert "def check_routes" in sys.stdin.read(), "route checker not fed on stdin"
@@ -226,6 +256,9 @@ class DeployRecoveryTest(unittest.TestCase):
         (root / "previous-ref").write_text("c" * 40 + "\n")
         (root / "previous-dump").write_text("older-marker.dump\n")
         (root / "prod.env").write_text("HLM_DOMAIN=localhost\n")
+        # D-111: an R3 release needs llm.env (the R3 env; a dummy, never a real key)
+        (root / "llm.env").write_text(R3_LLM_ENV)
+        (root / "llm.env").chmod(0o600)
         binary = root / "bin"
         binary.mkdir()
         programs = {

@@ -196,6 +196,9 @@ settings = {
     "HLM_LIBRARIAN_ROLE": "observer",
     "HLM_PROFILE": primary,
     "HLM_FALLBACK_PROFILE": fallback,
+    # D-111/D-116: the release marker (check_librarian.py evaluate checks this env against the R3
+    # manifest: no query rewrite, no per-source cap, the D-094 fallback mapping)
+    "HLM_ENV_RELEASE": "r3",
     **{name: found[name] for name in names},
 }
 out = [
@@ -218,4 +221,4 @@ PY
 echo "install_llm_env: $target on hlm-deploy ($ssh_config): profile=$profile fallback=$fallback role=observer enabled=true"
 printf '%s\n' "$content" | rssh "$remote_cmd"
 unset content
-echo "Next: deploy the R2 release (--accept-compose-change), or on a running R2 release: stack.sh up -d --no-deps librarian api (RUNBOOK \"R2 release\")."
+echo "Next (R3, D-108 order): on the running R3 release, stack.sh up -d --no-deps librarian api, then check_librarian.py evaluate --release r3 (RUNBOOK \"R3 release\")."
