@@ -195,3 +195,12 @@ A0's apparent 4/15 comes from the stale key dropping out of the drill window, no
 - **B-oracle:** 108 span revisions, byte check 108/108, no index growth, latency ≈ base.
 - Pilot spend: $2.28.
 **Proposal:** adopt B as the stale-first mechanism and do NOT pursue A (−7.9 W2b, 21× items, G4 fail). Next, build and measure **B-real**: the librarian proposes a span revision {stale span quoted verbatim from the old item, replacement quoted VERBATIM from the newer item, evidence}. Deterministic guards check both quotes byte-exact. The owner approves (assistant role); the observer never mutates. It is measured on the same pilot harness against the B-oracle ceiling (0/15). This needs the owner's OK, per D-104.
+D-110 | 2026-09-25 | ACCEPTED (owner) | **D-109 accepted: pursue B-real (span-bound revision) and drop A (atomic children). Production and development get SEPARATE OpenRouter keys.**
+**B-real** builds on the librarian v3 code, using the pilot branch pilot-d104-av3 (v3 + pilot hooks + the `revise` primitive). A v3 partial supersede becomes a REVISE_SPAN proposal with these fields:
+- `old_span`: quoted byte-exact from the old item's current version, and unique in it;
+- `replacement`: quoted byte-exact from the newer item;
+- evidence quotes, and the direction per D-100/D-101 with the verifier's agreement.
+Deterministic guards re-check both quotes byte-exact before a proposal is emitted and again at apply time.
+Apply path: only after the owner's answer in the assistant role (the observer never mutates, D-074). Apply creates a new version of the old item that differs only in that span, plus a supersedes link from the new version to the old one; it is bi-temporal and replayable. The locks follow J/D-095. Reversal is a compensating event.
+Measured on the D-104 harness against the B-oracle ceiling (A 0/15). Pass needs A stale-first ≤ 4/15, G-E-W2b ≥ +3 with no category < −3, and precision tracked. The live measurement waits for OpenRouter credits.
+**Keys:** the owner creates a production-only key. It is installed on the VPS llm.env during the R3 deploy (D-108 order). The existing key stays for development and agents. BACKLOG: reconcile the spend, since billed cost was about $66 against about $18 reported.
