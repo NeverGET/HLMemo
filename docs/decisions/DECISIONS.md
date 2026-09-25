@@ -440,3 +440,4 @@ D-133 | 2026-09-26 | ACCEPTED (owner: "continue until it works as intended"; the
 - a dual review only for the read-path scope/privacy;
 - every decision recorded here;
 - no prod writes beyond a gated release.
+D-134 | 2026-09-26 | ACCEPTED | **D-118 write-time supersession is fully gated on its branch.** wf-write-updates @ 8919355: the full integration suite ran 612 passed / 14 skipped / 0 failed (fresh DB, 1 h). With D-126 (review-closed) it is complete and parked for R4. Per D-125 it is ported minimally onto main after the research-librarian work (D-133), or together with it if that port is small.
