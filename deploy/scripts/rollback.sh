@@ -13,6 +13,10 @@
 # the previous ref, its quiesced dump and its image (verified by ID) as one unit. The state records
 # the attempt before anything stops, so an interrupted (killed) rollback can simply be re-run. If a
 # step fails, the saved current database is restored and the current release restarted.
+# D-108/D-111 #7: llm.env is part of the release state. The previous release's own llm.env
+# (previous_llm_env, snapshotted by remote-deploy.sh) renders its model and is restored atomically
+# before the previous image starts; the newer llm.env is copied once per attempt (rollback_llm_env)
+# and put back before the current release restarts after a failed step.
 # accept: verifies the running release, deletes every recorded env backup (retired secrets) and, for
 # a W0+ current release, sweeps any unrecorded *.pre-w0-* next to the env files.
 # shellcheck disable=SC2016,SC2217
@@ -42,13 +46,16 @@ if [[ ${HLM_DEPLOY_LOCK_HELD:-0} != 1 ]]; then
   exec 9>"$parent_dir/.deploy.lock"
   flock -n 9 || { echo 'Another deployment is running' >&2; exit 1; }
 fi
+# A killed (SIGKILL) earlier run leaves its private rendered model and helper copies behind; the model
+# holds env values (llm.env included, D-111). Only the lock owner sweeps them, like remote-deploy.sh.
+rm -rf -- "$parent_dir"/.rollback-compose.* "$parent_dir"/.rollback-helpers.*
 cd "$app_dir"
 [[ -f $state_file ]] || refuse "no $state_file (only releases deployed by a W0a-or-later runner can be rolled back this way)"
 current=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["current_ref"])' "$state_file")
 # Helpers always come from the CURRENT release's git objects, never from the working tree (which
 # an interrupted rollback may have left at the previous commit), into a private temp dir.
 helpers=$(mktemp -d "$parent_dir/.rollback-helpers.XXXXXX")
-for helper in release_state.py release_env.py; do
+for helper in release_state.py release_env.py llm_env_release.py; do
   git show "$current:deploy/scripts/$helper" > "$helpers/$helper"
 done
 state() { python3 "$helpers/release_state.py" get "$parent_dir" "$1"; }
@@ -94,6 +101,8 @@ previous=$(state previous_ref)
 dump=$(state previous_dump)
 image=$(state previous_image)
 image_id=$(state previous_image_id)
+previous_llm_env=$(state previous_llm_env)
+llm_env_file=${HLM_LLM_ENV_FILE:-$(dirname "$HLM_ENV_FILE")/llm.env}
 [[ -n $previous ]] || refuse 'release-state.json records no previous release (already rolled back or initial deployment)'
 [[ -z $in_progress || $in_progress == "$previous" ]] || refuse "an unfinished rollback to $in_progress is recorded, not to $previous"
 [[ -z $in_progress || $running == "$current" || $running == "$previous" || -z $running ]] ||
@@ -108,10 +117,23 @@ fi
 [[ -f $dump ]] || refuse "previous dump $dump is missing"
 [[ -n $image && $(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null) == "$image_id" ]] ||
   refuse "previous image $image does not resolve to the recorded ID $image_id"
+# D-111 #7: Compose inlines env_file contents into the rendered model, so the previous model is
+# rendered with the previous release's OWN llm.env (else it would carry the newer env, whose
+# profiles the previous code may not know: D-108).
+render_llm_env=$llm_env_file
+case $previous_llm_env in
+  '')
+    echo "WARNING: release-state.json records no llm.env for $previous (deployed by an older runner): llm.env is left as it is. If $previous cannot load it, reinstall its own llm.env first (D-108)." >&2 ;;
+  absent) render_llm_env=$helpers/no-llm.env ;;  # the previous release ran without one
+  *)
+    [[ -f $previous_llm_env ]] || refuse "the llm.env snapshot of $previous ($previous_llm_env) is missing"
+    render_llm_env=$previous_llm_env ;;
+esac
 previous_model=$(mktemp "$PWD/deploy/.compose-previous.XXXXXX")
 git show "$previous:deploy/compose.prod.yaml" > "$previous_model"
 model=$(mktemp "$parent_dir/.rollback-compose.XXXXXX")
-docker compose -p "$COMPOSE_PROJECT" -f "$previous_model" --env-file "$HLM_ENV_FILE" config --format json > "$model"
+HLM_LLM_ENV_FILE=$render_llm_env docker compose -p "$COMPOSE_PROJECT" -f "$previous_model" --env-file "$HLM_ENV_FILE" \
+  config --format json > "$model"
 rm -f -- "$previous_model"
 python3 - "$model" "$image_id" <<'PYMODEL'
 import json, sys
@@ -149,7 +171,14 @@ rendered=$(rb config --format json | python3 -c 'import json,sys; s=json.load(sy
 printf 'Rollback validated: %s -> %s (image %s = %s, dump %s)\n' "$current" "$previous" "$image" "$image_id" "$dump"
 
 # ---- the service is interrupted from here on. The attempt is recorded first (re-runnable).
-python3 "$helpers/release_state.py" begin-rollback "$parent_dir" "$previous"
+# D-111 #7: a copy of the NEWER llm.env, taken once per attempt (a re-run finds the older one
+# already restored and must keep the recorded copy).
+newer_llm_env=$(state rollback_llm_env)
+if [[ -n $previous_llm_env && -z $newer_llm_env ]]; then
+  newer_llm_env=$(python3 "$helpers/llm_env_release.py" snapshot "$llm_env_file" "$current")
+fi
+python3 "$helpers/release_state.py" begin-rollback "$parent_dir" "$previous" ${newer_llm_env:+--llm-env "$newer_llm_env"}
+newer_llm_env=$(state rollback_llm_env)
 safety=
 db_replaced=0
 recover_current() {
@@ -166,6 +195,9 @@ recover_current() {
   python3 "$helpers/release_env.py" "$HLM_ENV_FILE" "$current_image" >&2
   export HLM_IMAGE=$current_image HLM_IMAGE_REVISION=$current
   ok=1
+  if [[ -n ${newer_llm_env:-} ]]; then  # D-111 #7: the newer llm.env back BEFORE the current release starts
+    python3 "$helpers/llm_env_release.py" restore "$newer_llm_env" "$llm_env_file" >&2 || ok=0
+  fi
   if ((db_replaced)) && [[ -f $safety ]]; then
     dc up -d --no-deps --wait --wait-timeout 180 db >&2 || ok=0
     dc exec -T db sh -eu -c '
@@ -178,6 +210,7 @@ recover_current() {
   read -ra up_services <<< "$(current_services)"
   if ((ok)) && dc up -d --no-deps --wait --wait-timeout 300 "${up_services[@]}" >&2; then
     python3 "$helpers/release_state.py" end-rollback "$parent_dir" >&2
+    [[ -z ${newer_llm_env:-} || $newer_llm_env == absent ]] || rm -f -- "$newer_llm_env"
     echo "Current release $current restored${safety:+ (database from $safety)}; rollback aborted." >&2
   else
     echo "Automatic restore of $current FAILED; the recorded attempt lets 'deploy.sh --rollback' be re-run. Saved database: ${safety:-<none>}." >&2
@@ -196,6 +229,10 @@ for mounted in deploy/Caddyfile deploy/scripts/worker_entrypoint.py deploy/scrip
   [[ ! -e $mounted ]] || chmod go+r "$mounted"
 done
 python3 "$helpers/release_env.py" "$HLM_ENV_FILE" "$image"
+# D-111 #7: the previous release's own llm.env, atomically, BEFORE its image starts (D-108)
+if [[ -n $previous_llm_env ]]; then
+  python3 "$helpers/llm_env_release.py" restore "$previous_llm_env" "$llm_env_file"
+fi
 rb up -d --no-deps --wait --wait-timeout 180 db
 db_replaced=1
 rb exec -T db sh -eu -c '
@@ -209,4 +246,8 @@ rb exec -T api python -c "import urllib.request; urllib.request.urlopen('http://
 trap - ERR
 # One atomic step: consume the pair, clear the attempt, derive (and prune) the legacy markers.
 python3 "$helpers/release_state.py" rolled-back "$parent_dir"
+# both llm.env copies are spent (llm.env itself is the restored one); they hold the provider key
+for spent in "$newer_llm_env" "$previous_llm_env"; do
+  [[ -z $spent || $spent == absent ]] || rm -f -- "$spent"
+done
 printf 'Rollback complete: %s is running again (image %s). Saved database of %s: %s\n' "$previous" "$image_id" "$current" "$safety"

@@ -609,7 +609,7 @@ default; a missing or stale one is re-read for up to 45 s after cutover), the ap
 chain loads and is non-empty, and every profile key is set. The heartbeat is written between jobs,
 so one job running longer than that window also fails the check: see `stack.sh logs librarian`. An unreachable provider is **reported only** (`UNREACHABLE ...; reported only`): jobs wait
 with backoff and risk_check answers retrieval-only until it returns. Without `llm.env` (R1-style)
-the check passes only while everything idles.
+the R2 check passes only while everything idles; from R3 on a missing `llm.env` fails (below).
 
 `remote_gates.sh` then adds two gates. `risk-check` (always): one registered lesson plus a task
 that repeats its mistake; PASS when the tool returns a verdict, reporting `judged=true|false` and
@@ -652,6 +652,27 @@ defaults, not a budget: `HLM_LLM_BUDGET_HOUR_USD=3`, `HLM_LLM_BUDGET_DAY_USD=10`
 (`breaker=budget`) and risk_check falls back to retrieval-only until the window rolls over. Check
 the spend after the gates, daily during the Phase 5 migration, and against the provider's own
 activity page; change a cap in `llm.env` and recreate `librarian api` as above.
+
+### R3 release (D-108 order, D-111, D-116: no query rewrite)
+
+R3 ships WITHOUT the query rewrite and the per-source cap (D-116). The post-cutover check validates
+`llm.env` against the **release manifest** in `check_librarian.py` (`RELEASE_MANIFESTS`): for R3,
+`HLM_QUERY_REWRITE` and `HLM_RETRIEVAL_SOURCE_CAP` absent or false in the api's and the librarian's
+env, and the D-094 fallback mapping (`HLM_PROFILE`, `HLM_FALLBACK_PROFILE`,
+`HLM_FALLBACK_PROFILE__SYNTHESIS`, `HLM_FALLBACK_PROFILE__RISK_JUDGE`) present.
+Order B (D-108) stays: deploy the R3 ref while the R2 `llm.env` is still installed; its librarian
+check passes as the **interim** (`RESULT librarian PASS llm.env=present release=r2-env (D-108
+interim ...)`: the R2 checks and the manifest's "off" keys). Then install the R3 env with the R3
+checkout's `install_llm_env.sh` (it writes the release marker `HLM_ENV_RELEASE=r3`), recreate
+`librarian api` and run the check again with `--release r3` (the same collect/evaluate the runner
+uses, `evaluate --llm-env present ... --release r3`): R3 mode fails unless both services run the R3
+env and it satisfies the R3 manifest. An api that already runs the R3 env is checked in R3 mode by
+every deployment; an R3 deployment without `llm.env` fails.
+`llm.env` is part of the release state: the runner snapshots the env the previous release runs with
+(`llm.env.release-<ref>`, 0600, `previous_llm_env` in `release-state.json`), and `--rollback`
+renders the previous model with it and restores it atomically before the previous image starts
+(a failed rollback step puts the newer env back first). Reinstalling the R2 env by hand before a
+rollback is no longer needed, but harmless.
 
 ### Application releases
 
@@ -697,7 +718,8 @@ Both first verify that the **running** api's image revision label equals `releas
 validates the previous commit (W0+), its quiesced dump and its image (by recorded ID) and renders
 the previous Compose model pinned to that ID, all before stopping anything. It then records the
 attempt in the state, stops writers, saves the current database (`backup.sh`), checks out the
-previous commit, publishes its image, restores its dump and starts it. If a step fails, the saved
+previous commit, publishes its image, restores its `llm.env` snapshot (D-111) and its dump and
+starts it. If a step fails, the saved
 database is restored and the current release restarted (the saved dump is used only for that; it
 then ages out with the daily tier). If the runner is killed, the recorded attempt lets the same
 `--rollback` command be re-run to completion. Success consumes the pair in one atomic state write

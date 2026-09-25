@@ -2,12 +2,15 @@
 """Atomic release state (Sol 36 M1): one JSON document is the source of truth for rollback.
 
     release_state.py publish DIR --current SHA [--previous SHA --previous-dump PATH
-                     --previous-image REPO:SHA --previous-image-id ID] [--env-backup FILE=BACKUP ...]
+                     --previous-image REPO:SHA --previous-image-id ID [--previous-llm-env PATH|absent]]
+                     [--env-backup FILE=BACKUP ...]
     release_state.py rolled-back DIR          # after a rollback: current <- previous, no rollback pair
     release_state.py add-retired DIR PATH...  # record retired-secret backups NOW (before cutover)
     release_state.py accept DIR [--sweep-dir D ...]  # delete every recorded env backup (and any
                                               # unrecorded D/*.pre-w0-*); mark accepted
-    release_state.py begin-rollback DIR SHA   # record an attempt (an interrupted rollback re-runs)
+    release_state.py begin-rollback DIR SHA [--llm-env PATH|absent]  # record an attempt (an
+                                              # interrupted rollback re-runs); --llm-env: the copy of
+                                              # the CURRENT llm.env, recorded only once per attempt
     release_state.py end-rollback DIR         # clear an aborted attempt
     release_state.py get DIR KEY              # one field ('' if absent); env_backups: FILE=BACKUP lines
 
@@ -15,6 +18,12 @@
 the legacy markers (current-ref, previous-ref, previous-dump) from it, each via tmp + rename. A crash
 before the rename leaves the old state intact; a crash while deriving legacy markers leaves a
 consistent state file (rollback reads only the state file) and `derive` repairs the markers.
+
+D-111 #7: llm.env is part of the release state. ``previous_llm_env`` is the snapshot of the llm.env
+the previous release ran with (llm_env_release.py snapshot; "absent" when it had none), restored by
+rollback.sh before the previous image starts; a new publication deletes the superseded snapshot
+(it holds the provider key). ``rollback_llm_env`` is the copy of the newer llm.env taken when a
+rollback begins, put back if a rollback step fails.
 """
 
 import argparse
@@ -25,6 +34,7 @@ import tempfile
 from pathlib import Path
 
 STATE = "release-state.json"
+ABSENT = "absent"
 LEGACY = {"current-ref": "current_ref", "previous-ref": "previous_ref", "previous-dump": "previous_dump"}
 
 
@@ -67,8 +77,17 @@ def derive(directory: Path) -> None:
             (directory / marker).unlink(missing_ok=True)
 
 
+def _snapshot_file(value: object) -> Path | None:
+    """A recorded llm.env snapshot/copy path (never the "absent" marker)."""
+    if not isinstance(value, str) or not value or value == ABSENT:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() and ".release-" in path.name else None
+
+
 def publish(directory: Path, args: argparse.Namespace) -> None:
     state = load(directory)
+    superseded = _snapshot_file(state.get("previous_llm_env"))
     state["current_ref"] = args.current
     if args.previous:
         state.update(
@@ -79,10 +98,17 @@ def publish(directory: Path, args: argparse.Namespace) -> None:
             env_backups=dict(pair.split("=", 1) for pair in args.env_backup),
             accepted=False,
         )
+        if args.previous_llm_env:
+            state["previous_llm_env"] = args.previous_llm_env
+        else:  # an older runner's pair: rollback leaves llm.env as it is (with a warning)
+            state.pop("previous_llm_env", None)
     # Every retired-secret backup ever recorded stays listed until --accept-release deletes it.
     retired = set(state.get("retired_backups") or []) | set((state.get("env_backups") or {}).values())
     state["retired_backups"] = sorted(retired)
     store(directory, state)
+    # D-111 #7: the older pair's llm.env snapshot is no rollback target any more (it holds the key)
+    if superseded is not None and str(superseded) != state.get("previous_llm_env"):
+        superseded.unlink(missing_ok=True)
 
 
 def add_retired(directory: Path, paths: list[str]) -> None:
@@ -123,6 +149,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--previous-image")
     p.add_argument("--previous-image-id")
     p.add_argument("--env-backup", action="append", default=[])
+    p.add_argument("--previous-llm-env")
     for name in ("rolled-back", "derive", "end-rollback"):
         sub.add_parser(name).add_argument("dir", type=Path)
     a = sub.add_parser("accept")
@@ -134,6 +161,7 @@ def main(argv: list[str]) -> int:
     b = sub.add_parser("begin-rollback")
     b.add_argument("dir", type=Path)
     b.add_argument("target")
+    b.add_argument("--llm-env")
     g = sub.add_parser("get")
     g.add_argument("dir", type=Path)
     g.add_argument("key")
@@ -156,10 +184,14 @@ def main(argv: list[str]) -> int:
     elif args.cmd == "begin-rollback":
         state = load(directory)
         state["rollback_in_progress"] = args.target
+        # the NEWER env is copied once per attempt: a re-run finds llm.env already restored
+        if args.llm_env and not state.get("rollback_llm_env"):
+            state["rollback_llm_env"] = args.llm_env
         store(directory, state)
     elif args.cmd == "end-rollback":
         state = load(directory)
         state.pop("rollback_in_progress", None)
+        state.pop("rollback_llm_env", None)
         store(directory, state)
     elif args.cmd == "rolled-back":
         state = load(directory)

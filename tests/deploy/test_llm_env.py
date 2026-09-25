@@ -104,8 +104,13 @@ class InstallLlmEnvTest(unittest.TestCase):
             "HLM_LLM_BUDGET_DAY_USD=10",
             "HLM_LLM_BUDGET_MONTH_USD=60",
             "HLM_LLM_JOB_CALL_CAP=20",
+            # D-111/D-116: the release marker (the post-cutover check expects the R3 manifest)
+            "HLM_ENV_RELEASE=r3",
         ):
             self.assertIn(line + "\n", content)
+        # D-116: R3 ships without the query rewrite and the per-source cap
+        self.assertNotIn("\nHLM_QUERY_REWRITE=", content)
+        self.assertNotIn("\nHLM_RETRIEVAL_SOURCE_CAP=", content)
         self.assertNotIn("HLM_LIBRARIAN_ENABLED=false", content)
         self.assertNotIn(OTHER, content, "only the profile's key variable is read")
         self.assertTrue(content.endswith("# END llm.env (install_llm_env.sh)\n"))
