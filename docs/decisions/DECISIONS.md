@@ -334,3 +334,25 @@ D-124 | 2026-09-25 | ACCEPTED | **R3 (805f4cd) shows no retrieval regression: th
 - B: hit@5 .625, evidence R@5 .451, L2 .556, stale-first 6/16.
 - Pooled .643; Turkish 17/36; English 28/36; every category Δ 0.0.
 The top-5 ids and titles are identical per question for 100/100 A and 80/80 B questions. Query p95 was 142/170 ms on a loaded host with one shared api (latency is gated separately in the VM rehearsal). Data: docs/private/realdata-{yt,hlmemo}/results-r3-release/.
+D-125 | 2026-09-25 | ACCEPTED (orchestrator; retrospective asked by the owner) | **Retrospective and course correction.** Why the project ran long:
+1. The core premise error (multi-statement items where the research report specified atomic L1 facts) was found only after three librarian builds (D-103/D-117). A ceiling experiment after v1 would have saved about 3 days.
+2. The review process could not converge: dual adversarial reviews gated on "no open HIGH", with no threat model, severity rubric or round cap until D-114. The query rewrite took 8 rounds, and its hardening erased its value (+8.3 → +1.8, then shelved).
+3. Enterprise-grade guarantees on a single-user system (124 decisions; every feature must satisfy replay, locks, observer, policy, events, TTL and budget).
+4. Too many parallel workstreams (5–6): merge churn, host contention, DB footguns, credit exhaustion.
+5. The wrong regime was measured: long imported docs instead of agents writing short memories; D-118 came after four failures.
+The core server works and safety never broke. The waste was direction, not effort.
+**Now:**
+- (a) Only 2 active workstreams: the R3 release (rehearsal → prod per D-123), and D-118 finishing its current fix round plus ONE verification, then an owner risk decision.
+- (b) STOPPED: post-hoc librarian quality work (v3/B-real tuning); the librarian stays an observer and question generator. Rewrite and renditions stay shelved.
+- (c) After R3, in order:
+  1. Dogfood HLMemo for this project's own memory.
+  2. R4 = a MINIMAL port of the D-118 write-time updates onto main, not the whole v3/B-real/pilot stack.
+  3. Tooling hardening T, before R4: threat-modelled, at most 2 rounds.
+  4. The real HLMemo self-migration (the first Phase 5 step), supervised by the owner.
+  5. Re-scope Phase 3/4 with a simplification review of which guarantees a personal system needs.
+**Working rules, effective now:**
+- ceiling-first: at most a 1-day oracle/prototype before any LLM-quality build;
+- dual review only for one-way doors (data, security, release), with the threat model and severity rubric written first, at most 2 rounds, then an explicit owner accept/reject on the residual; a HIGH requires a reproducing test;
+- at most 2–3 parallel workstreams, finish before starting;
+- timeboxes with owner checkpoints.
+The CLAUDE.md working agreement is to be updated when the owner confirms.
