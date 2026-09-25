@@ -70,6 +70,8 @@ Owner framing: the librarian's gradual supervised learning (observe → apply) h
 
 - **2026-09-26 NEW GOAL (D-130, owner): the RESEARCH LIBRARIAN.** Memory Map + multi-query + an LLM-to-LLM answer with primary/related source handles. It is read-only. The release self-certifies once the D-130 Production-Ready gate passes on the REAL migrated memory. Running: W-A migrates HLMemo into prod project `hlmemo` (dry-run first, then my go); W-B runs the ceiling prototype V0–V3 on B-dev (≤ $3, 1-day timebox). The D-118 full suite is finishing (then parked). CLAUDE.md now carries the D-125/D-130 rules.
 
+- **2026-09-26 ~01:45 OVERNIGHT (D-133): the owner is asleep; autonomous work toward the D-130 gate.** Plan: W-B result → Memory Map (tree + L2 summaries) → research tool in the server → gate on a dev replica of the migrated memory (sealed B + fresh blind questions) → if it passes: VM rehearsal, a fresh snapshot, self-certified prod release. Dev spend ≤ $6 tonight. Morning report in Turkish with measured results.
+
 ## GOAL (D-051/D-058) — active
 Phases 2-5 per docs/decisions/PHASE2-4-ROADMAP.md → gates → incremental releases → final acceptance (HLMemo self-migration, then the corpus-A project) → delete local dev stack + lima VMs.
 State 2026-09-23 night: **R1 is LIVE in production** (ee6ce9c, D-068): D-055 retrieval, W0a access hardening (ops over SSH, closed registration), W2a librarian foundation (DISABLED). Owner device id 21 `cemals-mb-pro-3` (hlmemo:write); the three CLIs point to production; the repo hlm.toml points to production, project hlmemo. **Dogfood D1 starts in the next chat** (a restart is needed so the MCP connection uses device 21).

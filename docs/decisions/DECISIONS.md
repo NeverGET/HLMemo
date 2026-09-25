@@ -427,3 +427,16 @@ D-132 | 2026-09-26 | ACCEPTED | **HLMemo's own memory is migrated into prod proj
 2. The approved import (scratchpad/wa/apply.sh, 22:11:27–22:13:04Z): markdown 511 new, context 1 new, automemory 40 new = **552 new; 0 changed, 0 closed, 0 rejected**. The 208-file set was gitleaks-clean and contained no docs/private, deploy/.local or secrets. It is one item more than the dry run, because STATUS and DECISIONS gained sections after the dry run.
 Right afterwards: 464 embeds queued and 517 observer librarian jobs queued; spend today $0.03 against caps of 1/2/10.
 The subagent's auto-mode permission check had refused these prod writes twice. The owner's grant applied to the main session only, so it was not routed around. This memory is the REAL data on which the D-130 Production-Ready gate will be measured.
+D-133 | 2026-09-26 | ACCEPTED (owner: "continue until it works as intended"; the owner is asleep, the orchestrator runs autonomously) | **Overnight autonomous plan toward the D-130 Production-Ready gate: the research librarian plus the Memory Map with L2 summaries.** The target is the full memory system of the research report (L2 topic summaries = the "summarising" layer), working as the owner described: a refined LLM-to-LLM answer plus primary and related source handles.
+**Steps, in order:**
+1. Pick the loop design from the W-B ceiling prototype.
+2. Memory Map per project: a deterministic source/section tree plus short LLM summaries per file and topic cluster (report §D, L2; RAPTOR-lite, bounded, cached, refreshed on writes). Summarising the whole HLMemo memory once is cheap (~355k input tokens).
+3. A server tool (read-only, caller's capabilities, per-task fallback hook, spend guard) returning {answer, primary[], related[], abstain}, with deterministic citation checks.
+4. Measure the gate on an exact dev replica of the migrated prod memory, same importer and sources. Questions: the SEALED B hold-out plus a fresh question set about the recent decisions, written blind by an independent agent.
+5. If the gate passes: a light VM rehearsal, then a fresh Hostinger snapshot of VM 2002259 only, then a self-certified prod release (D-130). If it fails: record exactly what fails and why.
+**Budget:** tonight's dev LLM spend is ≤ $6 in total, so that ≥ $9 of the shared balance always stays available to prod. Prod runs on its own key with caps 1/2/10.
+**Rules (D-125):**
+- at most 2–3 workstreams;
+- a dual review only for the read-path scope/privacy;
+- every decision recorded here;
+- no prod writes beyond a gated release.
