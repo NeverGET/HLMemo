@@ -47,6 +47,11 @@ History (append-only):
 | corpus_a | 23 | 2026-09-25 | D-104 pilot A-oracle (CEILING, not a quality claim): A0 + oracle close of the labelled stale children | 16e0a2d | 167eda1cdb15 | 0.728 | 0.0 | - | False | True |
 | corpus_a | 24 | 2026-09-25 | D-104 pilot A-v3: A0 + librarian v3 C2 (TEMPORAL+CLOSE), assistant, approve-all x1 — PARTIAL: OpenRouter credits exhausted (HTTP 402) after 1103/1564 corpus-A child-subject review jobs; corpus B unreviewed; 0 closes | c794456 | d59f361ac718 | 0.750 | 0.011948 | - | False | False |
 | corpus_a | 25 | 2026-09-25 | D-104 pilot B-oracle (CEILING, not a quality claim): span-bound revision of the labelled stale spans | 16e0a2d | 3407072c7eb9 | 0.793 | 0.0 | - | False | True |
+| corpus_a | 26 | 2026-09-25 | R3 final candidate 63bc041, flags off | 63bc041 | 4acb7b8a8d0a | 0.793 | 0.0 | - | False | True |
+| corpus_a | 27 | 2026-09-25 | R3 final 63bc041 query rewrite ON (mask-and-translate), branch weight 1.0, paced prewarm | 63bc041 | c6beb4175aa0 | 0.815 | 8.41e-05 | - | False | True |
+| corpus_a | 28 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 1.0, paced prewarm, replicate | 63bc041 | c6beb4175aa0 | 0.826 | 8.41e-05 | - | False | True |
+| corpus_a | 29 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.7, paced prewarm | 63bc041 | 7c5255420f64 | 0.804 | 8.41e-05 | - | False | True |
+| corpus_a | 30 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.5, paced prewarm | 63bc041 | 0491a1718a03 | 0.783 | 8.41e-05 | - | False | True |
 | corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
@@ -72,6 +77,11 @@ History (append-only):
 | corpus_b_dev | 23 | 2026-09-25 | D-104 pilot A-oracle (CEILING, not a quality claim): A0 + oracle close of the labelled stale children | 16e0a2d | 167eda1cdb15 | 0.361 | 0.0 | - | False | True |
 | corpus_b_dev | 24 | 2026-09-25 | D-104 pilot A-v3: A0 + librarian v3 C2 (TEMPORAL+CLOSE), assistant, approve-all x1 — PARTIAL: OpenRouter credits exhausted (HTTP 402) after 1103/1564 corpus-A child-subject review jobs; corpus B unreviewed; 0 closes | c794456 | d59f361ac718 | 0.326 | 0.011948 | - | False | False |
 | corpus_b_dev | 25 | 2026-09-25 | D-104 pilot B-oracle (CEILING, not a quality claim): span-bound revision of the labelled stale spans | 16e0a2d | 3407072c7eb9 | 0.458 | 0.0 | - | False | True |
+| corpus_b_dev | 26 | 2026-09-25 | R3 final candidate 63bc041, flags off | 63bc041 | 4acb7b8a8d0a | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 27 | 2026-09-25 | R3 final 63bc041 query rewrite ON (mask-and-translate), branch weight 1.0, paced prewarm | 63bc041 | c6beb4175aa0 | 0.465 | 8.41e-05 | - | False | True |
+| corpus_b_dev | 28 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 1.0, paced prewarm, replicate | 63bc041 | c6beb4175aa0 | 0.465 | 8.41e-05 | - | False | True |
+| corpus_b_dev | 29 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.7, paced prewarm | 63bc041 | 7c5255420f64 | 0.465 | 8.41e-05 | - | False | True |
+| corpus_b_dev | 30 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.5, paced prewarm | 63bc041 | 0491a1718a03 | 0.438 | 8.41e-05 | - | False | True |
 
 ## Librarian: bench_v2 (score = macro mean of per-task mean scores, %)
 
