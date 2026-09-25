@@ -1,0 +1,59 @@
+# 2026-09-25T17:20:13Z §9.1 drill (b): restore the VM from the pre-deploy snapshot (taken 13:42:20Z, R2 + owner caps, right before the first R3 deploy) = the Hostinger VPS snapshot analog (D-123)
+time="2026-09-25T20:20:15+03:00" level=info msg="The instance hlm-2604 has shut down"
+disk + vz-efi restored (APFS clone)
+start rc=0
+re-pinned SHA256:uGVxTqfruFFZW4MklVZR+dMDU/YxA7c86zDWUSuopDw (keyscan == guest key via limactl shell)
+/ready 200; stop -> ready 13 s; clock host 17:20:26 vm 17:20:26
+{
+    "accepted": false,
+    "current_ref": "6902f91e7a79",
+    "env_backups": {},
+    "previous_dump": "/var/backups/hlmemo/pre-upgrade/3535bcc9bf66-2026-09-25T004818Z-HGUfCm.dump",
+    "previous_image": "hlmemo:3535bcc9bf66",
+    "previous_image_id": "sha256:e1f22c62e1d4a246464e88c962feba10fe93",
+    "previous_ref": "3535bcc9bf66",
+    "retired_backups": []
+}
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:41 llm.env
+HLM_FALLBACK_PROFILE=openrouter
+HLM_LLM_BUDGET_HOUR_USD=1
+HLM_LLM_BUDGET_DAY_USD=2
+HLM_LLM_BUDGET_MONTH_USD=10
+no dockerd drop-in (as before the workaround)
+hlmemo-prod-api-1 hlmemo:6902f91e7a79 Up 21 seconds (healthy)
+hlmemo-prod-librarian-1 hlmemo:6902f91e7a79 Up 21 seconds (healthy)
+hlmemo-prod-worker-1 hlmemo:6902f91e7a79 Up 21 seconds (healthy)
+hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 21 seconds (healthy)
+hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 21 seconds (healthy)
+0
+checkout 6902f91e7a79; api image revision 6902f91e7a79; llm.env=present; release marker: none
+RESULT librarian PASS llm.env=present enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna
+   slug    | count 
+-----------+-------
+ r3-base   |   248
+ r3-load   |   163
+ rk-main   |    46
+ rk-secret |     2
+ rk-shell  |     6
+(5 rows)
+
+       alembic        | max_event 
+----------------------+-----------
+ 0008_librarian_tasks |      1843
+(1 row)
+
+# remote gates on the restored R2 (--librarian --no-drill)
+GATE                   RESULT DETAIL
+health-ready           PASS  /health=200 /ready=200
+unknown-path-404       PASS  status=404
+tls-issuer             PASS  internal CA as requested (rehearsal): CN=Caddy Local Authority - ECC Intermediate
+postgres-closed        PASS  tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+probe                  PASS  smoke + write/read marker gates-a-20260925T172044Z-8264
+routes                 PASS  RESULT routes PASS base=https://localhost:19443 failures=0
+hlm-cli                PASS  init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-10471
+wan-latency            PASS  n=20 errors=0 p50=16ms p95=41ms max=51ms (ceiling p95<=3000ms)
+risk-check             PASS  verdict=warn judged=true judge=ok reason=- warnings=1 candidates=1
+librarian              PASS  v1133 1 job(s) done in 10.0s; role=observer outcome=annotated; mutations signal_upsert=1 links/closes=0; version_signals=yes; audit proposals=0 (none), applied=0
+backup-restore         SKIP  --no-drill
+total 24s (gates 24s); log: /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260925T172044Z.log
+RESULT PASS
