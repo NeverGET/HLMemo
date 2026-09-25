@@ -141,3 +141,22 @@ Measures: A/B stale-first, G-E-W2b per category, G3 (≤1 pt drop), G4/G-L3 (p95
 - Otherwise the owner chooses the architecture.
 Consults: docs/consults/68-*.
 D-105 | 2026-09-25 | ACCEPTED (orchestrator) | **Librarian v3 is code-complete and review-closed (wf-librarian-v3 e9b5508), but held OFF main until R3 is released.** All 9 findings of critical review 66 are fixed, each with a regression test that fails on 0757c4b: D-101 double veto, close linearization for every segment type, the future cut aligned with the link start, per-question reversal with a dependency refusal, source/code_refs kept on CLOSE/REOPEN, cross-project export masking with an audited opt-in, `--out` created 0600/O_EXCL/O_NOFOLLOW, budget hints only on incomplete pairs, and the section pool cut after cosine ordering. Routine check 69: OK with no new defect. G-LIVE-B with all flags passes 3 reps × luna/deepseek/chain ($0.20). Reason for holding: D-099 scopes R3 to J+F+pivot-s1, and v3's always-on instrumentation changes the write path and the event payloads. v3 merges into main after the R3 prod deploy, with every flag default off. It remains the librarian code for the D-104 pilot's "A-v3" arm. Consult: docs/consults/69-*.
+D-106 | 2026-09-25 | ACCEPTED (orchestrator, after dual review 70 — the 5th rewrite round) | **The query rewrite becomes MASK-AND-TRANSLATE: protected tokens never reach the model, so they cannot be changed and cannot leak.** Review 70 (both reviewers FIX-NEEDED) again found accepted rewrites that change commands, operators, quotes and technical words (`git add .`→`git add`, `&&`→`||`, `false`→`true`, `main`→`master`, `"prod db"`→`"prod new db"`), plus send-gate misses (`ÖZEL=hunter2`, `"pin": "1234"`, `Mein Passwort …`, `p a r o l a hunter2`, `passw0rd hunter2`, bare `hunter2`). Validating free LLM output after the fact is an open-ended game.
+**New design:**
+1. Tokenize the query. A token is TRANSLATABLE only if it is a word of the query's source language (bundled TR/DE lists, ASCII-folded, TR suffix stripping) AND NOT an English word, a CLI head, a code-ish token, punctuation/operator, number, or quote/backtick content. Every other token is replaced by a placeholder ⟦Pn⟧, and contiguous protected runs, quote spans and command spans are masked whole.
+2. Only the masked text goes to the provider.
+3. The model must return English containing every placeholder exactly once and in order. Otherwise the rewrite is rejected.
+4. The server re-inserts the protected tokens verbatim.
+By construction, protected tokens and any non-dictionary string (including bare secrets like `hunter2`) never leave the server and cannot be altered. The send gate stays in front of it as defence in depth:
+- credential lexicon incl. DE stems, with leetspeak and letter-spacing normalisation;
+- Unicode and quoted assignment keys;
+- PIN keyword, Luhn-valid card numbers, IBAN;
+- URLs;
+- high-entropy tokens.
+**Release wiring (D-099):** `deploy/llm.env.example` and install_llm_env set `HLM_QUERY_REWRITE=true`, and a post-deploy status check asserts the flag is live.
+**Verification:**
+- Property tests over generated queries: (a) the provider payload contains only source-language dictionary words, placeholders and the fixed prompt; (b) the output equals the model text with every protected token restored verbatim.
+- All earlier reviewer counterexamples as regression tests.
+- Acceptance and the hold-out re-measured on the final code.
+- Release-gating dual review scoped to these two properties and the send gate.
+Residual (documented): a dictionary word that doubles as an identifier (`worker`, `query`) may be translated. It is harmless, because the original query is always searched as well and the English branch only adds candidates.
