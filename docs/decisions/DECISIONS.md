@@ -444,3 +444,28 @@ D-134 | 2026-09-26 | ACCEPTED | **D-118 write-time supersession is fully gated o
 D-135 | 2026-09-26 | ACCEPTED (orchestrator) | **The PR-gate question set is ready.** 60 questions were written BLIND by an independent agent from the migrated knowledge files only (no src/eval/prototype access). Location: docs/private/realdata-hlmemo/pr-gate/questions.jsonl (gitignored). Categories: recent 25, temporal 10 (the gold is the CURRENT state, with superseded sources noted), procedure 10, multi-hop 5, unanswerable 10. Languages: en 30, tr 25, tr-ascii 5. Each question carries gold_answer, gold_sources anchors and must_mention facts.
 The final gate uses this set PLUS the sealed B hold-out.
 Replica rule: the dev replica mirrors the CURRENT tree (all migrated sources, including D-132/D-133 and MIGRATION-HLMEMO.md). Prod memory is refreshed by an incremental `hlm import` (--keep-missing; dogfooding keeps it current) before the final prod certification sample.
+D-136 | 2026-09-26 | ACCEPTED (orchestrator, overnight D-133) | **W-B ceiling: the map-guided research loop is close to the gate, so it gets built. Gate v1 pins the judge and the rubric.** B-dev: 72 questions, sealed B never opened; replica `hlm_research_b` reproduces R3 exactly; spend $1.46.
+| Variant | Correct (flash judge) | Abstain | Faithful | Source recall | p95 | $/q |
+|---|---|---|---|---|---|---|
+| V0 single query | – | – | – | .451 | – | – |
+| V1 W2e synthesis | .250 | 1.00 | .93 (judge) | .521 | 2.3 s | – |
+| V2 loop, no map | .611 | – | – | .632 | – | – |
+| **V3 loop + 3k map** | **.778** | 1.00 | .78 quote / .95 judge | .708 | 9.3 s | .0019 |
+| V5 (+refine, answer prompt v2) | .72–.76 | .875–1.00 | .93–.95 | .70 (.771 with a 6k map) | ~11–12 s | .002–.003 |
+- **The map is the lever:** it adds +.17 correct and takes incorrect answers from .069 to 0, mainly through better queries.
+- **Dominant failure:** INCOMPLETE answers (a secondary gold detail is dropped) even though the evidence was retrieved (9–10/72). Next: retrieval misses (4–6/72) cap source recall at ≤ .82.
+- **Judge sensitivity:** deepseek-v4-pro scores the same answers far lower (V3 .583), and the two judges agree on .746.
+**Build (R4 core), from main:** a read-only tool `memory.ask`.
+- **Flow:** plan (map + question) → 3–5 queries + ≤6 map sections → fuse → drill ≤12 (chunk handles) → answer. It adds a COMPLETENESS pass (checking every retrieved gold-candidate fact against the draft) and one refinement round only when it abstains or is unsure. At most 4–5 LLM calls.
+- **Answer contract:** {answer in the caller's language, confidence, primary ≤3 [{handle, path, quote}], related ≤5 [{handle, path}], abstained}. A deterministic quote/literal check with normalised numerals.
+- **Memory Map per project:** about 6k tokens. It holds the path tree, item handles with chunk counts, headings and decision rows as `vN.M`, and git subjects, spread across large documents. It also carries an **L2 summary** for each file or topic cluster: LLM-written, cached, refreshed asynchronously when its items change (report §D L2, the "summarising" layer).
+- **Runtime:** caller capabilities, privacy precheck, spend guard, per-task fallback `research`.
+**Gate v1 (pinned before the sealed run):**
+- judge = deepseek-v4-pro, an independent family and the strict one;
+- correct = every must_mention fact present and no contradicting claim;
+- source recall = cited sources contain the gold facts: the exact gold anchor OR a judge-verified restatement;
+- the sets are the 60-question PR set plus the sealed B;
+- the thresholds of D-130 stand.
+Workstreams:
+- an implementer, with no hold-out access;
+- an evaluator on B-dev who reports aggregate failure classes back (no question text).
