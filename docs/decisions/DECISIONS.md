@@ -329,3 +329,8 @@ D-123 | 2026-09-25 | ACCEPTED (owner) | **D-122 option (b) accepted: R3 ships be
 4. Prod: take a Hostinger snapshot of VM 2002259 ONLY (the other VPSs are never touched), pause the backup timer, deploy attended (D-108/D-119 order), run the remote gates and the cutover check, run the e2e re-check, resume the timer.
 5. Any failure: script rollback first; if that fails, restore the snapshot.
 The review-77 findings are an accepted residual for R3 only and are listed for workstream T.
+D-124 | 2026-09-25 | ACCEPTED | **R3 (805f4cd) shows no retrieval regression: the D-116 criterion 1 PASS.** Pinned git-archive, prod-rule import, budget 3000, drill-top 5, with no librarian and no rewrite ($0). Every metric equals the D-090/D-087 base exactly:
+- A: hit@5 .793, MRR .660, L2 .772, temporal L2 .40, stale-first 8/15, negative AUC .792.
+- B: hit@5 .625, evidence R@5 .451, L2 .556, stale-first 6/16.
+- Pooled .643; Turkish 17/36; English 28/36; every category Δ 0.0.
+The top-5 ids and titles are identical per question for 100/100 A and 80/80 B questions. Query p95 was 142/170 ms on a loaded host with one shared api (latency is gated separately in the VM rehearsal). Data: docs/private/realdata-{yt,hlmemo}/results-r3-release/.
