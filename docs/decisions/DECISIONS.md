@@ -378,3 +378,10 @@ D-127 | 2026-09-25 | ACCEPTED (owner waiver) | **The R3 VM rehearsal passed ever
 - Docker Hub, ghcr and Hugging Face must be reachable from the VPS; every deploy re-downloads the model.
 - The Hostinger snapshot of VM 2002259 only.
 - The backup timer is paused during the attended deploy.
+D-128 | 2026-09-26 | ACCEPTED | **Prod pre-deploy state for R3.** The owner edited /etc/hlmemo/llm.env on the VPS (D-121), and it was verified without printing secrets:
+- The OPENROUTER_API_KEY sha256 prefix 32fe76f56a2b equals /etc/hlmemo/openrouter-prod.key, so production now uses its own key ($50/month key limit).
+- The caps are HOUR 1 / DAY 2 / MONTH 10 with DISABLED=false; the running api reports MONTH=10.
+- Only api and librarian were recreated; `/ready` returned 200 after about 60 s, and all services are healthy.
+- The old-key llm.env.bak-* on the VPS still contains the dev key. The owner may delete it after R3.
+Network: registry-1.docker.io and ghcr.io answer (401, the auth challenge), and huggingface.co answers 200. No HLMemo backup timer exists on the VPS (only dpkg's), so there is nothing to pause.
+The Hostinger snapshot of VM 2002259 was started (action 116674684). It was the first snapshot on this VPS; no prior snapshot existed, so nothing was overwritten.
