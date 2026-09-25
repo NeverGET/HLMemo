@@ -160,3 +160,17 @@ By construction, protected tokens and any non-dictionary string (including bare 
 - Acceptance and the hold-out re-measured on the final code.
 - Release-gating dual review scoped to these two properties and the send gate.
 Residual (documented): a dictionary word that doubles as an identifier (`worker`, `query`) may be translated. It is harmless, because the original query is always searched as well and the English branch only adds candidates.
+D-107 | 2026-09-25 | ACCEPTED (orchestrator) | **Interim R3 re-measure on 97344eb (D-102 allow-list guard) FAILS D-099 criterion 1, and it does not ship.** Paced prewarm, prod-rule import, D-094 fallback chain; 2 runs.
+| Criterion | Result | vs D-090 |
+|---|---|---|
+| Turkish top-5 | 21/36 (exactly at the bar) | 26/36 |
+| English new misses | 0 | — |
+| Pooled W-E | +3.4 / +5.2 | +8.3 |
+| Worst category | A fact/config −4.6 in both runs (FAIL) | — |
+| Stale-first | +1 in each run | — |
+Every hit lost vs D-090 comes from guard rejections ("protected token": 13/8 on A, 6/5 on B; "unchanged": 2–3 per corpus); the credential send gate cost none. Production-relevant finding: a burst of ~50 non-English queries times out in the rewrite queue (2 in flight, deadline counted from enqueue), those local timeouts OPEN the provider breaker, and rewrites stay disabled for ~60 s. Fixes are folded into the D-106 round:
+- queue/admission timeouts never trip the breaker;
+- early `unavailable` when the queue wait would exceed the deadline;
+- configurable concurrency, default 4;
+- a tunable `HLM_QUERY_REWRITE_BRANCH_WEIGHT` (default 1.0) so the English branch's RRF weight can be tested at 0.5–0.8 against the q002-type rank loss.
+The final gate is the re-measure on the D-106 code. Leaderboard eval-r3-rewrite merged (interim labels).
