@@ -265,3 +265,17 @@ D-116 | 2026-09-25 | ACCEPTED (owner) | **R3 ships WITHOUT the query rewrite, an
 | B-real | 8/15 | 6/16 | ±0.0 |
 | B-oracle | 0/15 | 0/16 | +0.3 |
 Only 2 revisions were applied, neither on a labelled stale pair, and both were judged wrong by a blind judge (0/2). Upstream, v3 finalised only 9 (A) / 5 (B) partial supersedes. Outcomes of the A stale pairs: 6 judged none, 4 never candidates, 2 proposed (1 rejected by `replacement_in_judged_statement`), 1 time-rejected, 2 with no stale item. D-113 puts 3/14 A and 7/19 B stale items out of scope (historical kinds or decision records). Spend $0.45. **This is the 4th librarian attempt that does not move stale-first. The mechanism (B-oracle 0/15) works, but the librarian does not find or judge the pairs.** Next: an offline diagnosis of the "judged none" and "never candidate" pairs from the v3 export, before any new build.
+D-117 | 2026-09-25 | ACCEPTED (orchestrator; direction decision to the owner) | **B-real diagnosis: the post-hoc pairwise librarian cannot fix stale-first on long imported documents at the D-100/D-101 safety level.**
+**Dominant cause:** relate reads only the start of each item (3,000 characters of the subject, 1,500 of each candidate), while the stale or current statement often sits beyond that (items of 2.8k–38k characters). Both labelled statements were visible in only 5/16 A pairs and 6/21 B pairs. A-pair classes:
+- 6 statement not visible;
+- 3 never candidates (same-project cap of 8, counterpart at rank 11–50; one is top-5 by vector similarity alone);
+- 1 doc_chunk↔episode never paired;
+- 1 correct partial supersede wrongly rejected by the 2-word quote rule of `replacement_in_judged_statement`;
+- 1 correct partial supersede rejected by the D-100 time rule (item-level dates not bound to the statement);
+- 1 bare contradiction on another statement;
+- 2 with no stale item.
+**Hypothesis tests** (luna, $0.02):
+- a similarity-centred statement window: 0/6;
+- a per-statement prompt: 0/6;
+- even ORACLE windows centred on the labelled statements: conflicts found in 9/12 calls, but only 2/6 pairs became correct partial supersedes and 1/6 survived the guards (no direction evidence, or judged compatible).
+Estimated gain from statement-level relate + fixing the quote rule + a guaranteed candidate slot for vector-only hits: about 2–4 A pairs. That still misses ≤4/15 unless the direction rules are relaxed, which trades against safety. Directions for the owner are listed in the next decision.
