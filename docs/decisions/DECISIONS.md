@@ -295,3 +295,12 @@ The imported legacy documents that the hold-out measures stay a Phase 3 (consoli
 - a small synthetic benchmark of client-LLM behaviour: given the query results and a new fact, does the client fill `updates` correctly (precision/recall)?
 - the stale-first metric for this regime, on a synthetic write-sequence set.
 **Builds on:** wf-b-real (ed8deda), which stacks on wf-librarian-v3. The stack merges after R3 (R4).
+D-119 | 2026-09-25 | ACCEPTED (orchestrator, after release-gating review 75) | **The release tooling gets crash-safety before R3. Several of these defects date from R1/R2 and were never triggered.** Review 75 of r3-tooling @ 3b2ce64: both reviewers DO-NOT-MERGE, with 6 HIGH findings (several reproduced in the harness):
+1. The "previous env" snapshot can capture the on-disk R3 env while the containers still run R2, so a rollback would start R2 with R3-only profiles.
+2. A same-ref deploy rerun rewrites the rollback tuple to R3→R3 and deletes the R2 env snapshot.
+3. The env install runs outside the deploy lock, so api and librarian can end on different env releases.
+4. **(pre-existing)** A killed destructive DB restore re-snapshots the half-restored DB on retry.
+5. **(pre-existing)** `--accept-release` passes while a rollback is in progress and deletes the backups.
+6. **(pre-existing)** A deploy killed between stack start and the state publish cannot converge.
+3 MEDIUM findings: the manifest checks presence rather than exact values or api==librarian equality; an unknown label gets the interim pass; secret-bearing snapshot files can be orphaned after a crash.
+All are fixed on r3-tooling, each with fault-injection tests (kill or interrupt at the exact step, then assert convergence), before R3 proceeds. The R3 flow is unchanged otherwise: merge → LLM-free retrieval re-check → push → VM rehearsal (including a rollback drill) → prod per D-099/D-116.
