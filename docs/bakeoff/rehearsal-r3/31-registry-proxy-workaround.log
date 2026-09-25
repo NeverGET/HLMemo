@@ -1,0 +1,14 @@
+# 2026-09-25T17:18:08Z ENVIRONMENT WORKAROUND (VM only, not release tooling): the Mac has no IPv4 path to Docker Hub (curl -4 registry-1.docker.io times out; IPv6 works, 401 in 0.5 s).
+# host: python3 scripts/connect_proxy.py 3128 127.0.0.1 (CONNECT pass-through, allow-list = Docker Hub + ghcr hosts); VM dockerd: HTTPS_PROXY=http://host.lima.internal:3128 via a systemd drop-in, removed after the drills.
+dockerd https proxy: http://host.lima.internal:3128
+/ready 200 after dockerd restart
+hlmemo-prod-worker-1 Up 4 seconds (health: starting)
+hlmemo-prod-librarian-1 Up 4 seconds (health: starting)
+hlmemo-prod-api-1 Up 4 seconds (health: starting)
+hlmemo-prod-caddy-1 Up 4 seconds (health: starting)
+hlmemo-prod-db-1 Up 4 seconds (health: starting)
+docker.io/pgvector/pgvector:0.8.6-pg17
+docker.io/library/caddy:2.11.2-alpine
+registry-ok
+checkout 6902f91e7a79; api image revision 6902f91e7a79; llm.env=present; release marker: none
+RESULT librarian PASS llm.env=present enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna

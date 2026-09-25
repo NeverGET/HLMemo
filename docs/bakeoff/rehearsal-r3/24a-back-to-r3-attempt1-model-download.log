@@ -1,0 +1,32 @@
+# 2026-09-25T17:21:37Z §9.2 back to R3 (final state). The restored snapshot has no dockerd proxy drop-in, and IPv4 to Docker Hub is still down: re-apply the VM-only registry workaround (see 31-...)
+dockerd https proxy: http://host.lima.internal:3128
+/ready 200 (R2) after dockerd restart
+# deploy R3 (Order B: R2 env installed; the image is rebuilt, the snapshot predates it)
+deploy rc=1 in 503 s
+llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f91e7a79
+ Image hlmemo:805f4cd2955b Building 
+ Image hlmemo:805f4cd2955b Building 
+ Image hlmemo:805f4cd2955b Building 
+488.9 RuntimeError: Task error: File reconstruction error: CAS Client Error: Request middleware error: error sending request for url (https://cas-server.xethub.hf.co/v2/reconstructions/cdcc2007f06a6d9d22da75bcd7e7f294c6ea)
+target worker: failed to solve: process "/bin/sh -c set -eu\nmkdir -p /app/models\nif [ \"$BAKE_MODELS\" = \"1\" ]; then\n  /app/.venv/bin/python - <<'PY'\nfrom pathlib import Path\nfrom hlmemo.core.embedder import download_model, model_hashes\nd = download_model(\"/app/models/multilingual-e5-small\")\nlock = {\n    line.split(\":\", 1)[0].strip(): line.split(\"sha256:\", 1)[1].split()[0]\n    for line in Path(\"models.lock\").read_text().splitlines()\n    if \": sha256:\" in line\n}\nbad = {k: v for k, v in model_hashes(d).items() if lock.get(k) != v}\nif bad:\n    raise SystemExit(f\"baked model differs from models.lock: {bad}\")\nprint(f\"baked {d}: hashes match models.lock\")\nPY\n  rm -rf /app/models/*/.cache\nfi\n" did not complete successfully: exit code: 1
+Deployment failed before writers stopped; previous stack remains running.
+# install the R3 env under the lock
+install_llm_env (remote): the deployed release predates R3; deploy R3 first, then install its llm.env (D-108 Order B); nothing changed
+install rc=3
+checkout 6902f91e7a79; api image revision 6902f91e7a79; llm.env=present; release marker: none
+{'current_ref': '6902f91e7a79', 'previous_ref': '3535bcc9bf66', 'previous_llm_env': None, 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': ['/etc/hlmemo/llm.env.release-6902f91e7a79']}
+# remote gates after the FAILED final deploy: the VM still runs R2 (6902f91), so these gates (drill ON) ran against R2
+GATE                   RESULT DETAIL
+health-ready           PASS  /health=200 /ready=200
+unknown-path-404       PASS  status=404
+tls-issuer             PASS  internal CA as requested (rehearsal): CN=Caddy Local Authority - ECC Intermediate
+postgres-closed        PASS  tcp localhost:5432 closed at guest 192.168.5.15 (rehearsal: probed inside the VM); host-listeners=0 db-published=none
+probe                  PASS  smoke + write/read marker gates-a-20260925T173022Z-11185
+routes                 PASS  RESULT routes PASS base=https://localhost:19443 failures=0
+hlm-cli                PASS  init/register-refused/ops-mint+login/query/close/whoami/revoke --self as gates-cli-25540
+wan-latency            PASS  n=20 errors=0 p50=15ms p95=45ms max=52ms (ceiling p95<=3000ms)
+risk-check             PASS  verdict=warn judged=true judge=ok reason=- warnings=1 candidates=1
+librarian              PASS  v1136 1 job(s) done in 12.0s; role=observer outcome=annotated; mutations signal_upsert=1 links/closes=0; version_signals=yes; audit proposals=0 (none), applied=0
+backup-restore         PASS  backup hlmemo-2026-09-25T173047Z-0cMq7J.dump -> restore 16s; marker A survives, post-backup marker B gone
+total 51s (gates 51s); log: /Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/logs/remote_gates-20260925T173022Z.log
+RESULT PASS
