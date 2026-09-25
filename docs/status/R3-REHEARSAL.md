@@ -1,6 +1,6 @@
 # R3 VM rehearsal — checklist and results (D-099 criterion 2, as amended by D-116/D-123)
 
-Status: **PHASE 2 PAUSED at a safe point, 2026-09-25 ~14:12Z (owner leaving; the Mac may sleep).** Resume at §5 (see "PAUSE" below). Target: **R3 = main `805f4cd2955b83c258678cf901a32a605ea88f9c`** (pushed), i.e. J (D-096) + F (D-098) + the
+Status: **PHASE 2 resumed 17:00Z (see RESUME below).** Target: **R3 = main `805f4cd2955b83c258678cf901a32a605ea88f9c`** (pushed), i.e. J (D-096) + F (D-098) + the
 env-aware release tooling (D-111/D-119, merged as-is per D-123). **The query rewrite is SHELVED (D-116): rewrite and per-source cap
 stay OFF/absent**; slice 2 renditions absent. Baseline: R2 `6902f91e7a79aab3ff4791ae443d7371b7cca5d7`.
 VM: lima `hlm-2604` (vz, aarch64, Ubuntu 26.04, 2 vCPU / 8 GiB, 7913 MiB visible), state dir `deploy/.local/127.0.0.1-2223`,
@@ -170,9 +170,9 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
   r3-base, r3-load, rk-main, gates-probe. → 16-observer.log
 
 ### §8 Drill (a): script rollback R3 → R2, then roll forward (all R3 measurements are recorded first: the rollback restores the pre-R3 dump)
-- [ ] 8.1 Poller; `PATH="$S/bin:$PATH" bash deploy/scripts/deploy.sh --rollback hlm-deploy` (NO manual env change) → "Rollback validated …",
+- [x] 8.1 Poller; `PATH="$S/bin:$PATH" bash deploy/scripts/deploy.sh --rollback hlm-deploy` (NO manual env change) → "Rollback validated …",
   the env restore, "Rollback complete: 6902f91… is running again"; downtime. → 21-rollback.log
-- [ ] 8.2 R2 healthy: release-state (current 6902f91, pair consumed), api label 6902f91, `/etc/hlmemo/llm.env` has no HLM_ENV_RELEASE
+- [x] 8.2 R2 healthy: release-state (current 6902f91, pair consumed), api label 6902f91, `/etc/hlmemo/llm.env` has no HLM_ENV_RELEASE
   marker and fallback `openrouter` (the R2 env with the §0.4 caps), `$SC/libcheck.sh` (R2's own check) PASS, project counts = §0.5,
   `remote_gates.sh --url $URL --state $S --insecure --librarian --no-drill` all PASS. → 21b-r2-after-rollback.log
 - [ ] 8.3 Roll forward: `deploy.sh hlm-deploy "$SHA"` (interim PASS) → `install_llm_env.sh --state $S` (R3 PASS) → libcheck `--release r3` →
@@ -207,6 +207,15 @@ Sanity first: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/ssh_config
 - **Background jobs:** all killed (G-LIVE-B, monitors, caffeinate). No deploy, rollback or install was running.
 - **On resume:** start `caffeinate` again and check the clock (host sleep skews the VM clock; restart the VM + re-pin if it is off by more than 2 s). Then re-run §5.3 G-LIVE-B, §5.4 G-LIVE-D, §5.2 gate-release and §6 G-L3 (quiet host only), §7, §8, §9, §10.
 - **Spend so far:** VM ledger $0.7296 (PHASE 1 $0.5492 + §3/§4 $0.1804) + G-LIVE-B partial (< $0.03, est.) ≈ **$0.76 of $3**.
+
+### RESUME 2026-09-25 17:00Z
+- 30-resume.log: caffeinate on. The VM clock was **9,703 s behind** (the Mac slept ~2.7 h; chrony still said 0.0005 s). Restarted the VM (R3 stays deployed), host key re-pinned (`SHA256:OpIj6nDT…`), clock in sync, `libcheck --release r3` PASS.
+- §5.3 G-LIVE-B re-run from the start and §5.4 G-LIVE-D (own DB `hlm_r3reh_live`) started in the background at 17:01Z.
+- §7 observer check #1 (16-observer-1.log, since BASE_EVENT 1843: R3 cutover, env switch, 11 gates, 320 risk_checks): librarian events 3, all `observer`; ops = 2 `signal_upsert` + 1 none; links_by_librarian 0, versions_by_librarian 0, versions superseded/closed 0/0, links 0, batches decided/applied 0/45; audit applied 0 for r3-base (224 open proposals), r3-load, rk-main (3 open), gates-probe → **PASS**. A second check follows G-L3 on the final state.
+- **§8.1 drill (a) script rollback: PASS** (21-rollback.log). `deploy.sh --rollback hlm-deploy` with NO manual env change: "Rollback validated: 805f4cd… -> 6902f91…", **`llm.env: restored /etc/hlmemo/llm.env from llm.env.release-6902f91…`**, R2 stack started, "Rollback complete", both secret-bearing env copies deleted from `pending_cleanup`; rc 0; **downtime 11.3 s**. The current DB was saved to `/var/backups/hlmemo/daily/…` (the review-77 residual "daily rotation can delete the rollback safety dump" is visible in this path; nothing was rotated).
+- **§8.2 R2 healthy: PASS** (21b): release-state current 6902f91, `rolled_back_from` 805f4cd, pair consumed; api image = R2's id; llm.env = the R2 env (no `HLM_ENV_RELEASE`, fallback `openrouter`, caps 1/2/10 as snapshotted); R2's own check PASS; data = the pre-upgrade dump (max event 1843; r3-base 248, r3-load 163, rk-main 46, rk-shell 6, rk-secret 2 = the §0.5 baseline); remote gates 10/10 PASS (drill skipped; risk-check judged=true).
+- **§8.3 roll-forward, attempt 1 (17:03Z): failed SAFELY, environment issue.** `deploy.sh hlm-deploy 805f4cd…` recorded the R2 env for rollback, then `dc pull db caddy` could not resolve `pgvector/pgvector:0.8.6-pg17` (`dial tcp …:443: i/o timeout`) → "Deployment failed before writers stopped; previous stack remains running", rc 1; R2 kept serving, the env copy was queued in `pending_cleanup`; `install_llm_env.sh` then refused correctly ("the deployed release predates R3 … nothing changed", rc 3). Cause: **the owner's network currently has no IPv4 path to Docker Hub** (every registry-1.docker.io IPv4 address times out from the Mac as well; the Mac reaches it over IPv6, 401 in 0.5 s; the lima VM is IPv4-only; OpenRouter and GitHub are fine from the VM). The runner pulls db/caddy unconditionally and builds with `--pull`, so a deploy needs the registry even when every image is cached. Production (Vilnius VPS) has normal IPv4, but a Docker Hub outage would block a prod deploy or roll-forward the same (safe) way. The gate lines in 22-roll-forward.log therefore ran against **R2**, not R3.
+- Waiting for the IPv4 path, then: roll-forward retry → drill (b) → back to R3 → G-L3 → observer #2. gate-release runs as soon as the host is quiet.
 
 ## Review-77 residuals (D-122/D-123) — watched during PHASE 2
 | Residual | Hit? | Note |
