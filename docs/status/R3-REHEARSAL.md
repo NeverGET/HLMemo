@@ -9,6 +9,15 @@ Raw outputs, the isolated hlm config (tokens) and the R2/R3 source archives live
 
 Stop rule (D-099): any criterion below that misses → STOP, record the numbers here, report to the owner; no prod deploy.
 
+## Budget (coordinator, 2026-09-25 07:0xZ): ≤ $3 real provider spend for the WHOLE rehearsal
+The OpenRouter balance (~$19.8) is shared with PRODUCTION. Spent in PHASE 1: $0.5492 (the R2 backlog) → **$2.45 left for PHASE 2**.
+PHASE 2 estimate ≈ $1.0: G-L3's 200 writes as librarian jobs ~$0.3–0.5 (the whole R2 rehearsal: $0.64); G-LIVE-C on the VM 4 × 80 ~$0.18 (D-098: $0.175); G-LIVE-B 3 configs ~$0.1–0.3; G-LIVE-D ~$0.12 (R2: $0.115); gates and rewrites: cents.
+Guards: (a) VM: after EVERY `install_llm_env.sh` (§2.1, §8.1, §8.4) and before containers are (re)created: `$VSSH "sed -i 's/^HLM_LLM_BUDGET_DAY_USD=.*/HLM_LLM_BUDGET_DAY_USD=2.2/' /etc/hlmemo/llm.env"`. This is a rehearsal-only hand edit, as R2's DAY=2; the UTC-day window already holds the $0.549. §4 runs before §5, so a tripped cap cannot turn G-LIVE-C into retrieval-only. (b) Host runs: G-LIVE-B `--max-usd 1.0`, G-LIVE-D `HLM_GLIVE_D_MAX_USD=0.5`. The host G-LIVE-C reference (§7.3) runs only if §4 fails or is ambiguous (`HLM_GLIVE_C_MAX_USD=0.6`). (c) After every paid step, add its real cost to the tally: VM = `SELECT round(sum(cost_usd),4) FROM llm_calls WHERE created_at > '<step start>'`; host = the run's SUMMARY cost. **STOP and report at a cumulative $2.70.**
+
+| Step | Real $ | Cumulative $ |
+|---|---|---|
+| PHASE 1 R2 backlog (import 247 + seeds, 345 jobs) | 0.5492 | 0.5492 |
+
 ## D-099 criterion 2 — results
 
 | # | Item | Bound | Measured | Result | Evidence |
@@ -35,7 +44,9 @@ Stop rule (D-099): any criterion below that misses → STOP, record the numbers 
 - [x] Seeded on R2 (so R3 reads R2-written data): G-L3 project `r3-load` (4 × 40 items, as R2 08a); G-LIVE-C world (projects rk-main/rk-shell/rk-secret + hlm-global, devices rk-loader id 34 / rk-reader id 35, the pinned 50-entry risk library via MCP); devices r3-base-mac 32, r3-load-mac 33 (tokens only in `$R3/cfg`, 0600).
 - [x] Harness written and smoke-tested on R2: `scripts/libcheck.sh` (the runner's librarian check on demand: PASS on R2), `observer.sql`, `gl3_vm_r3.py`, `glive_c_vm.py`, `preseed.py` (+ R2 helpers sampler/analyze/poller/downtime/vmsql/snap/backlog).
 - [x] Host: own template DB `hlm_r3reh_world` with the G3 world pre-loaded (main code; the loader is identical at pivot-s1-r3), for gate-release clones.
-- [ ] The R2 librarian (concurrency 1) is draining the import/seed backlog: 301 jobs at 00:52Z, 232 at 01:13Z (~2.5 jobs/min, ~$0.2 so far; ETA ~02:45Z). It keeps running unattended; §0.7 checks it and takes the snapshot.
+- [x] The R2 librarian (concurrency 1) drained the whole import/seed backlog by 01:56Z: 345 librarian_write jobs done, 0 failed; 1,066 provider calls, all `ok` (place 343 + relate 668 on luna, relate_verify 55 on openrouter), **$0.5492**. The librarian was NOT stopped: nothing was left to spend. Drained R2 state: 1,060 signal_upsert, 0 links/versions by the librarian, 0 of 45 batches decided/applied, versions superseded/closed 0 (00-phase1.log).
+- [x] **R2-state snapshot** (07:04Z, VM stopped): APFS clones `~/.lima/_snapshots/hlm-2604-r2state.{disk,vz-efi}`. Restarted: host key re-pinned the same way (`SHA256:kFVL8y3o…`), `/ready` 200 after ~3 s, `libcheck.sh` PASS (R2 reboot check).
+- [x] Found and fixed on restart: the VM clock was **46 min slow** (the host slept about 47 min; chrony only slews, "2763 s slow"), which would skew every host/VM time window (sampler vs gl3 timestamps, llm_calls windows). §0.8 now guards it.
 
 ### PHASE 1 findings that shape this procedure
 1. **R2 code cannot load the D-094 llm.env.** In the R2 image, `profile_chain` fails with `LlmConfigError: profile 'openrouter-glm53-flash' not found` and the risk judge chain is empty (checked in a throwaway container on the VM with the D-094 profile lines; evidence 00-phase1.log). The R2 librarian builds its provider at startup, so it would crash-loop. Consequences:
@@ -76,9 +87,8 @@ Sanity before anything: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/
 - [ ] 0.5 VM baseline (R2): `$VSSH cat /opt/hlmemo/release-state.json` (current_ref 6902f91), `$SC/libcheck.sh` PASS, `$OPS status` (librarian `ready=0` = drained), `$SC/vmsql.sh < $SC/snap.sql`; `BASE_EVENT=$(printf '\\pset tuples_only on\n\\pset format unaligned\nSELECT max(event_id) FROM events;\n' | $SC/vmsql.sh)`; project item counts:
   `printf "SELECT p.slug, count(*) FROM memory_versions v JOIN projects p ON p.project_id = v.project_id GROUP BY 1 ORDER BY 1;\n" | $SC/vmsql.sh` → 10-baseline-r2.log.
 - [ ] 0.6 `scp`-free: `$VSSH 'cat > /tmp/r3-backlog.sql' < $SC/backlog.sql` (sampler input).
-- [ ] 0.7 Restorable R2-state snapshot (lima vz has no `limactl snapshot`): once `$OPS status` shows librarian `ready=0 in_flight=0`,
-  `limactl stop hlm-2604 && mkdir -p ~/.lima/_snapshots && cp -c ~/.lima/hlm-2604/disk ~/.lima/_snapshots/hlm-2604-r2state.disk && cp -c ~/.lima/hlm-2604/vz-efi ~/.lima/_snapshots/hlm-2604-r2state.vz-efi && limactl start hlm-2604`
-  (APFS clone: instant, copy-on-write), then re-pin the host key exactly as in PHASE 1 (keyscan = guest key file via `limactl shell`), `curl --cacert $SSL_CERT_FILE $URL/ready`, `$SC/libcheck.sh` PASS (this is also an R2 reboot check). Restore = stop, `cp -c` both files back, start, re-pin. Re-run 0.5 after the restart.
+- [x] 0.7 Restorable R2-state snapshot: DONE in PHASE 1 (drained R2, 07:04Z) as APFS clones `~/.lima/_snapshots/hlm-2604-r2state.{disk,vz-efi}` (lima vz has no `limactl snapshot`). Restore only if the VM is broken beyond the rollback drill: `limactl stop hlm-2604 && cp -c ~/.lima/_snapshots/hlm-2604-r2state.disk ~/.lima/hlm-2604/disk && cp -c ~/.lima/_snapshots/hlm-2604-r2state.vz-efi ~/.lima/hlm-2604/vz-efi && limactl start hlm-2604`, then re-pin (keyscan = guest key file via `limactl shell`), `/ready`, `libcheck.sh`.
+- [ ] 0.8 Clock and sleep guard: `caffeinate -dimsu & CAF=$!` for the whole of PHASE 2 (kill at §9). Check `date -u` on host vs `$VSSH 'date -u; chronyc tracking | grep "System time"'`: offset ≤ 2 s. Else `$VSSH 'sudo chronyc makestep'`, or restart the VM (re-pin) before any timed step.
 
 ### §1 Upgrade R2 → R3, Order B (the R2 llm.env stays in place during the cutover)
 - [ ] 1.1 Downtime poller: `python3 $SC/poller.py $R3/poll-cutover.txt $SSL_CERT_FILE & POLL=$!`
@@ -119,9 +129,9 @@ Sanity before anything: `grep -q 127.0.0.1 $S/ssh_config && ! grep -q 153.92 $S/
 ### §7 Host gates on the final SHA (sequential; never during §5)
 - [ ] 7.1 DBs (own only): `psql $PG/postgres -c 'CREATE DATABASE hlm_r3reh_gate TEMPLATE hlm_r3reh_world' -c 'CREATE DATABASE hlm_r3reh_live'`.
 - [ ] 7.2 gate-release (quiet host, `quiet` before/after): `(cd $R3/r3src && HLM_MODELS_DIR=$REPO/models HLM_TEST_DSN=$PG/hlm_r3reh_gate HLM_QUERY_REWRITE=true make gate-release)` → G3 ≥ 0.90, G4 p95 ≤ 500 ms, local G-L3 (rewrite flag on, its LLM refused) p95 ≤ 500 ms both bodies. Then `DROP DATABASE hlm_r3reh_gate`. → 17-gate-release.log
-- [ ] 7.3 G-LIVE-C host reference (the D-098 procedure on the final code): `(cd $R3/r3src && HLM_GLIVE_C_WIRING=1 HLM_GLIVE_C_KEY_FILE=$REPO/.env HLM_GLIVE_C_OUT=$R3/glive-c-host HLM_MODELS_DIR=$REPO/models HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_wf_glive_c_wiring.py)` → PASS (D-098: catch 1.000, false-warn max .075). → 18-glive-c-host.log
-- [ ] 7.4 G-LIVE-B as in R2, on the D-094 mapping (finding 4): `(cd $R3/r3src && uv run --frozen python eval/live/run_w2b.py --profile openrouter-gpt6-luna --fallback openrouter-glm53-flash --chain openrouter-gpt6-luna+openrouter-glm53-flash --reps 3 --max-usd 4 --env-file $REPO/.env --out $R3/glive-b)` → Verdict PASS for luna, glm53-flash and the chain (placement ≥ .90, contradiction exact ≥ .90, false supersede ≤ .02, class bars). R2: luna / openrouter / chain luna+openrouter all PASS. → 19-glive-b.log
-- [ ] 7.5 G-LIVE-D as in R2 (profiles luna + openrouter = D-094 synthesis primary/fallback): `(cd $R3/r3src && HLM_GLIVE_D=1 HLM_W2E_ENV_FILE=$REPO/.env HLM_GLIVE_D_OUT=$R3/glive-d HLM_MODELS_DIR=$REPO/models HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_w2e_glive_d.py)` → PASS per profile (R2: luna +0.161 min, openrouter +0.194 min). → 20-glive-d.log
+- [ ] 7.3 (Only if §4 FAILs or is ambiguous: budget) G-LIVE-C host reference, the D-098 procedure on the final code, separating a deploy/wiring problem from a model one: `(cd $R3/r3src && HLM_GLIVE_C_MAX_USD=0.6 HLM_GLIVE_C_WIRING=1 HLM_GLIVE_C_KEY_FILE=$REPO/.env HLM_GLIVE_C_OUT=$R3/glive-c-host HLM_MODELS_DIR=$REPO/models HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_wf_glive_c_wiring.py)` → PASS (D-098: catch 1.000, false-warn max .075). → 18-glive-c-host.log
+- [ ] 7.4 G-LIVE-B as in R2, on the D-094 mapping (finding 4): `(cd $R3/r3src && uv run --frozen python eval/live/run_w2b.py --profile openrouter-gpt6-luna --fallback openrouter-glm53-flash --chain openrouter-gpt6-luna+openrouter-glm53-flash --reps 3 --max-usd 1.0 --env-file $REPO/.env --out $R3/glive-b)` → Verdict PASS for luna, glm53-flash and the chain (placement ≥ .90, contradiction exact ≥ .90, false supersede ≤ .02, class bars). R2: luna / openrouter / chain luna+openrouter all PASS. → 19-glive-b.log
+- [ ] 7.5 G-LIVE-D as in R2 (profiles luna + openrouter = D-094 synthesis primary/fallback): `(cd $R3/r3src && HLM_GLIVE_D_MAX_USD=0.5 HLM_GLIVE_D=1 HLM_W2E_ENV_FILE=$REPO/.env HLM_GLIVE_D_OUT=$R3/glive-d HLM_MODELS_DIR=$REPO/models HLM_TEST_DSN=$PG/hlm_r3reh_live uv run --frozen pytest -q -s -p no:cacheprovider tests/integration/test_w2e_glive_d.py)` → PASS per profile (R2: luna +0.161 min, openrouter +0.194 min). → 20-glive-d.log
 
 ### §8 Rollback drill R3 → R2 (W0a image rollback), then roll forward
 All R3 measurements are recorded first: the rollback restores the pre-R3 quiesced dump, so every R3-era write is discarded (by design, RUNBOOK).
