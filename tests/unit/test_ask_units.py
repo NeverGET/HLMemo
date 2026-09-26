@@ -2477,7 +2477,8 @@ async def test_d172_writer_past_its_timeout_falls_back_and_the_task_writes(write
     timeout_row = rows[0]
     assert timeout_row.outcome == "timeout" and timeout_row.cost_usd == timeout_row.reserved_usd > 0
     assert budget.spent == timeout_row.cost_usd + rows[1].cost_usd and budget.reserved == 0
-    assert r.provider.breaker("w-writer").failures == 1  # the writer's breaker, not the task's
+    # D-173: a cut at the writer timeout is tail latency, not a breaker failure
+    assert r.provider.breaker("w-writer").failures == 0 and r.provider.breaker("w-writer").state == "closed"
 
 
 async def test_d172_fast_writer_is_used_with_its_own_cap(writer_profiles) -> None:  # noqa: ANN001
@@ -2509,3 +2510,149 @@ async def test_d172_no_writer_profile_keeps_the_task_timeout(writer_profiles) ->
     assert run.cap_for("prose", rsv.ANSWER_CAP_S) == rsv.ANSWER_CAP_S
     # the task's attempt: the provider's timeout budgeted to the call's deadline, as before D-172
     assert seen[0][0] == "stub/t-task" and rsv.ANSWER_CAP_S - 1.0 < seen[0][1] <= rsv.ANSWER_CAP_S
+
+
+# --------------------------------------------------------------------------- D-173 cuts vs breaker
+class _ManualClock:
+    """The provider's clock with a hand-moved monotonic time (the breaker and the cut valve)."""
+
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    async def sleep(self, seconds: float) -> None:
+        return None
+
+    def monotonic(self) -> float:
+        return self.t
+
+
+def _cut_provider(behaviour: dict[str, object]):  # noqa: ANN202
+    """A research-like provider (threshold 3, latency policy) over [capped writer, task]:
+    ``behaviour["w"]`` is what the writer does next: ``"stall"`` (past its 0.05 s cap), ``503`` or
+    ``"connect_timeout"``; the task always answers. Returns (provider, chain, clock, models seen)."""
+    import asyncio
+    from dataclasses import replace
+
+    import httpx
+
+    from hlmemo.librarian.ledger import MemoryLedger
+    from hlmemo.librarian.provider import Provider
+
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body["model"])
+        if body["model"] == "stub/w-writer":
+            what = behaviour["w"]
+            if what == "stall":
+                await asyncio.sleep(1.0)
+            elif what == "connect_timeout":
+                raise httpx.ConnectTimeout("unreachable", request=request)
+            elif isinstance(what, int):
+                return httpx.Response(what, json={"error": {"code": what, "message": "down"}})
+        return httpx.Response(200, json=_chat(_JOB_OUT["prose"]))
+
+    clock = _ManualClock()
+    writer = replace(_task_profile(), name="w-writer", model_id="stub/w-writer", attempt_timeout_s=0.05)
+    provider = Provider(
+        [_task_profile()],
+        mode="live",
+        ledger=MemoryLedger(),
+        transport=httpx.MockTransport(handler),
+        clock=clock,
+        breaker_threshold=rs.BREAKER_THRESHOLD,
+        breaker_open_s=rs.BREAKER_OPEN_S,
+        budget_disabled=True,
+    )
+    return provider, [writer, _task_profile()], clock, seen
+
+
+async def _prose_call(provider, chain):  # noqa: ANN001, ANN202
+    import asyncio
+
+    spec = load_task("research", rs.PROSE_PROMPT_VERSION)
+    return await provider.complete(
+        spec,
+        "JOB: prose\nINPUT: {}",
+        chain=chain,
+        deadline=asyncio.get_running_loop().time() + 20,
+        attempt_policy="latency",
+    )
+
+
+async def test_d173_writer_cuts_below_the_valve_keep_the_breaker_closed() -> None:
+    from hlmemo.librarian import provider as pv
+
+    provider, chain, clock, seen = _cut_provider({"w": "stall"})
+    try:
+        for _ in range(pv.CUT_VALVE_COUNT - 1):  # well past BREAKER_THRESHOLD (3)
+            res = await _prose_call(provider, chain)
+            assert res.profile == "t-task"  # the task wrote
+            clock.t += 10.0
+        b = provider.breaker("w-writer")
+        assert b.state == "closed" and b.failures == 0
+        assert seen.count("stub/w-writer") == pv.CUT_VALVE_COUNT - 1  # the writer is still tried
+        rows = [(r.profile, r.outcome) for r in provider.ledger.rows]
+        assert rows.count(("w-writer", "timeout")) == pv.CUT_VALVE_COUNT - 1  # still ledgered as timeout
+        # older cuts leave the window: one more after it is the 1st of a new window, not the 8th
+        clock.t += pv.CUT_VALVE_WINDOW_S + 1
+        await _prose_call(provider, chain)
+        assert b.state == "closed"
+    finally:
+        await provider.aclose()
+
+
+async def test_d173_the_valve_opens_the_breaker_at_8_cuts_in_the_window(caplog) -> None:  # noqa: ANN001
+    from hlmemo.librarian import provider as pv
+
+    provider, chain, clock, seen = _cut_provider({"w": "stall"})
+    try:
+        for i in range(pv.CUT_VALVE_COUNT):
+            clock.t += 30.0 if i else 0.0  # 8 cuts within 3.5 min
+            await _prose_call(provider, chain)
+        b = provider.breaker("w-writer")
+        assert b.state == "open" and "w-writer" in caplog.text and "breaker opened" in caplog.text
+        n = seen.count("stub/w-writer")
+        res = await _prose_call(provider, chain)  # open: the writer is skipped, the task writes
+        assert res.profile == "t-task" and seen.count("stub/w-writer") == n
+        assert provider.ledger.rows[-2].outcome == "breaker_open"
+        # the half-open trial that is cut again re-opens it (a probe that did not answer in time)
+        clock.t += b.window_s + 1
+        await _prose_call(provider, chain)
+        assert (
+            seen.count("stub/w-writer") == n + 1 and b.state == "open" and b.window_s == 2 * rs.BREAKER_OPEN_S
+        )
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.parametrize("failure", [503, "connect_timeout"])
+async def test_d173_real_writer_failures_still_count(failure: object) -> None:
+    provider, chain, clock, seen = _cut_provider({"w": failure})
+    b = provider.breaker("w-writer")
+    try:
+        for i in range(rs.BREAKER_THRESHOLD):
+            assert (await _prose_call(provider, chain)).profile == "t-task"
+            assert b.failures == i + 1 or b.state == "open"
+        assert b.state == "open"  # 3 real failures open it, as before
+    finally:
+        await provider.aclose()
+
+
+async def test_d173_a_cut_neither_counts_nor_resets_the_failure_streak() -> None:
+    behaviour: dict[str, object] = {"w": 503}
+    provider, chain, clock, seen = _cut_provider(behaviour)
+    b = provider.breaker("w-writer")
+    try:
+        for _ in range(rs.BREAKER_THRESHOLD - 1):
+            await _prose_call(provider, chain)
+        assert (b.state, b.failures) == ("closed", 2)
+        behaviour["w"] = "stall"
+        await _prose_call(provider, chain)  # a cut: 2 stays 2 (no count, no reset)
+        assert (b.state, b.failures) == ("closed", 2)
+        behaviour["w"] = 503
+        await _prose_call(provider, chain)  # the 3rd REAL failure opens it
+        assert b.state == "open"
+    finally:
+        await provider.aclose()

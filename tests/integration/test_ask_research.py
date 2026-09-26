@@ -677,6 +677,9 @@ async def test_ask_prose_mode_slow_writer_times_out_and_the_task_writes(connect,
     )
     flags = out["meta"]["flags"]
     assert flags["writer_timeout"] is True and flags["writer_used"] == "stub-primary"
+    # D-173: the cut is tail latency, not a breaker failure of the writer
+    writer_breaker = r.provider.breaker("openrouter-glm5")
+    assert writer_breaker.state == "closed" and writer_breaker.failures == 0
     assert out["meta"]["writer_profile"] == "openrouter-glm5"  # configured; the task wrote this time
     assert [(request_job(b)[0], b["model"]) for b in llm.requests] == [
         ("plan", "stub/stub-primary"),

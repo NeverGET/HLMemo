@@ -33,7 +33,10 @@ Attempt policies (``complete(attempt_policy=)``):
   judge uses its own qualified fallback or none, D-071/D-094). When every attempted profile timed
   out the call raises ``DeadlineExceeded`` (the caller's ``timeout``), otherwise
   ``ProviderUnavailable``. Breaker failures are counted per PROFILE (``ChainBreakers`` is an API
-  caller's view of them), so a failing primary never suppresses a working fallback.
+  caller's view of them), so a failing primary never suppresses a working fallback. D-173: an
+  attempt CUT by its profile's per-role cap (``LlmProfile.attempt_timeout_s``: a read or wall-clock
+  timeout, not a connect timeout) is not a breaker failure (and no success); ``CUT_VALVE_COUNT``
+  cuts of one profile within ``CUT_VALVE_WINDOW_S`` open its breaker (logged).
 
 Every attempt writes exactly one ``llm_calls`` row. ``HLM_LLM_MODE`` selects live / record /
 replay (strict cassettes) / off. The raw provider response is never stored anywhere.
@@ -46,9 +49,11 @@ import contextlib
 import contextvars
 import hashlib
 import json
+import logging
 import re
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
@@ -82,6 +87,14 @@ from hlmemo.librarian.redact import Redactor
 
 BACKOFF_S = (1, 2, 4, 8)
 MAX_TRANSIENT_ATTEMPTS = 5
+#: D-173: an attempt CUT by its profile's per-role cap (``LlmProfile.attempt_timeout_s``, the research
+#: writer's timeout) is expected tail latency, not an outage: it never counts toward the breaker
+#: (nor resets it). The safety valve: this many cuts of one profile within the window open its
+#: breaker (a hard outage of that profile is still cut off)
+CUT_VALVE_COUNT = 8
+CUT_VALVE_WINDOW_S = 300.0
+
+log = logging.getLogger("hlmemo.librarian.provider")
 TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529})
 _FENCE = re.compile(r"^\s*```(?:json|JSON)?\s*|\s*```\s*$", re.S)
 
@@ -193,6 +206,10 @@ class Breaker:
         if self.failures >= self.threshold:
             self._open()
 
+    def trip(self) -> None:
+        """D-173: open now (the cut valve), whatever the consecutive-failure count."""
+        self._open()
+
     def _open(self) -> None:
         self.state = "open"
         self.open_until = self.clock.monotonic() + self.window_s
@@ -263,16 +280,18 @@ class LlmResult:
 
 
 class _Exhausted(Exception):
-    def __init__(self, reason: str, *, fatal: bool = False, timeout: bool = False) -> None:
+    def __init__(self, reason: str, *, fatal: bool = False, timeout: bool = False, cut: bool = False) -> None:
         super().__init__(reason)
         self.fatal = fatal
         self.timeout = timeout  # the profile's last attempt timed out (latency policy)
+        self.cut = cut  # D-173: ... cut by its profile's per-role cap (not a breaker failure)
 
 
 @dataclass(slots=True)
 class _Attempt:
     kind: str  # "response" | "transient" | "fatal"
     timeout: bool = False  # a transient that was an HTTP timeout
+    cut: bool = False  # D-173: a timeout of a capped profile's attempt (read or wall clock)
     content: str | None = None
     row: LedgerRow | None = None
     usage: dict[str, Any] | None = None
@@ -339,6 +358,8 @@ class Provider:
             "max_s": breaker_max_open_s,
         }
         self._breakers: dict[str, Breaker] = {}
+        #: D-173: the recent attempt-cap cuts per profile (monotonic times), for the valve
+        self._cuts: dict[str, deque[float]] = {}
         self._clients: dict[str, httpx.AsyncClient] = {}
 
     # ------------------------------------------------------------------ construction
@@ -397,6 +418,31 @@ class Provider:
         if b is None:
             b = self._breakers[profile] = Breaker(self.clock, **self._breaker_args)
         return b
+
+    def _cut(self, profile: str) -> None:
+        """D-173: one attempt of ``profile`` was cut by its attempt cap. Not a breaker failure and no
+        success either; a half-open trial that is cut did not prove the profile healthy (it
+        re-opens, as a failure would). ``CUT_VALVE_COUNT`` cuts within ``CUT_VALVE_WINDOW_S`` open
+        the breaker (logged): a hard outage of the profile is still cut off."""
+        breaker = self.breaker(profile)
+        if breaker.state == "half_open":
+            breaker.failure()
+            return
+        now = self.clock.monotonic()
+        cuts = self._cuts.setdefault(profile, deque())
+        cuts.append(now)
+        while cuts and cuts[0] < now - CUT_VALVE_WINDOW_S:
+            cuts.popleft()
+        if len(cuts) >= CUT_VALVE_COUNT:
+            log.warning(
+                "profile %s: %d attempt-cap cuts within %.0f s: breaker opened (%.0f s)",
+                profile,
+                len(cuts),
+                CUT_VALVE_WINDOW_S,
+                breaker.window_s,
+            )
+            cuts.clear()
+            breaker.trip()
 
     def breaker_state(self, task: str | None = None) -> str:
         """``closed`` unless every profile's breaker is open (``open``) or some are (``degraded``).
@@ -512,7 +558,10 @@ class Provider:
                     profile, task, user_redacted, job_id, validate, latency=latency, share=share
                 )
             except _Exhausted as exc:
-                breaker.failure()  # per PROFILE: a failing primary never closes the fallback's way
+                if exc.cut:
+                    self._cut(profile.name)  # D-173: tail latency, not an outage (the valve only)
+                else:
+                    breaker.failure()  # per PROFILE: a failing primary never closes the fallback's way
                 reasons.append(f"{profile.name}: {exc}")
                 timeouts_only = timeouts_only and exc.timeout
                 continue
@@ -583,7 +632,10 @@ class Provider:
                 profile, task, body, att_key, messages, params, job_id, legacy_key=key, share=share
             )
             if att.kind == "transient" and latency:  # no retry, no backoff: straight to the next profile
-                raise _Exhausted("transient failure (latency policy)", timeout=att.timeout)
+                reason = (
+                    "cut at the profile's attempt cap" if att.cut else "transient failure (latency policy)"
+                )
+                raise _Exhausted(reason, timeout=att.timeout, cut=att.cut)
             if att.kind == "transient":
                 transient += 1
                 if transient >= MAX_TRANSIENT_ATTEMPTS:
@@ -751,7 +803,7 @@ class Provider:
 
             await _finalize(abandoned())
             raise
-        except (httpx.TimeoutException, TimeoutError):
+        except (httpx.TimeoutException, TimeoutError) as exc:
             # unknown whether billed: charge the worst case
             await _finalize(self.budget.settle(call_id, None))
             await _finalize(
@@ -769,7 +821,12 @@ class Provider:
                     )
                 )
             )
-            return _Attempt("transient", timeout=True)
+            # D-173: a capped profile's read/wall-clock timeout is a cut; a connect or pool timeout
+            # (the endpoint unreachable) stays a real failure
+            cut = profile.attempt_timeout_s is not None and not isinstance(
+                exc, httpx.ConnectTimeout | httpx.PoolTimeout
+            )
+            return _Attempt("transient", timeout=True, cut=cut)
         except httpx.TransportError:
             # the request may have reached the provider: billing is uncertain -> worst case
             await _finalize(self.budget.settle(call_id, None))
