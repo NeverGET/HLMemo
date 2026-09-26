@@ -1214,3 +1214,20 @@ The chunks were rebuilt offline with the product chunker (all 134 cited windows 
 - (C) The D-118 writer-update port (the R4 plan) is for live memory.write use. It is not needed for the imported-doc evaluation, so it comes after.
 - (D) The query-time triage LLM only if (A)+(B) leave stale cases.
 A backfill on PROD data is a data change: review before the prod run (D-125). Dev measurement runs on the hlm_research_b replica only.
+D-185 | 2026-09-26 | ACCEPTED | **The temporal layer is built (wf-memory-ask da41a94 = explicit supersession links + excerpt status, superseder pull-in and context labels). End-to-end, luna's faithfulness improves; glm-5's raw scores swing, and adjudication decides the writer.**
+**Build:**
+- explicit links: `hlm links explicit`, evented and reversible. On the dev copy `hlm_research_b_tl` it wrote 4 links (PHASE0-SPEC chunks → the two merged draft consults). A precision check over 1,731 repo markdown files found only these. DECISIONS-internal rows are self-links in this corpus.
+- excerpt `status` and `context`, and pull-in of up to 2 superseders, on wf-memory-ask 82dcd97.
+- merged, with 772 unit / 63 integration tests green.
+**End-to-end on hlm_research_b_tl** (33 dev questions, per-question cap $0.05):
+| Metric | glm-5 (Z.AI, text) | luna | luna before (a0d91d0) |
+|---|---|---|---|
+| Correct (judge) | .68 | .72 | .68 |
+| Abstain (judge) | .375 | .875 | 1.00 |
+| Faithful (judge, item) | .626 (246 statements) | **.925** (93) | .878 |
+| Contradiction | .04 | .08 | .04 |
+| p95 | 22.8 s | 12.5 s | 11.5 s |
+| $/q | .016 | .003 | .004 |
+glm-5's "answered negatives" are premise corrections grounded in memory (no Redis name, only an LRU cache; Docker Compose, not Kubernetes; no Grafana, the latency gate is in remote_gates.sh). The strict abstain judge counts those as answers, so they go to D-168 adjudication.
+glm-5's raw scores swing between runs (817aff9: .84 / .853 / .875 against this run's .68 / .626 / .375) and its answers are very long. Only 1–2 questions per run show a superseded excerpt: the 4 links touch few questions.
+**Next:** blind codex adjudication of BOTH runs (correctness plus faithfulness, one mixed packet each); the writer is then decided on adjudicated numbers.
