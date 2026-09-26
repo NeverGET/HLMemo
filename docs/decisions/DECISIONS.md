@@ -596,3 +596,13 @@ D-147 | 2026-09-26 | ACCEPTED | **memory.ask is built on the server (wf-memory-a
 **Next, in parallel:**
 - a dev evaluation of the server build on the 34-question subset (≤ $0.40, summaries included);
 - dual review 79 against a written threat model T1–T6 (scope, privacy, mutation, spend, migration, output honesty), capped at 2 rounds.
+D-148 | 2026-09-26 | ACCEPTED (orchestrator) | **Review 79, round 1 of 2 on memory.ask: FIX-NEEDED, against the threat model.** Every finding was reproduced by the reviewers.
+| Threat | Severity | Finding |
+|---|---|---|
+| T1 | HIGH | The D-083 exclude isolation is missing from load_view, the privacy rechecks and the map_summary grouping, so an [A,T] item with T excluded leaks into A's map, prompts and summary. |
+| T2 | HIGH | The redactor misses secrets after JSON escaping, so text must be redacted before serialisation. |
+| T4 | HIGH | Per-question budget checks happen only before the logical call; retries and fallback exceed the $0.01 cap ($0.016 was observed). |
+| T4 | MEDIUM | map_summary never retries after a failure. |
+| T5 | HIGH | The new features default to ON, so an R3 env on this image silently enables memory.ask and summary spend. They must default OFF, and an R4 manifest must pin the flags, fallbacks and fingerprint. |
+| T6 | HIGH | The quote matcher's word-skipping fallback accepts a quote with its "not" removed (a negation flip). It must be a contiguous normalised match, with changes to negation or modality words rejected. |
+T3 (mutation) and the migration DDL had no findings. Round 2 is the last: a verification of these fixes only. After that, any residual goes to the owner, per D-125.
