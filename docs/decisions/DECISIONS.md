@@ -532,3 +532,11 @@ D-140 | 2026-09-26 | ACCEPTED (orchestrator) | **Offline diagnosis ($0): the jud
 - self-contained quotes that name their subject, with the heading or row key as a second quote;
 - the main fact first, and a re-quote attempt before any drop.
 The scorer's own quote/value check is NOT changed. It stays as pinned, and any change to it would need its own recorded decision.
+D-141 | 2026-09-26 | ACCEPTED (orchestrator; recorded BEFORE any final-gate run) | **V7 closes the claim-drop artefacts, and the scorer's deterministic check gets the SAME normalisation (a measurement-validity fix).** V7 = V6 + the D-140 fixes, on luna, on the fixed 34-question subset:
+| Variant | Correct | Faithful | Recall | Abstain | p95 | $/q | Claims dropped |
+|---|---|---|---|---|---|---|---|
+| V7 | .538 | .647 | .872 | .875 | 15.4 s | .0035 | 0 of 85 |
+| V6 | – | – | – | – | – | – | 15 of 94 |
+V7 matches V6-pro's correctness at luna cost and inside the latency limit.
+The pinned scorer still rejected 8 TRUE V7 claims for the very artefacts diagnosed in D-140: suffix 4, reformatted value 2, dash 1, markup 1. A faithfulness metric must measure entailment, not formatting, so the scorer's deterministic quote/value check now uses exactly the product's normalisation. The judge prompt, the judge model, the frozen key facts and all thresholds are unchanged. The decision is backed by the D-140 audit (29 of 33 drops were artefacts on true claims) and is fixed before the PR set or sealed B is touched.
+Remaining gap: 10 of 26 answerable questions still miss a key fact (8 of them the MAIN fact), with 2 retrieval misses and 0 contradictions. A $0 diagnosis now classifies whether the main fact was present in the evidence the answerer saw.
