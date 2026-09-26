@@ -1175,3 +1175,9 @@ Nothing tells the writer which excerpt is superseded. Every writer model must gu
 **Proposal to the owner (a strategic fork):**
 - (a) The next lever is the memory layer. Surface current/superseded status per excerpt (bi-temporal validity plus supersession links from D-118 and the librarian) and show it to the writer, then re-measure with both writers. This is the "Human-Like" core: knowing what is current.
 - (b) Or release with the conservative luna writer, which has fewer wrong facts, and accept the C2/C3 residuals explicitly.
+D-182 | 2026-09-26 | ACCEPTED (owner chose "bring in the temporal layer") | **Next phase: surface current / superseded status per excerpt in memory.ask. This is HLMemo's "Human-Like" core, and it comes before any release.**
+**Plan:**
+- (1) A free inventory of the temporal machinery on main and on the branches: the bi-temporal fields, D-118 write-time supersession (wf-write-updates), librarian contradiction/relate (wf-librarian-v3, wf-b-real), and what memory.ask's excerpts carry today. This includes how it can apply to IMPORTED documents, where supersession lives inside the text.
+- (2) A ceiling test before building: annotate the excerpts of the D-181 runs with current or superseded status, re-run both writers, and adjudicate contradictions.
+- (3) Build, measure with the full D-165/D-168 protocol plus the C1 rater, freeze, then run the final gate.
+The writer choice (luna vs glm-5) is re-decided after the temporal layer, because glm-5's extra wrong facts are mostly stale-as-current.
