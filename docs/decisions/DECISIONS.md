@@ -1197,3 +1197,20 @@ Grounded on main a76d8fe plus the branches:
 3. the chunk's own in-text date;
 4. a query-time "currency triage" LLM for conflicts among the shown excerpts, quote-validated and annotation-only.
 **Ceiling test first:** step (i) is free (was the superseder among the shown excerpts?); step (ii) uses oracle labels and re-runs both writers. Go if stale-as-current contradictions at least halve with C2 no lower.
+D-184 | 2026-09-26 | ACCEPTED | **Temporal ceiling check (free): the stale-as-current errors are fixable by EXPLICIT supersession links, a superseder pull-in and per-chunk context labels. The build starts.**
+The chunks were rebuilt offline with the product chunker (all 134 cited windows matched), and the excerpts the writer saw were reconstructed. The 8 C statements (817aff9 + a0d91d0) break down as:
+- **5 genuine stale-as-current.** In 3 of them the old fact comes from the SAME pre-merge draft `docs/consults/03-claude-phase0-spec.md`, which PHASE0-SPEC declares explicitly: "MERGED 2026-09-22 from docs/consults/03-claude-phase0-spec.md". Nothing records that as a link, and PHASE0-SPEC's header chunk was never shown.
+  - The superseding text reached the writer in 2 of 5 cases; the superseded source did in 5 of 5.
+  - 1 is explicit (D-026 "rather than MCPServer decorators", whose row never reached the writer), and 4 are implicit.
+- **3 are not stale:** an over-extension, a D-number cut at a chunk boundary, and a disputable label.
+- **Date cues are useless:** file commit days are the same day or even inverted.
+**Design:**
+- (A) **Explicit-supersession links**, deterministic and LLM-free. A pass over items finds explicit declarations: "MERGED … from <path>", "supersedes / replaces <path | D-id>", "Update (D-xxx)", "instead of", "no longer". It writes `supersedes` links through the product's link path, with props {by: "explicit", scope: whole|part, quote}, so they are evented, replayable and reversible. It runs at import and as a backfill command.
+- (B) **memory.ask:**
+  - each excerpt gets a status (current / superseded_by X [quote]) from live supersedes links;
+  - the superseder is pulled into the excerpt set;
+  - the writer prompt treats superseded excerpts as history;
+  - each chunk carries a read-time context label (the enclosing D-row id or heading and its in-text date), computed from the stored item body.
+- (C) The D-118 writer-update port (the R4 plan) is for live memory.write use. It is not needed for the imported-doc evaluation, so it comes after.
+- (D) The query-time triage LLM only if (A)+(B) leave stale cases.
+A backfill on PROD data is a data change: review before the prod run (D-125). Dev measurement runs on the hlm_research_b replica only.
