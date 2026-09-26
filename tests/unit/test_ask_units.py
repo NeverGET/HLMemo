@@ -4,6 +4,7 @@ quote check (TR numerals), the answer contract and the completeness-pass prompt 
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -1479,7 +1480,7 @@ def test_d162_fabricated_number_drops_only_its_sentence() -> None:
         "The retrieval p95 target is now 1.2 s; it was 1,6 s before (D-001). The owner decided it after R3."
     )
     assert v.answer == kept
-    assert v.confidence == "medium" and not v.main_dropped and v.polarity_flagged == 0
+    assert v.confidence == "medium" and not v.main_dropped
     main = v.kept[0]
     assert [h for h, _q in main.support] == ["v10.0", "v11.0"]  # both state its values
     assert main.support[0][1].startswith("D-004 | ACCEPTED | The retrieval p95 target is now 1.2 s")
@@ -1506,33 +1507,25 @@ def test_d162_literal_in_a_non_source_excerpt_is_kept_and_attributed_there() -> 
     assert v.answered and [c.state for c in v.claims] == ["kept", "kept"] and v.sources == ["v10.0"]
     first, second = v.kept
     assert [h for h, _q in first.support] == ["v13.0"] and "14 daily dumps" in first.support[0][1]
-    assert second.text == "The p95 target is 1.2 s." and [h for h, _q in second.support] == ["v10.0"]
-    assert "[v10.0]" not in v.answer and v.primary == ["v13.0", "v10.0"]
+    # D-165: the inline cite is a tie-break, not the pool: v11.0 states "p95 target" too (2nd source)
+    assert second.text == "The p95 target is 1.2 s." and [h for h, _q in second.support] == ["v10.0", "v11.0"]
+    assert "[v10.0]" not in v.answer and v.primary == ["v13.0", "v10.0", "v11.0"]
 
 
-def test_d162_t6_polarity_is_flagged_not_dropped() -> None:
-    """Review 79/80 T6 in the prose mode: the dropped "not" is caught against the best source line and
-    FLAGGED (the claim is kept, the confidence lowered); a faithful sentence carries no flag."""
+def test_d165_prose_has_no_polarity_flag() -> None:
+    """D-165: the prose mode no longer flags a polarity mismatch (the V16 audit found 6/6 flags false
+    positives): the sentence is kept and attributed to its best line, the confidence is untouched and
+    a claim carries no ``flags``. The claims/cite modes keep ``polarity_ok``."""
     shown = {"v40.0": _ex("v40.0", "The release gate is not enabled by default. It runs weekly, not daily.")}
     v = rs.validate_prose(_prose("The release gate is enabled by default.", ["v40.0"]), shown)
-    assert v.answered and v.answer == "The release gate is enabled by default."
-    assert [c.state for c in v.claims] == ["kept"] and v.kept[0].flags == ["polarity"]
+    assert v.answered and v.answer == "The release gate is enabled by default." and v.confidence == "high"
     assert v.kept[0].support == [("v40.0", "The release gate is not enabled by default.")]
-    assert v.polarity_flagged == 1 and v.confidence == "medium" and v.drop_reasons["literal"] == 0
     assert v.kept[0].out() == {
         "text": "The release gate is enabled by default.",
         "support": [{"handle": "v40.0", "quote": "The release gate is not enabled by default."}],
-        "flags": ["polarity"],
     }
-    ok = rs.validate_prose(
-        _prose("The release gate is not enabled by default; it runs weekly.", ["v40.0"]), shown
-    )
-    assert (
-        ok.answered
-        and ok.kept[0].flags == []
-        and "flags" not in ok.kept[0].out()
-        and ok.polarity_flagged == 0
-    )
+    assert not hasattr(v, "polarity_flagged") and not hasattr(v.kept[0], "flags")
+    assert not rs.polarity_ok("The release gate is enabled by default.", [shown["v40.0"].text])
 
 
 def test_d162_abstention_and_guard() -> None:
@@ -1644,7 +1637,164 @@ async def test_d162_prose_run_answers_and_sets_its_flags() -> None:
     run = _ScriptedRun({"prose": _prose(answer, ["v10.0"])}, select=False, mode="prose")
     v = await run.answer(list(EXS))
     assert run.steps == ["prose"] and run.shown_to["prose"] == [e.handle for e in EXS]
-    assert v.answered and v.answer == "The retrieval p95 target is now 1.2 s." and v.primary == ["v10.0"]
-    assert run.flags["dropped_literal"] == 1 and run.flags["polarity_flagged"] == 0
+    assert v.answered and v.answer == "The retrieval p95 target is now 1.2 s." and v.primary[0] == "v10.0"
+    assert run.flags["dropped_literal"] == 1 and "polarity_flagged" not in run.flags
+    # no embedder in this run (deps=None): literal + word attribution
+    assert (run.flags["attr_embed"], run.flags["attr_embedded"], run.sim) == ("off", 0, None)
     assert run.flags["dropped_claims"] == 1 and run.flags["main_dropped"] is False
     assert run.prose and not run.cite and not run.claims_mode
+
+
+# --------------------------------------------------------------------------- D-165 attribution
+#: a stub multilingual embedder: a text's vector is its bag of CONCEPTS, each reached by an EN and a
+#: TR word stem (a small uniform bias keeps every vector non-zero); rows are L2-normalised
+_CONCEPTS = {
+    "backup": 0, "yedek": 0, "nightly": 1, "gece": 1, "runs": 2, "çalış": 2,
+    "interface": 3, "arayüz": 3, "dark": 4, "karanlık": 4, "mode": 5, "mod": 5,
+}  # fmt: skip
+
+
+class _StubEmbedder:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[list[str]] = []
+        self.fail = fail
+
+    def embed_queries(self, texts: list[str]):  # noqa: ANN201
+        import numpy as np
+
+        self.calls.append(list(texts))
+        if self.fail:
+            raise RuntimeError("the embedder session is closed")
+        rows = []
+        for t in texts:
+            v = np.full(8, 0.01, dtype=np.float32)
+            for w in re.findall(r"\w+", t.casefold()):
+                for stem, i in _CONCEPTS.items():
+                    if w.startswith(stem):
+                        v[i] += 1.0
+            rows.append(v / np.linalg.norm(v))
+        return np.stack(rows)
+
+
+#: the EN excerpt that STATES the TR sentence below (no shared word, no literal), and a TR excerpt
+#: sharing one word with it ("gece") about something else, which the model named as its source
+TR_SHOWN = {
+    "v50.0": _ex(
+        "v50.0",
+        "## Backup\nThe backup job runs nightly and keeps fourteen daily dumps.\n"
+        "Restores are rehearsed monthly.",
+    ),
+    "v51.0": _ex("v51.0", "Gece modunda arayüz karanlık olur."),
+}
+TR_SENTENCE = "Yedekleme her gece çalışır."
+
+
+def test_d165_tr_sentence_is_attributed_to_the_en_excerpt_that_states_it() -> None:
+    emb = _StubEmbedder()
+    sim = rs.LineSim(emb.embed_queries)
+    v = rs.validate_prose(_prose(TR_SENTENCE, ["v51.0"]), TR_SHOWN, sim=sim)
+    assert v.answered and v.kept[0].support == [
+        ("v50.0", "The backup job runs nightly and keeps fourteen daily dumps.")
+    ]
+    assert v.primary == ["v50.0"] and v.related == ["v51.0"]
+    # ONE embedder call for the request: the sentence and the lines (≥ QUOTE_MIN_CHARS: not "## Backup"),
+    # sorted by length inside the call
+    assert len(emb.calls) == 1 and emb.calls[0] == sorted(emb.calls[0], key=len)
+    assert set(emb.calls[0]) == {
+        TR_SENTENCE,
+        "Gece modunda arayüz karanlık olur.",
+        "The backup job runs nightly and keeps fourteen daily dumps.",
+        "Restores are rehearsed monthly.",
+    }
+    assert (sim.state, sim.embedded, sim.wanted) == ("full", 4, 4)
+    # without the embedder (literals + words only) the one shared word and the source bonus win
+    lexical = rs.validate_prose(_prose(TR_SENTENCE, ["v51.0"]), TR_SHOWN)
+    assert [h for h, _q in lexical.kept[0].support] == ["v51.0"]
+
+
+def test_d165_literal_in_a_non_source_excerpt_outranks_shared_words() -> None:
+    shown = {
+        "v60.0": _ex("v60.0", "The nightly backup job keeps daily dumps of the database."),
+        "v61.0": _ex("v61.0", "Retention policy: 14 dumps are kept."),
+    }
+    v = rs.validate_prose(_prose("The nightly backup keeps 14 daily dumps.", ["v60.0"]), shown)
+    # v60.0 (the model's source) shares 5 words; v61.0 states the value: literals dominate
+    assert [h for h, _q in v.kept[0].support] == ["v61.0", "v60.0"]
+    assert v.kept[0].support[0][1] == "Retention policy: 14 dumps are kept." and v.primary[0] == "v61.0"
+    # the same with the stub embedder: the similarity never outweighs a stated value
+    sim = rs.LineSim(_StubEmbedder().embed_queries)
+    v2 = rs.validate_prose(_prose("The nightly backup keeps 14 daily dumps.", ["v60.0"]), shown, sim=sim)
+    assert [h for h, _q in v2.kept[0].support] == ["v61.0", "v60.0"]
+
+
+def test_d165_fallback_without_a_working_embedder_is_the_lexical_attribution() -> None:
+    answer = "The retrieval p95 target is now 1.2 s. The owner decided it after R3. " + TR_SENTENCE
+    shown = {**SHOWN, **TR_SHOWN}
+    lexical = rs.validate_prose(_prose(answer, ["v11.0", "v51.0"]), shown)
+    failing = _StubEmbedder(fail=True)
+    sim = rs.LineSim(failing.embed_queries)
+    broken = rs.validate_prose(_prose(answer, ["v11.0", "v51.0"]), shown, sim=sim)
+    assert len(failing.calls) == 1 and (sim.state, sim.embedded) == ("off", 0)
+    assert [c.support for c in broken.kept] == [c.support for c in lexical.kept]
+    assert broken.answer == lexical.answer and broken.primary == lexical.primary
+    assert [h for h, _q in lexical.kept[0].support] == ["v10.0", "v11.0"]  # the value first, no bonus win
+
+
+def test_d165_embedding_caps_budget_and_one_call_per_request() -> None:
+    emb = _StubEmbedder()
+    ticks = iter([0.0, 0.2, 2.0, 2.1])  # start, after batch 1, after batch 2 (over budget), end
+    sim = rs.LineSim(emb.embed_queries, budget_s=1.5, clock=lambda: next(ticks))
+    texts = [f"backup text number {i}" for i in range(rs.ATTR_TEXTS + 100)]
+    sim.prepare(texts)
+    # ≤ ATTR_BATCH texts per call; the budget is checked between calls; ≤ ATTR_TEXTS wanted
+    assert [len(c) for c in emb.calls] == [rs.ATTR_BATCH, rs.ATTR_BATCH]
+    assert (sim.state, sim.embedded, sim.wanted) == ("partial", 2 * rs.ATTR_BATCH, rs.ATTR_TEXTS)
+    assert sim.seconds == pytest.approx(2.1) and sim.get(texts[0]) is not None and sim.get(texts[40]) is None
+    sim.prepare(["something new"])  # once per request: later calls read the cache only
+    assert len(emb.calls) == 2 and sim.get("something new") is None
+    # the re-check (prose_check again, same sim) embeds nothing and attributes the same way
+    emb2 = _StubEmbedder()
+    sim2 = rs.LineSim(emb2.embed_queries)
+    first, _r = rs.prose_check([(TR_SENTENCE, False)], ["v51.0"], TR_SHOWN, sim2)
+    again, _r = rs.prose_check([(TR_SENTENCE, False)], ["v51.0"], TR_SHOWN, sim2)
+    assert len(emb2.calls) == 1 and first[0].support == again[0].support
+    assert [h for h, _q in again[0].support] == ["v50.0"]
+    # long texts are cut, lines per excerpt are capped
+    assert rs.LineSim.key("x " * 1000) == ("x " * 1000)[: rs.ATTR_TEXT_CHARS]
+    long_ex = {"v70.0": _ex("v70.0", "\n".join(f"Line {i} about backups." for i in range(100)))}
+    units = {"v70.0": rs._units(long_ex["v70.0"], {}), **{h: rs._units(e, {}) for h, e in TR_SHOWN.items()}}
+    lex = rs._Lexical({"v70.0": [], "v50.0": [], "v51.0": []}, {("v70.0", 7): 1.0, ("v70.0", 9): 2.0})
+    texts = rs._embed_order(["A sentence."], ["v51.0", "v70.0", "v50.0"], units, [lex])
+    assert len(texts) == 1 + rs.ATTR_LINES + 3 and len(set(texts)) == len(texts)
+    # the sentence's best line per excerpt first, then its other shared lines, then the rest round-robin
+    assert texts[:5] == [
+        "A sentence.",
+        "Line 9 about backups.",
+        "Line 7 about backups.",
+        "Gece modunda arayüz karanlık olur.",  # the model's source first in the round-robin
+        "Line 0 about backups.",
+    ]
+
+
+async def test_d165_prose_run_embeds_with_the_servers_embedder() -> None:
+    from types import SimpleNamespace
+
+    emb = _StubEmbedder()
+    run = _ScriptedRun({"prose": _prose(TR_SENTENCE, ["v51.0"])}, select=False, mode="prose")
+    run.deps = SimpleNamespace(embedder=emb)
+    v = await run.answer([*TR_SHOWN.values()])
+    assert v.answered and [h for h, _q in v.kept[0].support] == ["v50.0"]
+    assert run.sim is not None and len(emb.calls) == 1
+    assert (run.flags["attr_embed"], run.flags["attr_embedded"]) == ("full", 4)
+    assert run.flags["attr_embed_ms"] >= 0 and "polarity_flagged" not in run.flags
+    # too little time left: no embedding (literal + word attribution)
+    late = _ScriptedRun(
+        {"prose": _prose(TR_SENTENCE, ["v51.0"])},
+        select=False,
+        mode="prose",
+        time_s=rsv.RECHECK_RESERVE_S + rsv.ATTR_MIN_LEFT_S - 0.5,
+    )
+    late.deps = SimpleNamespace(embedder=_StubEmbedder())
+    lv = await late.answer([*TR_SHOWN.values()])
+    assert late.sim is None and late.flags["attr_embed"] == "off"
+    assert [h for h, _q in lv.kept[0].support] == ["v51.0"]

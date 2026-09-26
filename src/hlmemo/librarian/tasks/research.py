@@ -65,6 +65,7 @@ import contextlib
 import json
 import logging
 import re
+import time
 import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
@@ -73,6 +74,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import numpy as np
 
 from hlmemo.librarian import privacy
 from hlmemo.librarian.budget import Caps, DbBudget, NoBudget
@@ -774,22 +776,14 @@ class Claim:
     support: list[tuple[str, str]]  # (handle, verbatim span of that excerpt), 1..MAX_SUPPORT
     state: str  # kept | downgraded | dropped
     cited: list[str] = field(default_factory=list)  # every shown handle the model named for it
-    #: D-162 prose mode: doubts that do not drop the claim ("polarity": it may contradict its best
-    #: source line), and whether a line break followed it in the answer (kept when re-joined)
-    flags: list[str] = field(default_factory=list)
+    #: D-162 prose mode: whether a line break followed it in the answer (kept when re-joined)
     line_end: bool = False
 
     def draft(self) -> dict[str, Any]:
         return {"text": self.text, "support": [{"id": h, "quote": q} for h, q in self.support]}
 
     def out(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "text": self.text,
-            "support": [{"handle": h, "quote": q} for h, q in self.support],
-        }
-        if self.flags:
-            out["flags"] = list(self.flags)
-        return out
+        return {"text": self.text, "support": [{"handle": h, "quote": q} for h, q in self.support]}
 
 
 @dataclass(slots=True)
@@ -819,9 +813,8 @@ class Validated:
     # D-159: the handles the answer was written over when a select narrowed them (None: all shown);
     # the re-check verifies its sentences against these only
     written_over: list[str] | None = None
-    # D-162 prose mode: the kept claims flagged for polarity, and the model's valid ``sources`` (the
-    # re-check attributes the sentences again over the ones still citable)
-    polarity_flagged: int = 0
+    # D-162 prose mode: the model's valid ``sources`` (an attribution tie-break, D-165; the re-check
+    # attributes the sentences again over the excerpts still citable)
     sources: list[str] = field(default_factory=list)
 
     @property
@@ -1510,71 +1503,236 @@ def hard_literals(text: str, handles: Iterable[str] = ()) -> list[str]:
     return out
 
 
-def _attribute(
-    body: str,
-    lits: list[str],
-    preferred: list[str],
-    shown: dict[str, Excerpt],
-    hay_of: dict[str, str],
-    cache: dict[str, list[_Unit]],
-) -> tuple[list[tuple[str, str]], list[str]]:
-    """D-162: ``(support, polarity lines)`` of one kept sentence. The candidates are ``preferred``
-    (the handles it named, then the model's sources; none valid → every shown excerpt), plus any
-    other shown excerpt that states one of its hard literals the candidates lack. The ≤
-    ``PROSE_ATTRIBUTE`` candidates sharing the most hard literals with it, then content words (≥ 1
-    literal or ≥ 2 words), are its support, each with its best line (``_units``/``_display``; the
-    excerpt's first line when only its title shares). Sharing nothing, it is attributed to the first
-    candidate and no line is compared for polarity."""
-    pool = [h for h in dict.fromkeys(preferred) if h in shown] or list(shown)
-    if not pool:
-        return [], []
-    have = "\n".join(hay_of[h] for h in pool)
-    missing = [x for x in lits if not literal_supported(x, have)]
-    if missing:
-        pool += [h for h in shown if h not in pool and any(literal_supported(x, hay_of[h]) for x in missing)]
+# --------------------------------------------------------------------------- D-165 attribution
+#: D-165: the weights of one (sentence, excerpt line) match. A hard literal of the sentence that the
+#: EXCERPT states (its text, title or date) counts ``ATTR_DOC``, and ``ATTR_LIT`` more when the line
+#: itself states it; a content word of the sentence in the line (prefix-tolerant, ``_hits``) counts
+#: ``ATTR_WORD``; the multilingual similarity of the sentence and the line counts at most
+#: ``ATTR_EMB`` (relative: 1 for the sentence's most similar embedded line, 0 at or below the mean of
+#: its embedded lines). Literals dominate (one stated value outweighs four shared words), then words,
+#: then the embedding (at most two words' worth).
+ATTR_DOC, ATTR_LIT, ATTR_WORD, ATTR_EMB = 4.0, 3.0, 1.0, 2.0
+#: tie-break bonuses (never part of the minimum): an excerpt the sentence names inline ("[v12.3]"),
+#: one the model listed in its ``sources``
+ATTR_CITED, ATTR_SOURCE = 0.6, 0.3
+#: an excerpt supports a sentence from this score: a literal it states, two words, a word and a close
+#: line; the excerpt of the sentence's most similar line always qualifies
+ATTR_MIN = 2.0
+#: the embedding's cost caps: lines per excerpt, texts per request (the sentences first), characters
+#: per text, texts per embedder call, and the time budget (s) of all calls of one request
+ATTR_LINES, ATTR_TEXTS, ATTR_TEXT_CHARS, ATTR_BATCH, ATTR_EMBED_S = 60, 400, 300, 8, 1.5
+
+Embed = Callable[[list[str]], Any]
+_Key = tuple[str, int]  # (excerpt handle, index of its line in ``_units``)
+
+
+class LineSim:
+    """D-165: the multilingual similarity of answer sentences and excerpt lines, from the server's own
+    embedder (``embed``: texts -> L2-normalised rows, one per text; whatever model the server is
+    configured with, D-017). The texts of one request are embedded ONCE (the first ``prepare`` with
+    texts), in their order: deduplicated, each cut to ``ATTR_TEXT_CHARS``, ≤ ``ATTR_TEXTS``, in calls
+    of ≤ ``ATTR_BATCH`` texts (sorted by length: less padding) while the next call is expected to end
+    within ``budget_s``. A text left out (the cap, the budget, a failing embedder) has no similarity:
+    its lines are scored by literals and words alone. Later calls (the re-check) only read the cache.
+    ``state``: ``full`` (every wanted text embedded), ``partial`` or ``off``."""
+
+    def __init__(
+        self, embed: Embed, budget_s: float = ATTR_EMBED_S, clock: Callable[[], float] = time.perf_counter
+    ) -> None:
+        self._embed = embed
+        self._budget = budget_s
+        self._clock = clock
+        self._vec: dict[str, np.ndarray] = {}
+        self.prepared = False
+        self.state = "off"
+        self.wanted = 0
+        self.seconds = 0.0
+
+    @property
+    def embedded(self) -> int:
+        return len(self._vec)
+
+    @staticmethod
+    def key(text: str) -> str:
+        return " ".join(text.split())[:ATTR_TEXT_CHARS]
+
+    def get(self, text: str) -> np.ndarray | None:
+        return self._vec.get(self.key(text))
+
+    def prepare(self, texts: list[str]) -> None:
+        if self.prepared:
+            return
+        todo = list(dict.fromkeys(k for k in map(self.key, texts) if k))[:ATTR_TEXTS]
+        if not todo:
+            return
+        self.prepared, self.wanted = True, len(todo)
+        t0 = last = self._clock()
+        step = 0.0  # the longest call so far: the next one is expected to take as long
+        try:
+            for i in range(0, len(todo), ATTR_BATCH):
+                if i and last + step - t0 > self._budget:
+                    break
+                part = sorted(todo[i : i + ATTR_BATCH], key=len)
+                rows = np.asarray(self._embed(part), dtype=np.float32)
+                if rows.ndim != 2 or rows.shape[0] != len(part):
+                    raise ValueError(f"embedder returned shape {rows.shape} for {len(part)} texts")
+                self._vec.update(zip(part, rows, strict=True))
+                now = self._clock()
+                step, last = max(step, now - last), now
+        except Exception:  # noqa: BLE001 - an unavailable embedder: literal + word scoring (D-165)
+            log.warning("research attribution: the embedder failed; literal+word scoring", exc_info=True)
+        self.seconds = self._clock() - t0
+        self.state = "full" if self.embedded == len(todo) else "partial" if self.embedded else "off"
+
+
+def _embed_order(
+    bodies: list[str], order: list[str], units: dict[str, list[_Unit]], lexes: list[_Lexical]
+) -> list[str]:
+    """What one request embeds, most useful first (a time budget that runs out cuts the tail): the
+    sentences; then, for each sentence, each excerpt's best literal/word line (its excerpts by that
+    score, interleaved over the sentences: where the similarity decides between excerpts); then the
+    other lines sharing anything with a sentence; then the rest. Lines: ≤ ``ATTR_LINES`` per excerpt,
+    ≥ ``QUOTE_MIN_CHARS``; the later tiers round-robin over ``order`` (the model's sources first)."""
+
+    def ok(k: _Key) -> bool:
+        return k[1] < ATTR_LINES and len(units[k[0]][k[1]][0]) >= QUOTE_MIN_CHARS
+
+    rank = {h: i for i, h in enumerate(order)}
+    per: list[list[_Key]] = []
+    for lex in lexes:
+        best: dict[str, tuple[float, _Key]] = {}
+        for k, sc in lex.line.items():
+            if ok(k) and (k[0] not in best or sc > best[k[0]][0]):
+                best[k[0]] = (sc, k)
+        total = {h: sc + ATTR_DOC * len(lex.doc[h]) for h, (sc, _k) in best.items()}
+        per.append([best[h][1] for h in sorted(best, key=lambda h: (-total[h], rank.get(h, len(rank))))])
+    keys: list[_Key] = [
+        k for i in range(max(map(len, per), default=0)) for p in per if i < len(p) for k in p[i : i + 1]
+    ]
+    hot = {k for lex in lexes for k in lex.line if ok(k)}
+    for tier in (True, False):
+        lines = {
+            h: [(h, j) for j in range(min(len(units[h]), ATTR_LINES)) if ((h, j) in hot) is tier]
+            for h in order
+        }
+        for i in range(max((len(x) for x in lines.values()), default=0)):
+            keys.extend(lines[h][i] for h in order if i < len(lines[h]) and ok(lines[h][i]))
+    return [*bodies, *(units[h][j][0] for h, j in dict.fromkeys(keys))]
+
+
+class _Lines:
+    """The embedded lines of the shown excerpts (``_Key``) with their vectors."""
+
+    __slots__ = ("keys", "mat")
+
+    def __init__(self, sim: LineSim | None, units: dict[str, list[_Unit]]) -> None:
+        self.keys: list[_Key] = []
+        rows: list[np.ndarray] = []
+        if sim is not None:
+            for h, us in units.items():
+                for j, (u, _cw, _uh) in enumerate(us[:ATTR_LINES]):
+                    vec = sim.get(u)
+                    if vec is not None:
+                        self.keys.append((h, j))
+                        rows.append(vec)
+        self.mat = np.stack(rows) if rows else None
+
+    def relative(self, vec: np.ndarray | None) -> tuple[dict[_Key, float], str | None]:
+        """``(the relative similarity of each embedded line to a sentence, the excerpt of its most
+        similar line)``: 1 for that line, (cos - mean) / (top - mean) clipped to [0, 1] for the
+        others (the cosine range is the model's own; only the order within one sentence counts)."""
+        if vec is None or self.mat is None:
+            return {}, None
+        cos = self.mat @ vec
+        top = int(np.argmax(cos))
+        mean, span = float(cos.mean()), float(cos[top] - cos.mean())
+        rel = np.clip((cos - mean) / span, 0.0, 1.0) if span > 1e-6 else np.zeros_like(cos)
+        out = {k: float(x) for k, x in zip(self.keys, rel, strict=True)}
+        out[self.keys[top]] = 1.0
+        return out, self.keys[top][0]
+
+
+@dataclass(slots=True)
+class _Lexical:
+    """One kept sentence's literal and word evidence: ``doc`` = its hard literals each excerpt states
+    (text, title or date); ``line`` = ``ATTR_LIT`` × the literals a line states + ``ATTR_WORD`` × its
+    content words in the line (``_hits``), for every line that shares anything."""
+
+    doc: dict[str, list[str]]
+    line: dict[_Key, float]
+
+
+def _lexical(body: str, lits: list[str], units: dict[str, list[_Unit]], hay_of: dict[str, str]) -> _Lexical:
     words = _content(body)
-    ranked: list[tuple[tuple[int, int, int], int, str, str]] = []
-    for i, h in enumerate(pool):
-        here = [x for x in lits if literal_supported(x, hay_of[h])]
-        score, line = (0, 0), ""
-        for unit, cw, uhay in _units(shown[h], cache):
-            s = (sum(1 for x in here if literal_supported(x, uhay)), _hits(words, cw))
-            if s > score:
-                score, line = s, unit
-        ranked.append(((len(here), *score), i, h, line))
-    ranked.sort(key=lambda r: (-r[0][0], -r[0][1], -r[0][2], r[1]))
-    chosen = [r for r in ranked if r[0][0] >= 1 or r[0][2] >= 2][:PROSE_ATTRIBUTE]
-    if not chosen:
-        return [(pool[0], _cut(_first_line(shown[pool[0]])))], []
-    support: list[tuple[str, str]] = []
-    lines: list[str] = []
-    for (_n, in_line, hits), _i, h, line in chosen:
-        if line and (in_line >= 1 or hits >= 2):
-            support.append((h, _display(line, lits)))
-            lines.append(line)
-        else:
-            support.append((h, _cut(_first_line(shown[h]))))
-    return support, lines
+    doc = {h: [x for x in lits if literal_supported(x, hay_of[h])] for h in units}
+    line: dict[_Key, float] = {}
+    for h, us in units.items():
+        for j, (_u, cw, uhay) in enumerate(us):
+            s = ATTR_LIT * sum(1 for x in doc[h] if literal_supported(x, uhay)) + ATTR_WORD * _hits(words, cw)
+            if s:
+                line[(h, j)] = s
+    return _Lexical(doc, line)
+
+
+def _attribute(
+    lits: list[str],
+    lex: _Lexical,
+    rel: dict[_Key, float],
+    nearest: str | None,
+    cited: list[str],
+    sources: list[str],
+    shown: dict[str, Excerpt],
+    units: dict[str, list[_Unit]],
+) -> list[tuple[str, str]]:
+    """D-165: the support of one kept sentence. EVERY shown excerpt is a candidate: ``ATTR_DOC`` × the
+    hard literals it states plus its best line's ``lex.line`` + ``ATTR_EMB`` × relative similarity
+    ``rel``. The ≤ ``PROSE_ATTRIBUTE`` best (score plus the tie-break bonus of an excerpt the sentence
+    names in ``cited`` or the model named in ``sources``) with at least ``ATTR_MIN``, or the excerpt
+    of the sentence's most similar line (``nearest``), are its support, each with its best line
+    (``_display``; the excerpt's first line when no line shares anything). None qualifies (no
+    similarity) → the single best, which is the first source when nothing is shared at all."""
+    bonus = {h: ATTR_SOURCE for h in sources} | {h: ATTR_CITED for h in cited}
+    ranked: list[tuple[float, int, str, float, str]] = []
+    for i, h in enumerate(shown):
+        best, line = 0.0, ""
+        for j, (unit, _cw, _uh) in enumerate(units[h]):
+            s = lex.line.get((h, j), 0.0) + ATTR_EMB * rel.get((h, j), 0.0)
+            if s > best:
+                best, line = s, unit
+        score = ATTR_DOC * len(lex.doc[h]) + best
+        ranked.append((score + bonus.get(h, 0.0), i, h, score, line))
+    ranked.sort(key=lambda r: (-r[0], r[1]))
+    chosen = [r for r in ranked if r[3] >= ATTR_MIN or r[2] == nearest][:PROSE_ATTRIBUTE] or ranked[:1]
+    return [
+        (h, _display(line, lits) if line else _cut(_first_line(shown[h]))) for _t, _i, h, _s, line in chosen
+    ]
 
 
 def prose_check(
-    sentences: list[tuple[str, bool]], sources: list[str], shown: dict[str, Excerpt]
+    sentences: list[tuple[str, bool]],
+    sources: list[str],
+    shown: dict[str, Excerpt],
+    sim: LineSim | None = None,
 ) -> tuple[list[Claim], dict[str, int]]:
     """D-162: the deterministic check of prose sentences (``split_sentences``) against the excerpts
     the answer was written from: ``(claims, drop counts by reason)``.
 
     - literal: a sentence is DROPPED only when one of its hard literals (``hard_literals``) is in no
       shown excerpt (their texts, titles and dates together: what the model was shown);
-    - every other sentence is KEPT and attributed (``_attribute``); a polarity mismatch against its
-      best lines adds ``"polarity"`` to its flags, it never drops it;
+    - every other sentence is KEPT and attributed (D-165 ``_attribute``) over every shown excerpt,
+      with the multilingual similarity of ``sim`` (its one embedding of the kept sentences and the
+      excerpts' lines, ``_embed_order``) when there is one; there is no polarity check (D-165: its
+      flags were false positives);
     - unsupported: only when nothing was shown (no excerpt to attribute to).
-    Handles written in a sentence ("[v12.3]" is removed from the text, a bare shown handle stays)
-    are its preferred sources. Sentences past ``ANSWER_MAX_CHARS`` of kept text are not checked."""
+    Handles written in a sentence ("[v12.3]" is removed from the text, a bare shown handle stays) and
+    the model's ``sources`` are tie-breaks. Sentences past ``ANSWER_MAX_CHARS`` of kept text are not
+    checked."""
     hay_of = {h: _hay([e.title, e.date, e.text]) for h, e in shown.items()}
     hay = "\n".join(hay_of.values())
     cache: dict[str, list[_Unit]] = {}
     claims: list[Claim] = []
     reasons = {"literal": 0, "unsupported": 0}
+    todo: list[tuple[Claim, str, list[str], list[str]]] = []  # a kept claim, its body, literals, cites
     size = 0
 
     def carry(brk: bool) -> None:  # a dropped sentence's line break stays in the answer
@@ -1589,22 +1747,34 @@ def prose_check(
             continue
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
             break
-        refs = [h for h in _BARE_HANDLE.findall(body) if h in shown]
         lits = hard_literals(body, shown)
         if not all(literal_supported(x, hay) for x in lits):
             reasons["literal"] += 1
             claims.append(Claim(text, [], "dropped", line_end=brk))
             carry(brk)
             continue
-        support, lines = _attribute(body, lits, [*inline, *refs, *sources], shown, hay_of, cache)
-        if not support:
+        if not shown:
             reasons["unsupported"] += 1
             claims.append(Claim(text, [], "dropped", line_end=brk))
             carry(brk)
             continue
         size += len(text) + (1 if size else 0)
-        flags = [] if not lines or polarity_ok(body, lines) else ["polarity"]
-        claims.append(Claim(text, support, "kept", [h for h, _q in support], flags, brk))
+        refs = [h for h in _BARE_HANDLE.findall(body) if h in shown]
+        claim = Claim(text, [], "kept", line_end=brk)
+        claims.append(claim)
+        todo.append((claim, body, lits, [h for h in dict.fromkeys([*inline, *refs]) if h in shown]))
+    if not todo:
+        return claims, reasons
+    units = {h: _units(ex, cache) for h, ex in shown.items()}
+    lexes = [_lexical(body, lits, units, hay_of) for _c, body, lits, _h in todo]
+    if sim is not None:
+        order = [*(h for h in sources if h in shown), *(h for h in shown if h not in sources)]
+        sim.prepare(_embed_order([body for _c, body, _l, _h in todo], order, units, lexes))
+    lines = _Lines(sim, units)
+    for (claim, body, lits, cited), lex in zip(todo, lexes, strict=True):
+        rel, nearest = lines.relative(sim.get(body) if sim is not None else None)
+        claim.support = _attribute(lits, lex, rel, nearest, cited, sources, shown, units)
+        claim.cited = [h for h, _q in claim.support]
     return claims, reasons
 
 
@@ -1630,12 +1800,11 @@ def assemble_prose(
 ) -> Validated:
     """The prose-mode answer: the kept sentences; primary = the excerpts attributed to the most kept
     sentences (≤ ``MAX_PRIMARY``); related = the model's related, its other sources, the other
-    attributed excerpts, then the remaining retrieved ones (≤ ``MAX_RELATED``). A dropped sentence or
-    a polarity flag lowers the confidence. Nothing kept → an abstention (guard when the model
-    answered; related = the closest ≤ 3: its sources, then its related)."""
+    attributed excerpts, then the remaining retrieved ones (≤ ``MAX_RELATED``). A dropped sentence
+    lowers the confidence. Nothing kept → an abstention (guard when the model answered; related = the
+    closest ≤ 3: its sources, then its related)."""
     kept = [c for c in claims if c.state == "kept"]
     dropped = len(claims) - len(kept)
-    flagged = sum(1 for c in kept if "polarity" in c.flags)
     text = _join_prose(kept, redact) if status == ANSWERED else ""
     if status != ANSWERED or not text.strip():
         hint = [*sources, *related_hint] if status == ANSWERED else related_hint
@@ -1652,18 +1821,22 @@ def assemble_prose(
         if h in shown and h not in primary
     ][:MAX_RELATED]
     return Validated(
-        ANSWERED, status, text, claims, primary, related, _lower(conf) if dropped or flagged else conf,
-        dropped_sentences=dropped, polarity_flagged=flagged, sources=list(sources), **extra,
+        ANSWERED, status, text, claims, primary, related, _lower(conf) if dropped else conf,
+        dropped_sentences=dropped, sources=list(sources), **extra,
     )  # fmt: skip
 
 
 def validate_prose(
-    obj: dict[str, Any] | None, shown: dict[str, Excerpt], redact: Callable[[str], str] = lambda s: s
+    obj: dict[str, Any] | None,
+    shown: dict[str, Excerpt],
+    redact: Callable[[str], str] = lambda s: s,
+    sim: LineSim | None = None,
 ) -> Validated:
     """D-162: the deterministic check of a ``prose`` output against the excerpts it was shown
     (``prose_check``): sentences with a fabricated hard literal are dropped (``drop_reasons``), the
-    rest is the answer, attributed; the model's ``sources`` (shown ids only, ≤
-    ``PROSE_MAX_SOURCES``) are the attribution candidates. Never cites a handle that was not shown."""
+    rest is the answer, attributed over every shown excerpt (D-165, with ``sim``'s similarity when
+    given); the model's ``sources`` (shown ids only, ≤ ``PROSE_MAX_SOURCES``) are a tie-break. Never
+    cites a handle that was not shown."""
     obj = obj or {}
     status = obj.get("status") if obj.get("status") in (ANSWERED, INSUFFICIENT) else None
     conf = obj.get("confidence") if obj.get("confidence") in _CONF else "low"
@@ -1674,7 +1847,7 @@ def validate_prose(
     rel = obj.get("related") if isinstance(obj.get("related"), list) else []
     related_hint = [h.strip() for h in rel if isinstance(h, str)]
     answer = obj.get("answer") if status == ANSWERED and isinstance(obj.get("answer"), str) else ""
-    claims, reasons = prose_check(split_sentences(answer), sources, shown)
+    claims, reasons = prose_check(split_sentences(answer), sources, shown, sim)
     return assemble_prose(
         status,
         claims,

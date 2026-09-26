@@ -419,7 +419,10 @@ async def test_ask_prose_mode_keeps_free_prose_and_drops_only_fabricated_values(
     assert out["meta"]["steps"] == ["plan", "prose"] and out["meta"]["calls"] == 2
     assert out["meta"]["answer_mode"] == "prose" and out["meta"]["attempts"] == 2
     flags = out["meta"]["flags"]
-    assert (flags["dropped_literal"], flags["polarity_flagged"], flags["main_dropped"]) == (1, 0, False)
+    assert (flags["dropped_literal"], flags["main_dropped"]) == (1, False) and "polarity_flagged" not in flags
+    # D-165: the server's own embedder scored the sentences against the excerpt lines, in one pass
+    assert flags["attr_embed"] in ("full", "partial") and flags["attr_embedded"] > 2
+    assert 0 <= flags["attr_embed_ms"] <= 1000 * rs.ATTR_EMBED_S + 500
     assert "0.4 s" not in out["answer"] and "1.2 s" in out["answer"] and "1,6 s" in out["answer"]
     d004 = world.versions["D-004"]
     assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
@@ -442,11 +445,9 @@ async def test_ask_prose_mode_keeps_free_prose_and_drops_only_fabricated_values(
     assert_no_secret(sent_text(llm), world)
 
 
-async def test_ask_prose_mode_flags_a_polarity_mismatch_without_dropping_it(
-    connect, world, deps, db_dsn
-) -> None:  # noqa: ANN001
-    """D-162: a sentence that drops the "no" of its best source line is KEPT with flags ["polarity"];
-    the confidence is lowered once (the re-check does not lower it again)."""
+async def test_ask_prose_mode_has_no_polarity_flag(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-165: a sentence that drops the "no" of its best source line is KEPT, attributed to that line,
+    without flags (the V16 audit found 6/6 polarity flags false positives); the confidence stays."""
     fake = FakeResearcher(
         facts=["1.2 s", "SQLite was rejected"], prose_extra=["SQLite has concurrent writers."]
     )
@@ -457,13 +458,13 @@ async def test_ask_prose_mode_flags_a_polarity_mismatch_without_dropping_it(
     finally:
         await r.aclose()
     assert out["abstained"] is False and out["answer"].endswith("SQLite has concurrent writers.")
-    flagged = out["claims"][-1]
-    assert flagged["text"] == "SQLite has concurrent writers." and flagged["flags"] == ["polarity"]
-    assert handle_re(world.versions["D-001"]).fullmatch(flagged["support"][0]["handle"])
-    assert "no concurrent writers" in flagged["support"][0]["quote"]
-    assert all("flags" not in c for c in out["claims"][:-1])
-    assert out["meta"]["flags"]["polarity_flagged"] == 1 and out["meta"]["flags"]["dropped_literal"] == 0
-    assert out["confidence"] == "medium"  # high, lowered once for the flag
+    last = out["claims"][-1]
+    assert last["text"] == "SQLite has concurrent writers." and "flags" not in last
+    assert handle_re(world.versions["D-001"]).fullmatch(last["support"][0]["handle"])
+    assert "no concurrent writers" in last["support"][0]["quote"]
+    assert all("flags" not in c for c in out["claims"])
+    assert "polarity_flagged" not in out["meta"]["flags"] and out["meta"]["flags"]["dropped_literal"] == 0
+    assert out["confidence"] == "high"  # nothing dropped, nothing flagged
 
 
 async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001

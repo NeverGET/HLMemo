@@ -53,9 +53,14 @@ the select runs again over the widened set.
 
 D-162 ``HLM_RESEARCH_ANSWER_MODE=prose`` (V16): step 4 is the JOB ``prose`` (free prose and the sources
 it draws on, checked by ``research.validate_prose``: a sentence is dropped only for a hard literal no
-shown excerpt states; every other one is kept and attributed to its best source lines, a polarity
-mismatch flagged), a refinement re-answers with ``prose``, and steps 6 and 7 do not run; the re-check
-(8) checks and attributes each kept sentence again over the excerpts still citable.
+shown excerpt states; every other one is kept and attributed to its best source lines), a refinement
+re-answers with ``prose``, and steps 6 and 7 do not run; the re-check (8) checks and attributes each
+kept sentence again over the excerpts still citable. D-165: the attribution scores every shown
+excerpt's lines by shared hard literals, then content words, then the multilingual similarity of the
+server's own embedder (the one the hybrid search embeds queries with: one embedding of the kept
+sentences and the excerpt lines per answer, ``research.LineSim``, within ``research.ATTR_EMBED_S``; no
+embedder or no time → literals and words alone); the model's ``sources`` are a tie-break only; there
+is no polarity flag.
 
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write); provider requests (schema retries,
@@ -142,6 +147,8 @@ SELECT_WRITE_RESERVE_S = 8.0
 MIN_REFINE_S = 16.0
 MIN_CHECK_S = 7.0
 MIN_CALL_S = 1.5
+#: D-165: the prose attribution embeds only with at least this much time left
+ATTR_MIN_LEFT_S = 1.0
 RECHECK_RESERVE_S = 1.0
 DB_PHASE_TIMEOUT_MS = 8000
 CONTEXT = (
@@ -260,6 +267,8 @@ class _Run:
     excluded: set[int] = field(default_factory=set)
     sent: set[int] = field(default_factory=set)
     lineage: str = field(default_factory=lambda: str(uuid.uuid4()))
+    #: D-165: the last prose answer's sentence/line similarity (the re-check reads its cache)
+    sim: rs.LineSim | None = None
     calls: int = 0
     steps: list[str] = field(default_factory=list)
     queries: list[str] = field(default_factory=list)
@@ -678,8 +687,9 @@ class _Run:
 
     async def write_prose(self, excerpts: list[rs.Excerpt]) -> rs.Validated:
         """D-162 prose mode: the JOB ``prose`` over the admitted excerpts, checked and attributed
-        sentence by sentence against exactly the excerpts it was shown (``rs.validate_prose``); the
-        flags describe the LAST validated answer."""
+        sentence by sentence against exactly the excerpts it was shown (``rs.validate_prose``, off the
+        event loop: D-165 embeds its sentences and lines); the flags describe the LAST validated
+        answer."""
 
         def build() -> tuple[str, list[int]]:
             ex = [e for e in excerpts if e.version_id not in self.excluded]
@@ -687,13 +697,30 @@ class _Run:
 
         obj = await self.call("prose", build, ANSWER_CAP_S)
         shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
-        v = rs.validate_prose(obj, shown, self.researcher.redactor.text)
-        if obj is not None:
-            self.flags["dropped_claims"] = v.dropped_claims
-            self.flags["main_dropped"] = v.main_dropped
-            self.flags["dropped_literal"] = v.drop_reasons.get("literal", 0)
-            self.flags["polarity_flagged"] = v.polarity_flagged
+        if obj is None:
+            return rs.validate_prose(obj, shown, self.researcher.redactor.text)
+        self.sim = self.line_sim()
+        v = await asyncio.to_thread(rs.validate_prose, obj, shown, self.researcher.redactor.text, self.sim)
+        self.flags["dropped_claims"] = v.dropped_claims
+        self.flags["main_dropped"] = v.main_dropped
+        self.flags["dropped_literal"] = v.drop_reasons.get("literal", 0)
+        self.flags["attr_embed"] = self.sim.state if self.sim is not None else "off"
+        self.flags["attr_embedded"] = self.sim.embedded if self.sim is not None else 0
+        self.flags["attr_embed_ms"] = int(self.sim.seconds * 1000) if self.sim is not None else 0
         return v
+
+    def line_sim(self) -> rs.LineSim | None:
+        """D-165: the attribution's similarity over the server's own embedder (``deps.embedder``, the
+        one the hybrid search embeds queries with; D-017: whatever model is configured), within
+        ``rs.ATTR_EMBED_S`` and half the time left. None without an embedder or without time."""
+        left = self.remaining()
+        if self.deps is None or left < ATTR_MIN_LEFT_S:
+            return None
+        try:
+            embedder = self.deps.embedder
+        except Exception:  # noqa: BLE001 - no model files, a closed session: literal + word scoring
+            return None
+        return rs.LineSim(embedder.embed_queries, budget_s=min(rs.ATTR_EMBED_S, left / 2))
 
 
 async def _search(
@@ -778,8 +805,10 @@ async def ask(
             run.flags.update({f"dropped_{why}": 0 for why in rs.DROP_REASONS})
         if researcher.select:  # D-159
             run.flags.update({"selected": 0, "select_fallback": False})
-        if run.prose:  # D-162: the prose mode's own counts (meta.flags)
-            run.flags.update({"dropped_literal": 0, "polarity_flagged": 0})
+        if run.prose:  # D-162: the prose mode's own counts (meta.flags); D-165: the embedding's
+            run.flags.update(
+                {"dropped_literal": 0, "attr_embed": "off", "attr_embedded": 0, "attr_embed_ms": 0}
+            )
         readable = (
             {p for v in view for p in v.project_ids} | {project.project_id}
             if ctx.is_admin
@@ -969,9 +998,12 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             abstain_reason = "sources_changed"
     elif v.answered and run.prose:
         # D-162: each kept sentence is checked again against the excerpts still citable (a hard
-        # literal none of them states drops it) and attributed again over them
+        # literal none of them states drops it) and attributed again over them (D-165: with the
+        # answer's cached similarity; nothing is embedded again)
         sources = [h for h in v.sources if h in ok]
-        prose_claims, _reasons = rs.prose_check([(cl.text, cl.line_end) for cl in v.kept], sources, ok)
+        prose_claims, _reasons = await asyncio.to_thread(
+            rs.prose_check, [(cl.text, cl.line_end) for cl in v.kept], sources, ok, run.sim
+        )
         before, settled = len(v.kept), v.confidence
         v = rs.assemble_prose(
             rs.ANSWERED,
@@ -983,7 +1015,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             run.researcher.redactor.text,
         )
         if v.answered and len(v.kept) == before:
-            v.confidence = settled  # its drops and flags already lowered it: nothing new was dropped
+            v.confidence = settled  # its drops already lowered it: nothing new was dropped
         if not v.answered and before:
             abstain_reason = "sources_changed"
     elif v.answered:
