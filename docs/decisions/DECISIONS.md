@@ -759,3 +759,31 @@ Owner decisions pending:
 - the gate definition (answer text vs answer + cited sources; faithful judged against the displayed quote or the cited source);
 - a budget top-up (shared balance about $10.0, ≥ $9 kept for prod).
 Today's dev spend is about $1.4.
+D-158 | 2026-09-26 | ACCEPTED (the owner delegated the gate definition and the residuals to the consumer: "you will read these answers; the optimal config/setup for your needs is release ready"; they topped up $10) | **Consumer gate v2, PRE-REGISTERED before any reference or new memory.ask result is seen. NotebookLM chat over the same sources is the reference system; the owner used it as a project memory and rates its source Q&A as very good.**
+**Who judges "good":** the consumer is a Claude coding agent. What it needs from `memory.ask`, in order:
+- (1) never act on a wrong fact;
+- (2) a clear "not in memory" when it is not;
+- (3) the facts needed to act, directly in the answer, or at most one precise drill away;
+- (4) exact source handles;
+- (5) speed, cost and compactness (LLM-to-LLM efficiency).
+**Criteria.** All must pass on the FINAL sets: the untouched PR set (60) on the current-tree replica and sealed B (50), as D-130 intended. Dev iteration uses the 33-question B-dev subset only.
+| Criterion | Definition | Pass |
+|---|---|---|
+| C1 Utility (primary) | A blind Claude rater (a fresh subagent, the consumer model family) sees the question, the gold answer and each system's response exactly as an agent would receive it, with system names hidden and order shuffled. It rates each question 0/1/2. Answerable: 2 = actionable and correct without another lookup; 1 = correct and points to a source holding the rest (one drill); 0 = wrong, contradicts gold, or misses the main point. Negative: 2 = clearly "not in memory"; 0 = asserts an answer. | mean U ≥ mean U(NotebookLM) − 0.05, and U = 0 share ≤ 0.10 |
+| C2 Key-fact correct | Strict judge v1 | ≥ .70 and ≥ correct(NotebookLM) − .05 |
+| C3 No wrong facts | Judge contradiction rate; faithful against the cited SOURCE text (D-156 scope) | contradiction ≤ .04; faithful ≥ .92 |
+| C4 Abstain | Negatives | ≥ .90 |
+| C5 Source recall | – | ≥ .85 |
+| C6 Efficiency | p95 latency; cost; median response size | p95 ≤ 20 s; ≤ $0.01/q; median response ≤ 1,200 tokens |
+**Rationale for the changes from D-130:**
+- C2: correct .80 was set before the ceiling was known. With the GOLD sources the answer model scores .84, which equals the judge ceiling on dev (D-155), so .80 demands near-perfect retrieval. The reference system anchors adequacy, and C1 measures actual consumer utility.
+- C3: .92 judged ≈ ≥ .94 true, since D-150 found about 30% of the judge's faithful rejections actually entailed. Contradiction is capped separately because a wrong fact is the costliest failure.
+**Reference:**
+- The NotebookLM notebook holds exactly the corpus B sources imported into the dev DB (89 docs at 82200ae + automem + the git episodes), bundled to ≤ 50 sources and secret-scanned.
+- It gets the same questions, with a fresh conversation each, scored by the same judge and the same rater.
+- NotebookLM has no source handles, so C5 does not apply to it.
+- Hold-out questions go to NotebookLM only at the final gate: that is a measurement, not tuning.
+**Residuals of review 80, decided by the consumer:**
+- (1) The map_summary DB-write failure delays the retry to the next event: ACCEPTED. Summaries are a cache; a restart or any event re-arms it.
+- (2) A timeout charges USD but not tokens: ACCEPTED. The USD cap is the binding one.
+- (3) TR suffix negation: RESOLVED by D-153 (TR negative-verb suffixes are read as negation).
