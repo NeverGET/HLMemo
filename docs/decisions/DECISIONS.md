@@ -673,3 +673,24 @@ D-152 | 2026-09-26 | ACCEPTED (D-125: max 2 review rounds; a HIGH is closed by a
 - (3) Turkish suffix negation ("etkin değildir" is caught, but a verb suffix like "-me/-ma" is not) remains unsupported.
 None of these is a leak or an overspend: (1) is a delayed retry; for (2), the USD cap still binds; (3) is a known language limit.
 The review-79/80 hardening (contiguous quotes plus polarity) can cost correctness, so memory.ask @ 8398656 is re-measured on the same 34-question dev subset. The result is D-153.
+D-153 | 2026-09-26 | ACCEPTED | **The review-79/80 hardening cost correctness through false polarity rejects. The polarity check was tuned on real claims (wf-memory-ask 7f900ba), and memory.ask is back at its pre-hardening level within noise. The 25-answerable dev subset cannot resolve levers smaller than about ±.15.**
+**Measured with the strict judge on the same 33 B-dev questions** (B-D006 excluded: the judge's entail call spends its whole 6k-token cap on reasoning and returns no JSON; 4 attempts cost about $0.10):
+| Tree | Correct | False abstain | Faithful | Recall | Abstain | p95 |
+|---|---|---|---|---|---|---|
+| 9bceb59 (pre-review) | 15/25 (.60) | 1 | – | – | – | – |
+| 8398656 (review-80 fix) | 10/25 (.40) | **5** | .899 | .80 | 1.00 | 16.9 s |
+| 7f900ba (tuned) | 12/25 (.48) | 1 | .892 | .88 | .875 | 21.1 s |
+**Cause at 8398656:** the per-proposition polarity check rejected 12 of 111 TRUE claims that 9bceb59 had accepted (the overnight audit found 0 of them false). A dropped main claim then became a guard abstain.
+**Tuning, driven by those real claims and without weakening either reviewer's reproduction:**
+- clause-bounded windows;
+- core versus widened scopes;
+- a contrast is kept when the claim names both sides;
+- epistemic hedges only, and an added hedge does not fail;
+- "X-free" and TR negative-verb suffixes are recognised, with an SOV window;
+- soft negations (unable/instead/rather/rejected/yerine) can excuse a dropped "not" but never count as an inserted one.
+**Replay:** memory.ask claims 0/211 rejected. The prototype variants V6–V11 (only V10 used for tuning) have 18/531 rejected, all paraphrased negation ("preventing", "refuse", "çıkarılır"). Accepted as the residual false-reject rate: the judge still measures faithfulness end-to-end.
+**At 7f900ba versus 9bceb59:** 5 lost and 2 gained. Nothing is systematic: no budget stops, the same steps, similar claim counts. The losses are answer variance (one question saw a model self-abstain).
+**Method lesson:**
+- At n = 25 answerable questions, the binomial SE at p ≈ .55 is ±.10, so the "±.04 noise" in D-149 was optimistic. Levers must be judged on large effects, or on more questions or replicates.
+- The gate needs .80 against about .55, so a big lever is required.
+**Gate not reached, so there is no release.** Next: a key-fact miss taxonomy on the 7f900ba outputs, then a ceiling-first prototype of the lever it points to. Morning spend is about $0.65; the shared balance is about $10.6, keeping ≥ $9 for prod.
