@@ -431,14 +431,98 @@ def test_validate_answer_downgrades_drops_and_grounds_the_answer() -> None:
     assert v.answer == "The target is now 1.2 s." and v.dropped_sentences == 1  # 3.5 s is in no claim
 
 
-def test_answer_states_only_what_the_claims_state() -> None:
-    """A number in the answer that only an UNQUOTED part of an excerpt states is dropped too."""
+def test_answer_states_only_what_the_cited_sources_state() -> None:
+    """A sentence of the answer whose value is in no kept claim, quote or cited excerpt is dropped
+    (addendum 3 #2c: values are checked against the cited excerpts, not only the quote strings)."""
     obj = _answer(
-        answer="The target is now 1.2 s. The owner decided it after R3.",
+        answer="The target is now 1.2 s. The owner decided it after R3. The store is Postgres 17.",
         claims=[_claim("The target is now 1.2 s.", ("v10.0", "The retrieval p95 target is now 1.2 s"))],
     )
     v = rs.validate_answer(obj, SHOWN)
-    assert v.answer == "The target is now 1.2 s." and v.dropped_sentences == 1
+    # R3 is in the cited excerpt v10.0; Postgres 17 only in v11.0, which no kept claim cites
+    assert v.answer == "The target is now 1.2 s. The owner decided it after R3." and v.dropped_sentences == 1
+
+
+# --------------------------------------------------------------------------- addendum 3 (matcher)
+def test_a3_markup_is_stripped_without_inserting_spaces() -> None:
+    text = "**HLM_RESEARCH_ENABLED**: true by default; `hlm doctor`: checks the models."
+    assert (
+        rs.find_verbatim("HLM_RESEARCH_ENABLED: true by default", text)
+        == "**HLM_RESEARCH_ENABLED**: true by default"
+    )
+    assert rs.find_verbatim("hlm doctor: checks the models", text) == "`hlm doctor`: checks the models"
+    assert rs.qnorm("**X**:") == rs.qnorm("X:") == "x:"
+    assert rs.find_verbatim("the D–116 decision — final", "The D-116 decision - final.") is not None  # dashes
+
+
+def test_a3_suffix_tolerant_values() -> None:
+    hay = rs._lit_norm("The target was 1.6 s. D-116 decided it; the v3 plan ships in R3 in 2026.")
+    for claim in (
+        "Hedef 1,6'dır.",  # apostrophe suffix on a number
+        "D-116'da karar verildi.",  # on an identifier
+        "The v3's plan.",  # English possessive
+        "R3'te çıkacak.",
+        "2026da çıkacak.",  # a suffix glued to a number
+        "D-116da karar verildi.",  # glued to an identifier
+        "D–116 decided it.",  # en dash
+    ):
+        assert rs.literals_ok(claim, hay), claim
+    assert not rs.literals_ok("D-117'de karar verildi.", hay)
+
+
+def test_a3_word_pairs_are_not_identifiers() -> None:
+    assert rs.literals("It supports read/write and TR/EN questions.") == []
+    assert rs.literals("See docs/USAGE.md and v12.3.") == ["docs/USAGE.md", "v12.3."] or rs.literals(
+        "See docs/USAGE.md and v12.3."
+    ) == ["docs/USAGE.md", "v12.3"]
+
+
+def test_a3_value_checked_against_the_cited_excerpt() -> None:
+    """The quote is a subject-less fragment; the claim's identifier is elsewhere in the SAME cited
+    excerpt: the claim is kept (and the flag's own sentence is added as a second quote)."""
+    shown = {
+        "v5.0": _ex(
+            "v5.0",
+            "D-002 | ACCEPTED | **HLM_RESEARCH_ENABLED** turns the librarian on."
+            " It defaults to true on the branch.",
+        )
+    }
+    obj = {
+        "status": "answered",
+        "answer": "HLM_RESEARCH_ENABLED defaults to true on the branch.",
+        "claims": [
+            _claim(
+                "HLM_RESEARCH_ENABLED defaults to true on the branch.",
+                ("v5.0", "It defaults to true on the branch"),
+            )
+        ],
+        "related": [],
+        "confidence": "high",
+    }
+    v = rs.validate_answer(obj, shown)
+    assert v.answered and v.kept and v.kept[0].support[0] == ("v5.0", "It defaults to true on the branch")
+    assert any("HLM_RESEARCH_ENABLED" in q for _h, q in v.kept[0].support)  # self-contained after re-quote
+
+
+def test_a3_value_reformatting() -> None:
+    hay = rs._lit_norm("It costs $10 per month; 1.600 users; launched 26.09.2026; the ratio is 1,6.")
+    for claim in (
+        "It costs 10 USD.",
+        "1600 users.",
+        "1,600 users.",
+        "Launched 2026-09-26.",
+        "The ratio is 1.6.",
+    ):
+        assert rs.literals_ok(claim, hay), claim
+    iso = rs._lit_norm("Released 2026-09-26.")
+    assert rs.literals_ok("Released 26.09.2026.", iso) and rs.literals_ok("Released 26/09/2026.", iso)
+    assert not rs.literals_ok("Released 27.09.2026.", iso)
+    assert not rs.literals_ok("It costs 11 USD.", hay)
+
+
+def test_a3_prompt_asks_for_self_contained_quotes() -> None:
+    system = load_task("research").system
+    assert "self-contained" in system and "row's key" in system
 
 
 def test_validate_answer_guard_and_abstention() -> None:

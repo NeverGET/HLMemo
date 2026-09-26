@@ -129,7 +129,9 @@ def _norm_with_map(text: str) -> tuple[str, list[int]]:
             piece = unicodedata.normalize("NFKC", ch).casefold()
             piece = "".join("-" if c in _DASHES else _QUOTES.get(c, c) for c in piece)
         for c in piece:
-            if c in _DROP or c.isspace():
+            if c in _DROP:
+                continue  # markup is not text, and not a word break either ("**X**:" = "X:")
+            if c.isspace():
                 if not space:
                     out.append(" ")
                     idx.append(i)
@@ -161,6 +163,11 @@ def find_verbatim(quote: str, text: str) -> str | None:
     if at < 0:
         return None
     start, end = idx[at], idx[at + len(q) - 1]
+    # the raw span keeps the emphasis/code markers around its edges ("**X**: …", not "X**: …")
+    while start > 0 and raw[start - 1] in "*`":
+        start -= 1
+    while end + 1 < len(raw) and raw[end + 1] in "*`":
+        end += 1
     return raw[start : end + 1]
 
 
@@ -209,7 +216,11 @@ def locate_quote(quote: str, text: str) -> str | None:
 
 
 def _lit_norm(text: str) -> str:
-    return _WS.sub(" ", _DECIMAL_COMMA.sub(".", unicodedata.normalize("NFKC", text).casefold())).strip()
+    """The literal-check form of a text: NFKC, casefold, unified dashes/quotes, a decimal comma read
+    as a point, whitespace collapsed."""
+    text = unicodedata.normalize("NFKC", unicodedata.normalize("NFC", text)).casefold()
+    text = "".join("-" if c in _DASHES else _QUOTES.get(c, c) for c in text)
+    return _WS.sub(" ", _DECIMAL_COMMA.sub(".", text)).strip()
 
 
 def _token_in(tok: str, hay: str) -> bool:
@@ -221,18 +232,43 @@ def _token_in(tok: str, hay: str) -> bool:
 
 
 _NUM_UNIT = re.compile(r"^(\d[\d.,]*)[a-z%µ]{1,3}$")
+#: a TR/EN suffix glued to a number or an identifier ending in a digit: 2026da, D-116da, R3te, 1600ler
+_GLUED_SUFFIX = re.compile(r"^(.*\d)([a-zçğıöşü]{1,8})$")
+_THOUSANDS = re.compile(r"(?<=\d)[.,](?=\d{3}(?!\d))")
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_DOT_DATE = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{4})$")
+
+
+def _date_variants(c: str) -> list[str]:
+    """2026-09-26 <-> 26.09.2026 / 26/09/2026 (and a non-padded day or month)."""
+    m = _ISO_DATE.match(c)
+    if m:
+        y, mo, d = m.groups()
+        return [f"{d}.{mo}.{y}", f"{d}/{mo}/{y}", f"{int(d)}.{int(mo)}.{y}"]
+    m = _DOT_DATE.match(c)
+    if m:
+        d, mo, y = m.groups()
+        return [f"{y}-{int(mo):02d}-{int(d):02d}"]
+    return []
 
 
 def literal_supported(literal: str, hay: str) -> bool:
-    """``synthesis.supported`` with the decimal-comma rule on both sides (``hay`` is ``_lit_norm``ed):
-    the literal occurs as a whole token; tolerated: thousands separators, a number glued to its unit
-    and hyphen-joined parts."""
+    """``literal`` occurs in ``hay`` (``_lit_norm``ed) as a whole token, tolerating (addendum 3 #2):
+    thousands separators (1,600 / 1.600 / 1600), a decimal comma (1,6 = 1.6), a unit glued to a
+    number (10s), a currency symbol or code around it ($10 = 10 USD: the symbol is stripped from the
+    literal and a code is its own word), a TR/EN suffix glued to a number or an identifier (2026da,
+    D-116da), a date written ISO or dotted (2026-09-26 = 26.09.2026) and hyphen-joined parts."""
     c = _lit_norm(literal)
     if not c or _token_in(c, hay):
         return True
-    if "," in c and _token_in(c.replace(",", ""), hay.replace(",", "")):
+    if any(_token_in(v, hay) for v in _date_variants(c)):
+        return True
+    if _token_in(_THOUSANDS.sub("", c), _THOUSANDS.sub("", hay)):
         return True
     m = _NUM_UNIT.match(c)
+    if m and _token_in(m.group(1), hay):
+        return True
+    m = _GLUED_SUFFIX.match(c)
     if m and _token_in(m.group(1), hay):
         return True
     if "-" in c and re.fullmatch(r"[\w.-]+", c):
@@ -240,18 +276,23 @@ def literal_supported(literal: str, hay: str) -> bool:
     return False
 
 
-#: a Turkish case suffix after an apostrophe (``%40’ını``, ``D-130'da``): not part of the literal
+#: a TR/EN suffix after an apostrophe (``%40’ını``, ``D-130'da``, ``v3's``, ``1,6'dır``)
 _APOS_SUFFIX = re.compile(r"^(.*?[\w%])['’][^\W\d_]{1,8}$")
+#: two plain words joined by a slash ("read/write", "TR/EN", "and/or"): prose, not an identifier
+_WORD_PAIR = re.compile(r"^[^\W\d_]+/[^\W\d_]+$")
 
 
 def literals(text: str) -> list[str]:
-    """The checkable literals of ``text`` (``synthesis.claims``), with a Turkish apostrophe suffix
-    removed so ``%40’ını`` is checked as ``40`` and ``D-130'da`` as ``D-130``."""
+    """The checkable literals of ``text`` (``synthesis.claims``): an apostrophe suffix is removed
+    (``%40’ını`` is checked as ``40``, ``D-130'da`` as ``D-130``) and a plain ``a/b`` word pair is
+    not a literal (addendum 3 #2)."""
     out = []
     for lit in literal_claims(text):
         m = _APOS_SUFFIX.match(lit)
-        out.append(m.group(1).lstrip("%") if m else lit)
-    return [x for x in out if x]
+        lit = m.group(1).lstrip("%") if m else lit
+        if lit and not _WORD_PAIR.match(lit):
+            out.append(lit)
+    return out
 
 
 def literals_ok(text: str, hay: str) -> bool:
@@ -430,6 +471,17 @@ def _lower(conf: str) -> str:
 
 def _hay(parts: list[str]) -> str:
     return _lit_norm("\n".join(parts))
+
+
+def support_hay(support: list[tuple[str, str]], shown: dict[str, Excerpt]) -> str:
+    """Where a claim's values are checked (addendum 3 #2c): its quotes AND the whole cited excerpts
+    (the chunk windows) the quotes come from."""
+    return _hay(
+        [
+            *(q for _h, q in support),
+            *(shown[h].text for h in dict.fromkeys(h for h, _q in support) if h in shown),
+        ]
+    )
 
 
 def _supports(raw: Any, cited: list[str], shown: dict[str, Excerpt]) -> list[tuple[str, str]]:
@@ -616,7 +668,7 @@ def assemble(
         if h in shown and h not in primary and h not in related:
             related.append(h)
     related = related[:MAX_RELATED]
-    hay = _hay([t for c in kept for t in (c.text, *(q for _h, q in c.support))])
+    hay = _hay([c.text for c in kept]) + "\n" + "\n".join(support_hay(c.support, shown) for c in kept)
     sentences = _SENTENCE.split(answer)
     kept_sentences = [s for s in sentences if literals_ok(s, hay)]
     dropped = len(sentences) - len(kept_sentences)
@@ -691,7 +743,7 @@ def validate_answer(
             support = requote(text, support, cited, shown)
         if not text:
             claims.append(Claim(text, [], "dropped", cited))
-        elif support and literals_ok(text, _hay([q for _h, q in support])):
+        elif support and literals_ok(text, support_hay(support, shown)):
             claims.append(Claim(text, support, "kept", cited))
             flags["requoted"] += int(requoted)
             flags["completed"] += int(len(support) > n_before)
@@ -716,7 +768,7 @@ def validate_answer(
     )
 
 
-def merge_check(draft: Validated, checked: Validated) -> Validated:
+def merge_check(draft: Validated, checked: Validated, shown: dict[str, Excerpt] | None = None) -> Validated:
     """The completeness pass wins when it validated as an answer; the draft's kept claims that the
     revision lost are carried over (their quotes are verified), so the pass can only add evidence."""
     if not checked.answered:
@@ -732,7 +784,7 @@ def merge_check(draft: Validated, checked: Validated) -> Validated:
         claims,
         checked.related,
         checked.confidence,
-        {h: e for h, e in _shown_of(checked, draft).items()},
+        shown if shown is not None else _shown_of(checked, draft),
         lambda s: s,
         missing=checked.missing,
         sub_asks=checked.sub_asks,
@@ -754,7 +806,10 @@ def _shown_of(*vs: Validated) -> dict[str, Excerpt]:
 
 
 def apply_verify(
-    v: Validated, obj: dict[str, Any] | None, redact: Callable[[str], str] = lambda s: s
+    v: Validated,
+    obj: dict[str, Any] | None,
+    redact: Callable[[str], str] = lambda s: s,
+    shown: dict[str, Excerpt] | None = None,
 ) -> Validated:
     """The self-check: a claim judged ``none`` is dropped; ``partial`` is narrowed to the model's
     rewrite when that rewrite's literals are all in the claim's quotes, else dropped; ``full`` (or no
@@ -778,7 +833,7 @@ def apply_verify(
             continue
         changed = True
         narrowed = " ".join(str((vd or {}).get("text") or "").split())
-        if verdict == "partial" and narrowed and literals_ok(narrowed, _hay([q for _h, q in c.support])):
+        if verdict == "partial" and narrowed and literals_ok(narrowed, support_hay(c.support, shown or {})):
             claims.append(Claim(narrowed, c.support, "kept", c.cited))
         else:
             claims.append(Claim(c.text, [], "dropped", c.cited))
@@ -789,7 +844,7 @@ def apply_verify(
         claims,
         v.related,
         v.confidence if not changed else _lower(v.confidence),
-        _shown_of(v),
+        shown if shown is not None else _shown_of(v),
         redact,
         missing=v.missing,
         sub_asks=v.sub_asks,
@@ -1067,6 +1122,7 @@ __all__ = [
     "refine_user",
     "rank_sources",
     "requote",
+    "support_hay",
     "research_chain",
     "validate_answer",
     "verify_user",

@@ -484,7 +484,8 @@ class _Run:
         base = sent[0] if sent else v
         if not base.answered:
             return base
-        out = rs.apply_verify(base, obj, self.researcher.redactor.text)
+        shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
+        out = rs.apply_verify(base, obj, self.researcher.redactor.text, shown)
         self.flags["verify_dropped"] = len(base.kept) - len(out.kept)
         return out
 
@@ -683,7 +684,9 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
         except rs.ResearchUnavailable:
             checked = None
         if checked is not None:
-            v = rs.merge_check(v, checked)
+            v = rs.merge_check(
+                v, checked, {e.handle: e for e in excerpts if e.version_id not in run.excluded}
+            )
     # 7. the self-check (the refinement's slot when no refinement ran), time permitting
     if v.answered and run.calls < rs.MAX_CALLS and run.remaining() >= MIN_VERIFY_S:
         v = await run.verify(v, excerpts)
@@ -737,7 +740,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
         claims = []
         for cl in v.kept:
             sup = [(h, q) for h, q in cl.support if h in ok]
-            if sup and rs.literals_ok(cl.text, rs._hay([q for _h, q in sup])):
+            if sup and rs.literals_ok(cl.text, rs.support_hay(sup, ok)):
                 claims.append(rs.Claim(cl.text, sup, "kept", [h for h in cl.cited if h in ok]))
         before = len(v.kept)
         v = rs.assemble(
