@@ -234,6 +234,18 @@ class _Run:
     queries: list[str] = field(default_factory=list)
     map_tokens: int = 0
     caps: dict[str, Any] = field(default_factory=dict)
+    #: addendum 2 (meta.flags): claims saved by a re-quote / completed with a literal's sentence
+    #: (summed over the answer and check calls), claims not kept and the main (first) claim not kept
+    #: in the LAST validated answer, claims the self-check dropped
+    flags: dict[str, Any] = field(
+        default_factory=lambda: {
+            "requoted": 0,
+            "completed": 0,
+            "dropped_claims": 0,
+            "main_dropped": False,
+            "verify_dropped": 0,
+        }
+    )
 
     # ---- db phases
     @contextlib.asynccontextmanager
@@ -472,7 +484,9 @@ class _Run:
         base = sent[0] if sent else v
         if not base.answered:
             return base
-        return rs.apply_verify(base, obj, self.researcher.redactor.text)
+        out = rs.apply_verify(base, obj, self.researcher.redactor.text)
+        self.flags["verify_dropped"] = len(base.kept) - len(out.kept)
+        return out
 
     async def answer(
         self, excerpts: list[rs.Excerpt], job: str = "answer", draft: rs.Validated | None = None
@@ -487,7 +501,13 @@ class _Run:
         cap = ANSWER_CAP_S if draft is None else CHECK_CAP_S
         obj = await self.call(job, build, cap)
         shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
-        return rs.validate_answer(obj, shown, self.researcher.redactor.text)
+        v = rs.validate_answer(obj, shown, self.researcher.redactor.text)
+        if obj is not None:
+            self.flags["requoted"] += v.requoted
+            self.flags["completed"] += v.completed
+            self.flags["dropped_claims"] = v.dropped_claims
+            self.flags["main_dropped"] = v.main_dropped
+        return v
 
 
 async def _search(
@@ -756,6 +776,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             "steps": run.steps,
             "excerpts": len(excerpts),
             "map_tokens": run.map_tokens,
+            "flags": run.flags,
         },
     }
     if not answered:

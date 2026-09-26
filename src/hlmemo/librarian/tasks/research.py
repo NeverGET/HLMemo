@@ -92,8 +92,11 @@ _HANDLE = re.compile(r"^v[1-9][0-9]*(\.(0|[1-9][0-9]*))?$")
 
 
 # --------------------------------------------------------------------------- normalisation
-_DROP = frozenset("*`_#>|")
-_QUOTES = {"“": '"', "”": '"', "„": '"', "«": '"', "»": '"', "’": "'", "‘": "'", "‚": "'"}
+_DROP = frozenset("*`_#>|•◦▪")
+_QUOTES = {"“": '"', "”": '"', "„": '"', "«": '"', "»": '"', "’": "'", "‘": "'", "‚": "'", "‛": "'"}
+_DASHES = frozenset("‐‑‒–—―−")
+#: a list marker at the start of a line ("- item", "* item", "+ item", "• item"): markup, not text
+_LIST_MARKER = re.compile(r"(?m)^[ \t]*([-*+•◦▪])[ \t]+")
 _DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d{1,2}(?!\d))")
 _WS = re.compile(r"\s+")
 
@@ -109,17 +112,22 @@ def _decimal_comma_at(text: str, i: int) -> bool:
 
 
 def _norm_with_map(text: str) -> tuple[str, list[int]]:
-    """``qnorm`` of ``text`` plus, for every character of the result, the index of the original
-    character it came from (so a match can be mapped back to the verbatim span)."""
+    """``qnorm`` of ``text`` (which must already be NFC) plus, for every character of the result,
+    the index of the character of ``text`` it came from (so a match maps back to the raw span).
+    Addendum 2: whitespace and line breaks collapse, markdown markup (table pipes, ``**``, backticks,
+    headings, quotes, list markers) is dropped, quote and dash variants are unified, casefolded."""
+    markers = {m.start(1) for m in _LIST_MARKER.finditer(text)}
     out: list[str] = []
     idx: list[int] = []
     space = True
     for i, ch in enumerate(text):
-        if _decimal_comma_at(text, i):
+        if i in markers:
+            piece = " "
+        elif _decimal_comma_at(text, i):
             piece = "."
         else:
             piece = unicodedata.normalize("NFKC", ch).casefold()
-            piece = "".join(_QUOTES.get(c, c) for c in piece)
+            piece = "".join("-" if c in _DASHES else _QUOTES.get(c, c) for c in piece)
         for c in piece:
             if c in _DROP or c.isspace():
                 if not space:
@@ -138,21 +146,66 @@ def _norm_with_map(text: str) -> tuple[str, list[int]]:
 
 def qnorm(text: str) -> str:
     """The quote-matching normal form (module docstring)."""
-    return _norm_with_map(text)[0]
+    return _norm_with_map(unicodedata.normalize("NFC", text))[0]
 
 
 def find_verbatim(quote: str, text: str) -> str | None:
-    """The span of ``text`` that ``quote`` matches under ``qnorm`` (the ORIGINAL characters), or
-    ``None``. Quotes shorter than ``QUOTE_MIN_CHARS`` normalised characters never match."""
+    """The raw span of ``text`` that ``quote`` matches under ``qnorm``, or ``None``. Quotes shorter
+    than ``QUOTE_MIN_CHARS`` normalised characters never match."""
     q = qnorm(quote)
     if len(q) < QUOTE_MIN_CHARS:
         return None
-    t, idx = _norm_with_map(text)
+    raw = unicodedata.normalize("NFC", text)
+    t, idx = _norm_with_map(raw)
     at = t.find(q)
     if at < 0:
         return None
     start, end = idx[at], idx[at + len(q) - 1]
-    return text[start : end + 1]
+    return raw[start : end + 1]
+
+
+_WORD = re.compile(r"\w+(?:[.,]\d+)*")
+#: a quote matched word by word may spread over at most this multiple of its own length
+IN_ORDER_SPREAD = 1.5
+IN_ORDER_MIN_WORDS = 4
+
+
+def _words(text: str) -> list[tuple[str, int, int]]:
+    """``(normalised word, start, end)`` of the NFC ``text`` (a decimal comma reads as a point)."""
+    out = []
+    for m in _WORD.finditer(text):
+        w = _DECIMAL_COMMA.sub(".", unicodedata.normalize("NFKC", m.group(0)).casefold()).replace("_", "")
+        if w:
+            out.append((w, m.start(), m.end()))
+    return out
+
+
+def find_in_order(quote: str, text: str) -> str | None:
+    """Addendum 2 fallback: the quote's words appear IN ORDER within a short window of ``text``
+    (at most ``IN_ORDER_SPREAD`` × its length): punctuation, markup or a dropped word between them
+    does not fail it. Returns the raw span of ``text`` from the first to the last matched word."""
+    q = [w for w, _s, _e in _words(unicodedata.normalize("NFC", quote))]
+    if len(q) < IN_ORDER_MIN_WORDS:
+        return None
+    raw = unicodedata.normalize("NFC", text)
+    t = _words(raw)
+    limit = int(len(q) * IN_ORDER_SPREAD) + 2
+    for i, (w, _s, _e) in enumerate(t):
+        if w != q[0]:
+            continue
+        j, k = i, 0
+        while j < len(t) and k < len(q) and j - i < limit:
+            if t[j][0] == q[k]:
+                k += 1
+            j += 1
+        if k == len(q):
+            return raw[t[i][1] : t[j - 1][2]]
+    return None
+
+
+def locate_quote(quote: str, text: str) -> str | None:
+    """The raw span of ``text`` supporting ``quote``: normalised substring, else in-order words."""
+    return find_verbatim(quote, text) or find_in_order(quote, text)
 
 
 def _lit_norm(text: str) -> str:
@@ -340,6 +393,13 @@ class Validated:
     dropped_sentences: int = 0
     missing: list[str] = field(default_factory=list)  # check: the facts the draft lacked
     sub_asks: list[dict[str, Any]] = field(default_factory=list)  # check: the question's parts
+    # addendum 2 flags (meta.flags): claims saved by a deterministic re-quote, claims whose quotes
+    # were completed with the sentence of a missing literal, claims not kept, the FIRST claim (the
+    # main fact) not kept
+    requoted: int = 0
+    completed: int = 0
+    dropped_claims: int = 0
+    main_dropped: bool = False
 
     @property
     def answered(self) -> bool:
@@ -373,8 +433,9 @@ def _hay(parts: list[str]) -> str:
 
 
 def _supports(raw: Any, cited: list[str], shown: dict[str, Excerpt]) -> list[tuple[str, str]]:
-    """The verified support of one claim: each quote located verbatim (``qnorm``) in the excerpt it
-    names, else re-attributed to another SHOWN excerpt holding it; deduplicated, ≤ MAX_SUPPORT."""
+    """The verified support of one claim: each quote located (normalised substring, else its words
+    in order, ``locate_quote``) in the excerpt it names, else re-attributed to another SHOWN excerpt
+    holding it; the RAW span of the excerpt is kept for display; deduplicated, ≤ MAX_SUPPORT."""
     out: list[tuple[str, str]] = []
     for s in (raw if isinstance(raw, list) else [])[: MAX_SUPPORT * 2]:
         if not isinstance(s, dict):
@@ -383,11 +444,11 @@ def _supports(raw: Any, cited: list[str], shown: dict[str, Excerpt]) -> list[tup
         h = str(s.get("id") or "").strip()
         span, where = None, None
         if h in shown:
-            span, where = find_verbatim(quote, shown[h].text), h
+            span, where = locate_quote(quote, shown[h].text), h
         if span is None:
             for other in [*cited, *shown]:
                 if other in shown and other != h:
-                    span = find_verbatim(quote, shown[other].text)
+                    span = locate_quote(quote, shown[other].text)
                     if span is not None:
                         where = other
                         break
@@ -457,6 +518,54 @@ def requote(
             break
         out.append(found)
     return out
+
+
+_STOP = frozenset(
+    "the a an and or of to in on at by for from with as is are was were be been it its this that these "
+    "those not no but if then than so into over under about which who what when where how why there their "
+    "has have had do does did can could will would should may might must also only "
+    "ve bir bu şu ile için da de ki mi mu mü mı ne gibi daha çok en olan olarak veya ya ama fakat her hem "
+    "sonra önce kadar göre".split()
+)
+#: a line/sentence re-quotes a claim when it holds at least this share of the claim's content words
+REQUOTE_MIN_OVERLAP = 0.6
+
+
+def _content(text: str) -> set[str]:
+    return {w for w, _s, _e in _words(unicodedata.normalize("NFC", text)) if len(w) >= 3 and w not in _STOP}
+
+
+def best_line(text: str, quote: str, handles: list[str], shown: dict[str, Excerpt]) -> tuple[str, str] | None:
+    """Addendum 2 re-quote: when none of a claim's quotes is found, quote the table row / line (or
+    sentence) of a cited excerpt that holds every literal of the claim and the largest share (≥
+    ``REQUOTE_MIN_OVERLAP``) of its content words; None when no line qualifies."""
+    want = _content(text)
+    if not want:
+        return None
+    lits = literals(text)
+    best: tuple[float, int, str, str] | None = None
+    for h in handles:
+        ex = shown.get(h)
+        if ex is None:
+            continue
+        candidates = [ln for ln in ex.text.splitlines()] + _SENTENCES.split(ex.text)
+        for cand in candidates:
+            line = " ".join(cand.split())
+            if len(qnorm(line)) < QUOTE_MIN_CHARS:
+                continue
+            words = _content(line)
+            overlap = len(want & words) / len(want)
+            if overlap < REQUOTE_MIN_OVERLAP:
+                continue
+            if lits and not all(literal_supported(x, _lit_norm(line)) for x in lits):
+                continue
+            key = (overlap, -len(line))
+            if best is None or key > (best[0], best[1]):
+                best = (overlap, -len(line), h, line)
+    if best is None:
+        return None
+    anchor = next(iter(lits), next(iter(want)))
+    return best[2], _window(best[3], anchor)
 
 
 def rank_sources(claims: list[Claim]) -> list[str]:
@@ -550,6 +659,7 @@ def validate_answer(
         if isinstance(a, dict) and str(a.get("ask") or "").strip()
     ][:16]
     claims: list[Claim] = []
+    flags: dict[str, Any] = {"requoted": 0, "completed": 0}
     raw_claims = obj.get("claims") if isinstance(obj.get("claims"), list) else []
     for c in raw_claims[:MAX_CLAIMS]:
         if not isinstance(c, dict):
@@ -567,16 +677,30 @@ def validate_answer(
         for h, _q in support:
             if h not in cited:
                 cited.append(h)
+        requoted = False
+        if text and not support:
+            # addendum 2: never drop silently — one re-quote attempt from the cited items' own lines
+            first_quote = next((str(x.get("quote") or "") for x in raw_support if isinstance(x, dict)), "")
+            found = best_line(text, first_quote, cited, shown)
+            if found is not None:
+                support, requoted = [found], True
+                if found[0] not in cited:
+                    cited.append(found[0])
+        n_before = len(support)
         if support:
             support = requote(text, support, cited, shown)
         if not text:
             claims.append(Claim(text, [], "dropped", cited))
         elif support and literals_ok(text, _hay([q for _h, q in support])):
             claims.append(Claim(text, support, "kept", cited))
+            flags["requoted"] += int(requoted)
+            flags["completed"] += int(len(support) > n_before)
         elif cited and literals_ok(text, _hay([shown[h].text for h in cited])):
             claims.append(Claim(text, [], "downgraded", cited))  # true to its sources, not to a quote
         else:
             claims.append(Claim(text, [], "dropped", cited))
+    flags["dropped_claims"] = sum(1 for c in claims if c.state != "kept")
+    flags["main_dropped"] = bool(claims) and claims[0].state != "kept"
     related_hint = [h for h in (obj.get("related") or []) if isinstance(h, str)]
     return assemble(
         status,
@@ -588,6 +712,7 @@ def validate_answer(
         redact,
         missing=missing,
         sub_asks=sub_asks,
+        **flags,
     )
 
 
@@ -928,7 +1053,10 @@ __all__ = [
     "check_user",
     "clip",
     "close_app_researcher",
+    "best_line",
+    "find_in_order",
     "find_verbatim",
+    "locate_quote",
     "job_validator",
     "literal_supported",
     "literals_ok",

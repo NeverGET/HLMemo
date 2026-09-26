@@ -196,6 +196,61 @@ def test_quote_check_tr_decimal_comma_equals_point() -> None:
     assert rs.qnorm("1,6 s") == rs.qnorm("1.6 s") and rs.qnorm("1,600") != rs.qnorm("1.600")
 
 
+def test_quote_matching_normalises_markup_unicode_and_dashes() -> None:
+    """Addendum 2: NFC, dash and quote variants, list markers, table pipes, ** and backticks are
+    not text; the RAW span is returned for display."""
+    text = (
+        "| D-7 | ACCEPTED | **Use** `pgvector` — never SQLite |\n- first item\n- second item\n"
+        "Cafe\u0301 opens at noon daily"
+    )
+    assert rs.find_verbatim("D-7 ACCEPTED Use pgvector - never SQLite", text) == (
+        "D-7 | ACCEPTED | **Use** `pgvector` — never SQLite"
+    )
+    assert rs.find_verbatim("first item second item", text) == "first item\n- second item"
+    # NFC: the decomposed é matches
+    assert rs.find_verbatim("Café opens at noon", text) == "Café opens at noon"
+
+
+def test_in_order_fallback_and_its_bounds() -> None:
+    text = "The retrieval p95 target is now, after the R3 release, 1.2 s on the VPS."
+    assert rs.find_verbatim("The retrieval p95 target is now 1.2 s on the VPS", text) is None
+    span = rs.find_in_order("The retrieval p95 target is now 1.2 s on the VPS", text)
+    assert span == text[:-1]  # the raw words from the first to the last match
+    assert rs.find_in_order("target is now 1.2 s", "target ... " + "x " * 40 + "is now 1.2 s") is None
+    assert rs.find_in_order("p95 target", text) is None  # too short to be matched word by word
+    assert rs.locate_quote("the p95 target is now, after", text) is not None
+
+
+def test_failed_quote_is_requoted_from_its_line_before_dropping() -> None:
+    """Addendum 2: a claim whose quotes are all wrong is re-quoted from the cited item's line that
+    holds its literals and most of its words; dropped only when no line qualifies; flags recorded."""
+    obj = {
+        "status": "answered",
+        "answer": "Postgres 17 with pgvector is the only store.",
+        "claims": [
+            _claim("Postgres 17 with pgvector is the only store.", ("v11.0", "we use postgres seventeen")),
+            _claim("The store is Oracle 9.", ("v11.0", "nothing like this")),
+        ],
+        "related": [],
+        "confidence": "high",
+    }
+    v = rs.validate_answer(obj, SHOWN)
+    assert [c.state for c in v.claims] == ["kept", "dropped"]
+    assert (
+        v.claims[0].support[0][0] == "v11.0" and "Use Postgres 17 with pgvector" in v.claims[0].support[0][1]
+    )
+    assert (v.requoted, v.dropped_claims, v.main_dropped) == (1, 1, False)
+    lost_main = rs.validate_answer({**obj, "claims": list(reversed(obj["claims"]))}, SHOWN)
+    assert lost_main.main_dropped is True  # the FIRST claim (the main fact) was not kept
+
+
+def test_prompt_puts_the_main_fact_first() -> None:
+    system = load_task("research").system
+    assert "The FIRST claim is the direct answer to the question's MAIN ask" in system
+    assert "sub_asks[0] is the question's MAIN ask" in system
+    assert "quote the table row" in system
+
+
 def test_literal_support_uses_the_same_numeral_rule() -> None:
     hay = rs._lit_norm("Gecikme hedefi 1,6 s; D-004 kararı; `HLM_RESEARCH_ENABLED=true`")
     assert rs.literals_ok("The target was 1.6 s (D-004).", hay)

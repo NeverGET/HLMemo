@@ -198,6 +198,7 @@ async def test_ask_live_smoke(connect, world, deps, db_dsn) -> None:  # noqa: AN
             print(
                 f"\n{qid}: ok={ok} abstained={out['abstained']} conf={out['confidence']} "
                 f"steps={out['meta']['steps']} attempts={out['meta']['attempts']} "
+                f"flags={out['meta']['flags']} "
                 f"cost=${out['meta']['cost_usd']} latency={round(ms_)} ms\n  answer: {out['answer'][:300]}"
             )
     finally:

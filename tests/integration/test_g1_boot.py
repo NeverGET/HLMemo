@@ -111,6 +111,7 @@ async def test_migration_applies_and_device1_reserved(connect) -> None:
             "llm_calls",
             "llm_lineage_calls",
             "llm_reservations",
+            "memory_map_summaries",  # 0009 (D-136): the Memory Map L2 summary cache
             "memory_versions",
             "projects",
             "version_signals",  # 0008 (W2b)
