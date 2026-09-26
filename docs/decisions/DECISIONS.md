@@ -1028,3 +1028,11 @@ D-172 | 2026-09-26 | ACCEPTED (owner: "if this quality is enough for you to work
 2. Implement a per-job writer profile (configuration, D-017) for the best candidate, then run end-to-end plus the D-165 and D-168 adjudication.
 3. If C2 or C3 still falls short, the residual goes back to the owner with the numbers.
 Prod cost note: memory.ask is about $0.004/q today. A writer at ≤ $0.007/q keeps 20–50 questions a day at about $3–10/month, inside the prod cap of 10.
+D-173 | 2026-09-26 | ACCEPTED (owner: "since we are trying other models and efforts, we will exceed the planned $10/month; so let's find the model that can do this job successfully at the best price/performance"; hint: OpenAI's gpt-5.6 models are pricier but more capable than the gpt-6 ones) | **The monthly $10 prod budget is no longer a hard cap. The writer model is chosen on price/performance, and C6's per-question cost limit is re-set with the owner after the sweep.**
+The sweep adds 4 runs:
+- gpt-5.6-luna ($0.2/$1.2 per M) at effort low and medium, about $0.004/q for the writer;
+- gpt-5.6-terra ($2/$12);
+- gpt-5.6-sol ($2/$10), about $0.03/q each.
+These join luna low/medium, luna-pro, mistral-large-2512 and glm-5. The dev spend cap for the sweep is $3.
+**Selection rule, written before the results:** among the writers that reach C2 ≥ .80 on the sweep AND keep C3/C4 at their thresholds in the end-to-end run, choose the cheapest. If none reaches .80, choose the best correct per dollar and present the residual to the owner.
+The C6 latency limit (p95 ≤ 20 s) stays. The C6 cost limit moves from $0.01/q to an owner-confirmed value, proposed together with the chosen writer's measured cost.
