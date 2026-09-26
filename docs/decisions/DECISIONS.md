@@ -1013,3 +1013,18 @@ Expand added only 17 sentences over 34 questions and dropped 2 of them by the li
 **A scorer robustness fix** (wf-research-proto b094458): a malformed judge verdict (`{"contained": true}` for a 2-fact question) is now left to adjudication instead of crashing the run.
 **State of C2:** across 5 end-to-end variants on the writer luna (prose modes), judged correctness sits in .64–.72; adjudicated in the D-169 run it is .72. The gate needs ≥ .83. Every other criterion is at or near its threshold on dev.
 **Remaining lever:** a stronger writer model for the prose job only (per-job profile). It trades against C6 (≤ $0.01/q) and the prod budget of $10/month, so it is presented to the owner with the numbers.
+D-172 | 2026-09-26 | ACCEPTED (owner: "if this quality is enough for you to work successfully and smoothly, accept it; if it would slow you down, tire you or cause problems on big or intense projects, go with your recommendation") | **Consumer verdict: the ~.70 C2 quality is NOT yet enough for large or intense projects, so the writer model is upgraded, time- and cost-boxed.**
+**Why, as the consumer:**
+- (1) On this project's small memory the answers are usable: C1 is 1.97, and the misses are secondary details one drill away. But completeness degrades as memory grows. More sources mean more distractors, and the cheap writer compresses more (D-155: .76 over ≤ 5 focused sources against about .65 over 12). That means more drills and re-asks.
+- (2) C3 is also short: .91 judged against .95. The misses are occasional overreach ("therefore…", an unstated rationale). On intense work every such sentence has to be re-verified, which is the "tiring" failure.
+- Better instruction-following addresses both.
+**Plan (≤ 1 day, ≤ $3 dev):**
+1. An offline writer sweep over the EXACT end-to-end contexts (`meta.excerpts_shown` of the v3.1 run), holding the prose prompt, excerpts and questions fixed:
+   - luna at effort low (baseline replicate) and medium;
+   - luna-pro;
+   - mistral-large-2512;
+   - glm-5.
+   Sonnet 5, gpt-6-sol and Haiku 4.5 are excluded because they cost about $0.017–0.034 per question against C6's $0.01. gemini-3.8-flash is excluded as borderline cost and weak in D-162.
+2. Implement a per-job writer profile (configuration, D-017) for the best candidate, then run end-to-end plus the D-165 and D-168 adjudication.
+3. If C2 or C3 still falls short, the residual goes back to the owner with the numbers.
+Prod cost note: memory.ask is about $0.004/q today. A writer at ≤ $0.007/q keeps 20–50 questions a day at about $3–10/month, inside the prod cap of 10.
