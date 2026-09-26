@@ -1258,3 +1258,29 @@ The protocol pins:
 - adjudication and rater procedures;
 - the NotebookLM reference notebooks;
 - the per-set pass criteria and the outcome rules.
+D-188 | 2026-09-26 | ACCEPTED (the owner: continue without the codex adjudicator for now; codex quota is exhausted until 2026-09-30) | **FINAL GATE (frozen protocol D-187, fd83f95): NOT PASSED. memory.ask is NOT release ready. The corpus-B dev set did not represent the real regime.**
+**Judge results** (adjudication pending codex; the direction does not depend on it):
+| Criterion | Sealed B (50: 45 answerable / 5 negative) | **PR set (60: 50 / 10), this project's current memory, 558 items** |
+|---|---|---|
+| Correct | .622 | **.30** |
+| Contradiction | .067 | **.22** |
+| Abstain | 1.00 | .70 |
+| Faithful (item) | .895 | .868 |
+| Recall | .948 | .853 |
+| p95 | 15.0 s | 14.1 s |
+| $/q | .004 | .003 |
+Errors: 0. The temporal layer fired (sealed B: 5 superseded excerpts shown, 2 pull-ins).
+**PR-set failure types (50 answerable):** 15 correct, 13 main fact only, 11 main fact missing, 9 contradictions, 2 stale-as-current.
+**PR by category:**
+| Category | Correct |
+|---|---|
+| multihop | **0/5** |
+| procedure | **2/10** |
+| temporal | **2/10** |
+| recent | 11/25 |
+**Sealed B by category:** architecture 5/10, rationale 6/10, gotcha 7/8, identifier 5/7, temporal 5/10.
+**Lessons:**
+- (1) All day of dev iteration ran on corpus B, an older and more static snapshot. The real regime is the current memory, with many superseded decisions and multi-hop or procedural questions, and dev did not represent it, so the tuning overfit dev.
+- (2) The capability gaps are multi-hop synthesis across items, procedures, and "what is current now" over an evolving memory. The explicit links cover almost nothing in the current tree: 252 links from ONE "MERGED" declaration.
+- (3) Per the protocol, the PR set and sealed B are now SPENT for this candidate. No tuning on them; the next candidate needs a new hold-out.
+**Next (proposed):** build a REPRESENTATIVE dev set from the current memory (the same generator as the PR set, a disjoint commit range) with multi-hop, procedure, temporal and recent questions, then attack those capabilities on it. The NotebookLM reference on these sets is still running, for context.
