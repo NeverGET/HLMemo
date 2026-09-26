@@ -44,8 +44,9 @@ question (``E_UNAVAILABLE``, retryable). The provider re-runs the gate before ea
 
 memory.ask writes nothing but the spend guard's ledger (``llm_calls``, ``llm_budget``,
 ``llm_reservations``, ``llm_lineage_calls``): no event, no version, no access event, no job, no map
-cache row. Systemic failures (disabled, busy, breaker open, budget stop, no answer in time) are
-``E_UNAVAILABLE`` with ``details.reason``; an abstention is a successful answer.
+cache row (over MCP the middleware refreshes ``devices.last_seen_at`` as for every tool call; that is
+auth telemetry, not memory). Systemic failures (disabled, busy, breaker open, budget stop, no answer
+in time) are ``E_UNAVAILABLE`` with ``details.reason``; an abstention is a successful answer.
 """
 
 from __future__ import annotations
@@ -674,8 +675,21 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
     shown = {e.handle: e for e in excerpts}
     handles = [*v.primary, *v.related, *(h for c in v.kept for h, _q in c.support)]
     vids = sorted(run.sent | {shown[h].version_id for h in handles if h in shown})
+    returned = sorted({shown[h].version_id for h in handles if h in shown})
     async with run.db() as c:
         fresh = await run.fresh_ctx(c)  # E_AUTH / E_FORBIDDEN_PROJECT
+        # review 80 (MED): the versions returned and their projects are read FOR SHARE (device first,
+        # then projects, then versions), so a concurrent policy change, supersession or tombstone
+        # either committed before these reads or waits until this answer is decided
+        await c.execute(
+            "SELECT 1 FROM projects WHERE project_id = %s OR project_id IN (SELECT unnest(project_ids)"
+            " FROM memory_versions WHERE version_id = ANY(%s)) ORDER BY project_id FOR SHARE",
+            (run.project_id, returned),
+        )
+        await c.execute(
+            "SELECT 1 FROM memory_versions WHERE version_id = ANY(%s) ORDER BY version_id FOR SHARE",
+            (returned,),
+        )
         rows = await sq.version_access(c, vids, t_start)
         policies = await mm.project_policies(c, (p for r in rows for p in r.project_ids))
     scopes = set(mm.view_scopes(fresh))

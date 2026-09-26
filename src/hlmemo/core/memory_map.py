@@ -61,6 +61,7 @@ _GIT_HEAD = re.compile(r"^\d{1,2}:\d{2}\s+[0-9a-f]{7,40}\s+")
 # emphasis/code markers; an underscore only when it is emphasis (identifiers keep theirs)
 _MD = re.compile(r"\*{1,3}|`{1,3}|(?<!\w)_{1,2}|_{1,2}(?!\w)")
 _GIT_TITLE = re.compile(r"^git log (\d{4}-\d{2}-\d{2})\b")
+_ROW_LEAD = re.compile(r"^([A-Z]{1,5}-\d{2,5}) · ([A-Za-z]+)[^:]{0,60}: ")
 _PATHISH = re.compile(r"^[\w.@~+-]+(?:/[\w.@~+-]+)*\.[A-Za-z0-9]{1,8}$|^[\w.@~+-]+(?:/[\w.@~+-]+)+$")
 
 
@@ -198,6 +199,23 @@ def _dir_name(path: str) -> tuple[str, str]:
     return (d + "/") if d else "./", base or path
 
 
+def lead_of(title: str) -> str:
+    """A title without its trailing `` · <path>`` (``hlm import`` titles) and without a leading
+    ``<doc title> › `` (a section's parent)."""
+    title = " ".join(title.split())
+    if " · " in title:
+        lead, _, tail = title.rpartition(" · ")
+        if _PATHISH.match(tail):
+            title = lead
+    if " › " in title:
+        title = title.rsplit(" › ", 1)[1]
+    m = _ROW_LEAD.match(title)
+    if m:  # a decision row's lead "D-130 · ACCEPTED (owner): text" -> "D-130 text" (a rarer status stays)
+        status = m.group(2)
+        title = f"{m.group(1)} " + ("" if status.upper() == "ACCEPTED" else f"({status}) ") + title[m.end() :]
+    return title
+
+
 def locate(item: ViewItem) -> Located:
     """Where an item sits in the tree: its source file (``source.path`` without the ``#anchor``),
     else a path parsed from the title (``path § section`` of the eval importer, ``… · path`` of
@@ -209,10 +227,7 @@ def locate(item: ViewItem) -> Located:
         if "/" not in path and item.source_system:
             group = f"{item.source_system}/"
         key = f"{item.source_system or 'src'}:{path}"
-        part = title.rsplit(" · ", 1)[0] if " · " in title else title
-        if "›" in part:
-            part = part.rsplit("›", 1)[1]
-        return Located(group, key, name, clean(part, 9, 64) if _anchor else None)
+        return Located(group, key, name, clean(lead_of(title), 9, 64) if _anchor else None)
     m = _GIT_TITLE.match(title)
     if m:
         part = title.split(" § ", 1)[1] if " § " in title else None
@@ -285,7 +300,7 @@ def _candidates(f: _File, entries: dict[int, list[Entry]]) -> list[tuple[int, in
     heads = []
     subs = []
     for idx, (it, loc) in enumerate(f.items):
-        label = loc.part or clean(it.title, 9, 64)
+        label = loc.part or clean(lead_of(it.title), 9, 64)
         heads.append((idx, -1, label, item_handle(it.version_id, it.n_chunks), None))
         for e in entries.get(it.version_id, []):
             if e.level <= 2 and it.n_chunks > 1:

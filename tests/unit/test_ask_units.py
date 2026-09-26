@@ -281,12 +281,18 @@ def test_validate_answer_contract_quotes_and_sources() -> None:
 
 
 def test_claim_needs_its_quotes_to_cover_every_literal() -> None:
-    """Gate v1 finding (b): one quote covering only PART of a claim does not support it."""
+    """Gate v1 finding (b): one quote covering only PART of a claim does not support it; a literal
+    the quotes lack is re-quoted from the cited excerpt's own sentence (deterministic), and a claim
+    whose literal no cited excerpt states is never kept."""
     partial = _answer(
         claims=[
-            # "D-001" is only in the second (missing) quote: the claim is not fully supported
+            # "D-001" is not in the quote: its own sentence of v11.0 is added as a second quote
             _claim(
                 "The target was 1,6 s in D-001.", ("v11.0", "The retrieval p95 target is 1.6 s on the VPS")
+            ),
+            # "D-009" is in no excerpt: never kept
+            _claim(
+                "The target was 1,6 s in D-009.", ("v11.0", "The retrieval p95 target is 1.6 s on the VPS")
             ),
             _claim(
                 "The retrieval p95 target is now 1.2 s.", ("v10.0", "The retrieval p95 target is now 1.2 s")
@@ -295,8 +301,26 @@ def test_claim_needs_its_quotes_to_cover_every_literal() -> None:
         answer="The p95 target is now 1.2 s.",
     )
     v = rs.validate_answer(partial, SHOWN)
-    assert [c.state for c in v.claims] == ["downgraded", "kept"]  # true to its excerpt, not to its quote
-    assert v.primary == ["v10.0"] and "v11.0" in v.related
+    assert [c.state for c in v.claims] == ["kept", "dropped", "kept"]
+    assert v.claims[0].support == [
+        ("v11.0", "The retrieval p95 target is 1,6 s on the VPS"),
+        ("v11.0", "D-001 | ACCEPTED | Use Postgres 17 with pgvector."),
+    ]
+    for h, q in v.claims[0].support:
+        assert rs.find_verbatim(q, SHOWN[h].text) == q  # re-quoted spans are verbatim too
+
+
+def test_requote_respects_the_support_cap_and_long_sentences() -> None:
+    long_text = (
+        "Intro. " + " ".join(["filler words here"] * 80) + " the flag HLM_X_42 is set " + " tail" * 80 + "."
+    )
+    shown = {"v1.0": _ex("v1.0", long_text)}
+    support = [("v1.0", "Intro.")] * 0 + [("v1.0", "filler words here filler words here")]
+    out = rs.requote("HLM_X_42 is set.", support, ["v1.0"], shown)
+    assert len(out) == 2 and "HLM_X_42" in out[1][1] and len(out[1][1]) <= rs.QUOTE_MAX_CHARS
+    assert rs.find_verbatim(out[1][1], long_text) is not None
+    full = [("v1.0", "a"), ("v1.0", "b"), ("v1.0", "c")]
+    assert rs.requote("HLM_X_42 is set.", full, ["v1.0"], shown) == full  # the cap holds
 
 
 def test_primary_is_the_handles_supporting_most_claims() -> None:

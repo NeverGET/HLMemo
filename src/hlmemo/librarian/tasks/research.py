@@ -24,7 +24,9 @@ caller can drill (``vN.M``/``vN``). Each quote must occur in the excerpt it name
 read as a point: TR "1,6" = "1.6"; a thousands-style "1,600" is left alone); a quote found only in
 another SHOWN excerpt is re-attributed to it; the quote returned is the original substring of the
 excerpt. A claim is kept only when its quotes TOGETHER contain every number/identifier/path literal of
-the claim; a claim without a verified quote is downgraded (its handles only ``related``) or dropped.
+the claim (a literal its quotes lack is re-quoted deterministically from the sentence of a cited
+excerpt that states it, ``requote``); a claim without a verified quote is downgraded (its handles
+only ``related``) or dropped.
 The free-text answer keeps only the sentences whose literals are in the kept claims' quotes.
 primary = the handles supporting the most kept claims (≤ 3). No kept claim left → abstention.
 """
@@ -391,13 +393,69 @@ def _supports(raw: Any, cited: list[str], shown: dict[str, Excerpt]) -> list[tup
                         break
         if span is None or where is None:
             continue
-        span = " ".join(span.split())
-        if len(span) > QUOTE_MAX_CHARS:
-            span = span[: QUOTE_MAX_CHARS - 1] + "…"
+        span = _cut(" ".join(span.split()))
         if all(qnorm(span) != qnorm(q) for _h, q in out):
             out.append((where, span))
         if len(out) >= MAX_SUPPORT:
             break
+    return out
+
+
+def _cut(span: str, limit: int = QUOTE_MAX_CHARS) -> str:
+    """A long span cut at a word boundary (no ellipsis: a quote stays a verbatim substring)."""
+    if len(span) <= limit:
+        return span
+    head = span[:limit]
+    return head.rsplit(" ", 1)[0] if " " in head else head
+
+
+_SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _window(sentence: str, literal: str) -> str:
+    """``sentence`` itself, or (when longer than a quote may be) a word-bounded window of it around
+    the first occurrence of ``literal``."""
+    if len(sentence) <= QUOTE_MAX_CHARS:
+        return sentence
+    at = sentence.casefold().find(literal.casefold())
+    if at < 0:
+        return _cut(sentence)
+    lo = max(0, at - QUOTE_MAX_CHARS // 2)
+    hi = min(len(sentence), at + len(literal) + QUOTE_MAX_CHARS // 2)
+    lo = sentence.rfind(" ", 0, lo) + 1 if lo > 0 else 0
+    hi_space = sentence.find(" ", hi)
+    hi = hi_space if hi_space >= 0 else len(sentence)
+    return _cut(sentence[lo:hi].strip())
+
+
+def requote(
+    text: str, support: list[tuple[str, str]], cited: list[str], shown: dict[str, Excerpt]
+) -> list[tuple[str, str]]:
+    """Deterministic re-quoting (gate v1 finding b): for each literal of the claim that its verified
+    quotes lack, add the verbatim sentence (or a window of it) of a cited excerpt that states it, up
+    to ``MAX_SUPPORT`` quotes. The model often quotes "It defaults to true" for a claim that names
+    the flag: the flag's own sentence is added, so the quotes TOGETHER carry the claim."""
+    out = list(support)
+    for lit in literals(text):
+        if literal_supported(lit, _hay([q for _h, q in out])):
+            continue
+        if len(out) >= MAX_SUPPORT:
+            break
+        found = None
+        for h in dict.fromkeys([*(h for h, _q in out), *cited]):
+            ex = shown.get(h)
+            if ex is None:
+                continue
+            for sentence in _SENTENCES.split(ex.text):
+                sentence = " ".join(sentence.split())
+                if len(qnorm(sentence)) >= QUOTE_MIN_CHARS and literal_supported(lit, _lit_norm(sentence)):
+                    found = (h, _window(sentence, lit))
+                    break
+            if found is not None:
+                break
+        if found is None or any(qnorm(found[1]) == qnorm(q) for _h, q in out):
+            break
+        out.append(found)
     return out
 
 
@@ -509,6 +567,8 @@ def validate_answer(
         for h, _q in support:
             if h not in cited:
                 cited.append(h)
+        if support:
+            support = requote(text, support, cited, shown)
         if not text:
             claims.append(Claim(text, [], "dropped", cited))
         elif support and literals_ok(text, _hay([q for _h, q in support])):
@@ -878,6 +938,7 @@ __all__ = [
     "qnorm",
     "refine_user",
     "rank_sources",
+    "requote",
     "research_chain",
     "validate_answer",
     "verify_user",
