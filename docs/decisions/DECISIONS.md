@@ -1075,3 +1075,14 @@ Latency and quality probes over the same 34 end-to-end contexts:
 - The remaining tail (3/34 at 29–42 s) is upstream variance. It is cut by `HLM_RESEARCH_WRITER_TIMEOUT_S` (default 12 s): on timeout the task profile (gpt-6-luna, 2–4 s) writes the answer. The expected cost is about 9% of questions at luna quality, ≈ −.014 correct.
 **Profile** `profiles/openrouter-glm5.toml` carries the final values. The estimated full cost per question is about $0.010 (writer $0.0075 plus plan and attribution on luna), roughly $6–15/month at 20–50 questions a day.
 **Next:** the end-to-end run with the writer profile and timeout, then the D-165 and D-168 adjudication and the C1 rater. terra and sol stay unrun: they are no longer needed unless glm-5 fails end-to-end.
+D-176 | 2026-09-26 | ACCEPTED | **glm-5's latency on OpenRouter drifts too much for a 20 s p95. The quality holds, but the writer timeout fires on up to half the questions.**
+**End-to-end runs of the final configuration** (prose + llm attribution + writer openrouter-glm5 with reasoning off, no Baidu, latency sort; writer timeout 12 s; dev per-question cap raised to $0.03 because the glm-5 worst-case reservation, about $0.014, does not fit under $0.01, the R4 manifest's current limit):
+| Run | glm-5 wrote | Timeouts | Breaker opens | Correct | Faithful | Contradiction | p50 / p95 | $/q |
+|---|---|---|---|---|---|---|---|---|
+| fba91c2 | 18/34 | 4 | 12 skipped (the timeout cuts tripped the breaker: a bug, fixed in 46ea7e6) | .64 | .941 | .08 | 11.1 / 21.4 s | .0103 |
+| 46ea7e6 | 17/34 | **17** | 0 | .60 | .83 | .16 | 18.3 / 36.4 s | .0145 |
+Where glm-5 wrote, it was better (fba91c2: 7/9 against luna 9/16), but in 46ea7e6 the upstream latency drifted and half the writer calls hit the 12 s cut. The earlier probe (lowr2) saw 3/34 over 12 s. The latency depends on which upstream provider serves the call at that hour.
+**Options:**
+- (1) Pin the fastest upstream (StreamLake) with no fallback: probe running.
+- (2) OpenAI-served gpt-5.6-terra or sol: latency should be stable, at about $0.03/q, and the test spend (about $2) needs the owner's approval because the permission check blocked it.
+- (3) Relax C6's p95 (20 s): an owner decision.
