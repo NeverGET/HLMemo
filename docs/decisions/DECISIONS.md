@@ -805,3 +805,15 @@ D-158a | 2026-09-26 | ACCEPTED (consult 81, gpt-6-astra low, 1 round per D-125; 
 - (7) **C6 adds** an error/timeout rate ≤ .02 and reports p99, response tokens (median and p95), and answer-plus-drill time.
 **Partly adopted:** paired bootstrap CIs are REPORTED for every reference comparison, but the point estimate gates. At n = 50–60 the CI is about ±.10, so "the CI must exclude −.05" would be unpassable by construction.
 **Not adopted:** removing the check of uncited sentences against all excerpts. Such a sentence is shown attributed to the excerpt(s) that hold its literals and words, the judge checks entailment against exactly those, and the count is reported (`uncited`).
+D-159 | 2026-09-26 | ACCEPTED | **Select-then-write (HLM_RESEARCH_SELECT, wf-memory-ask 642dc7a + 2761c6c) hurts correctness, so the flag stays OFF.**
+Same 33 dev questions, consumer gate v2.1 criteria:
+| Variant | Correct | Faithful (source) | Recall | Abstain | False abstain | p95 |
+|---|---|---|---|---|---|---|
+| V14 + select | .40 | **.957** | .78 | 1.00 | .12 | 14.2 s |
+| V14 D-157 | .60 | .911 | .90 | .875 | .04 | 12.7 s |
+**Why it fails:**
+- The select job keeps too little: 3 excerpts in 14 questions, 1–2 in 8, none in 7. In the 7 questions lost against D-157, the answers are complete over what was selected but miss facts in excerpts that were left out.
+- The model's own relevance guess is weaker than the ORACLE-sel selection, which came from an answer pass (claims-mode primary + related).
+- The 7 `budget_stop`s are 6 negative questions plus B-D010: select [] → write → refine → select [] → no budget for a second write. The abstentions come out right, just at higher cost.
+**Kept from the experiment:** the select-job output cap is 800 tokens, because reasoning counts against the cap.
+**Next:** an offline test of the product's V14 write prompt + `validate_cited` over the ORACLE-sel contexts. It separates the context-selection effect from the answer-format effect in the .60 → .76 gap.
