@@ -2103,6 +2103,114 @@ def parse_expand(obj: dict[str, Any] | None, answer: list[str]) -> list[str]:
     return out
 
 
+# --------------------------------------------------------------------------- D-178 text protocol
+#: the JOBs with a plain-text variant, for a profile without JSON mode (``LlmProfile.json_mode``)
+TEXT_JOBS = {"prose": "prose_text", "expand": "expand_text"}
+_TEXT_FENCE = re.compile(r"^\s*```[\w-]*[ \t]*\n?|\n?[ \t]*```\s*$")
+#: a header line: optional markup, the key (any case), optional markup, ":" and its value
+_TEXT_KEY = re.compile(
+    r"^[ \t]*[*_#>`-]*[ \t]*(status|confidence|sources|related|answer)[ \t]*[*_`]*[ \t]*:[ \t]*(.*)$", re.I
+)
+_ADD_KEY = re.compile(r"^[ \t]*[*_#>`-]*[ \t]*add[ \t]*[*_`]*[ \t]*:[ \t]*(.*)$", re.I)
+_TEXT_ITEM = re.compile(r"^[ \t]*(?:[-*+•][ \t]+|\d{1,3}[.)][ \t]+)")
+_TEXT_NONE = frozenset(["", "[]", "none", "-", "n/a", "(none)", "empty"])
+_TEXT_MAX_ANSWER = 20000  # the JSON schema's own answer bound (research/v3.schema.json)
+_TEXT_MAX_IDS = 16
+
+
+def _text_body(text: str) -> list[str]:
+    return _TEXT_FENCE.sub("", text.replace("\r\n", "\n").replace("\r", "\n").strip()).split("\n")
+
+
+def _text_ids(value: str, shown: set[str] | None) -> list[str]:
+    ids = [x.strip("[](){}'\"`*. ") for x in re.split(r"[,;\s]+", value)]
+    ok = [x for x in ids if x and (x in shown if shown is not None else _HANDLE.match(x))]
+    return list(dict.fromkeys(ok))[:_TEXT_MAX_IDS]
+
+
+def parse_prose_text(
+    text: str | None, shown: Iterable[str] | None = None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """D-178: the plain-text layout of the JOB ``prose_text`` -> the object the JSON JOB ``prose``
+    returns, or ``(None, why)`` (a schema failure, retried once). Tolerant: an outer code fence,
+    CR/LF, header keys in any case/order with markup or extra spaces around them, stray lines
+    before ``ANSWER:``. ``STATUS`` (answered / insufficient_evidence) and the ``ANSWER:`` line are
+    required; the answer is everything after it (text on its own line included) to the end.
+    ``SOURCES``/``RELATED`` ids are kept only when shown (``shown``; without it, well-formed
+    handles); an unknown ``CONFIDENCE`` is left out (the answer's reads "low")."""
+    if text is None or not text.strip():
+        return None, "empty response"
+    lines = _text_body(text)
+    head: dict[str, str] = {}
+    at = None
+    for i, line in enumerate(lines):
+        m = _TEXT_KEY.match(line)
+        if m is None:
+            continue
+        key, value = m.group(1).lower(), m.group(2).strip()
+        if key == "answer":
+            at = i
+            break
+        head.setdefault(key, value)
+    if at is None:
+        return None, "text layout: no ANSWER line"
+    status = re.sub(r"[\s-]+", "_", head.get("status", "").strip(" *_`.").lower())
+    if status not in (ANSWERED, INSUFFICIENT):
+        return None, f"text layout: STATUS missing or invalid ({head.get('status', '')[:40]!r})"
+    first = _TEXT_KEY.match(lines[at])
+    rest = "\n".join([first.group(2) if first else "", *lines[at + 1 :]]).strip()
+    valid = set(shown) if shown is not None else None
+    obj: dict[str, Any] = {
+        "status": status,
+        "answer": rest[:_TEXT_MAX_ANSWER],
+        "sources": _text_ids(head.get("sources", ""), valid),
+        "related": _text_ids(head.get("related", ""), valid),
+    }
+    conf = head.get("confidence", "").strip(" *_`.").lower()
+    if conf in _CONF:
+        obj["confidence"] = conf
+    return obj, None
+
+
+def parse_expand_text(text: str | None) -> tuple[dict[str, Any] | None, str | None]:
+    """D-178: the plain-text layout of the JOB ``expand_text`` (an ``ADD:`` line, then one sentence
+    per line; list markers are layout) -> ``{"add": [...]}``, or ``(None, why)``. Nothing after
+    ``ADD:`` (or "none" / "[]") is ``{"add": []}``."""
+    if text is None or not text.strip():
+        return None, "empty response"
+    lines = _text_body(text)
+    at = next((i for i, line in enumerate(lines) if _ADD_KEY.match(line)), None)
+    if at is None:
+        return None, "text layout: no ADD line"
+    m = _ADD_KEY.match(lines[at])
+    items = [m.group(1) if m else "", *lines[at + 1 :]]
+    add = [s for s in (_TEXT_ITEM.sub("", x).strip() for x in items) if s.lower() not in _TEXT_NONE]
+    return {"add": add[:12]}, None
+
+
+def _payload_ids(user: str) -> list[str] | None:
+    """The excerpt ids of a JOB's INPUT (``_input``'s one-line JSON), or None."""
+    try:
+        payload = json.loads(user.split("INPUT: ", 1)[1].split("\n", 1)[0])
+    except (IndexError, ValueError):
+        return None
+    ex = payload.get("excerpts") if isinstance(payload, dict) else None
+    return [str(e.get("id")) for e in ex if isinstance(e, dict)] if isinstance(ex, list) else None
+
+
+def text_variant(job: str, user: str) -> tuple[str, Callable[[str | None], Any]] | None:
+    """D-178: the plain-text protocol of ``job`` for a profile without JSON mode: ``(the same
+    message under the JOB's text name, its parser)``; None for a JOB without one."""
+    name = TEXT_JOBS.get(job)
+    if name is None or not user.startswith(f"JOB: {job}\n"):
+        return None
+    message = f"JOB: {name}\n" + user.split("\n", 1)[1]
+    if job == "expand":
+        return message, parse_expand_text
+    shown = _payload_ids(user)
+    return message, lambda content: parse_prose_text(content, shown)
+
+
 def attribute_user(
     question: str, sentences: list[str], excerpts: list[Excerpt], redact: Redact | None = None
 ) -> str:
@@ -2562,12 +2670,17 @@ class Researcher:
                 if prior.denied:
                     raise PrivacyDenied("E_PRIVACY_DENIED")
 
+        def variant(profile: LlmProfile) -> Any:
+            """D-178: the JOB's plain-text protocol on a profile without JSON mode (never by name)."""
+            return None if profile.json_mode else text_variant(job, user)
+
         return await self.provider.complete(
             self.job_spec(job),
             user,
             validate=job_validator(job),
             precheck=precheck,
             chain=self.chain_for_job(job),  # D-171: a writer job's own chain, else the task's
+            variant=variant if job in TEXT_JOBS else None,
             deadline=deadline,
             lineage=lineage,
             attempt_policy="latency",
@@ -2619,6 +2732,7 @@ __all__ = [
     "PROSE_PROMPT_VERSION",
     "SELECT_MAX",
     "TASK",
+    "TEXT_JOBS",
     "WRITER_JOBS",
     "WRITER_TIMEOUT_S",
     "Claim",
@@ -2651,6 +2765,8 @@ __all__ = [
     "merge_check",
     "parse_attribute",
     "parse_expand",
+    "parse_expand_text",
+    "parse_prose_text",
     "parse_plan",
     "parse_select",
     "plan_user",
@@ -2673,6 +2789,7 @@ __all__ = [
     "select_user",
     "split_inline_cites",
     "split_sentences",
+    "text_variant",
     "validate_answer",
     "validate_cited",
     "validate_prose",

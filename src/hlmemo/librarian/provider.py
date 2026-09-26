@@ -298,6 +298,12 @@ class _Attempt:
     latency_ms: int = 0
 
 
+#: D-178: a response parser: content -> (object, None) or (None, why it is not one)
+Parser = Callable[[str | None], tuple[dict[str, Any] | None, str | None]]
+#: D-178: per profile, the ``(user message, parser)`` of a call's own protocol, or None (JSON)
+Variant = Callable[[LlmProfile], tuple[str, Parser] | None]
+
+
 def parse_json_object(text: str | None) -> tuple[dict[str, Any] | None, str | None]:
     if text is None:
         return None, "empty response"
@@ -501,12 +507,15 @@ class Provider:
         deadline: float | None = None,
         attempt_policy: str = "background",
         attempt_guard: AttemptGuard | None = None,
+        variant: Variant | None = None,
     ) -> LlmResult:
         """``deadline`` (event-loop time): the caller's hard cap. HTTP timeouts are budgeted to end
         before it and no attempt starts without room (``DeadlineExceeded``), so an outer
         ``asyncio.timeout`` at the same deadline never has to cut an attempt mid-flight.
         ``attempt_policy``: ``background`` (retry/backoff) or ``latency`` (one bounded attempt per
-        profile, then the next one; see the module doc). ``attempt_guard``: see ``AttemptGuard``."""
+        profile, then the next one; see the module doc). ``attempt_guard``: see ``AttemptGuard``.
+        ``variant`` (D-178): per PROFILE of the chain, ``(user message, parser)`` to use instead of
+        ``user`` and the JSON parser (a text protocol for a profile without JSON mode), or None."""
         if attempt_policy not in ATTEMPT_POLICIES:
             raise LlmConfigError(f"unknown attempt_policy {attempt_policy!r}")
         token = _LINEAGE.set(lineage) if lineage is not None else None
@@ -515,7 +524,13 @@ class Provider:
         gtoken = _GUARD.set(attempt_guard)
         try:
             return await self._complete(
-                task, user, job_id=job_id, validate=validate, chain=chain, latency=attempt_policy == "latency"
+                task,
+                user,
+                job_id=job_id,
+                validate=validate,
+                chain=chain,
+                latency=attempt_policy == "latency",
+                variant=variant,
             )
         finally:
             _GUARD.reset(gtoken)
@@ -533,6 +548,7 @@ class Provider:
         validate: Validator | None,
         chain: list[LlmProfile] | None,
         latency: bool = False,
+        variant: Variant | None = None,
     ) -> LlmResult:
         if self.mode == "off":
             raise LlmDisabled("HLM_LLM_MODE=off")
@@ -553,9 +569,17 @@ class Provider:
                 remaining = _remaining_s()
                 if remaining is None or remaining * LATENCY_PRIMARY_SHARE >= MIN_ATTEMPT_S:
                     share = LATENCY_PRIMARY_SHARE  # leave the rest of the deadline to the next profile
+            own = variant(profile) if variant is not None else None  # D-178: its protocol
             try:
                 result = await self._run_profile(
-                    profile, task, user_redacted, job_id, validate, latency=latency, share=share
+                    profile,
+                    task,
+                    self.redactor.redact(own[0]).text if own is not None else user_redacted,
+                    job_id,
+                    validate,
+                    latency=latency,
+                    share=share,
+                    parse=own[1] if own is not None else parse_json_object,
                 )
             except _Exhausted as exc:
                 if exc.cut:
@@ -603,7 +627,9 @@ class Provider:
         *,
         latency: bool = False,
         share: float | None = None,
+        parse: Parser | None = None,
     ) -> LlmResult:
+        parse = parse or parse_json_object
         messages = [
             {"role": "system", "content": task.system_for(profile.prompt_overrides)},
             {"role": "user", "content": user_redacted},
@@ -649,7 +675,7 @@ class Provider:
             if att.kind == "fatal":
                 raise _Exhausted("non-retryable HTTP error", fatal=True)
             assert att.row is not None
-            obj, err = parse_json_object(att.content)
+            obj, err = parse(att.content)
             if obj is not None:
                 err = task.schema_errors(obj) or (validate(obj) if validate else None)
             if err is None:

@@ -53,6 +53,9 @@ class LlmProfile:
     #: profile ends after at most this many seconds (HTTP timeout and wall clock), in place of the
     #: ``latency`` policy's share; the chain then moves on (e.g. the research writer -> the task)
     attempt_timeout_s: float | None = None
+    #: D-178 capability: the endpoint honours JSON mode (``response_format``). False: a caller that
+    #: has a plain-text protocol for a JOB uses it (research prose/expand, ``research.TEXT_JOBS``)
+    json_mode: bool = True
 
     @property
     def priced(self) -> bool:
@@ -88,6 +91,15 @@ def _json(v: Any) -> Any:
     return v
 
 
+def _flag(value: Any, default: bool) -> bool:
+    """A boolean profile key (TOML bool, or an env string "true"/"false")."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def _tasks(value: Any) -> frozenset[str]:
     if isinstance(value, str):
         value = [v.strip() for v in value.split(",") if v.strip()]
@@ -120,6 +132,7 @@ def _build(name: str, raw: dict[str, Any], disabled: frozenset[str] = frozenset(
         supports_json_schema=bool(raw.get("supports_json_schema", False)),
         prompt_overrides=dict(_json(raw.get("prompt_overrides")) or {}),
         disabled_tasks=disabled or _tasks(raw.get("disabled_tasks")),
+        json_mode=_flag(raw.get("json_mode"), True),
     )
 
 
@@ -136,6 +149,7 @@ def primary_profile(settings: Settings) -> LlmProfile:
             "price_out_per_m": settings.price_out_per_m,
             "supports_json_schema": settings.supports_json_schema,
             "prompt_overrides": settings.prompt_overrides,
+            "json_mode": settings.json_mode,
         },
         profile_disabled_tasks(settings.profile),
     )

@@ -1,19 +1,22 @@
-# memory.ask prose WRITER candidate (HLM_RESEARCH_WRITER_PROFILE, D-171): `z-ai/glm-5` routed through
-# OpenRouter. A writer-model sweep over the exact end-to-end contexts: 22/25 correct (luna 18/25).
-# Key from env only.
+# memory.ask prose WRITER (HLM_RESEARCH_WRITER_PROFILE, D-171/D-178): `z-ai/glm-5` routed through
+# OpenRouter to the first-party Z.AI endpoint, Novita as its only backup. Key from env only.
+# D-178 (the same 34 end-to-end contexts): 22/25 correct, 0 overloads, median 7.4 s, p95 17 s.
+# Earlier (D-175): reasoning ON was 22/25 but p95 31.9-33 s; reasoning OFF 21/25 (within noise),
+# median 6.0 s, 0 reasoning tokens; the slow Baidu upstream (21 s median) is no longer routed to.
 HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
 HLM_LLM_MODEL     = "z-ai/glm-5"
 HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
-# D-175 latency probes (34 questions, same contexts): reasoning ON 22/25 correct but p95 31.9-33 s;
-# reasoning OFF 21/25 (within noise), median 6.0 s, 0 reasoning tokens ('{"effort":"low"}' is ignored
-# by this model; '{"enabled": false}' works). The slow upstream (Baidu: 21 s median) is excluded and the
-# fastest endpoints are preferred; the residual tail is cut by HLM_RESEARCH_WRITER_TIMEOUT_S (fallback
-# to the task profile).
+# '{"effort":"low"}' is ignored by this model; '{"enabled": false}' turns reasoning off.
 HLM_LLM_REASONING = '{"enabled": false}'
-# No temperature (as gpt-6-luna). require_parameters: only endpoints that honour response_format
-# serve the call (D-093).
-extra = { response_format = { type = "json_object" }, provider = { data_collection = "deny", require_parameters = true, sort = "latency", ignore = ["Baidu"] }, usage = { include = true } }
-# USD per 1M tokens (reservation worst case; actual cost is settled from usage).
-price_in_per_m  = 0.60
-price_out_per_m = 1.92
+# Z.AI and Novita do not support response_format (so no require_parameters either): without JSON
+# mode, 7/34 first tries were invalid JSON (long prose breaks the escaping) and the retries fed the
+# tail. json_mode = false makes memory.ask use its plain-text protocol for the prose and expand
+# JOBs (research/v3 "prose_text" / "expand_text"). No temperature. The residual latency tail is cut
+# by HLM_RESEARCH_WRITER_TIMEOUT_S (fallback to the research profile).
+json_mode = false
+extra = { provider = { data_collection = "deny", order = ["Z.AI", "Novita"], allow_fallbacks = false }, usage = { include = true } }
+# USD per 1M tokens: the Z.AI / Novita list prices (reservation worst case; actual cost is settled
+# from usage).
+price_in_per_m  = 1.00
+price_out_per_m = 3.20
 supports_json_schema = false

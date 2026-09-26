@@ -593,7 +593,8 @@ async def test_ask_prose_mode_writer_profile_writes_prose_and_expand(connect, wo
     """D-171 HLM_RESEARCH_WRITER_PROFILE (the built-in ``openrouter-glm5`` profile file, behind the
     mock transport: nothing leaves the host): the JOBs prose and expand go to the writer profile with
     ITS request options; plan and attribute stay on the task profile; each call is priced by its own
-    profile; meta.writer_profile names the writer."""
+    profile; meta.writer_profile names the writer. D-178: that profile has no JSON mode, so its
+    JOBs are the plain-text prose_text / expand_text, parsed into the same objects."""
     fake = FakeResearcher(facts=["1.2 s"], expand_add=["It was 1,6 s on the VPS before D-004."])
     llm = ScriptedLLM(default=fake)
     r = make_researcher(
@@ -618,16 +619,27 @@ async def test_ask_prose_mode_writer_profile_writes_prose_and_expand(connect, wo
     sent = [(request_job(b)[0], b["model"], host) for b, host in zip(llm.requests, llm.hosts, strict=True)]
     assert sent == [
         ("plan", "stub/stub-primary", "stub-primary.invalid"),
-        ("prose", "z-ai/glm-5", "openrouter.ai"),
-        ("expand", "z-ai/glm-5", "openrouter.ai"),
+        ("prose_text", "z-ai/glm-5", "openrouter.ai"),
+        ("expand_text", "z-ai/glm-5", "openrouter.ai"),
         ("attribute", "stub/stub-primary", "stub-primary.invalid"),
     ]
     prose = llm.requests[1]
-    assert prose["provider"]["data_collection"] == "deny" and "temperature" not in prose
-    assert prose["response_format"] == {"type": "json_object"} and prose["max_tokens"] == 3000
-    # every call priced by ITS profile: 100 in / 20 out tokens each (stub $1/$2, glm-5 $0.60/$1.92 per M)
-    stub, glm5 = 100 * 1.0 + 20 * 2.0, 100 * 0.60 + 20 * 1.92
-    assert out["meta"]["cost_usd"] == round((2 * stub + 2 * glm5) / 1_000_000, 6)  # 0.000477 (not 0.00056)
+    assert prose["provider"] == {
+        "data_collection": "deny",
+        "order": ["Z.AI", "Novita"],
+        "allow_fallbacks": False,
+    }
+    assert "response_format" not in prose and "temperature" not in prose and prose["max_tokens"] == 3000
+    assert prose["reasoning"] == {"enabled": False}
+    assert 'JOB "prose_text"' in prose["messages"][0]["content"]  # the same research/v3 system prompt
+    # the text JOB carries the same INPUT as the JSON JOB would (the question and the excerpts)
+    assert [e["id"] for e in request_job(prose)[1]["excerpts"]] == out["meta"]["excerpts_shown"]
+    # every call priced by ITS profile: 100 in / 20 out tokens each (stub $1/$2, glm-5 $1.00/$3.20 per M)
+    stub, glm5 = 100 * 1.0 + 20 * 2.0, 100 * 1.00 + 20 * 3.20
+    assert out["meta"]["cost_usd"] == round((2 * stub + 2 * glm5) / 1_000_000, 6)  # 0.000608 (not 0.00056)
+    # the text answer, parsed: its sentences kept and attributed like a JSON answer's
+    assert "The retrieval p95 target is now 1.2 s" in out["claims"][0]["text"] and len(out["claims"]) == 2
+    assert all(c["support"] for c in out["claims"])
     assert "1,6 s" in out["answer"] and out["meta"]["flags"]["expand_added"] == 1
     assert_no_secret(sent_text(llm), world)
     # the default: no writer profile, the task profile writes and is reported
@@ -683,8 +695,8 @@ async def test_ask_prose_mode_slow_writer_times_out_and_the_task_writes(connect,
     assert out["meta"]["writer_profile"] == "openrouter-glm5"  # configured; the task wrote this time
     assert [(request_job(b)[0], b["model"]) for b in llm.requests] == [
         ("plan", "stub/stub-primary"),
-        ("prose", "z-ai/glm-5"),
-        ("prose", "stub/stub-primary"),
+        ("prose_text", "z-ai/glm-5"),  # D-178: the text JOB on the writer without JSON mode
+        ("prose", "stub/stub-primary"),  # the task fallback: the JSON JOB
     ]
     assert out["meta"]["attempts"] == 3  # plan, the cut writer attempt, the task's prose
     # the spend guard is disabled in these settings, so no worst case is reserved and the cut attempt

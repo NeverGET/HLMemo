@@ -197,6 +197,10 @@ class Settings(BaseSettings):
     price_in_per_m: float | None = Field(default=None, ge=0)
     price_out_per_m: float | None = Field(default=None, ge=0)
     supports_json_schema: bool = False
+    # D-178 capability: the endpoint honours JSON mode (response_format). A profile whose endpoints
+    # do not (json_mode = false) gets a plain-text protocol where a task has one (research prose and
+    # expand); default true.
+    json_mode: bool = True
     # Model quirks live only here (D-017): {task: {"system_append": str}}.
     prompt_overrides: dict[str, Any] = Field(default_factory=dict)
 

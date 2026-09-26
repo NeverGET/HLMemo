@@ -237,6 +237,15 @@ async def seed_world(connect: Any, embedder: Embedder) -> AskWorld:
 
 
 # --------------------------------------------------------------------------- a JOB-routing fake model
+def prose_text(obj: dict[str, Any]) -> str:
+    """D-178: a JOB prose output in the JOB prose_text layout."""
+    return (
+        f"STATUS: {obj['status']}\nCONFIDENCE: {obj.get('confidence', 'low')}\n"
+        f"SOURCES: {', '.join(obj.get('sources') or [])}\nRELATED: {', '.join(obj.get('related') or [])}\n"
+        f"ANSWER:\n{obj.get('answer', '')}"
+    )
+
+
 def request_job(body: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """``(job, INPUT payload)`` of a provider request body."""
     user = body["messages"][1]["content"]
@@ -292,6 +301,10 @@ class FakeResearcher:
             return self._write(excerpts)
         if job == "prose":
             return self._prose(excerpts)
+        if job == "prose_text":  # D-178: the same answer in the plain-text layout
+            return prose_text(self._prose(excerpts))
+        if job == "expand_text":
+            return "ADD:\n" + "\n".join(self.expand_add)
         if job == "attribute":
             return self._attribute(inp.get("sentences") or [], excerpts)
         if job == "expand":
@@ -421,6 +434,7 @@ __all__ = [
     "AskWorld",
     "FakeResearcher",
     "ctx_of",
+    "prose_text",
     "request_job",
     "seed_world",
     "sentence_with",

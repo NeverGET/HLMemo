@@ -2188,14 +2188,21 @@ def _job_of(body: dict) -> str:
 
 @pytest.fixture
 def writer_profiles(tmp_path, monkeypatch):  # noqa: ANN001, ANN201
-    """A writer profile file (its own prices and provider options) and one not qualified for research."""
-    for name, extra in (("w-writer", ""), ("w-unq", 'disabled_tasks = ["research"]\n')):
+    """Writer profile files (their own prices and provider options): a JSON writer, one not
+    qualified for research, and (D-178) one without JSON mode, shaped like the glm5 profile."""
+    json_extra = (
+        'extra = { response_format = { type = "json_object" }, provider = { data_collection = "deny" } }\n'
+    )
+    text_extra = 'extra = { provider = { data_collection = "deny" } }\njson_mode = false\n'
+    for name, extra in (
+        ("w-writer", json_extra),
+        ("w-unq", json_extra + 'disabled_tasks = ["research"]\n'),
+        ("w-text", text_extra),
+    ):
         (tmp_path / f"{name}.toml").write_text(
             f'HLM_LLM_BASE_URL = "http://{name}.invalid/v1"\n'
             f'HLM_LLM_MODEL = "stub/{name}"\n'
             'HLM_LLM_API_KEY = "test-key-not-secret"\n'
-            'extra = { response_format = { type = "json_object" }, '
-            'provider = { data_collection = "deny" } }\n'
             "price_in_per_m = 5.0\nprice_out_per_m = 10.0\n" + extra
         )
     monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
@@ -2656,3 +2663,206 @@ async def test_d173_a_cut_neither_counts_nor_resets_the_failure_streak() -> None
         assert b.state == "open"
     finally:
         await provider.aclose()
+
+
+# --------------------------------------------------------------------------- D-178 text protocol
+TEXT_SHOWN = ["v10.0", "v11.0", "v12.3"]
+
+
+def test_d178_parse_prose_text_well_formed_and_messy() -> None:
+    good = (
+        "STATUS: answered\nCONFIDENCE: high\nSOURCES: v10.0, v11.0\nRELATED: v12.3\nANSWER:\n"
+        "The p95 target is now 1.2 s.\n\n- It was 1,6 s before.\nSTATUS: not a header inside the answer"
+    )
+    obj, err = rs.parse_prose_text(good, TEXT_SHOWN)
+    assert err is None and obj == {
+        "status": "answered",
+        "answer": good.split("ANSWER:\n", 1)[1],  # everything after it, a "STATUS:" line included
+        "sources": ["v10.0", "v11.0"],
+        "related": ["v12.3"],
+        "confidence": "high",
+    }
+    # the object is exactly what the JSON JOB prose returns: same schema, same shape check
+    v3 = load_task("research", rs.PROSE_PROMPT_VERSION)
+    assert v3.schema_errors(obj) is None and rs.job_validator("prose")(obj) is None
+    messy = (
+        "```text\r\n  status :   Answered \r\n**Confidence:** Medium\r\nsources:[v11.0 ;  v10.0,v11.0]\r\n"
+        "Related :\r\nNote: a stray line\r\nAnswer: The target is 1.2 s.\r\nIt was 1,6 s.\r\n```"
+    )
+    obj, err = rs.parse_prose_text(messy, TEXT_SHOWN)
+    assert err is None and obj["status"] == "answered" and obj["confidence"] == "medium"
+    assert obj["sources"] == ["v11.0", "v10.0"] and obj["related"] == []
+    assert obj["answer"] == "The target is 1.2 s.\nIt was 1,6 s."  # text on the ANSWER line included
+    # ids the model was never shown are dropped (sources and related)
+    obj, _ = rs.parse_prose_text(
+        "STATUS: answered\nSOURCES: v10.0, v99.9, none\nRELATED: v404, v12.3\nANSWER:\nx", TEXT_SHOWN
+    )
+    assert obj["sources"] == ["v10.0"] and obj["related"] == ["v12.3"]
+    # insufficient_evidence with an empty answer (spelled with a space, no confidence)
+    obj, err = rs.parse_prose_text(
+        "STATUS: insufficient evidence\nSOURCES:\nRELATED: v12.3\nANSWER:\n", TEXT_SHOWN
+    )
+    assert err is None and obj == {
+        "status": "insufficient_evidence",
+        "answer": "",
+        "sources": [],
+        "related": ["v12.3"],
+    }
+    assert rs.validate_prose(obj, SHOWN).related == ["v12.3"] and not rs.validate_prose(obj, SHOWN).answered
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "STATUS: answered\nSOURCES: v10.0\nThe target is 1.2 s.",  # no ANSWER line
+        "SOURCES: v10.0\nANSWER:\nThe target is 1.2 s.",  # no STATUS
+        "STATUS: maybe\nANSWER:\nThe target is 1.2 s.",  # an invalid STATUS
+        '{"status": "answered", "answer": "json instead"}',
+        "",
+        None,
+    ],
+    ids=["no_answer", "no_status", "bad_status", "json", "empty", "none"],
+)
+def test_d178_parse_prose_text_malformed_is_a_failure(bad: str | None) -> None:
+    obj, err = rs.parse_prose_text(bad, TEXT_SHOWN)
+    assert obj is None and err
+
+
+def test_d178_parse_expand_text_and_the_variant() -> None:
+    obj, err = rs.parse_expand_text("ADD:\n- It was 1,6 s on the VPS.\n2) The owner decided it.\n\n")
+    assert err is None and obj == {"add": ["It was 1,6 s on the VPS.", "The owner decided it."]}
+    assert rs.parse_expand_text("add: none") == ({"add": []}, None)
+    assert rs.parse_expand_text("ADD:") == ({"add": []}, None)
+    assert rs.parse_expand_text("Add: One more fact.") == ({"add": ["One more fact."]}, None)
+    assert rs.parse_expand_text("One more fact.")[0] is None
+    v3 = load_task("research", rs.PROSE_PROMPT_VERSION)
+    assert v3.schema_errors(obj) is None and rs.job_validator("expand")(obj) is None
+    # the variant: the same message under the JOB's text name, with its parser
+    user = rs.prose_user("Q?", list(SHOWN.values()))
+    message, parse = rs.text_variant("prose", user)
+    assert message == "JOB: prose_text\n" + user.split("\n", 1)[1]
+    assert parse("STATUS: answered\nSOURCES: v10.0, v77.0\nANSWER:\nx")[0]["sources"] == [
+        "v10.0"
+    ]  # shown ids
+    assert rs.text_variant("expand", rs.expand_user("Q?", ["A."], list(SHOWN.values())))[0].startswith(
+        "JOB: expand_text\n"
+    )
+    assert rs.text_variant("plan", "JOB: plan\nINPUT: {}") is None and rs.TEXT_JOBS == {
+        "prose": "prose_text",
+        "expand": "expand_text",
+    }
+    # the prompt: the text JOBs next to their JSON JOBs (research/v3 only)
+    for job in ("prose_text", "expand_text"):
+        assert f'JOB "{job}"' in v3.system
+        assert all(f'JOB "{job}"' not in load_task("research", v).system for v in (1, 2))
+    for line in (
+        "STATUS: answered | insufficient_evidence",
+        "SOURCES: <excerpt ids, comma-separated>",
+        "ANSWER:",
+    ):
+        assert line in v3.system
+
+
+def _protocol_handler(seen: list, writer_reply):  # noqa: ANN001, ANN202
+    """A mock provider recording ``(model, the JOB line, response_format sent?)``; the w-text model
+    answers ``writer_reply(job)`` (text), every other model the JSON output of its JOB."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        job = _job_of(body)
+        seen.append((body["model"], job, "response_format" in body))
+        if body["model"] == "stub/w-text":
+            reply = writer_reply(job)
+            if isinstance(reply, int):
+                return httpx.Response(reply, json={"error": {"code": reply, "message": "down"}})
+            return httpx.Response(
+                200,
+                json={
+                    **_chat({}),
+                    "choices": [
+                        {"message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}
+                    ],
+                },
+            )
+        return httpx.Response(200, json=_chat(_JOB_OUT[job]))
+
+    return handler
+
+
+PROSE_TEXT_REPLY = (
+    "STATUS: answered\nCONFIDENCE: high\nSOURCES: v10.0, v99.9\nRELATED:\nANSWER:\nThe target is 1.2 s."
+)
+
+
+async def test_d178_a_text_writer_gets_the_text_job_a_json_profile_the_json_job(writer_profiles) -> None:  # noqa: ANN001
+    user = rs.prose_user("What is the p95 target?", list(SHOWN.values()))
+    replies = {"prose_text": PROSE_TEXT_REPLY, "expand_text": "ADD:\nIt was 1,6 s on the VPS."}
+    seen: list = []
+    r = _writer_researcher(_protocol_handler(seen, replies.get), writer="w-text")
+    try:
+        assert r.writer_chain[0].json_mode is False and r.chain[0].json_mode is True
+        res = await _complete(r, "prose", user)
+        exp = await _complete(
+            r, "expand", rs.expand_user("Q?", ["The target is 1.2 s."], list(SHOWN.values()))
+        )
+        plan = await _complete(r, "plan", "JOB: plan\nINPUT: {}")
+    finally:
+        await r.aclose()
+    assert res.profile == "w-text" and res.output == {
+        "status": "answered",
+        "answer": "The target is 1.2 s.",
+        "sources": ["v10.0"],  # v99.9 was never shown
+        "related": [],
+        "confidence": "high",
+    }
+    assert exp.output == {"add": ["It was 1,6 s on the VPS."]}
+    assert plan.profile == "t-task"
+    assert seen == [
+        ("stub/w-text", "prose_text", False),
+        ("stub/w-text", "expand_text", False),
+        ("stub/t-task", "plan", True),  # the task profile keeps JSON (and its response_format)
+    ]
+    # a JSON writer keeps the JSON JOB
+    seen2: list = []
+    r2 = _writer_researcher(_protocol_handler(seen2, replies.get), writer="w-writer")
+    try:
+        out = await _complete(r2, "prose", user)
+    finally:
+        await r2.aclose()
+    assert out.profile == "w-writer" and seen2 == [("stub/w-writer", "prose", True)]
+
+
+async def test_d178_text_writer_falls_back_to_the_json_job_and_retries_a_bad_layout(writer_profiles) -> None:  # noqa: ANN001
+    user = rs.prose_user("What is the p95 target?", list(SHOWN.values()))
+    # the writer is down: its fallback (the task profile, JSON mode) gets the JSON JOB
+    seen: list = []
+    r = _writer_researcher(_protocol_handler(seen, lambda _job: 503), writer="w-text")
+    try:
+        res = await _complete(r, "prose", user)
+    finally:
+        await r.aclose()
+    assert res.profile == "t-task" and [(m, j) for m, j, _rf in seen] == [
+        ("stub/w-text", "prose_text"),
+        ("stub/t-task", "prose"),
+    ]
+    # a malformed layout (no STATUS) is a schema failure, retried once like a bad JSON answer
+    replies = iter(["SOURCES: v10.0\nANSWER:\nThe target is 1.2 s.", PROSE_TEXT_REPLY])
+    seen2: list = []
+    r2 = _writer_researcher(_protocol_handler(seen2, lambda _job: next(replies)), writer="w-text")
+    try:
+        res2 = await _complete(r2, "prose", user)
+        rows = [(row.profile, row.outcome) for row in r2.provider.ledger.inner.rows]
+    finally:
+        await r2.aclose()
+    assert res2.profile == "w-text" and res2.output["answer"] == "The target is 1.2 s."
+    assert rows == [("w-text", "schema_fail"), ("w-text", "schema_retry_ok")]
+    # twice malformed: the call fails as a schema failure does today
+    from hlmemo.librarian.errors import SchemaFail
+
+    r3 = _writer_researcher(_protocol_handler([], lambda _job: "no layout at all"), writer="w-text")
+    try:
+        with pytest.raises(SchemaFail):
+            await _complete(r3, "prose", user)
+    finally:
+        await r3.aclose()
