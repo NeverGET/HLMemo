@@ -1086,3 +1086,16 @@ Where glm-5 wrote, it was better (fba91c2: 7/9 against luna 9/16), but in 46ea7e
 - (1) Pin the fastest upstream (StreamLake) with no fallback: probe running.
 - (2) OpenAI-served gpt-5.6-terra or sol: latency should be stable, at about $0.03/q, and the test spend (about $2) needs the owner's approval because the permission check blocked it.
 - (3) Relax C6's p95 (20 s): an owner decision.
+D-177 | 2026-09-26 | ACCEPTED | **The GLM family is not viable as the prod writer: capacity and latency are too volatile. The candidates left are big-vendor models with stable serving, and their test spend needs the owner's approval.**
+Probes on the same 34 end-to-end contexts:
+- **glm-5, pinned to StreamLake** (the fastest upstream in lowr2) with no fallback: 6/6 calls returned HTTP 529 "system overloaded".
+- **glm-5.3** ($0.379/$1.192, 40 endpoints): reasoning is mandatory (`{"enabled": false}` → 400). Median 58.5 s, p95 77 s, a mean of 4,077 reasoning tokens, 8/11 calls hit the 3,000-token cap with no JSON. Stopped after 7 questions.
+- **glm-5.3-flash** ($0.04/$0.5, 33 endpoints): reasoning is mandatory. Median 9.1 s, p95 59.8 s, 7/39 calls cap-cut, 2 questions errored.
+Together with D-176 (glm-5's timeouts moved from 4 to 17 of 34 between two runs an hour apart), a memory tool the consumer calls many times a session cannot depend on these upstream pools.
+**Remaining writer candidates**, each served by its own vendor and major clouds:
+| Model | Endpoints | $/M in / out | Est. $/q (full) |
+|---|---|---|---|
+| anthropic/claude-haiku-4.5 | 8: Anthropic, Bedrock, Google, Azure | $1 / $5 | ≈ .02 |
+| openai/gpt-5.6-terra | 7: OpenAI, Azure, Bedrock | $2 / $12 | ≈ .04 |
+| openai/gpt-5.6-sol | – | $2 / $10 | ≈ .037 |
+The cheap stable option measured so far is gpt-5.6-luna low: 18/25 correct, 8/8 abstain, p95 5.6 s, ≈ $.006/q full.
