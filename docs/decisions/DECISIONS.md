@@ -1181,3 +1181,19 @@ D-182 | 2026-09-26 | ACCEPTED (owner chose "bring in the temporal layer") | **Ne
 - (2) A ceiling test before building: annotate the excerpts of the D-181 runs with current or superseded status, re-run both writers, and adjudicate contradictions.
 - (3) Build, measure with the full D-165/D-168 protocol plus the C1 rater, freeze, then run the final gate.
 The writer choice (luna vs glm-5) is re-decided after the temporal layer, because glm-5's extra wrong facts are mostly stale-as-current.
+D-183 | 2026-09-26 | ACCEPTED | **Temporal inventory: the machinery exists but carries no data in the answer path. There are no supersedes links in dev or prod, and memory.ask's excerpts carry no status.**
+Grounded on main a76d8fe plus the branches:
+- **Data model:** `memory_versions` is bi-temporal (valid_from/valid_to, recorded_at/superseded_at, supersedes_version_id; GiST exclusion per logical_id), and `links` has rel supersedes/contradicts with bi-temporal columns and props.
+- **Read path:** reads filter by (valid_at, known_at). D-057 hides a superseded hit when a live `supersedes` link joins two hits, and a `scope=part` link demotes. Hits carry valid_from only.
+- **Librarian:** write_review (placement → relate → relate_verify) proposes contradicts/supersedes, but production runs as OBSERVER, so nothing is written (the R3 rehearsal wrote 0 links). **D-057 is therefore a no-op in dev and prod.**
+- **D-118 (wf-write-updates):** writer-declared `updates` (revise or supersede, with a scope=part|whole link and a quote). It is reviewed (round 2 OK, D-126), 612 integration tests pass, and the client bench is item precision .978 / recall 1.0. It is unmerged: stacked on wf-b-real → wf-librarian-v3, and a minimal port is planned for R4 (D-125).
+- **wf-librarian-v3 / wf-b-real:** evidence.py (quote-bound dates, CHANGE_MARKERS), span revise. Hold-outs failed (D-103, D-116); relate sees only the head of long documents (D-117), so librarian relate over imported chunks is NOT a viable status source.
+- **memory.ask:** excerpt = {id, title, date = the ITEM's valid_from, text}, and no links are read. DECISIONS.md chunks all share one date, and the only currency signal is a prompt sentence.
+- **The imported-docs gap:** the stale facts (the D-055 preview change, D-026 replacing the decorator design) sit in PHASE0-SPEC and the consults. No DECISIONS row names them by D-id (only 3 of 61 rows do), so a D-id parser has low recall.
+- **The research report prescribes** invalidate-not-delete on contradiction, write-time contradiction detection, and extracting ingested docs into L1 facts with validity; its contradiction target is < .02.
+**Candidate design:** a server-computed per-excerpt `status` (current / superseded_by X [part: quote] / earlier_than X), sourced from:
+1. live supersedes links (D-118 writer updates);
+2. a D-id change-marker index;
+3. the chunk's own in-text date;
+4. a query-time "currency triage" LLM for conflicts among the shown excerpts, quote-validated and annotation-only.
+**Ceiling test first:** step (i) is free (was the superseder among the shown excerpts?); step (ii) uses oracle labels and re-runs both writers. Go if stale-as-current contradictions at least halve with C2 no lower.
