@@ -369,6 +369,69 @@ def test_per_proposition_polarity_keeps_true_claims() -> None:
     assert rs.polarity_ok("The gate runs weekly.", ["The gate is not enabled. It runs weekly."])
 
 
+@pytest.mark.parametrize(
+    ("claim", "quote"),
+    [
+        # a "no" about other words across a table cell / parenthesis does not bind the claim
+        (
+            "The tool returns no cursor.",
+            "| Pagination | `omitted`, no cursor | Signed cursor over a cached ranking |",
+        ),
+        (
+            "All projects move into the store one at a time.",
+            "All projects (some with a system, some with none) move into the store one at a time.",
+        ),
+        (
+            "All projects move into the store one at a time.",
+            "All projects (some with a system, some with none)—move into the store one at a time.",
+        ),
+        # the claim negates the same word the quote does, in other words
+        ("The query tool does not return a cursor.", "| Pagination | `omitted`, no cursor |"),
+        ("Phase 0 stays LLM-free.", "Phase 0 has no LLM."),
+        (
+            "Replay kod yolu `nextval` veya `clock_timestamp` çağırmaz.",
+            "The replay path has no `clock_timestamp`/`nextval`.",
+        ),
+        ("Önizleme süreyi sıfırlamaz.", "A preview does not reset the idle time."),
+        # a contrast the claim restates with both sides
+        ("On D-050 gpt-6-sol replaced gpt-6-astra.", "Since D-050 the model is gpt-6-sol, not gpt-6-astra."),
+        ("The implementation uses 0.9 while the spec says 0.1.", "The threshold is 0.9 not 0.1."),
+        # ability, not a hedge; an added hedge only weakens a claim
+        ("The worker was unable to read its entrypoint.", "The worker could not read its entrypoint."),
+        (
+            "The first deploy could exit 0 without the app ever starting.",
+            "The first deploy exits 0 and the app never started.",
+        ),
+        # a derived negation (yerine / rejected / a TR suffix) never counts as an INSERTED one
+        (
+            "Kilitleme için `locked_by` yerine `lease_token` kullanılır.",
+            "| Locking | `locked_by` | `lease_token`, fenced completion |",
+        ),
+        ("The worker waits on commit edilmemiş rows.", "The worker blocks on our uncommitted rows."),
+    ],
+)
+def test_polarity_real_data_false_positives_stay_accepted(claim: str, quote: str) -> None:
+    """D-153: the round-2 check rejected 12 of 111 true claims on real data (guard abstains on
+    answerable questions); each class here is one of them, rewritten."""
+    assert rs.polarity_ok(claim, [quote]), claim
+
+
+@pytest.mark.parametrize(
+    ("claim", "quote"),
+    [
+        ("The gate is enabled.", "The gate is not enabled."),
+        ("Das Gate ist aktiviert.", "Das Gate ist nicht aktiviert."),
+        ("The flag is enabled in production.", "The flag may be enabled in production."),
+        ("Phase 0 uses an LLM on every ingest.", "Phase 0 has no LLM on ingest."),
+        ("The replay path calls `nextval`.", "The replay path has no `nextval`."),
+        ("The gate is not enabled.", "The gate is enabled by default."),
+        ("Sürüm kapısı varsayılan olarak etkin değil.", "Sürüm kapısı varsayılan olarak etkin."),
+    ],
+)
+def test_polarity_still_rejects_dropped_and_inserted_negations(claim: str, quote: str) -> None:
+    assert not rs.polarity_ok(claim, [quote]), claim
+
+
 def test_failed_quote_is_requoted_from_its_line_before_dropping() -> None:
     """Addendum 2: a claim whose quotes are all wrong is re-quoted from the cited item's line that
     holds its literals and most of its words; dropped only when no line qualifies; flags recorded."""
