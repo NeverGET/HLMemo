@@ -205,6 +205,10 @@ async def test_ask_live_smoke(connect, world, deps, db_dsn) -> None:  # noqa: AN
         await researcher.aclose()
     spent = f", spent ${budget.spent} of ${cap}" if budget is not None else ""
     total = sum(r[3]["cost_usd"] for r in rows)
+    lat = sorted(r[4] for r in rows)
+    p50 = lat[len(lat) // 2]
+    p95 = lat[min(len(lat) - 1, int(round(0.95 * (len(lat) - 1))))]
+    print(f"\nmemory.ask latency over {len(lat)} questions: p50 {p50} ms, p95 {p95} ms (max {lat[-1]} ms)")
     print(
         f"\nmemory.ask live smoke ({'record' if RECORD else 'replay'}): "
         f"{sum(r[1] for r in rows)}/{len(rows)} ok, sum of meta.cost_usd ${total:.4f}{spent}"

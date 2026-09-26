@@ -21,14 +21,15 @@ completeness pass):
    the caller, an item co-owned by a project the caller cannot read or with ``policy.librarian=off``,
    an item written after step 1) is dropped before any prompt.
 4. **Answer** (LLM, JOB ``answer``) → deterministic validation (``librarian.tasks.research``).
-5. **Refine** — only when the answer abstained or its confidence is low: JOB ``refine`` (map +
-   what was tried and read) → one more retrieval (new handles only) → JOB ``answer`` again.
-6. **Completeness** (LLM, JOB ``check``): the question's sub-asks against the draft and the same
-   excerpts → the full revised answer, a missing fact added only as a new claim with its own quotes
-   (the D-136 fix for the dominant W-B failure: dropped secondary details); validated the same way
-   and merged so it can only add verified evidence.
-7. **Self-check** (LLM, JOB ``verify``, the refinement's call slot, cheap: no documents): each claim
-   against ONLY its quotes → kept / narrowed / dropped, and the answer rewritten to what remains.
+5. **Refine** — only when the answer abstained: JOB ``refine`` (map + what was tried and read) →
+   one more retrieval (new handles only) → JOB ``answer`` again.
+6. **Completeness + repair** (LLM, JOB ``check``, when no refinement ran): the question's sub-asks
+   against the draft and the same excerpts → the full revised answer, a missing fact added only as a
+   new claim with its own quotes (the D-136 fix for the dominant W-B failure); the draft claims that
+   the deterministic copy-through / attribution checks flagged are repaired in the same call. At most
+   4 sequential LLM steps (addendum 7). The planned queries run in parallel.
+7. **Attribution** (deterministic): a claim still naming a subject that neither its quotes nor its
+   cited excerpts state is dropped.
 8. **Re-check** (a fresh short transaction): the device is still trusted, unexpired and on the
    bearer's token generation (else ``E_AUTH``) and still reads the project (else
    ``E_FORBIDDEN_PROJECT``); a returned handle that is no longer citable (current, active, visible,
@@ -99,6 +100,8 @@ DEFAULT_BUDGET = 3000
 QUESTION_MAX = 2000
 QUERY_BUDGET = 2000  # token budget of each internal memory.query (about 15-25 hits)
 MAX_DRILL = 12
+#: addendum 7: planned queries run in parallel, at most this many at once per question
+PARALLEL_QUERIES = 3
 #: addendum 6: the top documents whose best-matching chunk may fill FREE drill slots
 DOC_TOP = 4
 DOC_BEST = 3
@@ -109,11 +112,9 @@ PLAN_CAP_S = 10.0
 ANSWER_CAP_S = 18.0
 CHECK_CAP_S = 16.0
 REFINE_CAP_S = 9.0
-VERIFY_CAP_S = 8.0
 #: an optional step starts only with this much time left (the re-check keeps RECHECK_RESERVE_S)
 MIN_REFINE_S = 16.0
 MIN_CHECK_S = 7.0
-MIN_VERIFY_S = 3.0
 MIN_CALL_S = 1.5
 RECHECK_RESERVE_S = 1.0
 DB_PHASE_TIMEOUT_MS = 8000
@@ -247,7 +248,6 @@ class _Run:
             "completed": 0,
             "dropped_claims": 0,
             "main_dropped": False,
-            "verify_dropped": 0,
             "budget_stop": False,
             "rewrites_asked": 0,
         }
@@ -299,11 +299,25 @@ class _Run:
     ) -> tuple[list[rs.Excerpt], list[list[dict[str, Any]]]]:
         """One DB phase: run ``queries``, fuse with ``prior`` hit lists, drill ≤ MAX_DRILL handles
         (``sections`` first) that are in the view and not in ``skip``."""
+        lists = list(prior)
+        if self.released and len(queries) > 1:
+            # addendum 7: the planned queries run in PARALLEL, each in its own short transaction on
+            # a pooled connection (at most PARALLEL_QUERIES at once); the drill follows
+            sem = asyncio.Semaphore(PARALLEL_QUERIES)
+
+            async def one(query: str) -> list[dict[str, Any]]:
+                async with sem, self.db() as c1:
+                    return await self._search(c1, await self.fresh_ctx(c1), query)
+
+            lists += await asyncio.gather(*(one(q) for q in queries))
+            queries_done = True
+        else:
+            queries_done = False
         async with self.db() as c:
             fresh = await self.fresh_ctx(c)
-            lists = list(prior)
-            for q in queries:
-                lists.append(await self._search(c, fresh, q))
+            if not queries_done:
+                for q in queries:
+                    lists.append(await self._search(c, fresh, q))
             fused = [h for h in rrf(lists) if self._handle_in_view(h)]
             wanted = collapse([h for h in [*sections, *fused] if h not in skip], MAX_DRILL)
             if len(wanted) < MAX_DRILL:
@@ -514,39 +528,6 @@ class _Run:
             sub_asks=v.sub_asks,
         )
 
-    async def verify(self, v: rs.Validated, excerpts: list[rs.Excerpt]) -> rs.Validated:
-        """The self-check (JOB ``verify``): the answer and each kept claim with ONLY its quotes; a
-        failed call leaves the answer as it is. The verdicts apply to exactly the claims sent."""
-        by_handle = {e.handle: e for e in excerpts}
-        sent: list[rs.Validated] = []
-        if not self.prune(v, excerpts).answered:
-            return self.prune(v, excerpts)  # nothing admitted is left to verify
-
-        fixes: dict[int, list[str]] = {}
-
-        def build() -> tuple[str, list[int]]:
-            cur = self.prune(v, excerpts)
-            sent[:] = [cur]
-            fixes.clear()
-            fixes.update(rs.claim_fixes(cur, self.question))  # addendum 6: targeted rewrites
-            ids = [by_handle[h].version_id for c in cur.kept for h, _q in c.support]
-            return rs.verify_user(self.question, cur.answer, cur.kept, fixes), ids
-
-        shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
-        try:
-            obj = await self.call("verify", build, VERIFY_CAP_S)
-        except rs.ResearchUnavailable:
-            obj = None
-        base = sent[0] if sent else self.prune(v, excerpts)
-        if not base.answered:
-            return base
-        if obj is None:  # no self-check: unsupported attributions are dropped deterministically
-            return rs.enforce_attribution(base, shown, self.researcher.redactor.text)
-        self.flags["rewrites_asked"] = len(fixes)
-        out = rs.apply_verify(base, obj, self.researcher.redactor.text, shown, fixes)
-        self.flags["verify_dropped"] = len(base.kept) - len(out.kept)
-        return out
-
     async def answer(
         self, excerpts: list[rs.Excerpt], job: str = "answer", draft: rs.Validated | None = None
     ) -> rs.Validated:
@@ -555,7 +536,9 @@ class _Run:
             if draft is None:
                 return rs.answer_user(self.question, ex), [e.version_id for e in ex]
             cur = self.prune(draft, excerpts)  # the draft's quotes come only from admitted excerpts
-            return rs.check_user(self.question, cur.draft(), ex), [e.version_id for e in ex]
+            fixes = rs.claim_fixes(cur, self.question)  # addendum 7: the repair rides on this call
+            self.flags["rewrites_asked"] = len(fixes)
+            return rs.check_user(self.question, cur.draft(), ex, fixes), [e.version_id for e in ex]
 
         cap = ANSWER_CAP_S if draft is None else CHECK_CAP_S
         obj = await self.call(job, build, cap)
@@ -708,8 +691,10 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
         if exc.reason != "question_budget":
             raise
         v = rs.validate_answer(None, {})
-    # 5. refine (abstained or unsure), time permitting
-    if (not v.answered or v.confidence == "low") and run.remaining() >= MIN_REFINE_S and run.calls <= 2:
+    # 5. refine (only when the answer abstained, addendum 7), time permitting
+    refined = False
+    if not v.answered and run.remaining() >= MIN_REFINE_S and run.calls <= 2:
+        refined = True
         read = list(excerpts)
 
         def build_refine() -> tuple[str, list[int]]:
@@ -740,8 +725,8 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
                         v2 = None
                     if v2 is not None and (v2.answered or not v.answered):
                         v, excerpts = v2, widened
-    # 6. completeness pass on an answer, time permitting
-    if v.answered and run.remaining() >= MIN_CHECK_S:
+    # 6. completeness + repair on an answer (not after a refinement: at most 4 sequential steps)
+    if v.answered and not refined and run.remaining() >= MIN_CHECK_S:
         try:
             checked = await run.answer(excerpts, job="check", draft=v)
         except rs.ResearchUnavailable:
@@ -750,11 +735,8 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
             v = rs.merge_check(
                 v, checked, {e.handle: e for e in excerpts if e.version_id not in run.excluded}
             )
-    # 7. the self-check (the refinement's slot when no refinement ran), time permitting; without
-    # it, a claim naming a subject its sources do not state is dropped deterministically
-    if v.answered and run.calls < rs.MAX_CALLS and run.remaining() >= MIN_VERIFY_S:
-        v = await run.verify(v, excerpts)
-    elif v.answered:
+    # 7. a claim still naming a subject that neither its quotes nor its sources state is dropped
+    if v.answered:
         shown = {e.handle: e for e in excerpts if e.version_id not in run.excluded}
         v = rs.enforce_attribution(v, shown, run.researcher.redactor.text)
     # 8. re-check and assemble

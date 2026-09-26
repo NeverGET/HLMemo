@@ -158,7 +158,7 @@ async def test_ask_answers_with_verified_quotes_and_completeness_pass(connect, w
     finally:
         await r.aclose()
     assert out["abstained"] is False and out["answer"]
-    assert out["meta"]["steps"] == ["plan", "answer", "check", "verify"] and out["meta"]["calls"] == 4
+    assert out["meta"]["steps"] == ["plan", "answer", "check"] and out["meta"]["calls"] == 3
     assert 1 <= len(out["primary"]) <= 3 and len(out["related"]) <= 5
     d004 = world.versions["D-004"]
     assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
@@ -168,7 +168,7 @@ async def test_ask_answers_with_verified_quotes_and_completeness_pass(connect, w
     quotes = [p["quote"] for p in out["primary"]]
     assert "1,6 s" in out["answer"] or any("1,6 s" in q for q in quotes)
     assert out["meta"]["queries"][0] == "What is the current retrieval p95 target and what was it before?"
-    assert out["meta"]["cost_usd"] > 0 and out["meta"]["attempts"] == 4
+    assert out["meta"]["cost_usd"] > 0 and out["meta"]["attempts"] == 3
     # the claims: each with verbatim support, the answer built from them
     assert out["claims"] and all(1 <= len(c["support"]) <= 3 for c in out["claims"])
     assert {p["handle"] for p in out["primary"]} <= {s["handle"] for c in out["claims"] for s in c["support"]}
@@ -176,9 +176,7 @@ async def test_ask_answers_with_verified_quotes_and_completeness_pass(connect, w
     assert METER.count(out) == out["budget"]["used"]
     # every request is JOB-tagged, the map rides only on plan
     jobs = [request_job(b)[0] for b in llm.requests]
-    assert jobs == ["plan", "answer", "check", "verify"]
-    verify = llm.requests[3]["messages"][1]["content"]
-    assert "JOB: verify" in verify and '"excerpts"' not in verify  # the self-check sees only quotes
+    assert jobs == ["plan", "answer", "check"]  # at most 4 sequential steps (addendum 7)
     assert "MEMORY MAP of project ask-main" in llm.requests[0]["messages"][1]["content"]
     assert "MEMORY MAP" not in llm.requests[1]["messages"][1]["content"]
 
@@ -643,7 +641,7 @@ async def test_ask_no_transaction_is_open_during_any_provider_call(
         out = await ask(connect, world, deps, r, "What is the retrieval p95 target and what was it?")
     finally:
         await r.aclose()
-    assert not out["abstained"] and [j for j, _ in seen] == ["plan", "answer", "check", "verify"]
+    assert not out["abstained"] and [j for j, _ in seen] == ["plan", "answer", "check"]
     assert all(rows == [] for _j, rows in seen), seen
 
 
@@ -667,7 +665,7 @@ async def test_ask_every_call_carries_its_job_max_tokens(connect, world, deps, d
     finally:
         await r.aclose()
     seen = {(request_job(b)[0], b["max_tokens"]) for b in llm.requests}
-    assert seen == {(job, rs.JOB_MAX_TOKENS[job]) for job in ("plan", "answer", "check", "verify")}
+    assert seen == {(job, rs.JOB_MAX_TOKENS[job]) for job in ("plan", "answer", "check")}
 
 
 async def test_ask_per_question_budget_stops_with_a_partial_answer(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
@@ -956,25 +954,21 @@ async def test_map_summary_refresh_after_change_only(connect, world, deps, db_ds
             await conn.commit()
 
 
-async def test_ask_self_check_narrows_or_drops_partly_supported_claims(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
-    """The self-check (gate v1 finding b): a claim its quotes support only in part is narrowed to
-    what the quotes state, one they do not state is dropped, and the answer is rewritten to the rest."""
-    fake = FakeResearcher(
-        facts=["1.2 s", "SQLite", "6k tokens"],
-        verdicts={1: ("none", ""), 2: ("partial", "The Memory Map budget is about 6k tokens.")},
-        verify_answer="The p95 target is 1.2 s. The map budget is about 6k tokens.",
-    )
+async def test_ask_check_call_repairs_flagged_claims(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """Addendum 7: the copy-through / attribution repair rides on the completeness call (no extra
+    call): the draft claim that names a subject its quotes do not state is sent with a fix note, and
+    the final answer carries the repaired claim."""
+    fake = FakeResearcher(facts=["1.2 s"], answer_prefix="As reported by Cemal, ")
     llm = ScriptedLLM(default=fake)
     r = make_researcher(db_dsn, llm)
     try:
-        out = await ask(connect, world, deps, r, "What are the p95 target, the store and the map budget?")
+        out = await ask(connect, world, deps, r, "What is the retrieval p95 target?")
     finally:
         await r.aclose()
-    texts = [c["text"] for c in out["claims"]]
-    assert not any("SQLite" in t for t in texts)  # judged not entailed: dropped
-    assert "The Memory Map budget is about 6k tokens." in texts  # narrowed to its quote
-    assert out["answer"] == "The p95 target is 1.2 s. The map budget is about 6k tokens."
-    assert out["confidence"] != "high"  # the self-check changed something
+    assert out["meta"]["steps"] == ["plan", "answer", "check"] and out["meta"]["flags"]["rewrites_asked"] >= 1
+    check = llm.requests[2]["messages"][1]["content"]
+    assert '"fix"' in check and "do not name: Cemal" in check
+    assert out["claims"] and not any("Cemal" in c["text"] for c in out["claims"])
 
 
 async def test_librarian_worker_runs_map_summaries_in_the_background(connect, world, db_dsn) -> None:  # noqa: ANN001

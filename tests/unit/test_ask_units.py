@@ -566,42 +566,36 @@ def test_a6_copy_through_finds_the_values_the_claim_lacks() -> None:
     assert any("do not name: Cemal" in n for n in fixes[1])
     assert not any("do not name" in n for n in fixes.get(2, []))  # D-004 is quoted now
     assert any("D-004" in q for _h, q in v.kept[2].support)
-    msg = rs.verify_user("q", v.answer, v.kept, fixes)
-    assert '"fix"' in msg and "copy into the claim" in msg
+    msg = rs.check_user("q", v.draft(), list(SHOWN.values()), fixes)
+    payload = json.loads(msg.partition("\n")[2].removeprefix("INPUT: "))
+    assert payload["draft"]["claims"][1]["fix"] == fixes[1]  # the repair rides on the check call
+    assert "fix" not in payload["draft"]["claims"][2] if 2 not in fixes else True
 
 
-def test_a6_rewrites_are_accepted_only_when_they_stay_grounded() -> None:
-    v = rs.validate_answer(
+def test_a6_repaired_claims_are_accepted_only_when_they_stay_grounded() -> None:
+    """The completeness+repair output goes through the same validation: a copy-through repair is
+    kept, a rewrite that adds a value no source states is dropped, and a claim still naming a
+    subject that neither its quotes nor its sources state is dropped by the attribution check."""
+    checked = rs.validate_answer(
         _answer(
             claims=[
-                _claim("The target was changed.", ("v10.0", "The retrieval p95 target is now 1.2 s")),
-                _claim("Sol set it to 1.2 s.", ("v10.0", "The retrieval p95 target is now 1.2 s")),
-                _claim("D-999 made it 1.2 s.", ("v10.0", "The retrieval p95 target is now 1.2 s")),
+                _claim(
+                    "The retrieval p95 target is now 1.2 s.",
+                    ("v10.0", "The retrieval p95 target is now 1.2 s"),
+                ),
+                _claim("The target is 1.2 s per D-777.", ("v10.0", "The retrieval p95 target is now 1.2 s")),
+                _claim(
+                    "The target was set by Cemal to 1.2 s.",
+                    ("v10.0", "The retrieval p95 target is now 1.2 s"),
+                ),
             ],
-            answer="The target was changed to 1.2 s.",
+            answer="The retrieval p95 target is now 1.2 s.",
         ),
         SHOWN,
     )
-    out = rs.apply_verify(
-        v,
-        {
-            "verdicts": [
-                {
-                    "i": 0,
-                    "entailed": "full",
-                    "text": "The retrieval p95 target is now 1.2 s.",
-                },  # copy-through
-                {"i": 1, "entailed": "full", "text": "The target is 1.2 s per D-777."},  # adds an unnamed id
-                {"i": 2, "entailed": "full", "text": ""},  # no rewrite of an unsupported attribution
-            ],
-            "answer": "The retrieval p95 target is now 1.2 s.",
-        },
-        shown=SHOWN,
-        fixes=rs.claim_fixes(v, "What is the p95 target?"),
-    )
-    texts = [c.text for c in out.kept]
-    assert "The retrieval p95 target is now 1.2 s." in texts
-    assert not any("D-777" in t or "D-999" in t for t in texts)
+    assert [c.state for c in checked.claims][:2] == ["kept", "dropped"]  # D-777: in no source
+    out = rs.enforce_attribution(checked, SHOWN)
+    assert [c.text for c in out.kept] == ["The retrieval p95 target is now 1.2 s."]
 
 
 def test_a6_enforce_attribution_without_a_self_check() -> None:
@@ -694,47 +688,6 @@ def test_completeness_prompt_assembly() -> None:
     assert 'JOB "check"' in system and '"sub_asks"' in system and "never a fact without quotes" in system
 
 
-def test_verify_prompt_carries_only_quotes() -> None:
-    v = rs.validate_answer(_answer(), SHOWN)
-    msg = rs.verify_user("q?", v.answer, v.kept)
-    payload = json.loads(msg.partition("\n")[2].removeprefix("INPUT: "))
-    assert msg.startswith("JOB: verify\n") and set(payload) == {"question", "answer", "claims"}
-    assert payload["claims"][1] == {
-        "i": 1,
-        "text": "The target was 1,6 s in D-001 on the VPS.",
-        "quotes": ["The retrieval p95 target is 1,6 s on the VPS", "D-001 | ACCEPTED | Use Postgres 17"],
-    }
-    assert "Next steps" not in msg  # no excerpt text beyond the quotes
-
-
-def test_apply_verify_narrows_drops_and_rewrites() -> None:
-    v = rs.validate_answer(_answer(), SHOWN)
-    out = rs.apply_verify(
-        v,
-        {
-            "verdicts": [
-                {"i": 0, "entailed": "full"},
-                {"i": 1, "entailed": "partial", "text": "The target was 1,6 s on the VPS."},
-            ],
-            "answer": "The target is 1.2 s now; it was 1.6 s on the VPS.",
-        },
-    )
-    assert [c.text for c in out.kept] == [
-        "The retrieval p95 target is now 1.2 s.",
-        "The target was 1,6 s on the VPS.",
-    ]
-    assert out.answer == "The target is 1.2 s now; it was 1.6 s on the VPS." and out.confidence == "medium"
-    bad_narrowing = rs.apply_verify(
-        v, {"verdicts": [{"i": 1, "entailed": "partial", "text": "It was 9.9 s."}], "answer": ""}
-    )
-    assert len(bad_narrowing.kept) == 1  # a narrowing its quotes do not support is dropped
-    none = rs.apply_verify(
-        v, {"verdicts": [{"i": 0, "entailed": "none"}, {"i": 1, "entailed": "none"}], "answer": "x"}
-    )
-    assert not none.answered
-    assert rs.apply_verify(v, None) is v and rs.apply_verify(v, {"answer": "x"}) is v
-
-
 def test_merge_check_only_adds_verified_evidence() -> None:
     draft = rs.validate_answer(_answer(), SHOWN)
     checked = rs.validate_answer(
@@ -764,8 +717,6 @@ def test_merge_check_only_adds_verified_evidence() -> None:
 def test_job_validator_and_parse_plan() -> None:
     assert rs.job_validator("plan")({"queries": []}) is None
     assert rs.job_validator("refine")({"sections": []}) == "queries missing"
-    assert rs.job_validator("verify")({"verdicts": [], "answer": ""}) is None
-    assert rs.job_validator("verify")({"answer": ""}) == "verdicts/answer missing"
     ans = rs.job_validator("answer")
     assert (
         ans({"status": "answered", "answer": "x", "claims": [], "confidence": "low"})

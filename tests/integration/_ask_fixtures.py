@@ -264,8 +264,7 @@ class FakeResearcher:
     abstain: bool = False
     extra_primary: list[str] = field(default_factory=list)  # handles the model tries to cite anyway
     check_adds: list[str] = field(default_factory=list)  # facts only the completeness pass adds
-    verdicts: dict[int, tuple[str, str]] = field(default_factory=dict)  # verify: i -> (entailed, text)
-    verify_answer: str | None = None
+    answer_prefix: str = ""  # prepended to the claims of the answer JOB only (an attribution to repair)
     jobs: list[str] = field(default_factory=list)
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -273,18 +272,6 @@ class FakeResearcher:
         self.jobs.append(job)
         if job in ("plan", "refine"):
             return {"queries": self.queries, "sections": self.sections}
-        if job == "verify":
-            claims = inp.get("claims") or []
-            out = []
-            for c in claims:
-                ent, text = self.verdicts.get(c["i"], ("full", ""))
-                out.append({"i": c["i"], "entailed": ent, "text": text})
-            answer = self.verify_answer
-            if answer is None:
-                answer = " ".join(
-                    c["text"] for c in claims if self.verdicts.get(c["i"], ("full", ""))[0] == "full"
-                )
-            return {"verdicts": out, "answer": answer}
         excerpts = inp.get("excerpts") or []
         facts = self.facts + (self.check_adds if job == "check" else [])
         claims = []
@@ -292,7 +279,8 @@ class FakeResearcher:
             for ex in excerpts:
                 s = sentence_with(ex["text"], needle)
                 if s:
-                    claims.append({"text": s, "support": [{"id": ex["id"], "quote": s}, *self._extra()]})
+                    text = (self.answer_prefix + s) if job == "answer" else s
+                    claims.append({"text": text, "support": [{"id": ex["id"], "quote": s}, *self._extra()]})
                     break
         if self.abstain or not claims:
             return {

@@ -1,15 +1,15 @@
 """The research librarian's LLM side (``memory.ask``; D-130, D-136): prompts, deterministic answer
 validation and the provider wrapper. ``core/research_service`` runs the loop and the DB phases.
 
-One provider TASK, ``research``, for the five JOBs of the loop (one system prompt, one schema, a
+One provider TASK, ``research``, for the four JOBs of the loop (one system prompt, one schema, a
 job-specific shape check): ``plan`` (map + question → queries + map sections), ``answer`` (excerpts →
-answer + claims, each with 1-3 verbatim supporting quotes), ``check`` (the COMPLETENESS pass: the
-question's sub-asks against the draft and the same excerpts → the full revised answer; a missing fact
-is added only as a new quoted claim), ``verify`` (the cheap self-check: each claim against ONLY its
-quotes → full / partial (narrowed) / none, and the answer rewritten to the entailed claims) and
-``refine`` (one more search round, only when the answer abstained or is unsure; it takes the
-self-check's call slot). The per-task fallback is therefore ``HLM_FALLBACK_PROFILE__RESEARCH``
-(D-094); a profile listing ``research`` in ``disabled_tasks`` is not used (D-071).
+answer + claims, each with 1-3 verbatim supporting quotes), ``check`` (the COMPLETENESS + REPAIR pass:
+the question's sub-asks against the draft and the same excerpts → the full revised answer; a missing
+fact is added only as a new quoted claim, and each claim flagged by the deterministic copy-through /
+attribution checks is repaired in the same call) and ``refine`` (one more search round, only when the
+answer abstained). At most 4 sequential steps (addendum 7). The per-task fallback is therefore
+``HLM_FALLBACK_PROFILE__RESEARCH`` (D-094); a profile listing ``research`` in ``disabled_tasks`` is
+not used (D-071).
 
 Guards (the W2e/W2d ones): privacy default-deny before EVERY attempt (``precheck``: the strict
 ``librarian.privacy`` gate over exactly the version ids whose text is in the prompt), redaction of
@@ -18,7 +18,8 @@ ledger), the ``latency`` attempt policy (one bounded primary attempt, then the q
 per-profile breakers, a per-request lineage whose DB-enforced ceiling (``MAX_ATTEMPTS``) bounds the
 provider requests of one question, and at most ``MAX_IN_FLIGHT`` questions per process.
 
-Validation (``validate_answer``, ``apply_verify``) is deterministic. Excerpt ids are the handles the
+Validation (``validate_answer``, ``enforce_attribution``) is deterministic. Excerpt ids are the
+handles the
 caller can drill (``vN.M``/``vN``). Each quote must occur in the excerpt it names after ``qnorm``
 (NFKC, casefold, typographic quotes, markdown markers, whitespace, and a DECIMAL comma between digits
 read as a point: TR "1,6" = "1.6"; a thousands-style "1,600" is left alone); a quote found only in
@@ -61,16 +62,16 @@ from hlmemo.librarian.tasks.synthesis import claims as literal_claims
 log = logging.getLogger("hlmemo.librarian.research")
 
 TASK = "research"
-JOBS = ("plan", "answer", "check", "verify", "refine")
-#: logical LLM calls of one question: plan, answer, check, verify — or, when the answer abstained or
-#: is unsure, plan, answer, refine, answer, check (the refinement takes the self-check's slot)
-MAX_CALLS = 5
+JOBS = ("plan", "answer", "check", "refine")
+#: sequential LLM steps of one question (addendum 7): plan, answer, completeness+repair — or, when
+#: the answer abstained, plan, answer, refine, answer
+MAX_CALLS = 4
 #: provider requests of one question (schema retries and fallbacks included), DB-enforced per lineage
 MAX_ATTEMPTS = 9
 MAX_IN_FLIGHT = 4
 #: addendum 5: an explicit max_tokens on EVERY call, per JOB (reasoning tokens included); a
 #: runaway output is cut there, and the per-question budget reserves exactly this worst case
-JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000, "verify": 1500}
+JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000}
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
 BREAKER_MAX_OPEN_S = 900.0
@@ -333,32 +334,24 @@ def answer_user(question: str, excerpts: list[Excerpt]) -> str:
     return "JOB: answer\n" + _input({"question": question, "excerpts": [e.shown() for e in excerpts]})
 
 
-def check_user(question: str, draft: dict[str, Any], excerpts: list[Excerpt]) -> str:
-    """The COMPLETENESS pass: the question, the draft (answer text + its claims with their quotes)
-    and EVERY excerpt the draft was written from, so each sub-ask and each retrieved candidate fact
-    can be checked against the draft."""
+def check_user(
+    question: str, draft: dict[str, Any], excerpts: list[Excerpt], fixes: dict[int, list[str]] | None = None
+) -> str:
+    """The COMPLETENESS + REPAIR pass (addendum 7): the question, the draft (answer text + its claims
+    with their quotes, a claim carrying ``fix`` notes where the deterministic copy-through and
+    attribution checks flagged it) and EVERY excerpt the draft was written from, so each sub-ask and
+    each retrieved candidate fact is checked against the draft and each flagged claim is repaired in
+    the same call."""
+    fixes = fixes or {}
+    claims = []
+    for i, c in enumerate(draft.get("claims", [])):
+        claims.append({**c, "fix": fixes[i]} if fixes.get(i) else c)
     payload = {
         "question": question,
-        "draft": {"answer": draft.get("answer", ""), "claims": draft.get("claims", [])},
+        "draft": {"answer": draft.get("answer", ""), "claims": claims},
         "excerpts": [e.shown() for e in excerpts],
     }
     return "JOB: check\n" + _input(payload)
-
-
-def verify_user(
-    question: str, answer: str, claims: list[Claim], fixes: dict[int, list[str]] | None = None
-) -> str:
-    """The self-check: the answer and each claim with ONLY its verified quotes (cheap: no
-    documents), so entailment is judged on exactly what the caller will be shown; a claim with
-    ``fix`` notes (addendum 6: copy-through, attribution) asks for one targeted rewrite."""
-    fixes = fixes or {}
-    rows = []
-    for i, c in enumerate(claims):
-        row: dict[str, Any] = {"i": i, "text": c.text, "quotes": [q for _h, q in c.support]}
-        if fixes.get(i):
-            row["fix"] = fixes[i]
-        rows.append(row)
-    return "JOB: verify\n" + _input({"question": question, "answer": answer, "claims": rows})
 
 
 def refine_user(question: str, tried: list[str], read: list[Excerpt], map_text: str) -> str:
@@ -388,12 +381,7 @@ def job_validator(job: str) -> Callable[[dict[str, Any]], str | None]:
             return "answered without claims"
         return None
 
-    def verify(obj: dict[str, Any]) -> str | None:
-        if not isinstance(obj.get("verdicts"), list) or not isinstance(obj.get("answer"), str):
-            return "verdicts/answer missing"
-        return None
-
-    return {"plan": plan, "refine": plan, "verify": verify}.get(job, answer)
+    return plan if job in ("plan", "refine") else answer
 
 
 def parse_plan(obj: dict[str, Any] | None, question: str) -> tuple[list[str], list[str]]:
@@ -933,68 +921,6 @@ def enforce_attribution(
                     missing=v.missing, sub_asks=v.sub_asks)  # fmt: skip
 
 
-def apply_verify(
-    v: Validated,
-    obj: dict[str, Any] | None,
-    redact: Callable[[str], str] = lambda s: s,
-    shown: dict[str, Excerpt] | None = None,
-    fixes: dict[int, list[str]] | None = None,
-) -> Validated:
-    """The self-check: a claim judged ``none`` is dropped; a rewrite (asked for by a ``fix`` note or
-    a ``partial`` verdict) replaces the claim when its values are in the cited sources and every
-    subject it names is in its quotes; a ``partial`` claim without a valid rewrite is dropped, and so
-    is a claim naming a subject that neither its quotes nor its cited excerpts state; ``full`` (or no
-    verdict) is kept. The answer becomes the verify rewrite (then grounded on the remaining claims
-    like any answer); with no usable output the answer is returned unchanged."""
-    if not v.answered or not obj or not isinstance(obj.get("verdicts"), list):
-        return v
-    kept = v.kept
-    verdicts = {
-        int(x["i"]): x
-        for x in obj["verdicts"]
-        if isinstance(x, dict) and isinstance(x.get("i"), int) and 0 <= x["i"] < len(kept)
-    }
-    claims: list[Claim] = []
-    changed = False
-    fixes = fixes or {}
-    for i, c in enumerate(kept):
-        vd = verdicts.get(i) or {}
-        verdict = vd.get("entailed", "full")
-        rewrite = " ".join(str(vd.get("text") or "").split())
-        hay = support_hay(c.support, shown or {})
-        if verdict == "none":
-            changed = True
-            claims.append(Claim(c.text, [], "dropped", c.cited))
-            continue
-        if rewrite and rewrite != c.text:
-            cand = Claim(rewrite, c.support, "kept", c.cited)
-            if literals_ok(rewrite, hay) and not unattributed(cand):
-                changed = changed or verdict != "full"
-                claims.append(cand)
-                continue
-        if verdict == "partial":
-            changed = True
-            claims.append(Claim(c.text, [], "dropped", c.cited))
-        elif unattributed(c) and not all(literal_supported(n, hay) for n in unattributed(c)):
-            changed = True  # a subject neither the quotes nor the cited excerpt state: dropped
-            claims.append(Claim(c.text, [], "dropped", c.cited))
-        else:
-            claims.append(c)
-    answer = str(obj.get("answer") or "").strip() or v.answer
-    out = assemble(
-        ANSWERED,
-        answer,
-        claims,
-        v.related,
-        v.confidence if not changed else _lower(v.confidence),
-        shown if shown is not None else _shown_of(v),
-        redact,
-        missing=v.missing,
-        sub_asks=v.sub_asks,
-    )
-    return out
-
-
 # --------------------------------------------------------------------------- the provider wrapper
 class ResearchUnavailable(Exception):
     """A call could not produce an output: ``reason`` is a synthesis-style status."""
@@ -1279,7 +1205,6 @@ __all__ = [
     "Validated",
     "answer_user",
     "app_researcher",
-    "apply_verify",
     "assemble",
     "check_user",
     "clip",
@@ -1308,5 +1233,4 @@ __all__ = [
     "support_hay",
     "research_chain",
     "validate_answer",
-    "verify_user",
 ]
