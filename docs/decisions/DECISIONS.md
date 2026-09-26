@@ -1248,3 +1248,13 @@ Faithfulness detail:
 **Scorer fix (wf-research-proto 6f9ab6d):** entail is judged in batches of 6 statements. A long answer's single payload made the judge run away (10/33 questions on the glm-5 run), so that run's first raw numbers (.626 / .375) were artifacts. Re-scored: .862 faithful, .84 correct, 0 runaways.
 **Reading:** the temporal layer plus the concise writer gives the faithfulness the consumer needs. The verbose writer surfaces more superseded or overreaching content than the links cover.
 **Last lever before the final gate (evidence-based, same price):** luna at reasoning effort MEDIUM scored 18/25 against 15/25 at low on the identical writer-sweep contexts (D-174). One end-to-end run with effort medium plus adjudication follows; then the configuration is frozen for the final gate.
+D-187 | 2026-09-26 | ACCEPTED | **Dev iteration ends: luna at effort medium brings no measurable gain (judge .72, 2 gained and 2 lost; p95 16.9 s against 12.5 s), so the writer stays at effort low. The final-gate protocol is FROZEN in docs/decisions/FINAL-GATE-PROTOCOL.md before the run.**
+On 25 dev questions, C2 sits one question below the NotebookLM-relative bar (.80 against .83), inside the ±.08 noise. Only the 110-question hold-out can resolve it.
+The protocol pins:
+- code wf-memory-ask fd83f95 and its configuration (prose, llm attribution, the temporal layer, luna low, a $0.01 cap);
+- the memory DBs: sealed B on `hlm_research_b_tl`, PR set on `hlm_research_cur_tl` with explicit links;
+- the set hashes;
+- the scorer 6f9ab6d and its rubric hashes;
+- adjudication and rater procedures;
+- the NotebookLM reference notebooks;
+- the per-set pass criteria and the outcome rules.
