@@ -929,3 +929,22 @@ The owner also notes the advantages HLMemo has over a NotebookLM-style tool beyo
 - cross-project reads when needed (D-083 policy);
 - a project-independent experience layer (L4, Phase 4);
 - no source limit.
+D-167 | 2026-09-26 | ACCEPTED | **Item-level fusion stays: gold-in-cited .76 → .90, correct .64 → .68. The "wide + embedding" attribution is reverted to a measurable choice.**
+End-to-end on wf-memory-ask 0db86e2 (prose mode, 33 dev questions, item scope):
+| Criterion | V16 2b46633 | 0db86e2 (wide attribution + item fusion) |
+|---|---|---|
+| Correct | .64 | .68 (gained D010, D021, D062; lost D009, D054) |
+| Source anchor among cited | .76 | **.90** |
+| Faithful (item) | .869 | .765 |
+| Abstain | 1.00 | .875 |
+| p95 | 10.7 s | 9.6 s |
+**Item fusion (0db86e2):** one vote per item per query, and the top-4 items' best in-document chunks take drill slots. It does what D-163 predicted.
+**Wide attribution (cbc4297):**
+- every shown excerpt is a candidate, plus multilingual embedding similarity;
+- it attached sentences to semantically similar lines that do not support them;
+- embedding also covered only part of each request in time (35 s embed time summed over 34 questions).
+**Next:**
+1. `HLM_RESEARCH_ATTRIBUTION` ∈ {sources (V16), wide, llm (one extra "attribute" call)}.
+2. `meta.excerpts_shown` so strategies can be replayed OFFLINE on the SAME answers; only the judge costs.
+3. A pure `attribute(...)` function for that replay.
+The winner is chosen by faithfulness (item scope, same answers), then adjudicated per D-165.
