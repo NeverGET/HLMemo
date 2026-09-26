@@ -871,3 +871,17 @@ It reaches .88 correct by writing long answers that go beyond what its sources s
 3. Each sentence is attributed deterministically to its best source line, for display and measurement. A polarity mismatch against that line FLAGS the claim (`flags: ["polarity"]`) instead of dropping it.
 4. There is no check/repair call, and refine-on-abstain stays as today.
 **Faithfulness ≥ .95 (C3) stays.** The calibration audit that consult 81 requires (an independent blind review of judge rejections in source scope) will decide the realistic reading. The threshold is not changed here.
+D-163 | 2026-09-26 | ACCEPTED | **Retrieval diagnostic: retrieval explains at most 3–4 of V14's 10 dev misses. Writing is the bigger lever (V16), and item-level fusion is the retrieval fix to take next.**
+The question and the plan queries of the V14 D-157 run were replayed through memory.query with the LLM off, taking the rank of the first hit whose chunk ±1 holds the gold span:
+- 15/25 correct: all had their gold cited, at best rank ≤ 6.
+- **9 misses had the gold surfaced (rank ≤ 12); 6 of those had it in primary/related.** The loss there is in writing: D009, D017, D018, D021, D034, D053.
+- 0 misses had the gold ranked 13–40.
+- 1 miss never surfaced it: D050. Its golds are markdown table rows in chunks that start mid-table, with the header and caption in earlier chunks, asked in Turkish.
+**Mechanisms found:**
+- memory.query returns one chunk per item. A long doc ranks high but shows a sibling chunk, so the gold chunk cannot appear: D002, D010, D062.
+- memory.ask fuses by CHUNK handle, which splits a doc's votes across queries: ROADMAP is #1 in 4 of 5 queries but fused #7.
+- `_doc_best` finds the right in-document chunk (#1 for D010 and D062) but only fills free drill slots, and the ranked list always fills all 12.
+**Fixes, in order:**
+- (1) V16 prose mode, for the 6 writing misses.
+- (2) Fuse per item, one vote per item per query, and let `_doc_best`'s chunk for the top-4 items take drill slots. What-if: gold-in-excerpts 20 → 21 of 25 (D010), no losses.
+- (3) Later, with a re-import: table-aware chunking that repeats the header row and nearest heading or caption in a chunk that starts inside a table (D050).
