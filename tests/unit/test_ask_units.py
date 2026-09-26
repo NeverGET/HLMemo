@@ -2162,3 +2162,242 @@ async def test_d170_expand_is_skipped_without_time_or_answer() -> None:
     off = _ScriptedRun({"prose": _prose(EXPAND_ANSWER, ["v10.0"])}, select=False, mode="prose")
     await off.answer(list(EXS))
     assert off.steps == ["prose"] and "expand_added" not in off.flags
+
+
+# --------------------------------------------------------------------------- D-171 writer profile
+_JOB_OUT = {
+    "plan": {"queries": ["a b c"], "sections": []},
+    "refine": {"queries": ["d e f"], "sections": []},
+    "prose": {"status": "answered", "answer": "The target is 1.2 s.", "sources": [], "confidence": "high"},
+    "expand": {"add": []},
+    "attribute": {"cites": []},
+}
+
+
+def _chat(obj: dict) -> dict:
+    return {
+        "model": "stub",
+        "choices": [{"message": {"role": "assistant", "content": json.dumps(obj)}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+    }
+
+
+def _job_of(body: dict) -> str:
+    return body["messages"][1]["content"].split("\n", 1)[0].removeprefix("JOB: ").strip()
+
+
+@pytest.fixture
+def writer_profiles(tmp_path, monkeypatch):  # noqa: ANN001, ANN201
+    """A writer profile file (its own prices and provider options) and one not qualified for research."""
+    for name, extra in (("w-writer", ""), ("w-unq", 'disabled_tasks = ["research"]\n')):
+        (tmp_path / f"{name}.toml").write_text(
+            f'HLM_LLM_BASE_URL = "http://{name}.invalid/v1"\n'
+            f'HLM_LLM_MODEL = "stub/{name}"\n'
+            'HLM_LLM_API_KEY = "test-key-not-secret"\n'
+            'extra = { response_format = { type = "json_object" }, '
+            'provider = { data_collection = "deny" } }\n'
+            "price_in_per_m = 5.0\nprice_out_per_m = 10.0\n" + extra
+        )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    return tmp_path
+
+
+def _task_profile():  # noqa: ANN202
+    from decimal import Decimal
+
+    from hlmemo.librarian.profiles import LlmProfile
+
+    return LlmProfile(
+        name="t-task",
+        base_url="http://t-task.invalid/v1",
+        model_id="stub/t-task",
+        api_key="test-key-not-secret",
+        reasoning=None,
+        extra={"response_format": {"type": "json_object"}},
+        price_in_per_m=Decimal("1.0"),
+        price_out_per_m=Decimal("2.0"),
+        supports_json_schema=False,
+        prompt_overrides={},
+    )
+
+
+def _writer_researcher(handler, *, writer: str | None = "w-writer", budget=None, mode: str = "prose"):  # noqa: ANN001, ANN202
+    import httpx
+
+    from hlmemo.config import get_settings
+    from hlmemo.librarian import privacy
+    from hlmemo.librarian.ledger import MemoryLedger
+    from hlmemo.librarian.provider import Provider
+
+    settings = get_settings(
+        research_enabled=True,
+        librarian_enabled=True,
+        llm_mode="live",
+        research_answer_mode=mode,
+        research_writer_profile=writer,
+    )
+    provider = Provider(
+        [_task_profile()],
+        mode="live",
+        budget=budget,
+        ledger=MemoryLedger(),
+        transport=httpx.MockTransport(handler),
+    )
+    r = rs.Researcher(settings, provider=provider)
+
+    async def gate(_caps, _ids):  # noqa: ANN001, ANN202 - no DB in a unit test
+        return privacy.Verdict(device_ok=True)
+
+    r.gate = gate  # type: ignore[method-assign]
+    r.gate_carried = gate  # type: ignore[method-assign]
+    return r
+
+
+async def _complete(r, job: str, user: str | None = None, guard=None):  # noqa: ANN001, ANN202
+    import asyncio
+    import uuid
+
+    return await r.complete(
+        job,
+        user or f"JOB: {job}\nINPUT: {{}}",
+        capabilities={},
+        gate_ids=[],
+        deadline=asyncio.get_running_loop().time() + 30,
+        lineage=str(uuid.uuid4()),
+        attempt_guard=guard,
+    )
+
+
+async def test_d171_writer_profile_routes_only_prose_and_expand(writer_profiles) -> None:  # noqa: ANN001
+    import httpx
+
+    seen: list[tuple[str, str, str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append((_job_of(body), body["model"], request.url.host, body.get("provider")))
+        assert "SuperSecret123456" not in request.content.decode()  # redacted for every profile
+        return httpx.Response(200, json=_chat(_JOB_OUT[_job_of(body)]))
+
+    r = _writer_researcher(handler)
+    try:
+        assert [p.name for p in r.writer_chain] == ["w-writer", "t-task"] and r.writer_profile == "w-writer"
+        secret = 'password = "SuperSecret123456"'
+        profiles = {}
+        for job in ("plan", "prose", "expand", "attribute", "refine"):
+            res = await _complete(r, job, f"JOB: {job}\nINPUT: {{}}\n{secret}")
+            profiles[job] = res.profile
+    finally:
+        await r.aclose()
+    assert profiles == {
+        "plan": "t-task",
+        "prose": "w-writer",
+        "expand": "w-writer",
+        "attribute": "t-task",
+        "refine": "t-task",
+    }
+    assert [(j, m, h) for j, m, h, _p in seen] == [
+        ("plan", "stub/t-task", "t-task.invalid"),
+        ("prose", "stub/w-writer", "w-writer.invalid"),
+        ("expand", "stub/w-writer", "w-writer.invalid"),
+        ("attribute", "stub/t-task", "t-task.invalid"),
+        ("refine", "stub/t-task", "t-task.invalid"),
+    ]
+    assert seen[1][3] == {"data_collection": "deny"}  # the writer's own request options
+    rows = r.provider.ledger.inner.rows  # the tee'd ledger: one row per attempt, per profile
+    assert [(row.profile, row.outcome) for row in rows][1] == ("w-writer", "ok")
+
+
+async def test_d171_writer_budget_reservation_and_guard_use_its_prices(writer_profiles) -> None:  # noqa: ANN001
+    import httpx
+
+    from hlmemo.librarian.budget import MemoryBudget, q8
+
+    class Recording(MemoryBudget):
+        def __init__(self) -> None:
+            super().__init__(1)
+            self.worst: list = []
+
+        async def reserve(self, call_id, worst_usd, job_id):  # noqa: ANN001, ANN201
+            self.worst.append(worst_usd)
+            return await super().reserve(call_id, worst_usd, job_id)
+
+    budget = Recording()
+    guarded: list[tuple[str, object]] = []
+
+    async def guard(profile, worst_usd, _tokens):  # noqa: ANN001, ANN202
+        guarded.append((profile.name, worst_usd))
+
+    r = _writer_researcher(
+        lambda req: httpx.Response(200, json=_chat(_JOB_OUT[_job_of(json.loads(req.content))])), budget=budget
+    )
+    try:
+        user = "JOB: prose\nINPUT: {}"
+        writer, task = r.writer_chain[0], r.chain[0]
+        spec = r.job_spec("prose")
+        tokens = r.provider.estimate_input_tokens(
+            [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
+        )
+        expect = writer.worst_usd(tokens, spec.max_tokens)
+        assert expect > task.worst_usd(tokens, spec.max_tokens)  # 5/10 vs 1/2 per M
+        # the call-level check (per-question budget) prices a writer job by the writer
+        assert r.worst_case("prose", user)[0] == expect
+        assert r.worst_case("plan", user)[0] == task.worst_usd(
+            r.provider.estimate_input_tokens(
+                [{"role": "system", "content": r.job_spec("plan").system}, {"role": "user", "content": user}]
+            ),
+            r.job_spec("plan").max_tokens,
+        )
+        await _complete(r, "prose", user, guard)
+    finally:
+        await r.aclose()
+    # the provider's reservation and the per-attempt guard: THIS profile's (the writer's) prices
+    assert budget.worst == [q8(expect)] and guarded == [("w-writer", expect)]
+    assert budget.spent == q8((100 * writer.price_in_per_m + 20 * writer.price_out_per_m) / 1_000_000)
+
+
+async def test_d171_writer_falls_back_to_the_task_profile(writer_profiles) -> None:  # noqa: ANN001
+    import httpx
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body["model"])
+        if body["model"] == "stub/w-writer":
+            return httpx.Response(503, json={"error": {"code": 503, "message": "down"}})
+        return httpx.Response(200, json=_chat(_JOB_OUT[_job_of(body)]))
+
+    r = _writer_researcher(handler)
+    try:
+        res = await _complete(r, "prose")
+    finally:
+        await r.aclose()
+    assert res.profile == "t-task" and res.output["status"] == "answered"
+    assert seen == ["stub/w-writer", "stub/t-task"]
+    # the failure counts on the WRITER's breaker; the task profile's stays closed
+    assert r.provider.breaker("t-task").state == "closed" and r.provider.breaker("w-writer").failures == 1
+
+
+def test_d171_writer_chain_resolution(writer_profiles, caplog) -> None:  # noqa: ANN001
+    import httpx
+
+    def handler(_req):  # noqa: ANN001, ANN202
+        return httpx.Response(500)
+
+    task = _task_profile()
+    for writer, mode, expect in (
+        (None, "prose", []),
+        ("", "prose", []),
+        ("t-task", "prose", []),  # the task profile itself: no routing
+        ("no-such-profile", "prose", []),  # unknown: logged, the task profile writes
+        ("w-unq", "prose", []),  # not qualified for research (D-071): logged
+        ("w-writer", "cite", []),  # only the prose mode has a writer job
+        ("w-writer", "prose", ["w-writer", "t-task"]),
+    ):
+        r = _writer_researcher(handler, writer=writer, mode=mode)
+        assert [p.name for p in r.writer_chain] == expect, (writer, mode)
+        assert r.writer_profile == (expect[0] if expect else task.name)
+        assert r.chain_for_job("plan") is None and (r.chain_for_job("prose") is None) is (not expect)
+    assert "no-such-profile" in caplog.text and "w-unq" in caplog.text
+    assert rs.writer_chain(type("S", (), {"research_writer_profile": "w-writer"})(), []) == []

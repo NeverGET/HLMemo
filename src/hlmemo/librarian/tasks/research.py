@@ -81,7 +81,7 @@ from hlmemo.librarian.budget import Caps, DbBudget, NoBudget
 from hlmemo.librarian.cassette import CassetteStore
 from hlmemo.librarian.errors import AuthorityLost, LlmConfigError, PrivacyDenied
 from hlmemo.librarian.ledger import NETWORK_OUTCOMES, DbLedger, Ledger, LedgerRow
-from hlmemo.librarian.profiles import LlmProfile, profile_chain
+from hlmemo.librarian.profiles import LlmProfile, named_profile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
 from hlmemo.librarian.provider import AttemptGuard, ChainBreakers, Clock, LlmResult, Provider
 from hlmemo.librarian.redact import Redactor
@@ -104,6 +104,9 @@ ATTRIBUTIONS = ("sources", "wide", "llm")
 ATTRIBUTE_MAX = 3
 #: D-170 expand (``HLM_RESEARCH_EXPAND``): the new sentences one expand call may add ("up to 6")
 EXPAND_MAX = 6
+#: D-171: the JOBs that write the prose answer: they use ``HLM_RESEARCH_WRITER_PROFILE`` when set
+WRITER_JOBS = frozenset({"prose", "expand"})
+WRITER_ENV = "HLM_RESEARCH_WRITER_PROFILE"
 #: the opt-in prompt versions of the cite and prose modes (``prompts.OPT_IN_VERSIONS``: never the
 #: default)
 CITE_PROMPT_VERSION = 2
@@ -2306,6 +2309,26 @@ def research_chain(settings: Any) -> list[LlmProfile]:
     return [p for p in chain if TASK not in p.disabled_tasks]
 
 
+def writer_chain(settings: Any, task_chain: list[LlmProfile]) -> list[LlmProfile]:
+    """D-171: the chain of the jobs that write the prose answer (``WRITER_JOBS``): the named profile
+    ``HLM_RESEARCH_WRITER_PROFILE`` (resolved like ``HLM_FALLBACK_PROFILE__<TASK>``: its own file,
+    never the env's ``HLM_LLM_*``), then the research task's own profile as its fallback. ``[]`` (the
+    task chain writes) when unset, naming the task profile, without a task chain, unknown or broken
+    (logged), or not qualified for ``research`` (its ``disabled_tasks``, D-071; logged)."""
+    name = str(getattr(settings, "research_writer_profile", None) or "").strip()
+    if not name or not task_chain or name == task_chain[0].name:
+        return []
+    try:
+        writer = named_profile(name)
+    except LlmConfigError as exc:
+        log.warning("%s=%r ignored (the research profile writes): %s", WRITER_ENV, name, exc)
+        return []
+    if TASK in writer.disabled_tasks:
+        log.warning("%s=%r lists %r in disabled_tasks: the research profile writes", WRITER_ENV, name, TASK)
+        return []
+    return [writer, task_chain[0]]
+
+
 class Researcher:
     """The app's ``research`` provider (built on first use; keeps breakers and HTTP clients)."""
 
@@ -2345,6 +2368,10 @@ class Researcher:
         self.expand: bool = self.answer_mode == "prose" and bool(getattr(settings, "research_expand", False))
         if self.answer_mode == "prose":
             self.max_calls = MAX_CALLS_NO_SELECT + int(self.expand) + int(self.attribution == "llm")
+        # D-171: the prose writer's own chain (prose mode only: the other modes write with the task)
+        self.writer_chain: list[LlmProfile] = (
+            writer_chain(settings, self.chain) if self.answer_mode == "prose" else []
+        )
         # D-156/D-162: the cite and prose modes' prompts are opt-in versions; the claims mode keeps the
         # default (v1, or a pin) unless that prompt has no JOB "answer" (another mode's prompt pinned
         # by mistake)
@@ -2438,11 +2465,24 @@ class Researcher:
         per-task fallback and the ledger, stay ``research``)."""
         return replace(self.spec, max_tokens=JOB_MAX_TOKENS.get(job, self.spec.max_tokens))
 
+    def chain_for_job(self, job: str) -> list[LlmProfile] | None:
+        """D-171: the explicit chain of a writer job when a writer profile is set, else None (the
+        task's chain)."""
+        return self.writer_chain if job in WRITER_JOBS and self.writer_chain else None
+
+    @property
+    def writer_profile(self) -> str | None:
+        """The profile that writes the answer (D-171 ``meta.writer_profile``): the writer profile when
+        routed, else the task profile."""
+        head = self.writer_chain or self.chain
+        return head[0].name if head else None
+
     def worst_case(self, job: str, user: str) -> tuple[Decimal, int]:
         """``(USD, tokens)`` the next call may cost at most on the expected path: its padded input
-        and its max_tokens, priced by the PRIMARY. The call-level check only; every ATTEMPT (schema
-        retry, fallback) is checked again with its own profile's worst case (``attempt_guard``,
-        review 79 T4)."""
+        and its max_tokens, priced by the head of the JOB's chain (the task primary; D-171: the
+        writer profile for a writer job). The call-level check only; every ATTEMPT (schema retry,
+        fallback) is checked again with its own profile's worst case (``attempt_guard``, review 79
+        T4)."""
         spec = self.job_spec(job)
         tokens_in = (
             self.provider.estimate_input_tokens(
@@ -2451,7 +2491,8 @@ class Researcher:
             if self.provider is not None
             else 0
         )
-        head = self.chain[0] if self.chain else None
+        chain = self.chain_for_job(job) or self.chain
+        head = chain[0] if chain else None
         usd = head.worst_usd(tokens_in, spec.max_tokens) if head is not None and head.priced else Decimal(0)
         return usd, -(-tokens_in * 11 // 10) + spec.max_tokens
 
@@ -2512,6 +2553,7 @@ class Researcher:
             user,
             validate=job_validator(job),
             precheck=precheck,
+            chain=self.chain_for_job(job),  # D-171: a writer job's own chain, else the task's
             deadline=deadline,
             lineage=lineage,
             attempt_policy="latency",
@@ -2563,6 +2605,7 @@ __all__ = [
     "PROSE_PROMPT_VERSION",
     "SELECT_MAX",
     "TASK",
+    "WRITER_JOBS",
     "Claim",
     "Excerpt",
     "LineSim",
@@ -2618,5 +2661,6 @@ __all__ = [
     "validate_answer",
     "validate_cited",
     "validate_prose",
+    "writer_chain",
     "write_user",
 ]

@@ -1,0 +1,16 @@
+# memory.ask prose WRITER candidate (HLM_RESEARCH_WRITER_PROFILE, D-171): `z-ai/glm-5` routed through
+# OpenRouter. A writer-model sweep over the exact end-to-end contexts: 22/25 correct (luna 18/25).
+# Key from env only.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "z-ai/glm-5"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+# Reasoning: under measurement (latency probe); unset = the endpoint's default. The final value goes
+# here, e.g. HLM_LLM_REASONING = '{"effort":"low"}'.
+# No temperature (as gpt-6-luna). require_parameters: only endpoints that honour response_format
+# serve the call (D-093). A provider `sort` (e.g. sort = "latency") joins the provider table once
+# the latency probe has chosen it.
+extra = { response_format = { type = "json_object" }, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# USD per 1M tokens (reservation worst case; actual cost is settled from usage).
+price_in_per_m  = 0.60
+price_out_per_m = 1.92
+supports_json_schema = false

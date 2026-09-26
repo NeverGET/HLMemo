@@ -277,6 +277,11 @@ class Settings(BaseSettings):
     # the attribution runs over every sentence. Skipped without ~6 s left; a failure keeps the
     # answer. Ignored in the claims and cite modes.
     research_expand: bool = False
+    # D-171: the named profile (profiles/<name>.toml, resolved like HLM_FALLBACK_PROFILE__<TASK>)
+    # that writes the prose answer: ONLY the jobs prose and expand use it, with the research task's
+    # own profile as their fallback; plan, refine and attribute keep the task profile. Empty = the
+    # task profile writes too. Its own prices, breaker, spend guard and ledger rows apply.
+    research_writer_profile: str | None = None
     # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
     # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
     # (the others stay drillable in `related`); an empty or failed select writes over them all.

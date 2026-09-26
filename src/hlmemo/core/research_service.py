@@ -67,6 +67,9 @@ that state each numbered kept sentence; a failed call, or a sentence given none,
 JOB ``expand`` (the kept sentences numbered, the same excerpts) adds up to 6 new sentences; they are
 appended and pass the same literal check, then the attribution runs over all sentences. It is
 skipped with less than ``EXPAND_MIN_S`` left (``expand_skipped``); a failure keeps the answer.
+D-171 ``HLM_RESEARCH_WRITER_PROFILE``: the JOBs prose and expand run on that named profile (its
+fallback: the research profile; ``research.Researcher.chain_for_job``), the others on the task's;
+``meta.writer_profile`` names the profile that writes.
 
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write), ``research.MAX_CALLS_ATTRIBUTE`` (5) with
@@ -1218,6 +1221,8 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             "map_tokens": run.map_tokens,
             "flags": run.flags,
             "answer_mode": run.researcher.answer_mode,
+            # D-171: the profile that writes the answer (HLM_RESEARCH_WRITER_PROFILE, else the task's)
+            "writer_profile": run.researcher.writer_profile,
             # D-165: the excerpts the answer step saw (handles only; one the caller can no longer
             # read is left out)
             "excerpts_shown": [

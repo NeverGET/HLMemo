@@ -589,6 +589,53 @@ async def test_ask_prose_mode_expand_appends_checked_sentences(connect, world, d
     assert_no_secret(sent_text(llm), world)
 
 
+async def test_ask_prose_mode_writer_profile_writes_prose_and_expand(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-171 HLM_RESEARCH_WRITER_PROFILE (the built-in ``openrouter-glm5`` profile file, behind the
+    mock transport: nothing leaves the host): the JOBs prose and expand go to the writer profile with
+    ITS request options; plan and attribute stay on the task profile; each call is priced by its own
+    profile; meta.writer_profile names the writer."""
+    fake = FakeResearcher(facts=["1.2 s"], expand_add=["It was 1,6 s on the VPS before D-004."])
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(
+        db_dsn,
+        llm,
+        research_answer_mode="prose",
+        research_expand=True,
+        research_attribution="llm",
+        research_writer_profile="openrouter-glm5",
+    )
+    try:
+        out = await ask(connect, world, deps, r, "What is the retrieval p95 target and what was it before?")
+    finally:
+        await r.aclose()
+    assert out["abstained"] is False and out["meta"]["writer_profile"] == "openrouter-glm5"
+    assert out["meta"]["steps"] == ["plan", "prose", "expand", "attribute"]
+    sent = [(request_job(b)[0], b["model"], host) for b, host in zip(llm.requests, llm.hosts, strict=True)]
+    assert sent == [
+        ("plan", "stub/stub-primary", "stub-primary.invalid"),
+        ("prose", "z-ai/glm-5", "openrouter.ai"),
+        ("expand", "z-ai/glm-5", "openrouter.ai"),
+        ("attribute", "stub/stub-primary", "stub-primary.invalid"),
+    ]
+    prose = llm.requests[1]
+    assert prose["provider"]["data_collection"] == "deny" and "temperature" not in prose
+    assert prose["response_format"] == {"type": "json_object"} and prose["max_tokens"] == 3000
+    # every call priced by ITS profile: 100 in / 20 out tokens each (stub $1/$2, glm-5 $0.60/$1.92 per M)
+    stub, glm5 = 100 * 1.0 + 20 * 2.0, 100 * 0.60 + 20 * 1.92
+    assert out["meta"]["cost_usd"] == round((2 * stub + 2 * glm5) / 1_000_000, 6)  # 0.000477 (not 0.00056)
+    assert "1,6 s" in out["answer"] and out["meta"]["flags"]["expand_added"] == 1
+    assert_no_secret(sent_text(llm), world)
+    # the default: no writer profile, the task profile writes and is reported
+    llm2 = ScriptedLLM(default=FakeResearcher(facts=["1.2 s"]))
+    r2 = make_researcher(db_dsn, llm2, research_answer_mode="prose")
+    try:
+        out2 = await ask(connect, world, deps, r2, "What is the retrieval p95 target?")
+    finally:
+        await r2.aclose()
+    assert out2["meta"]["writer_profile"] == "stub-primary"
+    assert {b["model"] for b in llm2.requests} == {"stub/stub-primary"}
+
+
 async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
     fake = FakeResearcher(facts=[], abstain=True)
     llm = ScriptedLLM(default=fake)
