@@ -900,3 +900,22 @@ Of 99 statements, 3 were dropped by the hard-literal guard and 6 carry polarity 
 Re-scoring the same answers with every sentence attributed to the first 3 of primary+related gives the same faithfulness (.818), so the product's per-sentence attribution is not the cause.
 Over 12 excerpts the prose is less faithful than over ORACLE-sel's ≤ 5 (.922), OR sentences rest on a 4th+ source that the judge's 3-source cap cannot see, OR the judge errs.
 A per-statement audit (JUDGE_FN / CLIPPED / ELSEWHERE / OVERREACH / UNSUPPORTED / CONTRADICTED) decides which. It is also the start of the calibration that consult 81 requires; the independent confirmation comes later.
+D-165 | 2026-09-26 | ACCEPTED (consult 82 = the independent calibration that D-158a requires) | **V16's faithfulness loss is attribution plus measurement scope, not fabrication. This is confirmed blind by codex. It sets the faithfulness measurement ("item" scope) and the final-run adjudication protocol.**
+**Internal audit** (Claude, per statement, all 17 judge rejections among 99 V16 statements): JUDGE_FN 6, CLIPPED 4 (in the cited item, outside the drilled chunk), ELSEWHERE 7 (another SHOWN source states it: an attribution error), OVERREACH / UNSUPPORTED / CONTRADICTED 0.
+**Independent blind check** (gpt-6-astra low; 25 statements = the 17 rejections + 8 random accepts, shuffled, no labels):
+| Internal class | Codex label |
+|---|---|
+| JUDGE_FN | S 6/6 |
+| CLIPPED | W 4/4 |
+| ELSEWHERE | E 6/7, P 1/7 |
+| Accepted sample (8) | S 6, W 1, E 1 |
+**U = 0, C = 0.** The agreement is 16/17 on the rejections.
+**Measurement (wf-research-proto 348ecb2):** `--faithful-scope item` gives the judge each cited source's TITLE plus a ≤ 6,000-char window of its item body centred on the cited chunk: what a caller sees when it drills. V16 re-scored: .828 → **.869**.
+Attribution errors (E) are NOT absorbed by the scope: they are product defects, because the caller would open the wrong source. WS-A attacks them with attribution over ALL shown excerpts plus multilingual embedding similarity, and item-level fusion.
+**Final-run faithfulness protocol (C3), frozen now:**
+1. Faithfulness is judged in item scope.
+2. EVERY judge rejection goes to independent blind adjudication (codex, labels S/W/E/P/U/C). S and W count as faithful; E, P, U and C count as unfaithful.
+3. A blind random sample of 20% of the judge accepts is adjudicated the same way, and the observed false-accept rate is applied to the remaining accepts.
+4. faithful = (adjudicated faithful rejections + accepts × (1 − sampled false-accept rate)) / statements ≥ .95.
+5. The contradiction rate (C, plus the judge's answer-level contradictions) stays ≤ .04.
+The polarity flags in prose mode were 6/6 false positives and are removed (WS-A).
