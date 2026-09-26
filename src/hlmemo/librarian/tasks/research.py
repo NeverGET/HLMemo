@@ -96,7 +96,7 @@ MAX_ATTEMPTS = 9
 MAX_IN_FLIGHT = 4
 #: addendum 5: an explicit max_tokens on EVERY call, per JOB (reasoning tokens included); a
 #: runaway output is cut there, and the per-question budget reserves exactly this worst case
-JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000, "write": 3000, "select": 300}
+JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000, "write": 3000, "select": 800}
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
 BREAKER_MAX_OPEN_S = 900.0
