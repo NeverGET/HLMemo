@@ -1036,3 +1036,27 @@ The sweep adds 4 runs:
 These join luna low/medium, luna-pro, mistral-large-2512 and glm-5. The dev spend cap for the sweep is $3.
 **Selection rule, written before the results:** among the writers that reach C2 ≥ .80 on the sweep AND keep C3/C4 at their thresholds in the end-to-end run, choose the cheapest. If none reaches .80, choose the best correct per dollar and present the residual to the owner.
 The C6 latency limit (p95 ≤ 20 s) stays. The C6 cost limit moves from $0.01/q to an owner-confirmed value, proposed together with the chosen writer's measured cost.
+D-174 | 2026-09-26 | ACCEPTED | **Writer sweep over the EXACT end-to-end contexts: GLM-5 writes at NotebookLM's correctness level (22/25) with 0 contradictions, at about $0.01/q for the writer; latency is its one problem.**
+The sweep held everything else fixed:
+- the prose prompt research/v3.1;
+- the same 34 questions, with each question's 12 excerpts from the 61f6712 run (request sha256 matched 34/34);
+- the same judge (correctness + abstain).
+| Writer | Correct | Abstain | Contradictions | Writer $/q | Latency median / p95 |
+|---|---|---|---|---|---|
+| gpt-6-luna low (current) | .60 | 7/8 | 2 | .0015 | 2.5 / 3.9 s |
+| gpt-6-luna medium | .72 | 7/8 | 0 | .0016 | 3.3 / 5.6 s |
+| gpt-6-luna-pro | .72 | 7/8 | 0 | .0021 | 7.0 / 11.9 s |
+| gpt-5.6-luna low | .72 | **8/8** | 0 | .0030 | 2.9 / 5.6 s |
+| gpt-5.6-luna medium | .72 | 7/8 | 1 | .0031 | 3.4 / 6.4 s |
+| mistral-large-2512 | .76 | **1/8** | **4** | .0069 | 6–30 s (rate-limited) |
+| **glm-5** | **.88** | 7/8 | **0** | .0099 | 10.3 / **31.9 s** |
+**Reading:**
+- The cheap writers plateau at .72.
+- mistral is ruled out on abstain and contradictions.
+- glm-5 matches NotebookLM (.88), but its writer p95 alone exceeds the 20 s end-to-end gate.
+- gpt-5.6-terra and gpt-5.6-sol (about $0.03/q) were NOT run: the auto-mode permission check blocked the projected spend (about $2.1), so it needs the owner's explicit approval. They are unnecessary if glm-5's latency can be fixed.
+**Next:**
+- (1) glm-5 latency probes: OpenRouter provider sort by latency or throughput, and reduced reasoning.
+- (2) Per-job writer profile `HLM_RESEARCH_WRITER_PROFILE` plus an `openrouter-glm5` profile (configuration, D-017).
+- (3) An end-to-end run with the D-165 and D-168 adjudication and the C1 rater.
+The estimated full cost with the glm-5 writer is about $0.013/q, roughly $8–20/month at 20–50 questions a day.
