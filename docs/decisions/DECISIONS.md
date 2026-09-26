@@ -469,3 +469,20 @@ D-136 | 2026-09-26 | ACCEPTED (orchestrator, overnight D-133) | **W-B ceiling: t
 Workstreams:
 - an implementer, with no hold-out access;
 - an evaluator on B-dev who reports aggregate failure classes back (no question text).
+D-137 | 2026-09-26 | ACCEPTED (orchestrator; recorded BEFORE any final-gate run) | **Gate v1 calibration on B-dev, and one rubric-consistency fix.** Scorer `score.py --gate v1` (judge deepseek-v4-pro pinned; rubric prompts versioned; branch wf-research-proto df03bf8). Current-tree replica `hlm_research_cur` = prod's 552 source keys plus the 6 new docs (558 items / 1,450 chunks).
+Re-scoring the prototype's existing B-dev answers under v1 gave V3:
+| Criterion | Score | Result |
+|---|---|---|
+| Correct | .389 | FAIL |
+| Abstention | 1.00 | PASS |
+| Faithful | .456 | FAIL (quote check alone .805) |
+| Source recall (with restatement) | .898 | PASS |
+| p95 | 9.3 s | PASS |
+| $/q | .002 | PASS |
+V5 scored .455 correct and .592 faithful on the 62 judged questions.
+Causes:
+- (1) answers miss about a third of the key facts;
+- (2) one quote per claim covers only PART of the claim, so the judge refuses entailment. Both are product defects, and memory.ask now requires claims[] with 1–3 fully entailing quotes each, plus a completeness pass (sent to the implementer).
+- (3) A RUBRIC INCONSISTENCY: for corpus B the scorer used ALL gold facts as must-mention, whereas the blind PR set uses 1–3 key atomic facts.
+**Fix:** for every set, must_mention = 1–3 key atomic facts per question. For sealed B they are derived ONCE from the gold answer by a fixed prompt, cached and frozen before any system answer is scored; the PR set keeps its own. The judge, the thresholds and all other criteria stay unchanged. The change is recorded before the sealed or PR sets are touched, and it is not tuned on results.
+Tonight's spend: the evaluator $0.60 (budget reached); the total is about $2.1 of $6.
