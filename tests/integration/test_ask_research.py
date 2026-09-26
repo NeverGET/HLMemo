@@ -1949,3 +1949,134 @@ async def test_ask_concurrent_questions_share_nothing(connect, world, deps, db_d
     finally:
         await r.aclose()
     assert all(not o["abstained"] for o in outs) and r.in_flight == 0
+
+
+# --------------------------------------------------------------------------- D-193 (5b) rerank
+RERANK_Q = "What is the current retrieval p95 target and what was it before?"
+
+
+def _is_rerank(body: dict[str, Any]) -> bool:
+    from hlmemo.librarian.prompts import load_task
+
+    return body["messages"][0]["content"] == load_task(rs.RERANK_TASK).system
+
+
+def _rerank_input(body: dict[str, Any]) -> dict[str, Any]:
+    return json.loads(body["messages"][1]["content"])
+
+
+async def _rerank_ask(connect, world, deps, db_dsn, rerank_answer, **kw: Any):  # noqa: ANN001, ANN202
+    """One prose ask; ``rerank_answer(body)`` answers the rerank request (None: no rerank expected)."""
+    fake = FakeResearcher(facts=["1.2 s", "1,6 s on the VPS"])
+
+    def model(body: dict[str, Any]) -> Any:
+        return rerank_answer(body) if _is_rerank(body) else fake(body)
+
+    llm = ScriptedLLM(default=model)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", **kw)
+    try:
+        out = await ask(connect, world, deps, r, RERANK_Q)
+    finally:
+        await r.aclose()
+    return out, llm, r
+
+
+async def test_ask_rerank_off_is_the_k4_order_and_on_reorders_the_drill(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-193 (5b): HLM_RESEARCH_RERANK off (default): no rerank request, the K4 drill order, no flag.
+    On (a mock provider): ONE rerank call after the plan sees the question and the K4 candidates as
+    [handle, title, first 300 characters]; its offered handles are drilled first (the rest follows in
+    the K4 order), a handle it invents is ignored; steps, flags and the cost show the call."""
+    base, llm0, r0 = await _rerank_ask(connect, world, deps, db_dsn, lambda body: pytest.fail("no rerank"))
+    assert not r0.rerank and not any(_is_rerank(b) for b in llm0.requests)
+    assert base["meta"]["steps"] == ["plan", "prose"] and "rerank" not in base["meta"]["flags"]
+    k4 = base["meta"]["excerpts_shown"]
+    assert len(k4) >= 3
+
+    seen: dict[str, Any] = {}
+
+    def reverse(body: dict[str, Any]) -> dict[str, Any]:
+        seen.update(_rerank_input(body))
+        handles = [c[0] for c in seen["candidates"]]
+        return {"order": ["v999999.0", *reversed(handles)]}  # an invented handle first
+
+    out, llm, r = await _rerank_ask(connect, world, deps, db_dsn, reverse, research_rerank="llm")
+    assert r.rerank and r.max_calls == rs.MAX_CALLS_NO_SELECT + 1
+    assert out["meta"]["steps"] == ["plan", "rerank", "prose"] and out["meta"]["flags"]["rerank"] == "ok"
+    reranks = [b for b in llm.requests if _is_rerank(b)]
+    assert len(reranks) == 1 and llm.requests.index(reranks[0]) == 1  # right after the plan
+    body = reranks[0]
+    assert body["model"] == "stub/stub-primary" and body["max_tokens"] == 1200
+    # the measured input: the question and [handle, title, text <= 300 characters], K4 order, <= 30
+    assert seen["question"] == RERANK_Q and 2 <= len(seen["candidates"]) <= rs.RERANK_CANDIDATES
+    assert all(len(c) == 3 and len(c[2]) <= rs.RERANK_TEXT_CHARS for c in seen["candidates"])
+    cands = [c[0] for c in seen["candidates"]]
+    assert [h for h in cands if h in k4][:3] == [h for h in k4 if h in cands][:3]  # offered in K4 order
+    # the reranked (offered, reversed) handles lead the drill; the invented one is ignored
+    kept = list(reversed(cands))[: rs.RERANK_KEEP]
+    shown = out["meta"]["excerpts_shown"]
+    assert shown != k4 and shown[0] == kept[0] and "v999999.0" not in shown
+    assert out["abstained"] is False and "1.2 s" in out["answer"]
+    # one more priced call (the stub: 100 in / 20 out tokens per call)
+    assert out["meta"]["cost_usd"] == round(3 * (100 * 1.0 + 20 * 2.0) / 1_000_000, 6)
+
+
+async def test_ask_rerank_timeout_and_invalid_output_keep_the_k4_order(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-193 (5b): a rerank that stalls past HLM_RESEARCH_RERANK_TIMEOUT_S is cut there (a D-173 cut,
+    not a breaker failure) and the K4 order is drilled; so is an answer with no offered handle, and a
+    schema failure. The answer is written either way."""
+    import time
+
+    base, _llm0, _r0 = await _rerank_ask(connect, world, deps, db_dsn, lambda body: pytest.fail("no rerank"))
+    k4 = base["meta"]["excerpts_shown"]
+
+    t0 = time.perf_counter()
+    out, llm, r = await _rerank_ask(
+        connect,
+        world,
+        deps,
+        db_dsn,
+        lambda body: ("stall", 5.0, {"order": [c[0] for c in _rerank_input(body)["candidates"]][::-1]}),
+        research_rerank="llm",
+        research_rerank_timeout_s=0.5,
+    )
+    assert time.perf_counter() - t0 < 4.0  # the 5 s stall was cut at the rerank's 0.5 s
+    assert out["meta"]["flags"]["rerank"] == "timeout" and out["meta"]["excerpts_shown"] == k4
+    assert out["abstained"] is False and "1.2 s" in out["answer"]
+    breaker = r.provider.breaker("stub-primary")
+    assert breaker.state == "closed" and breaker.failures == 0  # tail latency, not an outage
+
+    for answer, why in (
+        ({"order": ["v999999.0", "not-a-handle"]}, "invalid"),  # no offered handle
+        ({"ranking": []}, "schema_fail"),  # the task's shape: "order" missing (retried once)
+    ):
+        out, llm, _r = await _rerank_ask(
+            connect, world, deps, db_dsn, lambda body, a=answer: a, research_rerank="llm"
+        )
+        assert out["meta"]["flags"]["rerank"] == why, why
+        assert out["meta"]["excerpts_shown"] == k4 and out["abstained"] is False
+
+
+async def test_ask_rerank_is_traced_under_its_section(connect, world, deps, db_dsn, tmp_path) -> None:  # noqa: ANN001
+    """D-193 (5b): the trace's ``rerank`` section holds the call (its exact input, attempts and raw
+    output), the candidates offered and the handles kept; the retrieval phase notes the result."""
+    from hlmemo.core import research_trace as rt
+
+    def first_two(body: dict[str, Any]) -> dict[str, Any]:
+        return {"order": [c[0] for c in _rerank_input(body)["candidates"]][1:3]}
+
+    out, llm, _r = await _rerank_ask(
+        connect, world, deps, db_dsn, first_two, research_rerank="llm", research_trace_dir=str(tmp_path)
+    )
+    (path,) = list(tmp_path.glob("*.json"))
+    t = json.loads(path.read_text())
+    assert list(t) == list(rt.SECTIONS) and "rerank" in rt.SECTIONS
+    (rec,) = t["rerank"]
+    body = next(b for b in llm.requests if _is_rerank(b))
+    assert rec["job"] == "rerank" and rec["user"] == body["messages"][1]["content"]
+    assert rec["output"]["order"] == rec["kept"] and rec["fallback"] is None and rec["phase"] == "plan"
+    assert rec["candidates"] == [c[0] for c in _rerank_input(body)["candidates"]]
+    assert rec["attempts"][0]["outcome"] == "ok" and rec["outputs"][0]["content"]
+    (phase,) = t["retrieval"]["phases"]
+    assert phase["rerank"] == {"kept": rec["kept"], "fallback": None}
+    assert phase["drill_order"][:2] == rec["kept"]
+    assert [c["job"] for c in t["calls"]] == out["meta"]["steps"] == ["plan", "rerank", "prose"]

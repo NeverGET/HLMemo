@@ -294,6 +294,16 @@ class Settings(BaseSettings):
     # LLM attempt, hit list, drop and verdict). Unset = off. Diagnostics only: it never changes an
     # answer; it holds the (redacted) prompts and excerpts, so treat the directory as memory data.
     research_trace_dir: str | None = None
+    # D-193 (5b): "llm" = ONE extra call (task `rerank`, prompts/rerank) in the prose mode's PLAN
+    # retrieval: the question and the top 30 drill candidates ([handle, title, first 300 characters])
+    # -> the 8 most useful handles in order; they are drilled first, then the K4 order fills the cap.
+    # Its own task name (profile qualification, HLM_FALLBACK_PROFILE__RERANK), the spend guard and
+    # the per-question budget apply. A timeout, an error or an invalid answer keeps the K4 order
+    # (meta.flags.rerank). "off" (default): no call. Ignored in the claims and cite modes.
+    research_rerank: Literal["off", "llm"] = "off"
+    # D-193 (5b): the rerank call's whole time (seconds); its attempts are capped by it (a cut there
+    # is tail latency, not a breaker failure, D-173).
+    research_rerank_timeout_s: float = Field(default=6.0, gt=0, le=60)
     # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
     # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
     # (the others stay drillable in `related`); an empty or failed select writes over them all.

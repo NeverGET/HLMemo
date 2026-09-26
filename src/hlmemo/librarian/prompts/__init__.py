@@ -44,6 +44,10 @@ MAX_TOKENS: dict[str, int] = {
     "research": 4000,
     # D-136 Memory Map L2 summaries (librarian process): 1-3 sentences + reasoning
     "map_summary": 800,
+    # D-193 (5b) memory.ask rerank (api process, HLM_RESEARCH_RERANK=llm): the question and <= 30
+    # drill candidates -> the 8 most useful handles in order, reasoning included (its own task: the
+    # per-task fallback key is `rerank`)
+    "rerank": 1200,
 }
 #: per-version ``max_tokens`` where a version's answer is longer (relate/v2 adds scope, refiner and
 #: the replaced statements; relate_verify/v2 adds replaces_all and adds_detail)

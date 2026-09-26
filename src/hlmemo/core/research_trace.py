@@ -27,11 +27,13 @@ from typing import Any
 
 log = logging.getLogger("hlmemo.core.research_trace")
 
-#: the sections of a trace file, in order (``refine``/``expand`` stay empty lists when not run)
+#: the sections of a trace file, in order (``rerank``/``refine``/``expand`` stay empty lists when not
+#: run; D-193 (5b) ``rerank``: the rerank call, its candidates, the handles kept or why it fell back)
 SECTIONS = (
     "request",
     "map",
     "plan",
+    "rerank",
     "refine",
     "retrieval",
     "excerpts",
@@ -78,7 +80,7 @@ class TraceRecorder:
         self.started = datetime.now(UTC)
         self.t0 = time.perf_counter()
         self.data: dict[str, Any] = {
-            k: ([] if k in ("plan", "refine", "write", "expand", "calls") else {}) for k in SECTIONS
+            k: ([] if k in ("plan", "rerank", "refine", "write", "expand", "calls") else {}) for k in SECTIONS
         }
         self.data["retrieval"] = {"queries": [], "phases": []}
         self.data["attribution"] = {"calls": []}
@@ -120,7 +122,7 @@ class TraceRecorder:
             rec = snapshot(record)
             self.data["calls"].append(rec)
             job = rec.get("job")
-            section = {"plan": "plan", "refine": "refine", "expand": "expand"}.get(job)
+            section = {"plan": "plan", "rerank": "rerank", "refine": "refine", "expand": "expand"}.get(job)
             if job == "attribute":
                 self.data["attribution"]["calls"].append(rec)
             elif section is not None:

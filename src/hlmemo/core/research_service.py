@@ -87,7 +87,15 @@ a long top item (> ``LONG_ITEM_CHUNKS`` chunks) shows its best chunk for the que
 other hit chunks; an excerpt longer than ``research.EXCERPT_CHARS`` is clipped around its
 best-matching part (``research.clip`` with the question's words). D-193 (5) "K4" (prose mode): a
 retrieval drills the ``DOC_TOP`` top items' best chunks FIRST and the planner's sections after them
-(``candidate_order``; the other modes keep the sections first).
+(``candidate_order``; the other modes keep the sections first). D-193 (5b)
+``HLM_RESEARCH_RERANK=llm`` (prose mode, the PLAN retrieval only): between two DB phases (no
+transaction is held across the call) ONE call of the task ``rerank`` sees the question and the top
+``research.RERANK_CANDIDATES`` candidates of the K4 order (``_rerank_rows``) and returns the most
+useful handles; the offered, in-view ones (≤ ``research.RERANK_KEEP``) are drilled first and the K4
+order fills the cap. A timeout (``HLM_RESEARCH_RERANK_TIMEOUT_S``, a cut, not a breaker failure),
+an error or an answer with no offered handle keeps the K4 order (``meta.flags.rerank``). It counts
+as one more logical call (``steps`` shows ``rerank``) under the same privacy gate, spend guard and
+per-question budget; the trace records it under ``rerank``.
 
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write), ``research.MAX_CALLS_ATTRIBUTE`` (5) with
@@ -510,6 +518,8 @@ class _Run:
         """One DB phase: run ``queries``, fuse with ``prior`` hit lists, drill ≤ MAX_DRILL handles
         (``sections`` first) that are in the view and not in ``skip``."""
         lists = list(prior)
+        # D-193 (5b): the prose mode's rerank of the PLAN retrieval (the refine keeps the K4 order)
+        rerank = self.prose and self.phase == "plan" and self.researcher.rerank
         if self.released and len(queries) > 1:
             # addendum 7: the planned queries run in PARALLEL, each in its own short transaction on
             # a pooled connection (at most PARALLEL_QUERIES at once); the drill follows
@@ -564,34 +574,112 @@ class _Run:
                     ]
                 focus = set().union(*(rs.content_words(t) for t in [self.question, *queries]))
             # D-193 (5) K4 (prose mode): the top items' best chunks before the planner's sections
-            wanted = drill_order(sections, best, fused, skip, best_first=self.prose)
+            cands = candidate_order(sections, best, fused, best_first=self.prose)
             if tp is not None:
                 tp["doc_best"] = [{"item_hit": hit, "best": b} for hit, b in zip(items, best, strict=False)]
-                tp["drill_order"] = wanted
-                candidates = candidate_order(sections, best, fused, best_first=self.prose)
-                tp["dropped"] += [
-                    {"handle": h, "stage": "drill_order", "reason": "already_read"}
-                    for h in candidates
-                    if h in skip
-                ]
-                _kept, cut = collapse_explain([h for h in candidates if h not in skip], MAX_DRILL)
-                tp["dropped"] += [{"handle": h, "stage": "drill_order", "reason": why} for h, why in cut]
-            excerpts = await self._drill(c, wanted, focus, tp)
-            if self.prose:  # D-184: supersession status, the superseder pull-in; D-188: xrefs
-                texts = [self.question, *queries]
-                excerpts = await self._temporal(c, fresh, excerpts, texts, skip, focus, tp)
-            if tp is not None:
-                tp["excerpts"] = [
-                    {
-                        "handle": e.handle,
-                        "version_id": e.version_id,
-                        "status": e.status,
-                        "status_vid": e.status_vid,
-                    }
-                    for e in excerpts
-                ]
-                self.trace.append("retrieval", tp, key="phases")
+            if not rerank:
+                excerpts = await self._drill_phase(c, fresh, cands, skip, focus, queries, tp)
+                return excerpts, lists
+            offered = [h for h in dict.fromkeys(cands) if h not in skip][: rs.RERANK_CANDIDATES]
+            rows = await self._rerank_rows(c, offered)
+        # D-193 (5b): the rerank call runs between two DB phases (no transaction is held across it)
+        head = await self.rerank(rows, tp)
+        async with self.db() as c:
+            fresh = await self.fresh_ctx(c)
+            excerpts = await self._drill_phase(c, fresh, [*head, *cands], skip, focus, queries, tp)
         return excerpts, lists
+
+    async def _drill_phase(
+        self,
+        c: AsyncConnection,
+        fresh: AuthContext,
+        cands: list[str],
+        skip: set[str],
+        focus: set[str] | None,
+        queries: list[str],
+        tp: dict[str, Any] | None,
+    ) -> list[rs.Excerpt]:
+        """The drill of one retrieval: ``cands`` (ordered) minus ``skip``, ±1-chunk collapse, ≤
+        ``MAX_DRILL`` (``drill_order``); then (prose mode) the D-184/D-188 temporal layer."""
+        wanted = collapse([h for h in cands if h not in skip], MAX_DRILL)
+        if tp is not None:
+            tp["drill_order"] = wanted
+            tp["dropped"] += [
+                {"handle": h, "stage": "drill_order", "reason": "already_read"} for h in cands if h in skip
+            ]
+            _kept, cut = collapse_explain([h for h in cands if h not in skip], MAX_DRILL)
+            tp["dropped"] += [{"handle": h, "stage": "drill_order", "reason": why} for h, why in cut]
+        excerpts = await self._drill(c, wanted, focus, tp)
+        if self.prose:  # D-184: supersession status, the superseder pull-in; D-188: xrefs
+            texts = [self.question, *queries]
+            excerpts = await self._temporal(c, fresh, excerpts, texts, skip, focus, tp)
+        if tp is not None:
+            tp["excerpts"] = [
+                {
+                    "handle": e.handle,
+                    "version_id": e.version_id,
+                    "status": e.status,
+                    "status_vid": e.status_vid,
+                }
+                for e in excerpts
+            ]
+            self.trace.append("retrieval", tp, key="phases")
+        return excerpts
+
+    async def _rerank_rows(self, c: AsyncConnection, handles: list[str]) -> list[list[str]]:
+        """D-193 (5b): ``[handle, title, text]`` of each candidate, as the measured ceiling showed
+        them: the item's title and the first ``rs.RERANK_TEXT_CHARS`` characters of the handle's chunk
+        (chunk 0 for a whole-item handle)."""
+        rows: list[list[str]] = []
+        for h in handles:
+            clue = decode_clue(h)
+            item = self.view.get(clue.version_id)
+            if item is None:
+                continue
+            ordinal = clue.ordinal or 0
+            spans = await rq.chunk_spans(c, clue.version_id, ordinal, ordinal)
+            rows.append([h, item.title, rs.rerank_text(spans[0].text if spans else "")])
+        return rows
+
+    async def rerank(self, rows: list[list[str]], tp: dict[str, Any] | None = None) -> list[str]:
+        """D-193 (5b) ``HLM_RESEARCH_RERANK=llm``: ONE call of the task ``rerank`` over ``rows`` (the
+        plan retrieval's top candidates); returns its handles that were offered and are still in the
+        view (≤ ``rs.RERANK_KEEP``, drilled first; the K4 order fills the cap after them). A timeout,
+        an error, a call cap or an answer with no offered handle returns ``[]`` (the K4 order);
+        ``meta.flags.rerank`` says which. A budget stop here stays final for the question."""
+        record: dict[str, Any] = {"phase": self.phase, "candidates": [r[0] for r in rows]}
+        if len(rows) < 2:
+            self.flags["rerank"] = record["fallback"] = "few_candidates"
+            if self.trace is not None:
+                self.trace.append("rerank", record)
+            return []
+
+        def admitted() -> list[list[str]]:
+            return [r for r in rows if decode_clue(r[0]).version_id not in self.excluded]
+
+        def build() -> tuple[str, list[int]]:
+            keep = admitted()
+            ids = [decode_clue(r[0]).version_id for r in keep]
+            return rs.rerank_user(self.question, keep, self.redact), ids
+
+        fallback: str | None = None
+        obj: dict[str, Any] | None = None
+        try:
+            obj = await self.call(rs.RERANK_TASK, build, self.researcher.rerank_timeout_s)
+            if obj is None:
+                fallback = "call_cap"
+        except rs.ResearchUnavailable as exc:
+            fallback = exc.reason
+        offered = [r[0] for r in admitted() if self._handle_in_view(r[0])]
+        order = rs.parse_rerank(obj, offered) if obj is not None else []
+        if obj is not None and not order:
+            fallback = "invalid"
+        self.flags["rerank"] = fallback or "ok"
+        if self.trace is not None:  # the call's record (input, attempts, output) is the last one
+            self.trace.enrich_last(**record, kept=order, fallback=fallback)
+        if tp is not None:
+            tp["rerank"] = {"kept": order, "fallback": fallback}
+        return order
 
     def _excluded(self, handle: str) -> bool:
         try:

@@ -57,6 +57,13 @@ shown excerpt (texts, titles and dates together): the fabricated-value guard. Ev
 kept and attributed deterministically (display and measurement) to ≤ 2 excerpts and their best
 line; a polarity mismatch against those lines FLAGS the claim (``flags: ["polarity"]``), it never
 drops it.
+
+D-193 (5b) ``HLM_RESEARCH_RERANK=llm`` (prose mode): the task ``rerank`` (its own prompt,
+prompts/rerank, its own per-task fallback ``HLM_FALLBACK_PROFILE__RERANK`` and profile
+qualification) sees the question and the plan retrieval's top ``RERANK_CANDIDATES`` drill candidates
+as ``[handle, title, first RERANK_TEXT_CHARS characters]`` (``rerank_user``) and returns the most
+useful handles in order; ``parse_rerank`` keeps the offered ones (≤ ``RERANK_KEEP``). Its attempts are
+capped at ``HLM_RESEARCH_RERANK_TIMEOUT_S`` (``rerank_chain``: a cut there is not a breaker failure).
 """
 
 from __future__ import annotations
@@ -81,7 +88,7 @@ from hlmemo.librarian.budget import Caps, DbBudget, NoBudget
 from hlmemo.librarian.cassette import CassetteStore
 from hlmemo.librarian.errors import AuthorityLost, LlmConfigError, PrivacyDenied
 from hlmemo.librarian.ledger import NETWORK_OUTCOMES, DbLedger, Ledger, LedgerRow
-from hlmemo.librarian.profiles import LlmProfile, named_profile, profile_chain
+from hlmemo.librarian.profiles import LlmProfile, for_task, named_profile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
 from hlmemo.librarian.provider import AttemptGuard, ChainBreakers, Clock, LlmResult, Provider
 from hlmemo.librarian.redact import Redactor
@@ -109,6 +116,14 @@ WRITER_JOBS = frozenset({"prose", "expand"})
 WRITER_ENV = "HLM_RESEARCH_WRITER_PROFILE"
 #: D-172: the default attempt timeout of the writer profile (``HLM_RESEARCH_WRITER_TIMEOUT_S``)
 WRITER_TIMEOUT_S = 12.0
+#: D-193 (5b): the rerank task (``HLM_RESEARCH_RERANK=llm``): its own task name (prompt, per-task
+#: fallback, qualification), the candidates it sees, the characters of each one's text, the handles
+#: kept from its answer, and its default time (``HLM_RESEARCH_RERANK_TIMEOUT_S``)
+RERANK_TASK = "rerank"
+RERANK_CANDIDATES = 30
+RERANK_TEXT_CHARS = 300
+RERANK_KEEP = 8
+RERANK_TIMEOUT_S = 6.0
 #: the opt-in prompt versions of the cite and prose modes (``prompts.OPT_IN_VERSIONS``: never the
 #: default)
 CITE_PROMPT_VERSION = 2
@@ -781,6 +796,33 @@ def select_user(question: str, excerpts: list[Excerpt], redact: Redact | None = 
     return "JOB: select\n" + _input(payload, redact)
 
 
+def rerank_user(question: str, candidates: list[list[str]], redact: Redact | None = None) -> str:
+    """D-193 (5b): the task ``rerank``'s message: the question and the candidates as ``[handle, title,
+    text]`` (the measured ceiling's input, rank/llm_rerank.py), every text value redacted first
+    (review 79 T2)."""
+    payload = {"question": question, "candidates": [list(c) for c in candidates]}
+    return json.dumps(redact_values(payload, redact or _DEFAULT_REDACTOR.text), ensure_ascii=False)
+
+
+def rerank_text(text: str) -> str:
+    """A candidate's text as the rerank sees it: whitespace collapsed, its first characters."""
+    return " ".join((text or "").split())[:RERANK_TEXT_CHARS]
+
+
+def parse_rerank(obj: dict[str, Any] | None, offered: list[str]) -> list[str]:
+    """The rerank's handles that were OFFERED (``offered``: the in-view candidates of the message), in
+    its order, each once, at most ``RERANK_KEEP``; anything else is ignored."""
+    allowed = set(offered)
+    out: list[str] = []
+    for x in (obj or {}).get("order") or []:
+        h = str(x).strip()
+        if h in allowed and h not in out:
+            out.append(h)
+        if len(out) >= RERANK_KEEP:
+            break
+    return out
+
+
 def prose_user(question: str, excerpts: list[Excerpt], redact: Redact | None = None) -> str:
     """D-162 prose mode: the JOB ``prose`` (the question and the excerpts, as ``write_user``; D-184:
     with their context and supersession status)."""
@@ -879,10 +921,17 @@ def job_validator(job: str) -> Callable[[dict[str, Any]], str | None]:
             return "add missing"
         return None
 
+    def rerank(obj: dict[str, Any]) -> str | None:
+        if not isinstance(obj.get("order"), list):
+            return "order missing"
+        return None
+
     if job == "prose":
         return prose
     if job == "attribute":
         return attribute
+    if job == RERANK_TASK:
+        return rerank
     if job == "expand":
         return expand
     return write if job == "write" else answer
@@ -3033,6 +3082,25 @@ def writer_chain(settings: Any, task_chain: list[LlmProfile]) -> list[LlmProfile
     return [replace(writer, attempt_timeout_s=timeout), task_chain[0]]
 
 
+def rerank_chain(settings: Any, task_chain: list[LlmProfile], *, explicit: bool = False) -> list[LlmProfile]:
+    """D-193 (5b): the chain of the task ``rerank``: the primary and ITS fallback
+    (``HLM_FALLBACK_PROFILE__RERANK`` when set, else ``HLM_FALLBACK_PROFILE``; D-094), minus the
+    profiles whose file lists ``rerank`` in ``disabled_tasks`` (D-071). ``explicit``: the researcher
+    was given its chain (or provider), so the rerank's is derived from it (``for_task``). Every
+    attempt is capped at ``HLM_RESEARCH_RERANK_TIMEOUT_S`` (``LlmProfile.attempt_timeout_s``: a cut
+    there is tail latency, not a breaker failure, D-173). ``[]`` without a task chain or on a broken
+    configuration (logged): the rerank then does not run."""
+    if not task_chain:
+        return []
+    try:
+        chain = for_task(task_chain, RERANK_TASK) if explicit else profile_chain(settings, RERANK_TASK)
+    except LlmConfigError as exc:
+        log.warning("rerank disabled: %s", exc)
+        return []
+    timeout = float(getattr(settings, "research_rerank_timeout_s", RERANK_TIMEOUT_S))
+    return [replace(p, attempt_timeout_s=timeout) for p in chain if RERANK_TASK not in p.disabled_tasks]
+
+
 class Researcher:
     """The app's ``research`` provider (built on first use; keeps breakers and HTTP clients)."""
 
@@ -3060,6 +3128,7 @@ class Researcher:
             self.chain = list(provider.chain)
         else:
             self.chain = list(chain) if chain is not None else research_chain(settings)
+        explicit_chain = provider is not None or chain is not None
         mode = getattr(settings, "research_answer_mode", "claims")
         self.answer_mode: str = mode if mode in ANSWER_MODES else "claims"
         # D-159: select-then-write, only in the cite mode (its prompt has the JOB select)
@@ -3070,8 +3139,19 @@ class Researcher:
         self.attribution: str = attribution if attribution in ATTRIBUTIONS else "sources"
         # D-170: the prose mode's expand (completeness) pass
         self.expand: bool = self.answer_mode == "prose" and bool(getattr(settings, "research_expand", False))
+        # D-193 (5b): the prose mode's rerank of the plan retrieval (its own task and chain)
+        self.rerank_chain: list[LlmProfile] = (
+            rerank_chain(settings, self.chain, explicit=explicit_chain)
+            if self.answer_mode == "prose" and getattr(settings, "research_rerank", "off") == "llm"
+            else []
+        )
+        self.rerank: bool = bool(self.rerank_chain)
+        self.rerank_timeout_s: float = float(getattr(settings, "research_rerank_timeout_s", RERANK_TIMEOUT_S))
+        self.rerank_spec: TaskSpec | None = load_task(RERANK_TASK) if self.rerank else None
         if self.answer_mode == "prose":
-            self.max_calls = MAX_CALLS_NO_SELECT + int(self.expand) + int(self.attribution == "llm")
+            self.max_calls = (
+                MAX_CALLS_NO_SELECT + int(self.expand) + int(self.attribution == "llm") + int(self.rerank)
+            )
         # D-171: the prose writer's own chain (prose mode only: the other modes write with the task)
         self.writer_chain: list[LlmProfile] = (
             writer_chain(settings, self.chain) if self.answer_mode == "prose" else []
@@ -3131,7 +3211,8 @@ class Researcher:
             breaker_threshold=BREAKER_THRESHOLD,
             breaker_open_s=BREAKER_OPEN_S,
             breaker_max_open_s=BREAKER_MAX_OPEN_S,
-            job_call_cap=MAX_ATTEMPTS,  # per question (the request's lineage), DB-enforced
+            # per question (the request's lineage), DB-enforced; D-193 (5b): one more for the rerank
+            job_call_cap=MAX_ATTEMPTS + int(self.rerank),
             budget_disabled=s.llm_budget_disabled,
         )
 
@@ -3166,12 +3247,17 @@ class Researcher:
 
     def job_spec(self, job: str) -> TaskSpec:
         """The ``research`` spec with the JOB's own ``max_tokens`` (the task name, and so the
-        per-task fallback and the ledger, stay ``research``)."""
+        per-task fallback and the ledger, stay ``research``); D-193 (5b): ``rerank`` is its own task
+        (prompt, max_tokens, per-task fallback and ledger rows ``rerank``)."""
+        if job == RERANK_TASK and self.rerank_spec is not None:
+            return self.rerank_spec
         return replace(self.spec, max_tokens=JOB_MAX_TOKENS.get(job, self.spec.max_tokens))
 
     def chain_for_job(self, job: str) -> list[LlmProfile] | None:
-        """D-171: the explicit chain of a writer job when a writer profile is set, else None (the
-        task's chain)."""
+        """D-171: the explicit chain of a writer job when a writer profile is set; D-193 (5b): the
+        rerank's own chain; else None (the task's chain)."""
+        if job == RERANK_TASK:
+            return self.rerank_chain or None
         return self.writer_chain if job in WRITER_JOBS and self.writer_chain else None
 
     @property
@@ -3325,6 +3411,11 @@ __all__ = [
     "MAX_CALLS_NO_SELECT",
     "MAX_CALLS_ATTRIBUTE",
     "PROSE_PROMPT_VERSION",
+    "RERANK_CANDIDATES",
+    "RERANK_KEEP",
+    "RERANK_TASK",
+    "RERANK_TEXT_CHARS",
+    "RERANK_TIMEOUT_S",
     "SELECT_MAX",
     "TASK",
     "TEXT_JOBS",
@@ -3385,7 +3476,11 @@ __all__ = [
     "uncopied",
     "unattributed",
     "support_hay",
+    "parse_rerank",
     "research_chain",
+    "rerank_chain",
+    "rerank_text",
+    "rerank_user",
     "select_user",
     "split_inline_cites",
     "split_sentences",

@@ -3320,3 +3320,102 @@ def test_d191_a_big_source_shows_its_newest_entries() -> None:
     ]
     m2 = mm.build_map(undated, {}, {}, budget_tokens=700, project="p")
     assert all(m2.drillable(f"v{vid}") for vid in range(51, 61))
+
+
+# --------------------------------------------------------------------------- D-193 (5b) rerank
+def test_d193_rerank_prompt_settings_and_helpers() -> None:
+    from hlmemo.config import get_settings
+
+    spec = load_task(rs.RERANK_TASK)
+    assert spec.name == "rerank" and spec.prompt_version == "v1" and spec.max_tokens == 1200
+    assert "8 candidates most useful" in spec.system and spec.schema_errors({"order": ["v1.0"]}) is None
+    assert spec.schema_errors({"ranking": []}) and spec.schema_errors({"order": [1]})
+    assert rs.job_validator("rerank")({"order": "v1"}) == "order missing"
+    s = get_settings()
+    assert s.research_rerank == "off" and s.research_rerank_timeout_s == 6.0  # opt-in, 6 s
+    # the input: the question and [handle, title, text] (the measured ceiling's), values redacted
+    msg = rs.rerank_user(
+        "Q?", [["v1.0", "D-001 · t", 'password = "SuperSecret123456" rest']], _DEFAULT_REDACT
+    )
+    obj = json.loads(msg)
+    assert obj["question"] == "Q?" and obj["candidates"][0][:2] == ["v1.0", "D-001 · t"]
+    assert "SuperSecret123456" not in msg
+    assert rs.rerank_text("a \n\n b" + "x" * 400) == ("a b" + "x" * 400)[: rs.RERANK_TEXT_CHARS]
+    # the answer: offered handles only, each once, in its order, at most RERANK_KEEP
+    offered = [f"v{i}.0" for i in range(1, 20)]
+    got = rs.parse_rerank({"order": ["v3.0", " v3.0", "v99.0", "v1.0", *offered]}, offered)
+    assert got[:2] == ["v3.0", "v1.0"] and len(got) == rs.RERANK_KEEP and "v99.0" not in got
+    assert rs.parse_rerank(None, offered) == [] and rs.parse_rerank({"order": ["x"]}, offered) == []
+
+
+def _DEFAULT_REDACT(text: str) -> str:  # noqa: N802 - a module-level stand-in for the provider's redactor
+    from hlmemo.librarian.redact import Redactor
+
+    return Redactor().text(text)
+
+
+def test_d193_rerank_chain_is_its_own_task(monkeypatch) -> None:  # noqa: ANN001
+    """The rerank's chain: its own task's fallback (HLM_FALLBACK_PROFILE__RERANK, D-094), profiles
+    not qualified for ``rerank`` dropped (D-071), every attempt capped at the rerank timeout."""
+    from dataclasses import replace
+
+    from hlmemo.config import get_settings
+
+    head, default_fb = _task_profile(), replace(_task_profile(), name="fb-default")
+    own = replace(_task_profile(), name="fb-rerank")
+    settings = get_settings(research_rerank="llm", research_rerank_timeout_s=2.5)
+    chain = rs.rerank_chain(settings, [head, default_fb], explicit=True)
+    assert [p.name for p in chain] == ["t-task", "fb-default"]
+    assert all(p.attempt_timeout_s == 2.5 for p in chain)
+    routed = replace(head, task_fallbacks={"rerank": own})
+    assert [p.name for p in rs.rerank_chain(settings, [routed, default_fb], explicit=True)] == [
+        "t-task",
+        "fb-rerank",
+    ]
+    unq = replace(default_fb, disabled_tasks=frozenset({"rerank"}))
+    assert [p.name for p in rs.rerank_chain(settings, [head, unq], explicit=True)] == ["t-task"]
+    assert rs.rerank_chain(settings, [], explicit=True) == []
+    # built from the settings: the chain OF THE TASK rerank (profile_chain resolves its fallback)
+    asked: list[object] = []
+
+    def fake_chain(_s, task=None):  # noqa: ANN001, ANN202
+        asked.append(task)
+        return [head, own]
+
+    monkeypatch.setattr(rs, "profile_chain", fake_chain)
+    assert [p.name for p in rs.rerank_chain(settings, [head])] == ["t-task", "fb-rerank"]
+    assert asked == ["rerank"]
+
+
+async def test_d193_rerank_job_runs_as_its_own_task(writer_profiles) -> None:  # noqa: ANN001
+    """The Researcher: the rerank is off unless HLM_RESEARCH_RERANK=llm in the prose mode; on, the
+    JOB ``rerank`` sends the rerank prompt with its own max_tokens and ledger task, the call cap and
+    the lineage ceiling grow by one, and its worst case is priced by its chain's head."""
+    import httpx
+
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        return httpx.Response(200, json=_chat({"order": ["v2.0", "v1.0"]}))
+
+    off = _writer_researcher(handler, writer=None)
+    claims = _writer_researcher(handler, writer=None, mode="claims", research_rerank="llm")
+    r = _writer_researcher(handler, writer=None, research_rerank="llm", research_rerank_timeout_s=3.0)
+    try:
+        assert not off.rerank and off.chain_for_job("rerank") is None and not claims.rerank
+        assert r.rerank and r.max_calls == off.max_calls + 1 == rs.MAX_CALLS_NO_SELECT + 1
+        assert [p.attempt_timeout_s for p in r.chain_for_job("rerank")] == [3.0]
+        assert r.job_spec("rerank").name == "rerank" and r.job_spec("plan").name == "research"
+        usd, tokens = r.worst_case("rerank", "x")
+        assert usd > 0 and tokens > 1200
+        res = await _complete(r, "rerank", json.dumps({"question": "Q?", "candidates": []}))
+    finally:
+        for x in (off, claims, r):
+            await x.aclose()
+    assert res.output == {"order": ["v2.0", "v1.0"]} and res.profile == "t-task"
+    (body,) = seen
+    assert body["messages"][0]["content"] == load_task("rerank").system and body["max_tokens"] == 1200
+    (row,) = r.provider.ledger.inner.rows
+    assert row.task == "rerank" and row.prompt_version == "v1" and row.outcome == "ok"

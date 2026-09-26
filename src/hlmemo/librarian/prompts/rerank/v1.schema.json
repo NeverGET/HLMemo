@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "rerank/v1",
+  "type": "object",
+  "properties": {
+    "order": {"type": "array", "items": {"type": "string"}, "maxItems": 30}
+  },
+  "required": ["order"]
+}
