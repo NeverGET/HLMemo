@@ -649,3 +649,12 @@ The misses are the same, so a stronger answerer does not fix compression.
 3. Compose from the filled slots only. This targets the dominant failure directly.
 Also: remove the residual attribution and list-overreach claims with the same deterministic subject/list check.
 Overnight spend is about $5.2 of the $6 cap.
+D-151 | 2026-09-26 | ACCEPTED | **V11 slot-filling is fast but too narrow; overnight experimentation ends (spend about $5.4 of $6).**
+| Variant | Correct | Faithful | Recall | Abstain | p95 | $/q |
+|---|---|---|---|---|---|---|
+| V11 | .385 | .838 | .853 | 1.00 | **17.4 s** (the first variant under 20 s) | .0029 |
+| V10 | .615 | .849 | .872 | – | 28.5 s | – |
+| memory.ask | .577 | .874 | .814 | – | 21.3 s | – |
+Why: the plan makes one slot for two-fact questions (9 cases). About 1.5 slots get filled and 1.4 claims written, against 3.5 in V10. Secondary key facts are stated .48 of the time, against .88.
+**Lesson:** slot decomposition under-generates. The combination worth trying next is slots per FACT plus a completeness pass over the filled slots; the latency headroom that V11 bought allows it.
+The overnight experiments are closed. Next steps are the owner's morning decision (see OVERNIGHT-2026-09-26.md). The review-79 fixes on memory.ask continue; they need no LLM spend.
