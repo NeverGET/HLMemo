@@ -553,3 +553,16 @@ Fix, V8 (prototype) and memory.ask:
 - a specificity instruction (exact ids, names, paths, URLs and all values; brevity is not a goal);
 - atomic claims with full-sentence or full-row quotes that include the subject;
 - a completeness pass that upgrades general wording to the most specific form in the evidence.
+D-143 | 2026-09-26 | ACCEPTED | **V8 with the output cap: correct .615, faithful .780, source recall .853, abstain .875, p95 19.6 s, $.0036/q** (34-question dev subset, fixed D-141 scorer, pinned judge). No answer hit the 6k cap; the longest output was 1,404 tokens.
+Progress under the strict gate-v1 judge:
+| Variant | Correct | Faithful |
+|---|---|---|
+| V1 W2e synthesis | .25 | – |
+| V3 | .47 | .46 |
+| V7 | .54 | .73 |
+| V8 | **.62** | **.78** |
+Gap to the gate: correct +.19, faithful +.17. Abstention is .875 against a .90 bar (1 false answer on 8 unanswerables), and p95 is at the 20 s limit.
+Remaining misses (10 of 26): missing key fact 7 (6 of them the main fact), retrieval 2, contradiction 1.
+Safety lesson: without per-call caps a specificity prompt can run away to 65k output tokens, so memory.ask gets per-call max_tokens, a per-question $ and token budget and a wall-clock deadline (sent to the implementer).
+The prototype spend guard now reserves the worst case for in-flight calls; there was an overshoot of $0.018 with 4 parallel judges.
+Tonight's spend is about $3.9 of $6. The final gate is NOT run: the dev numbers have not cleared the thresholds.
