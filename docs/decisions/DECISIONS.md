@@ -576,3 +576,7 @@ D-144 | 2026-09-26 | ACCEPTED (orchestrator) | **$0 diagnosis of V8-cap gives th
 - (b) NO ATTRIBUTION: provenance lives in the handle, and a check requires every named subject in a claim to occur in its quotes. This fixes 8 of 18.
 - (c) A doc-level best-chunk drill for top-ranked documents. This fixes 3.
 Expected if they hold: correct ≈ .80, faithful ≈ .88.
+D-145 | 2026-09-26 | ACCEPTED | **V9 isolates the levers.** V9 = V8-cap + copy-through + no-attribution + the doc-level drill: correct .500, faithful .817, recall .744, abstain .875, p95 23.4 s, $.0038/q.
+- Copy-through and no-attribution WORK: faithful +.037, and both targeted compression misses became correct.
+- The doc-level drill HURTS: under the 12-chunk cap it displaced ranked chunks 7–12, so gold-in-evidence fell from .712 to .538 (6 questions worse, 0 better), correct fell by 5 answers, and p95 rose.
+Decision: V10 = V8-cap + copy-through + no-attribution; the doc-level drill is allowed only in FREE drill slots. The same correction went to memory.ask. Spend $0.30; tonight's total is about $4.2 of $6.
