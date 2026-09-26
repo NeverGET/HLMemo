@@ -1324,3 +1324,26 @@ The per-question table is in `<scratch>/prdev-rca/classification.tsv`.
 - (2) Cross-reference retrieval: pull in D-ids and paths mentioned in the shown excerpts but not shown; best chunk across long items; clip windows centred on the matched section.
 - (3) Then writer coverage, and the decision-to-decision supersession sources.
 Dev comparisons are PAIRED on pr-dev (same questions), and every correct/incorrect flip is spot-checked, because judge noise is as large as a single lever and codex adjudication is unavailable until 09-30.
+D-191 | 2026-09-27 | ACCEPTED | **The pr-dev fixes (wf-memory-ask 43113fb + c7e066f) give a modest paired gain: correct .34 → .42, abstain .90 → 1.00. Contradiction stays at .26, and procedure answers still miss steps.**
+Paired on the same 50 answerable pr-dev questions, same memory (hlm_research_cur_tl):
+| Metric | fd83f95 | c7e066f |
+|---|---|---|
+| Correct | 17 | **21** (+9 gained, −5 lost) |
+| Contradiction | 11 | 11 |
+| Stale | 2 | 2 |
+| Missing main fact | 9 | 5 |
+| Partial | 9 | 9 |
+| multihop | 2/12 | 3/12 |
+| procedure | 3/12 | 3/12 |
+| temporal | 5/12 | 6/12 |
+| recent | 7/14 | 9/14 |
+| Recall | .82 | .84 |
+| p95 | 13.1 s | 13.9 s |
+Findings:
+- **Fix 1 (the code-block literal guard)** removed the block destruction, but the writer seldom writes fenced blocks (1/12 procedure answers). Procedure failures are MISSING steps or facts, not guard drops.
+- **Fix 2 (cross-reference pull-in)** always filled its cap of 3 (xref_pulled 207 over 60 questions), which likely adds noise. The 5 losses are each one missing fact, plus one contradiction.
+- **The memory replica holds DECISIONS up to D-136**, while the pr-dev gold stops at D-133. That is a small snapshot mismatch (e.g. PD-003), not the main cause of the contradictions.
+**Next levers:**
+- (a) Gate the xref pull-in on relevance: a D-id or path overlapping the question, or ≥ 2 question words; cap 2.
+- (b) Writer coverage for how-to questions: the complete ordered steps with exact commands and flags from the excerpts.
+- (c) Recency for "what is current" questions: a planner query for the latest status and the latest decision rows. Contradictions are dominated by the writer answering from an older source when the current one was not retrieved.
