@@ -92,6 +92,11 @@ _LINEAGE: contextvars.ContextVar[str | None] = contextvars.ContextVar("hlm_llm_l
 _PRECHECK: contextvars.ContextVar[Callable[[], Awaitable[None]] | None] = contextvars.ContextVar(
     "hlm_llm_precheck", default=None
 )
+#: the caller's per-attempt guard (review 79 T4): called before EVERY attempt (retries and the
+#: fallback included, before any reservation or byte) with the profile, that attempt's worst-case USD
+#: (its own prices) and worst-case tokens; it raises to stop the call (a per-question budget)
+AttemptGuard = Callable[[LlmProfile, Decimal, int], Awaitable[None]]
+_GUARD: contextvars.ContextVar[AttemptGuard | None] = contextvars.ContextVar("hlm_llm_guard", default=None)
 #: the caller's deadline on the event-loop clock (``complete(deadline=)``, e.g. the API's 4 s risk
 #: judge cap): each HTTP timeout is budgeted to end DEADLINE_MARGIN_S before it, and no attempt,
 #: reservation or backoff starts without MIN_ATTEMPT_S of room (DeadlineExceeded instead)
@@ -449,22 +454,25 @@ class Provider:
         precheck: Callable[[], Awaitable[None]] | None = None,
         deadline: float | None = None,
         attempt_policy: str = "background",
+        attempt_guard: AttemptGuard | None = None,
     ) -> LlmResult:
         """``deadline`` (event-loop time): the caller's hard cap. HTTP timeouts are budgeted to end
         before it and no attempt starts without room (``DeadlineExceeded``), so an outer
         ``asyncio.timeout`` at the same deadline never has to cut an attempt mid-flight.
         ``attempt_policy``: ``background`` (retry/backoff) or ``latency`` (one bounded attempt per
-        profile, then the next one; see the module doc)."""
+        profile, then the next one; see the module doc). ``attempt_guard``: see ``AttemptGuard``."""
         if attempt_policy not in ATTEMPT_POLICIES:
             raise LlmConfigError(f"unknown attempt_policy {attempt_policy!r}")
         token = _LINEAGE.set(lineage) if lineage is not None else None
         ptoken = _PRECHECK.set(precheck)
         dtoken = _DEADLINE.set(deadline)
+        gtoken = _GUARD.set(attempt_guard)
         try:
             return await self._complete(
                 task, user, job_id=job_id, validate=validate, chain=chain, latency=attempt_policy == "latency"
             )
         finally:
+            _GUARD.reset(gtoken)
             _DEADLINE.reset(dtoken)
             _PRECHECK.reset(ptoken)
             if token is not None:
@@ -625,6 +633,16 @@ class Provider:
         if lineage is not None and not await self.ledger.claim(lineage, self.job_call_cap):
             raise JobCallCapExceeded(f"E_CALL_CAP lineage reached {self.job_call_cap} calls")
 
+    async def _run_guard(self, profile: LlmProfile, task: TaskSpec, messages: list[dict[str, str]]) -> None:
+        """The caller's per-attempt guard (``AttemptGuard``), with THIS attempt's worst case priced by
+        THIS profile (whether or not the global spend guard is enabled)."""
+        guard = _GUARD.get()
+        if guard is None:
+            return
+        tokens_in = self.estimate_input_tokens(messages)
+        worst = profile.worst_usd(tokens_in, task.max_tokens) if profile.priced else Decimal(0)
+        await guard(profile, worst, -(-tokens_in * 11 // 10) + task.max_tokens)
+
     async def _run_precheck(self) -> None:
         """The caller's privacy/authority gate, re-run before EVERY attempt (retries after backoff
         and the fallback profile included): it raises to abort before any byte is sent."""
@@ -647,6 +665,7 @@ class Provider:
         """One network attempt (or its replay). ``share``: the fraction of the remaining deadline
         this attempt may use (``latency`` policy while a later profile is available)."""
         request_sha = _sha(canonical(body))
+        await self._run_guard(profile, task, messages)  # review 79 T4: before every attempt
         if self.mode == "replay":  # stands in for the HTTP attempt: same gate and ceiling
             await self._run_precheck()
             await self._claim_call(job_id)
@@ -895,6 +914,7 @@ __all__ = [
     "Breaker",
     "Clock",
     "LlmResult",
+    "AttemptGuard",
     "Provider",
     "lineage_scope",
     "parse_json_object",

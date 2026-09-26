@@ -7,11 +7,15 @@ no event and no job row is written (jobs are event projections, replay re-create
 deleting rows only makes this task write them again. ``memory.ask`` works without it.
 
 A cycle (``MapSummarizer.cycle``, every ``HLM_MAP_SUMMARY_EVERY_S``, in the background of the
-librarian loop, skipped while nothing was written since the last scan):
+librarian loop) scans only when something was written since the last scan, when groups were left for
+a later cycle, or when a waiting group (debounce, or a failure's back-off; review 79 T4) is due:
 
 1. **Members.** The summarisable items: current, active, non-card, ``device_scope = 'all'`` (never a
    class- or device-scoped item) and every project of the item with ``policy.librarian`` not
-   ``off``; grouped per (project, source key). ``digest`` = sha256 of the sorted member ids.
+   ``off``; grouped per (project, source key), an item joining a project's group only when the D-083
+   isolation allows it (``memory_map.isolation_ok``: an item co-owned with a
+   ``librarian_cross_project = exclude`` project is summarised nowhere; review 79 T1). ``digest`` =
+   sha256 of the sorted member ids.
 2. **Stale + debounced.** A group is due when its digest differs from the cached one AND that same
    digest has been observed unchanged for ``HLM_MAP_SUMMARY_DEBOUNCE_S`` (a burst of writes or an
    import is summarised once, after it settles). A failed refresh backs off exponentially
@@ -41,6 +45,7 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from hlmemo.core import memory_map as mm
+from hlmemo.db.librarian_queries import cross_project_excluded
 from hlmemo.librarian.errors import (
     BudgetDeferred,
     JobCallCapExceeded,
@@ -53,6 +58,7 @@ from hlmemo.librarian.errors import (
 from hlmemo.librarian.events import NS_LIBRARIAN
 from hlmemo.librarian.prompts import load_task
 from hlmemo.librarian.provider import Provider
+from hlmemo.librarian.redact import Redactor
 
 log = logging.getLogger("hlmemo.librarian.map_summary")
 
@@ -93,7 +99,9 @@ async def current_groups(conn: AsyncConnection) -> dict[tuple[int, str], Group]:
     """Every summarisable (project, source key) group with its members NOW (module step 1)."""
     cur = await conn.execute(_MEMBERS_SQL, prepare=False)
     rows = await cur.fetchall()
-    policies = await mm.project_policies(conn, (p for r in rows for p in r[1]))
+    touched = {int(p) for r in rows for p in r[1]}
+    policies = await mm.project_policies(conn, touched)
+    excluded = await cross_project_excluded(conn, touched)
     groups: dict[tuple[int, str], Group] = {}
     for vid, pids, title, kind, system, path in rows:
         pids = [int(p) for p in pids]
@@ -102,6 +110,8 @@ async def current_groups(conn: AsyncConnection) -> dict[tuple[int, str], Group]:
         item = mm.ViewItem(int(vid), str(title), str(kind), system, path, 0, pids)
         loc = mm.locate(item)
         for pid in pids:
+            if not mm.isolation_ok(pids, pid, excluded):
+                continue
             g = groups.get((pid, loc.key))
             if g is None:
                 g = groups[(pid, loc.key)] = Group(pid, loc.key, loc.name, [], "", False)
@@ -112,8 +122,9 @@ async def current_groups(conn: AsyncConnection) -> dict[tuple[int, str], Group]:
     return groups
 
 
-async def member_gate(conn: AsyncConnection, members: list[int]) -> bool:
-    """The system privacy gate over the members (module step 3), in the caller's transaction."""
+async def member_gate(conn: AsyncConnection, members: list[int], project_id: int) -> bool:
+    """The system privacy gate over the members of ``project_id``'s group (module step 3), in the
+    caller's transaction: the member rule and the D-083 isolation, re-read NOW."""
     cur = await conn.execute(
         "SELECT version_id, project_ids, device_scope, status,"
         " superseded_at = 'infinity' AND valid_to = 'infinity', kind"
@@ -124,13 +135,16 @@ async def member_gate(conn: AsyncConnection, members: list[int]) -> bool:
     rows = await cur.fetchall()
     if len(rows) != len(set(members)):
         return False
-    policies = await mm.project_policies(conn, (p for r in rows for p in r[1]))
+    touched = {int(p) for r in rows for p in r[1]} | {project_id}
+    policies = await mm.project_policies(conn, touched)
+    excluded = await cross_project_excluded(conn, touched)
     return all(
         r[2] == "all"
         and r[3] == "active"
         and r[4]
         and r[5] != "project_card"
         and _allowed(list(r[1]), policies)
+        and mm.isolation_ok([int(p) for p in r[1]], project_id, excluded)
         for r in rows
     )
 
@@ -156,8 +170,13 @@ def spread_sample(items: list[tuple[str, str]], budget: int = MAX_INPUT_CHARS) -
     return out
 
 
-def user_message(name: str, key: str, items: list[dict[str, str]], total: int) -> str:
+def user_message(
+    name: str, key: str, items: list[dict[str, str]], total: int, redactor: Redactor | None = None
+) -> str:
+    """Review 79 T2: every text value is redacted BEFORE the JSON serialisation (an escaped quote
+    hides an assignment from the redactor); the provider still redacts the whole message."""
     payload = {"source": name, "key": key, "items_total": total, "items": items}
+    payload = (redactor or Redactor()).value(payload)
     return f"JOB: {TASK}\nINPUT: {json.dumps(payload, ensure_ascii=False)}"
 
 
@@ -175,7 +194,10 @@ class MapSummarizer:
         self.connect = connect
         self.spec = load_task(TASK)
         self._last_marker: int | None = None
-        self._pending = False  # due groups were left for a later cycle
+        self._pending = False  # due groups were left for a later cycle (or a refresh failed)
+        #: the earliest time (``due``'s clock) a waiting group becomes due: a debounce ending or a
+        #: failure's back-off expiring triggers a scan on its own, with no new event (review 79 T4)
+        self._wake_at: float | None = None
         self._seen: dict[tuple[int, str], tuple[str, float]] = {}  # group -> (digest, first seen)
         self.written = 0
         self.failed = 0
@@ -189,7 +211,8 @@ class MapSummarizer:
         now = time.monotonic() if now is None else now
         async with await self.connect() as conn:
             marker = await self._marker(conn)
-            if marker == self._last_marker and not self._pending:
+            waking = self._wake_at is not None and now >= self._wake_at
+            if marker == self._last_marker and not self._pending and not waking:
                 await conn.commit()
                 return []
             groups = await current_groups(conn)
@@ -208,7 +231,7 @@ class MapSummarizer:
         self._last_marker = marker
         debounce = float(self.settings.map_summary_debounce_s)
         due: list[Group] = []
-        waiting = False
+        wakes: list[float] = []
         for k, g in groups.items():
             row = cache.get(k)
             g.cached = row is not None
@@ -218,23 +241,24 @@ class MapSummarizer:
             if row is not None and row[1] == "failed":
                 backoff = min(BACKOFF_BASE_S * 2 ** max(0, int(row[2]) - 1), BACKOFF_MAX_S)
                 if float(row[3]) < backoff:
-                    waiting = True
+                    wakes.append(now + backoff - float(row[3]))
                     continue
             seen = self._seen.get(k)
             if seen is None or seen[0] != g.digest:
                 self._seen[k] = (g.digest, now)
                 if debounce > 0:
-                    waiting = True
+                    wakes.append(now + debounce)
                     continue
             elif now - seen[1] < debounce:
-                waiting = True
+                wakes.append(seen[1] + debounce)
                 continue
             due.append(g)
         for k in [k for k in self._seen if k not in groups]:
             del self._seen[k]
         due.sort(key=lambda g: (g.cached, -len(g.members), g.project_id, g.key))
         limit = int(self.settings.map_summary_per_cycle)
-        self._pending = waiting or len(due) > limit
+        self._pending = len(due) > limit
+        self._wake_at = min(wakes) if wakes else None
         return due[:limit]
 
     async def cycle(self, *, now: float | None = None) -> int:
@@ -254,7 +278,7 @@ class MapSummarizer:
     async def refresh(self, g: Group) -> bool:
         """Summarise one group and upsert its row; False when it was skipped or failed."""
         async with await self.connect() as conn:
-            if not await member_gate(conn, g.members):
+            if not await member_gate(conn, g.members, g.project_id):
                 await conn.commit()
                 self._pending = True
                 return False
@@ -266,11 +290,11 @@ class MapSummarizer:
             rows = {int(r[0]): (str(r[1]), str(r[2])) for r in await cur.fetchall()}
             await conn.commit()
         items = spread_sample([rows[v] for v in g.members if v in rows])
-        user = user_message(g.name, g.key, items, len(g.members))
+        user = user_message(g.name, g.key, items, len(g.members), self.provider.redactor)
 
         async def precheck() -> None:  # before EVERY attempt (retries and the fallback included)
             async with await self.connect() as c:
-                ok = await member_gate(c, g.members)
+                ok = await member_gate(c, g.members, g.project_id)
                 await c.commit()
             if not ok:
                 raise PrivacyDenied("E_PRIVACY_DENIED")
@@ -313,9 +337,11 @@ class MapSummarizer:
         return True
 
     async def _failed(self, g: Group, why: str) -> None:
-        """Keep the last good summary; record the failure (exponential back-off)."""
+        """Keep the last good summary; record the failure (exponential back-off). The next cycle
+        re-reads the cache (``_pending``), which arms the back-off's wake time (review 79 T4)."""
         log.warning("map_summary: %s for project %s source %s", why, g.project_id, g.key)
         self.failed += 1
+        self._pending = True
         async with await self.connect() as conn:
             await conn.execute(
                 """

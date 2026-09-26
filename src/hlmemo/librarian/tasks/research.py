@@ -20,15 +20,18 @@ provider requests of one question, and at most ``MAX_IN_FLIGHT`` questions per p
 
 Validation (``validate_answer``, ``enforce_attribution``) is deterministic. Excerpt ids are the
 handles the
-caller can drill (``vN.M``/``vN``). Each quote must occur in the excerpt it names after ``qnorm``
+caller can drill (``vN.M``/``vN``). Each quote must occur CONTIGUOUSLY (no skipped word, review 79
+T6) in the excerpt it names after ``qnorm``
 (NFKC, casefold, typographic quotes, markdown markers, whitespace, and a DECIMAL comma between digits
 read as a point: TR "1,6" = "1.6"; a thousands-style "1,600" is left alone); a quote found only in
 another SHOWN excerpt is re-attributed to it; the quote returned is the original substring of the
 excerpt. A claim is kept only when its quotes TOGETHER contain every number/identifier/path literal of
 the claim (a literal its quotes lack is re-quoted deterministically from the sentence of a cited
 excerpt that states it, ``requote``); a claim without a verified quote is downgraded (its handles
-only ``related``) or dropped.
-The free-text answer keeps only the sentences whose literals are in the kept claims' quotes.
+only ``related``) or dropped. A claim that drops or inserts a negation or a modal its quotes state
+about the same words (``polarity_ok``) is dropped.
+The free-text answer keeps only the sentences whose literals are in the kept claims' quotes and whose
+polarity agrees with them.
 primary = the handles supporting the most kept claims (≤ 3). No kept claim left → abstention.
 """
 
@@ -54,7 +57,7 @@ from hlmemo.librarian.errors import AuthorityLost, LlmConfigError, PrivacyDenied
 from hlmemo.librarian.ledger import NETWORK_OUTCOMES, DbLedger, Ledger, LedgerRow
 from hlmemo.librarian.profiles import LlmProfile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
-from hlmemo.librarian.provider import ChainBreakers, Clock, LlmResult, Provider
+from hlmemo.librarian.provider import AttemptGuard, ChainBreakers, Clock, LlmResult, Provider
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.risk_judge import ConnectFactory, direct_connector
 from hlmemo.librarian.tasks.synthesis import claims as literal_claims
@@ -176,9 +179,6 @@ def find_verbatim(quote: str, text: str) -> str | None:
 
 
 _WORD = re.compile(r"\w+(?:[.,]\d+)*")
-#: a quote matched word by word may spread over at most this multiple of its own length
-IN_ORDER_SPREAD = 1.5
-IN_ORDER_MIN_WORDS = 4
 
 
 def _words(text: str) -> list[tuple[str, int, int]]:
@@ -191,32 +191,70 @@ def _words(text: str) -> list[tuple[str, int, int]]:
     return out
 
 
-def find_in_order(quote: str, text: str) -> str | None:
-    """Addendum 2 fallback: the quote's words appear IN ORDER within a short window of ``text``
-    (at most ``IN_ORDER_SPREAD`` × its length): punctuation, markup or a dropped word between them
-    does not fail it. Returns the raw span of ``text`` from the first to the last matched word."""
-    q = [w for w, _s, _e in _words(unicodedata.normalize("NFC", quote))]
-    if len(q) < IN_ORDER_MIN_WORDS:
-        return None
-    raw = unicodedata.normalize("NFC", text)
-    t = _words(raw)
-    limit = int(len(q) * IN_ORDER_SPREAD) + 2
-    for i, (w, _s, _e) in enumerate(t):
-        if w != q[0]:
-            continue
-        j, k = i, 0
-        while j < len(t) and k < len(q) and j - i < limit:
-            if t[j][0] == q[k]:
-                k += 1
-            j += 1
-        if k == len(q):
-            return raw[t[i][1] : t[j - 1][2]]
-    return None
-
-
 def locate_quote(quote: str, text: str) -> str | None:
-    """The raw span of ``text`` supporting ``quote``: normalised substring, else in-order words."""
-    return find_verbatim(quote, text) or find_in_order(quote, text)
+    """The raw span of ``text`` supporting ``quote``: a CONTIGUOUS match under ``qnorm`` only
+    (whitespace, markup, NFC, dashes and quote variants are normalised; no word is ever skipped).
+    Review 79 T6: the addendum 2 in-order fallback let a quote drop a word ("is **not** enabled" →
+    "is enabled") and still verify; it is gone."""
+    return find_verbatim(quote, text)
+
+
+#: review 79 T6: polarity words. A claim may not drop or insert a negation or a (epistemic) modal
+#: that its quotes state about the same words (``polarity_ok``). ``n't`` is read as ``not``.
+_NEGATION = frozenset(
+    "not no never none nor neither cannot without "
+    "değil yok hiç asla hiçbir "
+    "nicht kein keine keinen keinem keiner keines nie niemals ohne".split()
+)
+_MODAL = frozenset(
+    "may might could can possibly maybe perhaps probably likely unlikely "
+    "belki olabilir olabilirler muhtemelen "
+    "kann können könnte könnten vielleicht wahrscheinlich".split()
+)
+_NT = re.compile(r"(?i)(\w)n['’]t\b")
+#: content words within this many words of a polarity word are what it is about
+POLARITY_WINDOW = 3
+
+
+def _polarity_words(text: str) -> list[str]:
+    text = _NT.sub(r"\1 not", unicodedata.normalize("NFC", text))
+    return [w for w, _s, _e in _words(text)]
+
+
+def _about(words: list[str], cls: frozenset[str]) -> list[set[str]]:
+    """For each word of ``cls`` in ``words``: the content words within ``POLARITY_WINDOW``."""
+    out = []
+    for i, w in enumerate(words):
+        if w in cls:
+            near = words[max(0, i - POLARITY_WINDOW) : i] + words[i + 1 : i + 1 + POLARITY_WINDOW]
+            out.append({x for x in near if len(x) >= 3 and x not in _STOP and x not in _NEGATION | _MODAL})
+    return out
+
+
+def _shares(scope: set[str], words: set[str]) -> bool:
+    """At least two (or all, when fewer) of ``scope`` are in ``words``; a word also matches its
+    inflections (one is a prefix of the other: run/runs, enable/enabled, etkin/etkinleştirildi)."""
+    hits = sum(1 for w in scope if w in words or any(x.startswith(w) or w.startswith(x) for x in words))
+    return bool(scope) and hits >= min(2, len(scope))
+
+
+def polarity_ok(text: str, quotes: list[str]) -> bool:
+    """Review 79 T6: ``text`` (a claim, or an answer sentence) keeps the polarity of ``quotes``. It
+    fails when a quote negates (or hedges with a modal) words that ``text`` states with no negation
+    (modal) at all — a DROPPED "not" — or when ``text`` negates (hedges) words that the quotes state
+    with none — an INSERTED one. EN/TR/DE word lists; a TR negative verb suffix is not seen."""
+    tw = _polarity_words(text)
+    qw = [w for q in quotes for w in _polarity_words(q)]
+    t_content = {w for w in tw if len(w) >= 3 and w not in _STOP}
+    q_content = {w for w in qw if len(w) >= 3 and w not in _STOP}
+    for cls in (_NEGATION, _MODAL):
+        t_has = any(w in cls for w in tw)
+        q_has = any(w in cls for w in qw)
+        if not t_has and any(_shares(sc, t_content) for sc in _about(qw, cls)):
+            return False  # the quotes say "not X"; the claim says "X"
+        if not q_has and any(_shares(sc, q_content) for sc in _about(tw, cls)):
+            return False  # the claim says "not X"; the quotes say "X"
+    return True
 
 
 def _lit_norm(text: str) -> str:
@@ -322,20 +360,51 @@ def clip(text: str, limit: int = EXCERPT_CHARS) -> str:
     return text if len(text) <= limit else text[:limit] + " …"
 
 
-def _input(payload: dict[str, Any]) -> str:
-    return "INPUT: " + json.dumps(payload, ensure_ascii=False)
+Redact = Callable[[str], str]
+#: the rule set every prompt builder applies when the caller passes none (the service passes the
+#: provider's own redactor, with the configured e-mail/phone options)
+_DEFAULT_REDACTOR = Redactor()
 
 
-def plan_user(question: str, context: str, map_text: str) -> str:
-    return "JOB: plan\n" + _input({"project_context": context, "question": question}) + "\n\n" + map_text
+def redact_values(obj: Any, redact: Redact) -> Any:
+    """Every string inside a JSON-like value, redacted (dict keys are the builders' constants)."""
+    if isinstance(obj, str):
+        return redact(obj)
+    if isinstance(obj, list):
+        return [redact_values(v, redact) for v in obj]
+    if isinstance(obj, dict):
+        return {k: redact_values(v, redact) for k, v in obj.items()}
+    return obj
 
 
-def answer_user(question: str, excerpts: list[Excerpt]) -> str:
-    return "JOB: answer\n" + _input({"question": question, "excerpts": [e.shown() for e in excerpts]})
+def _input(payload: dict[str, Any], redact: Redact | None = None) -> str:
+    """``INPUT: <json>``. Review 79 T2: every text value is redacted BEFORE the JSON serialisation
+    (JSON escapes the quotes of ``password = "..."`` and the escaped form hides the assignment from
+    the redactor); the provider still redacts the whole message right before the send."""
+    fn = redact or _DEFAULT_REDACTOR.text
+    return "INPUT: " + json.dumps(redact_values(payload, fn), ensure_ascii=False)
+
+
+def _text(text: str, redact: Redact | None) -> str:
+    return (redact or _DEFAULT_REDACTOR.text)(text)
+
+
+def plan_user(question: str, context: str, map_text: str, redact: Redact | None = None) -> str:
+    payload = {"project_context": context, "question": question}
+    return "JOB: plan\n" + _input(payload, redact) + "\n\n" + _text(map_text, redact)
+
+
+def answer_user(question: str, excerpts: list[Excerpt], redact: Redact | None = None) -> str:
+    payload = {"question": question, "excerpts": [e.shown() for e in excerpts]}
+    return "JOB: answer\n" + _input(payload, redact)
 
 
 def check_user(
-    question: str, draft: dict[str, Any], excerpts: list[Excerpt], fixes: dict[int, list[str]] | None = None
+    question: str,
+    draft: dict[str, Any],
+    excerpts: list[Excerpt],
+    fixes: dict[int, list[str]] | None = None,
+    redact: Redact | None = None,
 ) -> str:
     """The COMPLETENESS + REPAIR pass (addendum 7): the question, the draft (answer text + its claims
     with their quotes, a claim carrying ``fix`` notes where the deterministic copy-through and
@@ -351,16 +420,18 @@ def check_user(
         "draft": {"answer": draft.get("answer", ""), "claims": claims},
         "excerpts": [e.shown() for e in excerpts],
     }
-    return "JOB: check\n" + _input(payload)
+    return "JOB: check\n" + _input(payload, redact)
 
 
-def refine_user(question: str, tried: list[str], read: list[Excerpt], map_text: str) -> str:
+def refine_user(
+    question: str, tried: list[str], read: list[Excerpt], map_text: str, redact: Redact | None = None
+) -> str:
     payload = {
         "question": question,
         "queries_tried": tried,
         "read_so_far": [{"id": e.handle, "title": e.title} for e in read],
     }
-    return "JOB: refine\n" + _input(payload) + "\n\n" + map_text
+    return "JOB: refine\n" + _input(payload, redact) + "\n\n" + _text(map_text, redact)
 
 
 # --------------------------------------------------------------------------- job shape checks
@@ -479,8 +550,8 @@ def support_hay(support: list[tuple[str, str]], shown: dict[str, Excerpt]) -> st
 
 
 def _supports(raw: Any, cited: list[str], shown: dict[str, Excerpt]) -> list[tuple[str, str]]:
-    """The verified support of one claim: each quote located (normalised substring, else its words
-    in order, ``locate_quote``) in the excerpt it names, else re-attributed to another SHOWN excerpt
+    """The verified support of one claim: each quote located (a contiguous normalised substring,
+    ``locate_quote``) in the excerpt it names, else re-attributed to another SHOWN excerpt
     holding it; the RAW span of the excerpt is kept for display; deduplicated, ≤ MAX_SUPPORT."""
     out: list[tuple[str, str]] = []
     for s in (raw if isinstance(raw, list) else [])[: MAX_SUPPORT * 2]:
@@ -673,7 +744,8 @@ def assemble(
     related = related[:MAX_RELATED]
     hay = _hay([c.text for c in kept]) + "\n" + "\n".join(support_hay(c.support, shown) for c in kept)
     sentences = _SENTENCE.split(answer)
-    kept_sentences = [s for s in sentences if literals_ok(s, hay)]
+    kept_quotes = [q for c in kept for _h, q in c.support]
+    kept_sentences = [s for s in sentences if literals_ok(s, hay) and polarity_ok(s, kept_quotes)]
     dropped = len(sentences) - len(kept_sentences)
     text = redact(" ".join(kept_sentences))[:ANSWER_MAX_CHARS]
     if not text.strip():
@@ -694,6 +766,12 @@ def assemble(
     return Validated(
         ANSWERED, status, text, claims, primary, related, conf, dropped_sentences=dropped, **extra
     )
+
+
+def support_ok(text: str, support: list[tuple[str, str]]) -> bool:
+    """A claim that is only downgraded (no verified quote) still may not contradict the polarity of
+    the quotes it was re-quoted with."""
+    return not support or polarity_ok(text, [q for _h, q in support])
 
 
 def validate_answer(
@@ -746,11 +824,15 @@ def validate_answer(
             support = requote(text, support, cited, shown)
         if not text:
             claims.append(Claim(text, [], "dropped", cited))
-        elif support and literals_ok(text, support_hay(support, shown)):
+        elif (
+            support
+            and literals_ok(text, support_hay(support, shown))
+            and polarity_ok(text, [q for _h, q in support])
+        ):
             claims.append(Claim(text, support, "kept", cited))
             flags["requoted"] += int(requoted)
             flags["completed"] += int(len(support) > n_before)
-        elif cited and literals_ok(text, _hay([shown[h].text for h in cited])):
+        elif cited and literals_ok(text, _hay([shown[h].text for h in cited])) and support_ok(text, support):
             claims.append(Claim(text, [], "downgraded", cited))  # true to its sources, not to a quote
         else:
             claims.append(Claim(text, [], "dropped", cited))
@@ -1006,7 +1088,7 @@ class Researcher:
             self.chain = list(chain) if chain is not None else research_chain(settings)
         self.spec: TaskSpec = load_task(TASK)
         self._enabled = (
-            bool(getattr(settings, "research_enabled", True))
+            bool(getattr(settings, "research_enabled", False))
             and bool(settings.librarian_enabled)
             and settings.llm_mode != "off"
             and bool(self.chain)
@@ -1088,8 +1170,9 @@ class Researcher:
 
     def worst_case(self, job: str, user: str) -> tuple[Decimal, int]:
         """``(USD, tokens)`` the next call may cost at most on the expected path: its padded input
-        and its max_tokens, priced by the PRIMARY (a fallback's actual cost is tallied before the
-        next check)."""
+        and its max_tokens, priced by the PRIMARY. The call-level check only; every ATTEMPT (schema
+        retry, fallback) is checked again with its own profile's worst case (``attempt_guard``,
+        review 79 T4)."""
         spec = self.job_spec(job)
         tokens_in = (
             self.provider.estimate_input_tokens(
@@ -1131,6 +1214,7 @@ class Researcher:
         deadline: float,
         lineage: str,
         carried_ids: list[int] | None = None,
+        attempt_guard: AttemptGuard | None = None,
     ) -> LlmResult:
         """One logical call. Before EVERY attempt (retries and the fallback included), and before any
         byte is sent: the strict privacy gate over ``gate_ids`` (the text of this prompt) and the
@@ -1161,6 +1245,7 @@ class Researcher:
             deadline=deadline,
             lineage=lineage,
             attempt_policy="latency",
+            attempt_guard=attempt_guard,
         )
 
     @contextlib.contextmanager
@@ -1210,9 +1295,10 @@ __all__ = [
     "clip",
     "close_app_researcher",
     "best_line",
-    "find_in_order",
     "find_verbatim",
     "locate_quote",
+    "polarity_ok",
+    "redact_values",
     "job_validator",
     "literal_supported",
     "literals_ok",

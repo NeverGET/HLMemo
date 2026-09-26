@@ -211,14 +211,111 @@ def test_quote_matching_normalises_markup_unicode_and_dashes() -> None:
     assert rs.find_verbatim("Café opens at noon", text) == "Café opens at noon"
 
 
-def test_in_order_fallback_and_its_bounds() -> None:
+def test_quote_match_is_contiguous_no_word_is_skipped() -> None:
+    """Review 79 T6: the quote check is a CONTIGUOUS normalised match (whitespace, markup, NFC,
+    dashes and quote variants normalised) — a quote that drops or inserts a word never verifies."""
     text = "The retrieval p95 target is now, after the R3 release, 1.2 s on the VPS."
-    assert rs.find_verbatim("The retrieval p95 target is now 1.2 s on the VPS", text) is None
-    span = rs.find_in_order("The retrieval p95 target is now 1.2 s on the VPS", text)
-    assert span == text[:-1]  # the raw words from the first to the last match
-    assert rs.find_in_order("target is now 1.2 s", "target ... " + "x " * 40 + "is now 1.2 s") is None
-    assert rs.find_in_order("p95 target", text) is None  # too short to be matched word by word
-    assert rs.locate_quote("the p95 target is now, after", text) is not None
+    assert rs.locate_quote("The retrieval p95 target is now 1.2 s on the VPS", text) is None  # skips words
+    assert rs.locate_quote("the p95 target is now, after", text) is None  # "retrieval" skipped
+    assert rs.locate_quote("p95 target is now, after the R3 release", text) == (
+        "p95 target is now, after the R3 release"
+    )
+    assert not hasattr(rs, "find_in_order")
+    gate = "The release gate is **not** enabled by default."
+    assert rs.locate_quote("The release gate is enabled by default.", gate) is None
+    assert rs.locate_quote("The release gate is not enabled by default.", gate) == gate
+
+
+RELEASE_GATE = {
+    "v20.0": rs.Excerpt(
+        "v20.0",
+        20,
+        "Gates",
+        "docs/gates.md",
+        "2026-09-26",
+        "## Gates\nThe release gate is **not** enabled by default. It runs weekly.",
+    )
+}
+
+
+@pytest.mark.parametrize(
+    ("claim", "quote"),
+    [
+        # the exact review 79 T6 case: the claim drops "not", the quote is the full verbatim sentence
+        ("The release gate is enabled by default.", "The release gate is **not** enabled by default."),
+        # the quote drops "not" (a word skipped): it never verifies; a re-quote from the line brings
+        # the "not" back, and the claim without it still fails
+        ("The release gate is enabled by default.", "The release gate is enabled by default."),
+        # the claim inserts a negation the quote does not state
+        ("The gate does not run weekly.", "It runs weekly."),
+        # the claim drops the hedge of a modal
+        ("The flag is enabled in production.", "The flag may be enabled in production."),
+    ],
+)
+def test_a_claim_or_quote_without_the_sources_not_fails(claim: str, quote: str) -> None:
+    shown = {
+        **RELEASE_GATE,
+        "v21.0": rs.Excerpt(
+            "v21.0",
+            21,
+            "Flag",
+            "docs/flag.md",
+            "2026-09-26",
+            "The flag may be enabled in production. It is reviewed monthly.",
+        ),
+    }
+    hid = "v21.0" if "flag" in claim else "v20.0"
+    v = rs.validate_answer(
+        {
+            "status": "answered",
+            "answer": claim,
+            "claims": [_claim(claim, (hid, quote))],
+            "confidence": "high",
+        },
+        shown,
+    )
+    assert not v.answered and v.guard and v.primary == [], (claim, quote)
+    assert all(c.state != "kept" for c in v.claims)
+
+
+def test_polarity_keeps_true_claims_and_unrelated_negations() -> None:
+    assert rs.polarity_ok(
+        "The release gate is not enabled by default.", ["The release gate is **not** enabled by default."]
+    )
+    assert rs.polarity_ok("The release gate isn't enabled by default.", ["The release gate is not enabled."])
+    # a negation in the quote about OTHER words does not bind the claim
+    assert rs.polarity_ok(
+        "SQLite was rejected.", ["SQLite was rejected because it has no concurrent writers."]
+    )
+    assert not rs.polarity_ok(
+        "SQLite has concurrent writers.", ["SQLite was rejected because it has no concurrent writers."]
+    )
+    # TR / DE negation words
+    assert not rs.polarity_ok(
+        "Sürüm kapısı varsayılan olarak etkin.", ["Sürüm kapısı varsayılan olarak etkin değil."]
+    )
+    assert not rs.polarity_ok(
+        "Das Gate ist standardmäßig aktiviert.", ["Das Gate ist standardmäßig nicht aktiviert."]
+    )
+    # an answer sentence that contradicts the kept claim's quote is dropped from the answer text
+    v = rs.validate_answer(
+        {
+            "status": "answered",
+            "answer": "The release gate is not enabled by default. So the release gate is enabled"
+            " by default.",
+            "claims": [
+                _claim(
+                    "The release gate is not enabled by default.",
+                    ("v20.0", "The release gate is **not** enabled by default."),
+                )
+            ],
+            "confidence": "high",
+        },
+        RELEASE_GATE,
+    )
+    assert (
+        v.answered and v.answer == "The release gate is not enabled by default." and v.dropped_sentences == 1
+    )
 
 
 def test_failed_quote_is_requoted_from_its_line_before_dropping() -> None:
@@ -783,3 +880,26 @@ def test_pack_fits_the_token_budget_exactly() -> None:
     with pytest.raises(ToolError) as exc:
         rsv._pack(METER, {**json.loads(json.dumps(out)), "answer": "The answer is long. " * 80}, 256)
     assert exc.value.code == "E_BUDGET_TOO_SMALL" and exc.value.details["min"] > 256
+
+
+# --------------------------------------------------------------------------- review 79 T2
+def test_prompt_values_are_redacted_before_json_serialisation() -> None:
+    """Review 79 T2: ``password = "SuperSecret123456"`` survives a redactor run over the JSON text
+    (the escaped quote hides the assignment); every builder redacts the values first."""
+    from hlmemo.librarian.redact import Redactor
+    from hlmemo.librarian.tasks import map_summary as ms
+
+    secret = "SuperSecret123456"
+    text = f'The staging password = "{secret}" is rotated monthly.'
+    assert secret in Redactor().text(json.dumps({"q": text}))  # the reviewed failure mode
+    ex = rs.Excerpt("v30.0", 30, text, "docs/c.md", "2026-09-26", text)
+    q = f'Is password = "{secret}" valid?'
+    draft = {"answer": text, "claims": [{"text": text, "support": [{"id": "v30.0", "quote": text}]}]}
+    for msg in (
+        rs.plan_user(q, "ctx", f"MEMORY MAP\n- {text}"),
+        rs.answer_user(q, [ex]),
+        rs.check_user(q, draft, [ex], {0: [text]}),
+        rs.refine_user(q, [q], [ex], "MEMORY MAP"),
+        ms.user_message("c.md", "markdown:docs/c.md", [{"title": text, "text": text}], 1),
+    ):
+        assert secret not in msg and "⟦REDACTED:assignment:" in msg

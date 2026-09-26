@@ -24,7 +24,11 @@ The VIEW (``load_view``) is what the caller may see AND what may be sent to a pr
 active, non-card items of the project whose ``device_scope`` is ``all`` or the caller's class (never
 ``device:*``) and whose every project is readable by the caller with ``policy.librarian`` not
 ``off`` — the privacy gate's rules (``librarian/privacy.py``), which ``memory.ask`` re-runs over the
-exact ids before every provider call. Structural entries are cached per version id in-process
+exact ids before every provider call — and that the D-083 isolation allows: a project whose
+``policy.librarian_cross_project`` is ``exclude`` never takes part in librarian work with another
+project (``candidates.relation_allowed`` over the item's projects plus the asked project; review 79
+T1), so an item co-owned with an excluded project, or lying in one while another is asked, is not in
+the view. Structural entries are cached per version id in-process
 (versions are immutable); nothing here writes to the database.
 
 The structural rules are ported from the measured W-B prototype (``eval/research/research_loop.py``
@@ -46,6 +50,8 @@ from psycopg import AsyncConnection
 
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.core.budget import Meter
+from hlmemo.db.librarian_queries import cross_project_excluded
+from hlmemo.librarian.candidates import relation_allowed
 
 #: summaries may take at most this share of the map budget
 SUMMARY_SHARE = 0.40
@@ -480,14 +486,24 @@ async def load_view(conn: AsyncConnection, ctx: AuthContext, project_id: int) ->
     provider. Run inside the caller's (request or fresh) transaction."""
     cur = await conn.execute(_VIEW_SQL, {"pid": project_id, "scopes": view_scopes(ctx)}, prepare=False)
     rows = await cur.fetchall()
-    policies = await project_policies(conn, (p for r in rows for p in r[5]))
+    touched = {int(p) for r in rows for p in r[5]} | {project_id}
+    policies = await project_policies(conn, touched)
+    excluded = await cross_project_excluded(conn, touched)
     out: list[ViewItem] = []
     for vid, title, kind, system, path, pids, n in rows:
         pids = [int(p) for p in pids]
         if not all(p in policies and policies[p] != "off" and ctx.has(p, Role.READ) for p in pids):
             continue
+        if not isolation_ok(pids, project_id, excluded):
+            continue
         out.append(ViewItem(int(vid), str(title), str(kind), system, path, int(n or 0), pids))
     return out
+
+
+def isolation_ok(project_ids: Iterable[int], home: int, excluded: set[int]) -> bool:
+    """D-083 isolation for librarian work ABOUT ``home`` (a question asked in it, a summary of its
+    source): the item's projects plus ``home`` touch no ``exclude`` project, or exactly one project."""
+    return relation_allowed({*project_ids, home}, excluded)
 
 
 class EntryCache:

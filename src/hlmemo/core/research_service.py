@@ -19,7 +19,8 @@ completeness pass):
    (sections first): ``version_live`` + ``chunk_spans`` exactly like ``memory.drilldown`` but WITHOUT
    its ``access`` event. A hit or section whose version is not in the VIEW (a device-scoped item of
    the caller, an item co-owned by a project the caller cannot read or with ``policy.librarian=off``,
-   an item written after step 1) is dropped before any prompt.
+   an item written after step 1, an item the D-083 isolation keeps out of the asked project) is
+   dropped before any prompt.
 4. **Answer** (LLM, JOB ``answer``) → deterministic validation (``librarian.tasks.research``).
 5. **Refine** — only when the answer abstained: JOB ``refine`` (map + what was tried and read) →
    one more retrieval (new handles only) → JOB ``answer`` again.
@@ -81,6 +82,7 @@ from hlmemo.db import auth_queries
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as kq
 from hlmemo.db import synthesis_queries as sq
+from hlmemo.db.librarian_queries import cross_project_excluded
 from hlmemo.librarian.errors import (
     AuthorityLost,
     BudgetDeferred,
@@ -291,6 +293,11 @@ class _Run:
         await _read_project(c, fresh, self.slug)
         return fresh
 
+    def redact(self, text: str) -> str:
+        """The provider's redactor (its configured rules), applied to every prompt value before the
+        JSON serialisation (review 79 T2)."""
+        return self.researcher.redactor.text(text)
+
     def in_view(self, vid: int) -> bool:
         return vid in self.view and vid not in self.excluded
 
@@ -470,6 +477,7 @@ class _Run:
                         carried_ids=sorted(self.sent),
                         deadline=deadline,
                         lineage=self.lineage,
+                        attempt_guard=self.attempt_guard,
                     )
             except PrivacyDenied:
                 continue  # changed between our gate and the attempt's: gate (and rebuild) again
@@ -495,10 +503,23 @@ class _Run:
             return res.output
         raise rs.ResearchUnavailable("privacy")
 
+    async def attempt_guard(self, _profile: Any, worst_usd: Decimal, worst_tokens: int) -> None:
+        """Review 79 T4: before EVERY provider attempt (a schema retry and the fallback included),
+        the question's actual spend so far (every attempt is tallied when its ledger row is written,
+        before the next one starts: the attempts of one question are sequential) plus THIS attempt's
+        worst case (its own profile's prices) must stay within the per-question USD and token
+        budget; otherwise the question stops (budget_stop) before anything is reserved or sent."""
+        usd, tokens = self.researcher.spent(self.lineage)
+        if usd + worst_usd > Decimal(str(self.settings.research_max_usd)) or tokens + worst_tokens > int(
+            self.settings.research_max_tokens
+        ):
+            self.flags["budget_stop"] = True
+            raise rs.ResearchUnavailable("question_budget")
+
     async def plan(self, m: mm.MemoryMap) -> tuple[list[str], list[str]]:
         def build() -> tuple[str, list[int]]:
             cur = self.render_map() if self.excluded else m
-            return rs.plan_user(self.question, CONTEXT, cur.text), cur.gate_ids()
+            return rs.plan_user(self.question, CONTEXT, cur.text, self.redact), cur.gate_ids()
 
         try:
             obj = await self.call("plan", build, PLAN_CAP_S)
@@ -534,11 +555,12 @@ class _Run:
         def build() -> tuple[str, list[int]]:
             ex = [e for e in excerpts if e.version_id not in self.excluded]
             if draft is None:
-                return rs.answer_user(self.question, ex), [e.version_id for e in ex]
+                return rs.answer_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
             cur = self.prune(draft, excerpts)  # the draft's quotes come only from admitted excerpts
             fixes = rs.claim_fixes(cur, self.question)  # addendum 7: the repair rides on this call
             self.flags["rewrites_asked"] = len(fixes)
-            return rs.check_user(self.question, cur.draft(), ex, fixes), [e.version_id for e in ex]
+            user = rs.check_user(self.question, cur.draft(), ex, fixes, self.redact)
+            return user, [e.version_id for e in ex]
 
         cap = ANSWER_CAP_S if draft is None else CHECK_CAP_S
         obj = await self.call(job, build, cap)
@@ -638,6 +660,8 @@ async def ask(
             "trigger_device_id": ctx.device_id,
             "token_generation": ctx.token_generation,  # a rotated bearer loses authority (D-062)
             "question": sorted(readable),  # the caller's readable projects: an upper bound only
+            # review 79 T1: every gate also enforces the D-083 isolation for the asked project
+            "isolation_home": project.project_id,
         }
         if detach is not None:
             released = await detach(hold_s=max(1.0, end - loop.time()))
@@ -700,7 +724,7 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
         def build_refine() -> tuple[str, list[int]]:
             cur = run.render_map() if run.excluded else m
             rd = [e for e in read if e.version_id not in run.excluded]
-            return rs.refine_user(q, run.queries, rd, cur.text), sorted(
+            return rs.refine_user(q, run.queries, rd, cur.text, run.redact), sorted(
                 set(cur.gate_ids()) | {e.version_id for e in rd}
             )
 
@@ -763,7 +787,9 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             (returned,),
         )
         rows = await sq.version_access(c, vids, t_start)
-        policies = await mm.project_policies(c, (p for r in rows for p in r.project_ids))
+        touched = {p for r in rows for p in r.project_ids} | {run.project_id}
+        policies = await mm.project_policies(c, touched)
+        excluded = await cross_project_excluded(c, touched)
     scopes = set(mm.view_scopes(fresh))
 
     def authz(r: sq.VersionAccess) -> bool:
@@ -771,6 +797,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             run.project_id in r.project_ids
             and r.device_scope in scopes
             and all(p in policies and policies[p] != "off" and fresh.has(p, Role.READ) for p in r.project_ids)
+            and mm.isolation_ok(r.project_ids, run.project_id, excluded)  # D-083 (review 79 T1)
         )
 
     by_vid = {r.version_id: r for r in rows}
@@ -789,7 +816,11 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
         claims = []
         for cl in v.kept:
             sup = [(h, q) for h, q in cl.support if h in ok]
-            if sup and rs.literals_ok(cl.text, rs.support_hay(sup, ok)):
+            if (
+                sup
+                and rs.literals_ok(cl.text, rs.support_hay(sup, ok))
+                and rs.polarity_ok(cl.text, [q for _h, q in sup])
+            ):
                 claims.append(rs.Claim(cl.text, sup, "kept", [h for h in cl.cited if h in ok]))
         before = len(v.kept)
         v = rs.assemble(
