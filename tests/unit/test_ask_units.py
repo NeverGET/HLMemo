@@ -3259,3 +3259,46 @@ def test_d190_genuine_catches_still_drop() -> None:
     # a changed flag on an otherwise stated command is not rescued by similarity
     flag = "Check:\n```\ncurl -6 https://mcp.hlmemo.com/ready\n```"
     assert not rs.validate_prose(_prose(flag, ["v90.0"]), OPS_SHOWN).answered
+
+
+# --------------------------------------------------------------------------- D-191 map: newest-K
+def test_d191_a_big_source_shows_its_newest_entries() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    t0 = datetime(2026, 9, 1, tzinfo=UTC)
+    # a decision log of 60 items (one per row), valid one day apart, stored out of date order
+    items = [
+        mm.ViewItem(
+            vid,
+            f"D-{vid:03d} · ACCEPTED: decision title number {vid} · docs/decisions/DECISIONS.md",
+            "fact",
+            "markdown",
+            f"docs/decisions/DECISIONS.md#D-{vid:03d}",
+            1,
+            [1],
+            t0 + timedelta(days=(vid * 37) % 60),  # a permutation of 0..59 days
+            t0,
+        )
+        for vid in range(1, 61)
+    ]
+    # a single-item document with 80 sections (its newest are its LAST ones)
+    doc = mm.ViewItem(
+        100, "STATUS · docs/status/STATUS.md", "doc_chunk", "markdown", "docs/status/STATUS.md", 80
+    )
+    entries = {100: [mm.Entry(2, i, f"Status section {i}") for i in range(80)]}
+    s = {"markdown:docs/decisions/DECISIONS.md": (list(range(1, 61)), "The append-only decision log.")}
+    m = mm.build_map([*items, doc], entries, s, budget_tokens=900, project="p")
+    assert m.tokens <= 900
+    newest = sorted(items, key=lambda it: it.valid_from, reverse=True)[: mm.NEWEST_K]
+    assert all(m.drillable(f"v{it.version_id}") for it in newest)  # the 10 newest rows, always
+    assert all(m.drillable(f"v100.{o}") for o in range(70, 80))  # the document's last 10 sections
+    assert m.summaries == 0 and "~ The append-only" not in m.text  # no budget left: no summary
+    # with room to spare the summary still renders, after the entries
+    wide = mm.build_map([*items, doc], entries, s, budget_tokens=20000, project="p")
+    assert wide.summaries == 1 and "- DECISIONS.md (60 items) ~ The append-only decision log." in wide.text
+    # without dates (an older caller): the version order decides, as before the dates were known
+    undated = [
+        mm.ViewItem(it.version_id, it.title, it.kind, it.source_system, it.source_path, 1) for it in items
+    ]
+    m2 = mm.build_map(undated, {}, {}, budget_tokens=700, project="p")
+    assert all(m2.drillable(f"v{vid}") for vid in range(51, 61))

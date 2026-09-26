@@ -14,11 +14,13 @@ request from the CALLER's view and never stored as a whole:
   file line as ``~ …`` — only when every version it was written from is in the caller's view.
 
 Budget (about 6k o200k tokens, ``HLM_RESEARCH_MAP_TOKENS``): header, group and file lines first
-(spread-truncated if even they overflow), then summaries (largest files first, at most
-``SUMMARY_SHARE`` of the budget), then section entries round-robin by size (priority =
-chunks / (1 + entries taken), each file's candidates in a bit-reversal "spread" order so any prefix
-covers the whole document). Truncation is by spreading, never by cutting the head. A large item
-(more than 2 chunks) is drillable only by a chunk handle.
+(spread-truncated if even they overflow); then (D-191) the NEWEST ``NEWEST_K`` entries of every
+source with more entries than that (a multi-item file: its newest items by valid_from, then
+recorded_at; a single-item document: its last level-1/2 entries), largest sources first; then the
+section entries round-robin by size (priority = chunks / (1 + entries taken), each file's remaining
+candidates in a bit-reversal "spread" order so any prefix covers the whole document); summaries
+only with the budget left after the entries (largest files first). Truncation is by spreading,
+never by cutting the head. A large item (more than 2 chunks) is drillable only by a chunk handle.
 
 The VIEW (``load_view``) is what the caller may see AND what may be sent to a provider: current,
 active, non-card items of the project whose ``device_scope`` is ``all`` or the caller's class (never
@@ -44,6 +46,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -53,7 +56,11 @@ from hlmemo.core.budget import Meter
 from hlmemo.db.librarian_queries import cross_project_excluded
 from hlmemo.librarian.candidates import relation_allowed
 
-#: summaries may take at most this share of the map budget
+#: D-191: a source with more entries than this ALWAYS lists its newest NEWEST_K entries first
+NEWEST_K = 10
+_EPOCH = datetime.min.replace(tzinfo=UTC)
+#: summaries may take at most this share of the map budget (before D-191; summaries now only use
+#: the budget the entries leave)
 SUMMARY_SHARE = 0.40
 #: a summary is clipped to this many characters in the map
 SUMMARY_CHARS = 320
@@ -87,6 +94,9 @@ class ViewItem:
     source_path: str | None  # the item's source path, anchor included (``docs/x.md#d-130``)
     n_chunks: int
     project_ids: list[int] = field(default_factory=list)
+    #: D-191: when the item became valid / was recorded (the map's "newest" order)
+    valid_from: datetime | None = None
+    recorded_at: datetime | None = None
 
     @property
     def path(self) -> str:
@@ -314,6 +324,35 @@ def _candidates(f: _File, entries: dict[int, list[Entry]]) -> list[tuple[int, in
     return spread(heads) + spread(subs)
 
 
+def _newest_key(it: ViewItem) -> tuple[datetime, datetime, int]:
+    """D-191: newest first = latest valid_from, then latest recorded_at, then the higher version."""
+    return (it.valid_from or _EPOCH, it.recorded_at or _EPOCH, it.version_id)
+
+
+def _newest_first(f: _File, entries: dict[int, list[Entry]], k: int) -> None:
+    """D-191: ``f.cands`` reordered: its newest ``k`` entries first (a multi-item file: its items'
+    head entries by ``_newest_key``; a single-item document: its last ``k`` level-1/2 entries, the
+    latest first), then the rest in their spread order."""
+    if len(f.items) > 1:
+        heads = [c for c in f.cands if c[1] == -1]
+        heads.sort(key=lambda c: _newest_key(f.items[c[0]][0]), reverse=True)
+        newest = heads[:k]
+    else:
+        ents = entries.get(f.items[0][0].version_id, [])
+        tail = [e for e in ents if e.level <= 2][-k:][::-1]
+        newest = [c for e in tail for c in f.cands if c[1] == e.ordinal and c[2] == e.label][:k]
+    f.cands = newest + [c for c in f.cands if c not in newest]
+
+
+def _doc_pos(f: _File, c: tuple[int, int, str, str, int | None], entries: dict[int, list[Entry]]) -> int:
+    """An entry's position in its item's document (entries sharing one chunk render in document
+    order whatever order the budget took them in; an item head first)."""
+    if c[1] == -1:
+        return -1
+    ents = entries.get(f.items[c[0]][0].version_id, [])
+    return next((i for i, e in enumerate(ents) if e.ordinal == c[1] and e.label == c[2]), len(ents))
+
+
 def build_map(
     items: list[ViewItem],
     entries: dict[int, list[Entry]],
@@ -337,6 +376,7 @@ def build_map(
         f.chunks += max(1, it.n_chunks)
     for f in files.values():
         f.cands = _candidates(f, entries)
+        _newest_first(f, entries, NEWEST_K)
         s = summaries.get(f.key)
         if s is not None and s[1].strip():
             text = " ".join(s[1].split())
@@ -371,24 +411,22 @@ def build_map(
     rendered = [f for f in ordered if f.key in kept]
     used += sum(cost[f.key] for f in rendered) + sum(gcost[g] for g in {f.group for f in rendered})
     omitted = len(ordered) - len(rendered)
-    # 2. summaries: largest sources first, within SUMMARY_SHARE of the budget
-    s_room = min(budget_tokens * SUMMARY_SHARE, budget_tokens - used)
-    shown_summaries = 0
+    # 2. D-191: the newest NEWEST_K entries of every source with more entries (largest sources first)
     for f in sorted(rendered, key=lambda f: (-f.chunks, f.key)):
-        if f.summary is None:
+        if len(f.cands) <= NEWEST_K:
             continue
-        c = ntok(f" ~ {f.summary}")
-        if c > s_room:
-            f.summary, f.summary_members = None, []
-            continue
-        s_room -= c
-        used += c
-        shown_summaries += 1
-    for f in rendered:
-        if f.summary is None:
-            f.summary_members = []
-    # 3. section entries: round-robin by size, each file's candidates in spread order
-    heap = [(-float(f.chunks), i) for i, f in enumerate(rendered) if f.cands]
+        for cand in f.cands[:NEWEST_K]:
+            c = ntok(f" · {cand[2]} {cand[3]}") + (2 if not f.take else 0)
+            if used + c > budget_tokens:
+                break
+            f.take.append(cand)
+            used += c
+    # 3. section entries: round-robin by size, each file's remaining candidates in spread order
+    heap = [
+        (-float(f.chunks) / (1 + len(f.take)), i)
+        for i, f in enumerate(rendered)
+        if len(f.take) < len(f.cands)
+    ]
     heapq.heapify(heap)
     while heap and used < budget_tokens:
         _, i = heapq.heappop(heap)
@@ -402,6 +440,20 @@ def build_map(
             f.cands = f.cands[: len(f.take)]  # this file's next entry does not fit: stop it
         if len(f.take) < len(f.cands):
             heapq.heappush(heap, (-f.chunks / (1 + len(f.take)), i))
+    # 4. D-191: summaries only with the budget the entries left (largest sources first)
+    shown_summaries = 0
+    for f in sorted(rendered, key=lambda f: (-f.chunks, f.key)):
+        if f.summary is None:
+            continue
+        c = ntok(f" ~ {f.summary}")
+        if used + c > budget_tokens:
+            f.summary, f.summary_members = None, []
+            continue
+        used += c
+        shown_summaries += 1
+    for f in rendered:
+        if f.summary is None:
+            f.summary_members = []
     # render
     lines = [header.rstrip("\n")]
     handles: dict[str, tuple[int, int | None]] = {}
@@ -428,7 +480,7 @@ def build_map(
             handles[f"v{it.version_id}"] = (it.version_id, None)
         summary_members.extend(f.summary_members)
         if f.take:
-            ents = sorted(f.take, key=lambda c: (c[0], c[1]))
+            ents = sorted(f.take, key=lambda c: (c[0], c[1], _doc_pos(f, c, entries)))
             lines.append("  " + " · ".join(f"{c[2]} {c[3]}" for c in ents))
             for c in ents:
                 vid = f.items[c[0]][0].version_id
@@ -456,7 +508,7 @@ def build_map(
 # --------------------------------------------------------------------------- the caller's view (DB)
 _VIEW_SQL = """
 SELECT mv.version_id, mv.title, mv.kind, mv.source->>'system', mv.source->>'path', mv.project_ids,
-       (SELECT count(*) FROM chunks c WHERE c.version_id = mv.version_id)::int
+       (SELECT count(*) FROM chunks c WHERE c.version_id = mv.version_id)::int, mv.valid_from, mv.recorded_at
   FROM memory_versions mv
  WHERE %(pid)s = ANY(mv.project_ids) AND mv.device_scope = ANY(%(scopes)s)
    AND mv.status = 'active' AND mv.superseded_at = 'infinity' AND mv.valid_to = 'infinity'
@@ -490,13 +542,17 @@ async def load_view(conn: AsyncConnection, ctx: AuthContext, project_id: int) ->
     policies = await project_policies(conn, touched)
     excluded = await cross_project_excluded(conn, touched)
     out: list[ViewItem] = []
-    for vid, title, kind, system, path, pids, n in rows:
+    for vid, title, kind, system, path, pids, n, valid_from, recorded_at in rows:
         pids = [int(p) for p in pids]
         if not all(p in policies and policies[p] != "off" and ctx.has(p, Role.READ) for p in pids):
             continue
         if not isolation_ok(pids, project_id, excluded):
             continue
-        out.append(ViewItem(int(vid), str(title), str(kind), system, path, int(n or 0), pids))
+        out.append(
+            ViewItem(
+                int(vid), str(title), str(kind), system, path, int(n or 0), pids, valid_from, recorded_at
+            )
+        )
     return out
 
 
