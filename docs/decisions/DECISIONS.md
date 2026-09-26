@@ -885,3 +885,18 @@ The question and the plan queries of the V14 D-157 run were replayed through mem
 - (1) V16 prose mode, for the 6 writing misses.
 - (2) Fuse per item, one vote per item per query, and let `_doc_best`'s chunk for the top-4 items take drill slots. What-if: gold-in-excerpts 20 → 21 of 25 (D010), no losses.
 - (3) Later, with a re-import: table-aware chunking that repeats the header row and nearest heading or caption in a chunk that starts inside a table (D050).
+D-164 | 2026-09-26 | ACCEPTED | **V16 prose mode (wf-memory-ask 2b46633) end-to-end: the best correct/abstain/latency so far, but faithfulness is .828 and is under audit.**
+Same 33 dev questions; token_budget 6000 so claims are not trimmed; faithfulness in source scope:
+| Criterion | V16 prose | V14 D-157 | Gate v2.1 |
+|---|---|---|---|
+| Correct | **.64** | .60 | ≥ .80 and ≥ .83 |
+| Abstain | **1.00 ✓** | .875 | ≥ .90 |
+| Faithful | .828 | .911 | ≥ .95 |
+| Contradiction (answer level) | .08 | .04 | ≤ .04 |
+| Source recall | .90 ✓ | .90 | ≥ .85 |
+| p95 | **10.7 s ✓** | 12.7 s | ≤ 20 s |
+| $/q | .003 ✓ | .003 | ≤ .01 |
+Of 99 statements, 3 were dropped by the hard-literal guard and 6 carry polarity flags.
+Re-scoring the same answers with every sentence attributed to the first 3 of primary+related gives the same faithfulness (.818), so the product's per-sentence attribution is not the cause.
+Over 12 excerpts the prose is less faithful than over ORACLE-sel's ≤ 5 (.922), OR sentences rest on a 4th+ source that the judge's 3-source cap cannot see, OR the judge errs.
+A per-statement audit (JUDGE_FN / CLIPPED / ELSEWHERE / OVERREACH / UNSUPPORTED / CONTRADICTED) decides which. It is also the start of the calibration that consult 81 requires; the independent confirmation comes later.
