@@ -273,6 +273,9 @@ class FakeResearcher:
     select_ids: list[str] | None = None
     #: D-162 prose mode: sentences the JOB prose appends to the facts' own
     prose_extra: list[str] = field(default_factory=list)
+    #: D-165 JOB attribute: the ids per sentence number; None = the excerpts whose text holds the
+    #: sentence (without its final period)
+    attribute_ids: dict[int, list[str]] | None = None
     jobs: list[str] = field(default_factory=list)
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -287,6 +290,8 @@ class FakeResearcher:
             return self._write(excerpts)
         if job == "prose":
             return self._prose(excerpts)
+        if job == "attribute":
+            return self._attribute(inp.get("sentences") or [], excerpts)
         facts = self.facts + (self.check_adds if job == "check" else [])
         claims = []
         for needle in facts:
@@ -383,6 +388,17 @@ class FakeResearcher:
             "related": [e["id"] for e in excerpts if e["id"] not in sources][:3] + self.extra_primary,
             "confidence": "high",
         }
+
+    def _attribute(self, sentences: list[dict[str, Any]], excerpts: list[dict[str, Any]]) -> dict[str, Any]:
+        """D-165 JOB attribute: per numbered sentence, the excerpts that state it."""
+        cites = []
+        for s in sentences:
+            if self.attribute_ids is not None:
+                ids = self.attribute_ids.get(s["n"], [])
+            else:
+                ids = [e["id"] for e in excerpts if s["text"].rstrip(".") in e["text"]][:3]
+            cites.append({"s": s["n"], "ids": ids})
+        return {"cites": cites}
 
     def _extra(self) -> list[dict[str, str]]:
         """Support the model tries to add from handles it was never shown (must be discarded)."""

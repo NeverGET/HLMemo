@@ -423,9 +423,7 @@ async def test_ask_prose_mode_keeps_free_prose_and_drops_only_fabricated_values(
     assert out["meta"]["answer_mode"] == "prose" and out["meta"]["attempts"] == 2
     flags = out["meta"]["flags"]
     assert (flags["dropped_literal"], flags["main_dropped"]) == (1, False) and "polarity_flagged" not in flags
-    # D-165: the server's own embedder scored the sentences against the excerpt lines, in one pass
-    assert flags["attr_embed"] in ("full", "partial") and flags["attr_embedded"] > 2
-    assert 0 <= flags["attr_embed_ms"] <= 1000 * rs.ATTR_EMBED_S + 500
+    assert flags["attribution"] == "sources" and "attr_embed" not in flags  # D-165: the default
     assert "0.4 s" not in out["answer"] and "1.2 s" in out["answer"] and "1,6 s" in out["answer"]
     d004 = world.versions["D-004"]
     assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
@@ -469,6 +467,85 @@ async def test_ask_prose_mode_has_no_polarity_flag(connect, world, deps, db_dsn)
     assert all("flags" not in c for c in out["claims"])
     assert "polarity_flagged" not in out["meta"]["flags"] and out["meta"]["flags"]["dropped_literal"] == 0
     assert out["confidence"] == "high"  # nothing dropped, nothing flagged
+
+
+async def test_ask_prose_mode_wide_attribution_embeds_with_the_servers_embedder(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """D-165 HLM_RESEARCH_ATTRIBUTION=wide: the server's own embedder scores the kept sentences
+    against the excerpt lines, in one pass, within the budget; no extra provider call."""
+    fake = FakeResearcher(facts=["1.2 s", "1,6 s on the VPS"])
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", research_attribution="wide")
+    try:
+        out = await ask(connect, world, deps, r, "What is the current retrieval p95 target?")
+    finally:
+        await r.aclose()
+    flags = out["meta"]["flags"]
+    assert out["abstained"] is False and out["meta"]["steps"] == ["plan", "prose"]
+    assert flags["attribution"] == "wide" and flags["attr_embed"] in ("full", "partial")
+    assert flags["attr_embedded"] > 2 and 0 <= flags["attr_embed_ms"] <= 1000 * rs.ATTR_EMBED_S + 500
+    assert handle_re(world.versions["D-004"]).fullmatch(out["claims"][0]["support"][0]["handle"])
+
+
+async def test_ask_prose_mode_llm_attribution_makes_one_attribute_call(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-165 HLM_RESEARCH_ATTRIBUTION=llm: ONE more call (JOB attribute, research/v3) over the kept
+    sentences and the excerpts the prose saw; its ids are the support (a sentence it gives [] is
+    attributed as sources); ids never shown are ignored."""
+    secret = [f"v{v}.0" for v in world.secret_versions.values()][:1]
+    d001 = world.versions["D-001"]
+    fake = FakeResearcher(
+        facts=["1.2 s", "1,6 s on the VPS"],
+        prose_extra=["SQLite has concurrent writers."],
+        attribute_ids={1: [f"v{d001}.0", *secret], 2: [f"v{d001}.0"], 3: []},
+    )
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", research_attribution="llm")
+    try:
+        out = await ask(
+            connect, world, deps, r, "What is the current retrieval p95 target and what was it before?"
+        )
+    finally:
+        await r.aclose()
+    assert out["abstained"] is False and out["meta"]["steps"] == ["plan", "prose", "attribute"]
+    assert out["meta"]["calls"] == 3 and out["meta"]["attempts"] == 3
+    flags = out["meta"]["flags"]
+    assert flags["attribution"] == "llm" and flags["attr_fallback"] is False and flags["attr_llm_cited"] == 2
+    job, inp = request_job(llm.requests[2])
+    assert job == "attribute" and llm.requests[2]["max_tokens"] == rs.JOB_MAX_TOKENS["attribute"] == 1500
+    assert [x["n"] for x in inp["sentences"]] == [1, 2, 3]
+    assert [x["text"] for x in inp["sentences"]] == [c["text"] for c in out["claims"]]
+    assert [e["id"] for e in inp["excerpts"]] == out["meta"]["excerpts_shown"]
+    assert 'JOB "attribute"' in llm.requests[2]["messages"][0]["content"]
+    supports = [[s["handle"] for s in c["support"]] for c in out["claims"]]
+    assert supports[0] == [f"v{d001}.0"] and supports[1] == [f"v{d001}.0"]  # its ids, the secret ignored
+    assert supports[2] and all(s["quote"] for c in out["claims"] for s in c["support"])
+    assert_no_secret(json.dumps({k: v for k, v in out.items() if k != "meta"}, ensure_ascii=False), world)
+    assert_no_secret(sent_text(llm), world)
+
+
+async def test_ask_prose_mode_llm_attribution_falls_back_to_sources(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-165: a failed JOB attribute (the provider refuses it) never fails the answer: it is
+    attributed as ``sources`` (meta.flags.attr_fallback)."""
+    fake = FakeResearcher(facts=["1.2 s", "1,6 s on the VPS"])
+
+    def model(body: dict[str, Any]) -> Any:
+        return 400 if request_job(body)[0] == "attribute" else fake(body)
+
+    llm = ScriptedLLM(default=model)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", research_attribution="llm")
+    try:
+        out = await ask(
+            connect, world, deps, r, "What is the current retrieval p95 target and what was it before?"
+        )
+    finally:
+        await r.aclose()
+    assert out["abstained"] is False and out["meta"]["steps"] == ["plan", "prose"]  # not counted
+    assert "attribute" in [request_job(b)[0] for b in llm.requests]
+    flags = out["meta"]["flags"]
+    assert flags["attribution"] == "sources" and flags["attr_fallback"] is True
+    d004 = world.versions["D-004"]
+    assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
 
 
 async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001

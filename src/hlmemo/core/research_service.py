@@ -56,15 +56,18 @@ D-162 ``HLM_RESEARCH_ANSWER_MODE=prose`` (V16): step 4 is the JOB ``prose`` (fre
 it draws on, checked by ``research.validate_prose``: a sentence is dropped only for a hard literal no
 shown excerpt states; every other one is kept and attributed to its best source lines), a refinement
 re-answers with ``prose``, and steps 6 and 7 do not run; the re-check (8) checks and attributes each
-kept sentence again over the excerpts still citable. D-165: the attribution scores every shown
-excerpt's lines by shared hard literals, then content words, then the multilingual similarity of the
-server's own embedder (the one the hybrid search embeds queries with: one embedding of the kept
-sentences and the excerpt lines per answer, ``research.LineSim``, within ``research.ATTR_EMBED_S``; no
-embedder or no time → literals and words alone); the model's ``sources`` are a tie-break only; there
-is no polarity flag.
+kept sentence again over the excerpts still citable. D-165: the attribution is a configured
+strategy (``HLM_RESEARCH_ATTRIBUTION``, ``research.attribute``): ``sources`` (default, V16: the model's
+sources, literal + word scoring); ``wide`` (every shown excerpt, literals > words > the multilingual
+similarity of the server's own embedder, the one the hybrid search embeds queries with: one
+embedding of the kept sentences and the excerpt lines per answer, ``research.LineSim``, within
+``research.ATTR_EMBED_S``); ``llm`` (ONE more call after an answered prose, JOB ``attribute``: the ids
+that state each numbered kept sentence; a failed call, or a sentence given none, falls back to
+``sources``). There is no polarity flag.
 
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
-D-159 select (plan, select, write, refine, select, write); provider requests (schema retries,
+D-159 select (plan, select, write, refine, select, write), ``research.MAX_CALLS_ATTRIBUTE`` (5) with
+the D-165 llm attribution (plan, prose, refine, prose, attribute); provider requests (schema retries,
 fallback) are capped per question by the lineage ceiling (``research.MAX_ATTEMPTS``). Before every
 call the strict privacy gate runs over exactly the version ids whose text is in the prompt: denied
 items are removed and the prompt rebuilt; an item that was already SENT and is now denied for a
@@ -140,6 +143,8 @@ PLAN_CAP_S = 10.0
 ANSWER_CAP_S = 18.0
 CHECK_CAP_S = 16.0
 REFINE_CAP_S = 9.0
+#: D-165: the JOB attribute's cap (llm attribution)
+ATTRIBUTE_CAP_S = 10.0
 #: D-159: the select call's cap, and the time it must leave for the write (else no select)
 SELECT_CAP_S = 8.0
 SELECT_WRITE_RESERVE_S = 8.0
@@ -300,8 +305,11 @@ class _Run:
     excluded: set[int] = field(default_factory=set)
     sent: set[int] = field(default_factory=set)
     lineage: str = field(default_factory=lambda: str(uuid.uuid4()))
-    #: D-165: the last prose answer's sentence/line similarity (the re-check reads its cache)
+    #: D-165: the last prose answer's attribution (the strategy used, ``wide``'s similarity cache and
+    #: ``llm``'s ids per kept sentence text): the re-check attributes the same way
+    attribution: str = "sources"
     sim: rs.LineSim | None = None
+    llm_cites: dict[str, list[str]] | None = None
     #: D-165 (meta.excerpts_shown): the excerpt handles the LAST answer step (answer/check, write,
     #: prose) was shown, in prompt order
     excerpts_shown: list[str] = field(default_factory=list)
@@ -736,15 +744,60 @@ class _Run:
         if obj is None:
             return rs.validate_prose(obj, shown, self.researcher.redactor.text)
         self.excerpts_shown = list(shown)
-        self.sim = self.line_sim()
-        v = await asyncio.to_thread(rs.validate_prose, obj, shown, self.researcher.redactor.text, self.sim)
+        strategy, self.sim, self.llm_cites = self.researcher.attribution, None, None
+        if strategy == "llm":
+            self.llm_cites = await self.attribute_call(obj, shown)
+            self.flags["attr_fallback"] = self.llm_cites is None
+            if self.llm_cites is None:
+                strategy = "sources"
+        elif strategy == "wide":
+            self.sim = self.line_sim()
+        self.attribution = strategy
+        v = await asyncio.to_thread(
+            rs.validate_prose,
+            obj,
+            shown,
+            self.researcher.redactor.text,
+            strategy,
+            embed=self.sim,
+            llm_cites=self.llm_cites,
+        )
         self.flags["dropped_claims"] = v.dropped_claims
         self.flags["main_dropped"] = v.main_dropped
         self.flags["dropped_literal"] = v.drop_reasons.get("literal", 0)
-        self.flags["attr_embed"] = self.sim.state if self.sim is not None else "off"
-        self.flags["attr_embedded"] = self.sim.embedded if self.sim is not None else 0
-        self.flags["attr_embed_ms"] = int(self.sim.seconds * 1000) if self.sim is not None else 0
+        self.flags["attribution"] = strategy
+        if self.researcher.attribution == "wide":
+            self.flags["attr_embed"] = self.sim.state if self.sim is not None else "off"
+            self.flags["attr_embedded"] = self.sim.embedded if self.sim is not None else 0
+            self.flags["attr_embed_ms"] = int(self.sim.seconds * 1000) if self.sim is not None else 0
+        if self.llm_cites is not None:
+            self.flags["attr_llm_cited"] = sum(1 for ids in self.llm_cites.values() if ids)
         return v
+
+    async def attribute_call(
+        self, obj: dict[str, Any], shown: dict[str, rs.Excerpt]
+    ) -> dict[str, list[str]] | None:
+        """D-165 ``llm``: the JOB ``attribute`` over the kept sentences of the prose output and the
+        excerpts the prose job saw (through the same gate, budget and attempt guards as every call)
+        → the excerpt ids per kept sentence text; None (the caller falls back to ``sources``) when
+        nothing was kept, or the call failed, timed out or was not made (call cap, question budget)."""
+        sentences = rs.prose_kept(obj, shown)
+        if not sentences:
+            return None
+        excerpts = list(shown.values())
+
+        def build() -> tuple[str, list[int]]:
+            ex = [e for e in excerpts if e.version_id not in self.excluded]
+            return rs.attribute_user(self.question, sentences, ex, self.redact), [e.version_id for e in ex]
+
+        try:
+            out = await self.call("attribute", build, ATTRIBUTE_CAP_S)
+        except rs.ResearchUnavailable:
+            return None
+        if out is None:
+            return None
+        admitted = [e.handle for e in excerpts if e.version_id not in self.excluded]
+        return rs.parse_attribute(out, sentences, admitted)
 
     def line_sim(self) -> rs.LineSim | None:
         """D-165: the attribution's similarity over the server's own embedder (``deps.embedder``, the
@@ -842,10 +895,12 @@ async def ask(
             run.flags.update({f"dropped_{why}": 0 for why in rs.DROP_REASONS})
         if researcher.select:  # D-159
             run.flags.update({"selected": 0, "select_fallback": False})
-        if run.prose:  # D-162: the prose mode's own counts (meta.flags); D-165: the embedding's
-            run.flags.update(
-                {"dropped_literal": 0, "attr_embed": "off", "attr_embedded": 0, "attr_embed_ms": 0}
-            )
+        if run.prose:  # D-162: the prose mode's own counts (meta.flags); D-165: its attribution's
+            run.flags.update({"dropped_literal": 0, "attribution": researcher.attribution})
+            if researcher.attribution == "wide":
+                run.flags.update({"attr_embed": "off", "attr_embedded": 0, "attr_embed_ms": 0})
+            if researcher.attribution == "llm":
+                run.flags.update({"attr_fallback": False, "attr_llm_cited": 0})
         readable = (
             {p for v in view for p in v.project_ids} | {project.project_id}
             if ctx.is_admin
@@ -1036,11 +1091,17 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             abstain_reason = "sources_changed"
     elif v.answered and run.prose:
         # D-162: each kept sentence is checked again against the excerpts still citable (a hard
-        # literal none of them states drops it) and attributed again over them (D-165: with the
-        # answer's cached similarity; nothing is embedded again)
+        # literal none of them states drops it) and attributed again over them (D-165: the same
+        # strategy; wide reads the answer's cached similarity, llm its ids still citable)
         sources = [h for h in v.sources if h in ok]
         prose_claims, _reasons = await asyncio.to_thread(
-            rs.prose_check, [(cl.text, cl.line_end) for cl in v.kept], sources, ok, run.sim
+            rs.prose_check,
+            [(cl.text, cl.line_end) for cl in v.kept],
+            sources,
+            ok,
+            run.attribution,
+            embed=run.sim,
+            llm_cites=run.llm_cites,
         )
         before, settled = len(v.kept), v.confidence
         v = rs.assemble_prose(

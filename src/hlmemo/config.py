@@ -245,7 +245,8 @@ class Settings(BaseSettings):
     # earlier release (R3) on this image never serves it and never spends; the R4 release manifest
     # (deploy/scripts/check_librarian.py) pins it on in the R4 llm.env.
     research_enabled: bool = False
-    # The whole memory.ask request (DB phases + at most 4 LLM calls, 6 with research_select), seconds.
+    # The whole memory.ask request (DB phases + at most 4 LLM calls, 6 with research_select, 5 with
+    # research_attribution=llm), seconds.
     research_timeout_s: float = Field(default=25.0, gt=0, le=120)
     # A runaway guard PER QUESTION (addendum 5): actual spend so far + the next call's worst case
     # (its max_tokens) must stay within these, else the remaining steps are skipped and the answer
@@ -260,9 +261,16 @@ class Settings(BaseSettings):
     # full text (literals, polarity); no completeness call (prompt research/v2). D-162 "prose" (V16):
     # free prose plus the sources it draws on; a sentence is dropped only when a hard literal of it (a
     # digit, a backticked identifier) is in no shown excerpt, every other one is kept and attributed
-    # to its best source lines (a polarity mismatch is flagged, not dropped); no completeness call
-    # (prompt research/v3).
+    # to its best source lines (HLM_RESEARCH_ATTRIBUTION; D-165: no polarity flag); no completeness
+    # call (prompt research/v3).
     research_answer_mode: Literal["claims", "cite", "prose"] = "claims"
+    # D-165: how the prose mode attributes each kept sentence to excerpts (shown as its support and
+    # used to rank primary/related). "sources" (default, V16): the model's sources (else every shown
+    # excerpt), literal + word scoring. "wide": every shown excerpt, literals > words > the
+    # multilingual similarity of the server's embedder. "llm": ONE extra provider call (JOB attribute,
+    # research/v3) names the excerpts per sentence; a failed call, or a sentence it gives none, falls
+    # back to "sources". Ignored in the claims and cite modes.
+    research_attribution: Literal["sources", "wide", "llm"] = "sources"
     # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
     # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
     # (the others stay drillable in `related`); an empty or failed select writes over them all.

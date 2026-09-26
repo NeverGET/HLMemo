@@ -91,11 +91,17 @@ from hlmemo.librarian.tasks.synthesis import claims as literal_claims
 log = logging.getLogger("hlmemo.librarian.research")
 
 TASK = "research"
-JOBS = ("plan", "answer", "check", "refine", "write", "select", "prose")
+JOBS = ("plan", "answer", "check", "refine", "write", "select", "prose", "attribute")
 #: D-156: ``claims`` (the default: quoted claims + the completeness pass, research/v1) or ``cite``
 #: (V14 "write, then cite": sentences citing excerpt handles, verified deterministically, research/v2);
 #: D-162: ``prose`` (V16: free prose, only fabricated values dropped, research/v3)
 ANSWER_MODES = ("claims", "cite", "prose")
+#: D-165: how a prose answer's sentences are attributed to excerpts (``HLM_RESEARCH_ATTRIBUTION``,
+#: ``attribute``): the model's sources (V16, default), every shown excerpt with the embedding
+#: (``wide``), or one extra JOB attribute (``llm``, falls back to ``sources``)
+ATTRIBUTIONS = ("sources", "wide", "llm")
+#: D-165 ``llm``: the excerpt ids one sentence may be attributed to (the prompt says "1 to 3")
+ATTRIBUTE_MAX = 3
 #: the opt-in prompt versions of the cite and prose modes (``prompts.OPT_IN_VERSIONS``: never the
 #: default)
 CITE_PROMPT_VERSION = 2
@@ -104,9 +110,12 @@ PROSE_PROMPT_VERSION = 3
 #: the answer abstained, plan, answer, refine, answer (``MAX_CALLS_NO_SELECT``; the prose mode: plan,
 #: prose — or plan, prose, refine, prose). D-159 select-then-
 #: write (cite mode + ``HLM_RESEARCH_SELECT``) adds one select before each write: plan, select,
-#: write — or plan, select, write, refine, select, write (``MAX_CALLS``)
+#: write — or plan, select, write, refine, select, write (``MAX_CALLS``). D-165 ``llm`` attribution
+#: (prose mode) adds one attribute after an answered prose: plan, prose, attribute — or plan, prose,
+#: refine, prose, attribute (``MAX_CALLS_ATTRIBUTE``)
 MAX_CALLS = 6
 MAX_CALLS_NO_SELECT = 4
+MAX_CALLS_ATTRIBUTE = 5
 #: provider requests of one question (schema retries and fallbacks included), DB-enforced per lineage
 MAX_ATTEMPTS = 9
 MAX_IN_FLIGHT = 4
@@ -120,6 +129,7 @@ JOB_MAX_TOKENS = {
     "write": 3000,
     "select": 800,
     "prose": 3000,
+    "attribute": 1500,
 }
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
@@ -731,8 +741,16 @@ def job_validator(job: str) -> Callable[[dict[str, Any]], str | None]:
         return plan
     if job == "select":
         return select
+
+    def attribute(obj: dict[str, Any]) -> str | None:
+        if not isinstance(obj.get("cites"), list):
+            return "cites missing"
+        return None
+
     if job == "prose":
         return prose
+    if job == "attribute":
+        return attribute
     return write if job == "write" else answer
 
 
@@ -1674,7 +1692,7 @@ def _lexical(body: str, lits: list[str], units: dict[str, list[_Unit]], hay_of: 
     return _Lexical(doc, line)
 
 
-def _attribute(
+def _attribute_wide(
     lits: list[str],
     lex: _Lexical,
     rel: dict[_Key, float],
@@ -1684,12 +1702,12 @@ def _attribute(
     shown: dict[str, Excerpt],
     units: dict[str, list[_Unit]],
 ) -> list[tuple[str, str]]:
-    """D-165: the support of one kept sentence. EVERY shown excerpt is a candidate: ``ATTR_DOC`` × the
-    hard literals it states plus its best line's ``lex.line`` + ``ATTR_EMB`` × relative similarity
-    ``rel``. The ≤ ``PROSE_ATTRIBUTE`` best (score plus the tie-break bonus of an excerpt the sentence
-    names in ``cited`` or the model named in ``sources``) with at least ``ATTR_MIN``, or the excerpt
-    of the sentence's most similar line (``nearest``), are its support, each with its best line
-    (``_display``; the excerpt's first line when no line shares anything). None qualifies (no
+    """D-165 ``wide``: the support of one sentence. EVERY shown excerpt is a candidate: ``ATTR_DOC`` ×
+    the hard literals it states plus its best line's ``lex.line`` + ``ATTR_EMB`` × relative
+    similarity ``rel``. The ≤ ``PROSE_ATTRIBUTE`` best (score plus the tie-break bonus of an excerpt
+    the sentence names in ``cited`` or the model named in ``sources``) with at least ``ATTR_MIN``, or
+    the excerpt of the sentence's most similar line (``nearest``), are its support, each with its best
+    line (``_display``; the excerpt's first line when no line shares anything). None qualifies (no
     similarity) → the single best, which is the first source when nothing is shared at all."""
     bonus = {h: ATTR_SOURCE for h in sources} | {h: ATTR_CITED for h in cited}
     ranked: list[tuple[float, int, str, float, str]] = []
@@ -1708,31 +1726,143 @@ def _attribute(
     ]
 
 
-def prose_check(
-    sentences: list[tuple[str, bool]],
-    sources: list[str],
-    shown: dict[str, Excerpt],
-    sim: LineSim | None = None,
-) -> tuple[list[Claim], dict[str, int]]:
-    """D-162: the deterministic check of prose sentences (``split_sentences``) against the excerpts
-    the answer was written from: ``(claims, drop counts by reason)``.
+def _best_line(body: str, lits: list[str], ex: Excerpt, units: list[_Unit]) -> tuple[tuple[int, int], str]:
+    """``((its hard literals in the line, its content words in the line), line)`` of the line of ``ex``
+    that shares the most with a sentence (literals first); ``((0, 0), "")`` when none shares."""
+    words = _content(body)
+    score, line = (0, 0), ""
+    for unit, cw, uhay in units:
+        s = (sum(1 for x in lits if literal_supported(x, uhay)), _hits(words, cw))
+        if s > score:
+            score, line = s, unit
+    return score, line
 
-    - literal: a sentence is DROPPED only when one of its hard literals (``hard_literals``) is in no
-      shown excerpt (their texts, titles and dates together: what the model was shown);
-    - every other sentence is KEPT and attributed (D-165 ``_attribute``) over every shown excerpt,
-      with the multilingual similarity of ``sim`` (its one embedding of the kept sentences and the
-      excerpts' lines, ``_embed_order``) when there is one; there is no polarity check (D-165: its
-      flags were false positives);
-    - unsupported: only when nothing was shown (no excerpt to attribute to).
-    Handles written in a sentence ("[v12.3]" is removed from the text, a bare shown handle stays) and
-    the model's ``sources`` are tie-breaks. Sentences past ``ANSWER_MAX_CHARS`` of kept text are not
-    checked."""
-    hay_of = {h: _hay([e.title, e.date, e.text]) for h, e in shown.items()}
-    hay = "\n".join(hay_of.values())
+
+def _shown_line(
+    h: str, score: tuple[int, int], line: str, lits: list[str], shown: dict[str, Excerpt]
+) -> tuple[str, str]:
+    """The displayed quote of excerpt ``h`` for a sentence: its best line when that shares a literal
+    or two words (``_display``), else the excerpt's first line."""
+    if line and (score[0] >= 1 or score[1] >= 2):
+        return h, _display(line, lits)
+    return h, _cut(_first_line(shown[h]))
+
+
+def _attribute_sources(
+    body: str,
+    lits: list[str],
+    preferred: list[str],
+    shown: dict[str, Excerpt],
+    hay_of: dict[str, str],
+    units: dict[str, list[_Unit]],
+) -> list[tuple[str, str]]:
+    """D-162 (V16, the D-165 ``sources`` strategy): the support of one sentence. The candidates are
+    ``preferred`` (the handles it names, then the model's sources; none valid → every shown excerpt),
+    plus any other shown excerpt that states one of its hard literals the candidates lack. The ≤
+    ``PROSE_ATTRIBUTE`` candidates sharing the most hard literals with it, then content words (≥ 1
+    literal or ≥ 2 words), are its support, each with its best line (``_shown_line``). Sharing
+    nothing, it is attributed to the first candidate's first line."""
+    pool = [h for h in dict.fromkeys(preferred) if h in shown] or list(shown)
+    if not pool:
+        return []
+    have = "\n".join(hay_of[h] for h in pool)
+    missing = [x for x in lits if not literal_supported(x, have)]
+    if missing:
+        pool += [h for h in shown if h not in pool and any(literal_supported(x, hay_of[h]) for x in missing)]
+    ranked: list[tuple[tuple[int, int, int], int, str, str]] = []
+    for i, h in enumerate(pool):
+        here = [x for x in lits if literal_supported(x, hay_of[h])]
+        score, line = _best_line(body, here, shown[h], units[h])
+        ranked.append(((len(here), *score), i, h, line))
+    ranked.sort(key=lambda r: (-r[0][0], -r[0][1], -r[0][2], r[1]))
+    chosen = [r for r in ranked if r[0][0] >= 1 or r[0][2] >= 2][:PROSE_ATTRIBUTE]
+    if not chosen:
+        return [(pool[0], _cut(_first_line(shown[pool[0]])))]
+    return [_shown_line(h, (n_line, hits), line, lits, shown) for (_n, n_line, hits), _i, h, line in chosen]
+
+
+def _attribute_ids(
+    body: str, lits: list[str], ids: list[str], shown: dict[str, Excerpt], units: dict[str, list[_Unit]]
+) -> list[tuple[str, str]]:
+    """D-165 ``llm``: the excerpts the attribute JOB named for one sentence, in its order, each with
+    its best line (``_shown_line``)."""
+    return [_shown_line(h, *_best_line(body, lits, shown[h], units[h]), lits, shown) for h in ids]
+
+
+def attribute(
+    sentences: list[str],
+    shown: dict[str, Excerpt],
+    strategy: str,
+    *,
+    model_sources: list[str],
+    llm_cites: list[list[str]] | None = None,
+    embed: Embed | LineSim | None = None,
+) -> list[list[tuple[str, str]]]:
+    """D-165: the support ``[(handle, displayed line), ...]`` of each of ``sentences`` (answer
+    sentences as written: an inline "[v12.3]" or a bare shown handle names an excerpt, a list marker
+    is layout) over the ``shown`` excerpts. PURE (no I/O; ``embed`` is only computed with), so the
+    strategies can be replayed offline on saved answers (``HLM_RESEARCH_ATTRIBUTION``):
+
+    - ``sources`` (default; V16, D-162): candidates are the handles the sentence names and the
+      model's ``model_sources`` (none → every shown excerpt) plus an excerpt stating a hard literal
+      they lack; literal + word scoring (``_attribute_sources``); no embedding.
+    - ``wide`` (cbc4297): every shown excerpt is a candidate, scored by literals, words and the
+      multilingual similarity of ``embed`` (a ``LineSim``, or texts -> L2-normalised rows; None →
+      literals and words only; ``_attribute_wide``).
+    - ``llm``: ``llm_cites[i]`` are the excerpt ids the JOB attribute named for sentence ``i`` (ids
+      not shown are ignored, ≤ ``ATTRIBUTE_MAX``); each is shown with its best line. A sentence with
+      no valid id (or no ``llm_cites``) is attributed as ``sources``.
+    """
+    if not shown:
+        return [[] for _ in sentences]
     cache: dict[str, list[_Unit]] = {}
+    units = {h: _units(ex, cache) for h, ex in shown.items()}
+    hay_of = {h: _hay([e.title, e.date, e.text]) for h, e in shown.items()}
+    sources = [h for h in dict.fromkeys(model_sources) if h in shown]
+    parsed: list[tuple[str, list[str], list[str]]] = []  # (body, hard literals, handles it names)
+    for s in sentences:
+        text, inline = split_inline_cites(s, shown)
+        body = _body(text)
+        refs = [h for h in _BARE_HANDLE.findall(body) if h in shown]
+        parsed.append(
+            (body, hard_literals(body, shown), [h for h in dict.fromkeys([*inline, *refs]) if h in shown])
+        )
+    if strategy == "wide":
+        sim = embed if isinstance(embed, LineSim) or embed is None else LineSim(embed)
+        lexes = [_lexical(body, lits, units, hay_of) for body, lits, _c in parsed]
+        if sim is not None:
+            order = [*sources, *(h for h in shown if h not in sources)]
+            sim.prepare(_embed_order([body for body, _l, _c in parsed], order, units, lexes))
+        lines = _Lines(sim, units)
+        out = []
+        for (body, lits, cited), lex in zip(parsed, lexes, strict=True):
+            rel, nearest = lines.relative(sim.get(body) if sim is not None else None)
+            out.append(_attribute_wide(lits, lex, rel, nearest, cited, sources, shown, units))
+        return out
+    out = []
+    for i, (body, lits, cited) in enumerate(parsed):
+        ids: list[str] = []
+        if strategy == "llm" and llm_cites is not None and i < len(llm_cites):
+            ids = [h for h in dict.fromkeys(llm_cites[i]) if h in shown][:ATTRIBUTE_MAX]
+        if ids:
+            out.append(_attribute_ids(body, lits, ids, shown, units))
+        else:
+            out.append(_attribute_sources(body, lits, [*cited, *sources], shown, hay_of, units))
+    return out
+
+
+def _prose_keep(
+    sentences: list[tuple[str, bool]], shown: dict[str, Excerpt]
+) -> tuple[list[Claim], dict[str, int], list[str]]:
+    """D-162: the literal check of prose sentences: ``(claims, drop counts by reason, the kept
+    sentences as written)``. A sentence is DROPPED only when one of its hard literals is in no shown
+    excerpt (texts, titles and dates together: what the model was shown), or (``unsupported``) when
+    nothing was shown; every other one is KEPT (its support is ``attribute``'s). Sentences past
+    ``ANSWER_MAX_CHARS`` of kept text are not checked."""
+    hay = "\n".join(_hay([e.title, e.date, e.text]) for e in shown.values())
     claims: list[Claim] = []
     reasons = {"literal": 0, "unsupported": 0}
-    todo: list[tuple[Claim, str, list[str], list[str]]] = []  # a kept claim, its body, literals, cites
+    raws: list[str] = []
     size = 0
 
     def carry(brk: bool) -> None:  # a dropped sentence's line break stays in the answer
@@ -1741,40 +1871,48 @@ def prose_check(
             last.line_end = True
 
     for raw, brk in sentences:
-        text, inline = split_inline_cites(raw, shown)
+        text, _inline = split_inline_cites(raw, shown)
         body = _body(text)
         if not any(ch.isalnum() for ch in body):
             continue
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
             break
-        lits = hard_literals(body, shown)
-        if not all(literal_supported(x, hay) for x in lits):
-            reasons["literal"] += 1
-            claims.append(Claim(text, [], "dropped", line_end=brk))
-            carry(brk)
-            continue
-        if not shown:
-            reasons["unsupported"] += 1
+        why = None
+        if not all(literal_supported(x, hay) for x in hard_literals(body, shown)):
+            why = "literal"
+        elif not shown:
+            why = "unsupported"
+        if why is not None:
+            reasons[why] += 1
             claims.append(Claim(text, [], "dropped", line_end=brk))
             carry(brk)
             continue
         size += len(text) + (1 if size else 0)
-        refs = [h for h in _BARE_HANDLE.findall(body) if h in shown]
-        claim = Claim(text, [], "kept", line_end=brk)
-        claims.append(claim)
-        todo.append((claim, body, lits, [h for h in dict.fromkeys([*inline, *refs]) if h in shown]))
-    if not todo:
-        return claims, reasons
-    units = {h: _units(ex, cache) for h, ex in shown.items()}
-    lexes = [_lexical(body, lits, units, hay_of) for _c, body, lits, _h in todo]
-    if sim is not None:
-        order = [*(h for h in sources if h in shown), *(h for h in shown if h not in sources)]
-        sim.prepare(_embed_order([body for _c, body, _l, _h in todo], order, units, lexes))
-    lines = _Lines(sim, units)
-    for (claim, body, lits, cited), lex in zip(todo, lexes, strict=True):
-        rel, nearest = lines.relative(sim.get(body) if sim is not None else None)
-        claim.support = _attribute(lits, lex, rel, nearest, cited, sources, shown, units)
-        claim.cited = [h for h, _q in claim.support]
+        claims.append(Claim(text, [], "kept", line_end=brk))
+        raws.append(raw)
+    return claims, reasons, raws
+
+
+def prose_check(
+    sentences: list[tuple[str, bool]],
+    sources: list[str],
+    shown: dict[str, Excerpt],
+    strategy: str = "sources",
+    *,
+    embed: Embed | LineSim | None = None,
+    llm_cites: dict[str, list[str]] | None = None,
+) -> tuple[list[Claim], dict[str, int]]:
+    """D-162: the deterministic check of prose sentences (``split_sentences``) against the excerpts
+    the answer was written from: ``(claims, drop counts by reason)``. A sentence is dropped only for
+    a hard literal no shown excerpt states (``_prose_keep``); every other one is kept and attributed
+    by ``attribute`` with ``strategy`` (D-165; ``llm_cites``: the JOB attribute's ids per kept sentence
+    TEXT). There is no polarity check (D-165: its flags were false positives)."""
+    claims, reasons, raws = _prose_keep(sentences, shown)
+    kept = [c for c in claims if c.state == "kept"]
+    cites = [llm_cites.get(c.text, []) for c in kept] if llm_cites is not None else None
+    supports = attribute(raws, shown, strategy, model_sources=sources, llm_cites=cites, embed=embed)
+    for c, support in zip(kept, supports, strict=True):
+        c.support, c.cited = support, [h for h, _q in support]
     return claims, reasons
 
 
@@ -1826,28 +1964,48 @@ def assemble_prose(
     )  # fmt: skip
 
 
-def validate_prose(
-    obj: dict[str, Any] | None,
-    shown: dict[str, Excerpt],
-    redact: Callable[[str], str] = lambda s: s,
-    sim: LineSim | None = None,
-) -> Validated:
-    """D-162: the deterministic check of a ``prose`` output against the excerpts it was shown
-    (``prose_check``): sentences with a fabricated hard literal are dropped (``drop_reasons``), the
-    rest is the answer, attributed over every shown excerpt (D-165, with ``sim``'s similarity when
-    given); the model's ``sources`` (shown ids only, ≤ ``PROSE_MAX_SOURCES``) are a tie-break. Never
-    cites a handle that was not shown."""
+def _prose_fields(
+    obj: dict[str, Any] | None, shown: dict[str, Excerpt]
+) -> tuple[str | None, str, list[str], list[str], str]:
+    """``(status, confidence, sources, related hint, answer)`` of a ``prose`` output: the model's
+    ``sources`` are shown ids only (≤ ``PROSE_MAX_SOURCES``); the answer is empty unless answered."""
     obj = obj or {}
     status = obj.get("status") if obj.get("status") in (ANSWERED, INSUFFICIENT) else None
     conf = obj.get("confidence") if obj.get("confidence") in _CONF else "low"
     raw = obj.get("sources")
     raw = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
     sources = [h for h in dict.fromkeys(x.strip() for x in raw if isinstance(x, str)) if h in shown]
-    sources = sources[:PROSE_MAX_SOURCES]
     rel = obj.get("related") if isinstance(obj.get("related"), list) else []
     related_hint = [h.strip() for h in rel if isinstance(h, str)]
     answer = obj.get("answer") if status == ANSWERED and isinstance(obj.get("answer"), str) else ""
-    claims, reasons = prose_check(split_sentences(answer), sources, shown, sim)
+    return status, conf, sources[:PROSE_MAX_SOURCES], related_hint, answer
+
+
+def prose_kept(obj: dict[str, Any] | None, shown: dict[str, Excerpt]) -> list[str]:
+    """D-165: the sentences of a ``prose`` output that survive the literal check, as they are kept in
+    the answer (the numbered sentences of the JOB attribute; their order is ``validate_prose``'s)."""
+    _s, _c, _src, _rel, answer = _prose_fields(obj, shown)
+    claims, _reasons, _raws = _prose_keep(split_sentences(answer), shown)
+    return [c.text for c in claims if c.state == "kept"]
+
+
+def validate_prose(
+    obj: dict[str, Any] | None,
+    shown: dict[str, Excerpt],
+    redact: Callable[[str], str] = lambda s: s,
+    strategy: str = "sources",
+    *,
+    embed: Embed | LineSim | None = None,
+    llm_cites: dict[str, list[str]] | None = None,
+) -> Validated:
+    """D-162: the deterministic check of a ``prose`` output against the excerpts it was shown
+    (``prose_check``): sentences with a fabricated hard literal are dropped (``drop_reasons``), the
+    rest is the answer, attributed by ``strategy`` (D-165 ``attribute``). Never cites a handle that
+    was not shown."""
+    status, conf, sources, related_hint, answer = _prose_fields(obj, shown)
+    claims, reasons = prose_check(
+        split_sentences(answer), sources, shown, strategy, embed=embed, llm_cites=llm_cites
+    )
     return assemble_prose(
         status,
         claims,
@@ -1860,6 +2018,45 @@ def validate_prose(
         main_dropped=bool(claims) and claims[0].state != "kept",
         drop_reasons=reasons,
     )
+
+
+def attribute_user(
+    question: str, sentences: list[str], excerpts: list[Excerpt], redact: Redact | None = None
+) -> str:
+    """D-165 ``llm`` attribution: the JOB ``attribute`` (the question, the kept answer sentences
+    numbered from 1, the excerpts the prose job saw: id, title, text)."""
+    payload = {
+        "question": question,
+        "sentences": [{"n": i, "text": s} for i, s in enumerate(sentences, start=1)],
+        "excerpts": [{"id": e.handle, "title": e.title, "text": e.text} for e in excerpts],
+    }
+    return "JOB: attribute\n" + _input(payload, redact)
+
+
+def parse_attribute(
+    obj: dict[str, Any] | None, sentences: list[str], shown: Iterable[str]
+) -> dict[str, list[str]]:
+    """D-165: the JOB attribute's ``cites`` as ``{sentence text: [excerpt id, ...]}``: numbers 1..n
+    of ``sentences`` only (the first entry of a number wins), shown ids only, each once, ≤
+    ``ATTRIBUTE_MAX``; a sentence it left out (or ``[]``) maps to ``[]`` (attributed as ``sources``)."""
+    ok = set(shown)
+    got: dict[int, list[str]] = {}
+    raw = obj.get("cites") if isinstance(obj, dict) else None
+    for x in raw if isinstance(raw, list) else []:
+        if not isinstance(x, dict):
+            continue
+        try:
+            n = int(x.get("s"))
+        except (TypeError, ValueError):
+            continue
+        ids = x.get("ids")
+        ids = [ids] if isinstance(ids, str) else ids if isinstance(ids, list) else []
+        if 1 <= n <= len(sentences) and n not in got:
+            got[n] = [h for h in dict.fromkeys(str(i).strip() for i in ids) if h in ok][:ATTRIBUTE_MAX]
+    out: dict[str, list[str]] = {}
+    for n, s in enumerate(sentences, start=1):
+        out.setdefault(s, got.get(n, []))
+    return out
 
 
 # --------------------------------------------------------------------------- addendum 6
@@ -2063,6 +2260,11 @@ class Researcher:
         # D-159: select-then-write, only in the cite mode (its prompt has the JOB select)
         self.select: bool = self.answer_mode == "cite" and bool(getattr(settings, "research_select", False))
         self.max_calls: int = MAX_CALLS if self.select else MAX_CALLS_NO_SELECT
+        # D-165: the prose mode's attribution strategy (the others have their own checks)
+        attribution = getattr(settings, "research_attribution", "sources")
+        self.attribution: str = attribution if attribution in ATTRIBUTIONS else "sources"
+        if self.answer_mode == "prose" and self.attribution == "llm":
+            self.max_calls = MAX_CALLS_ATTRIBUTE
         # D-156/D-162: the cite and prose modes' prompts are opt-in versions; the claims mode keeps the
         # default (v1, or a pin) unless that prompt has no JOB "answer" (another mode's prompt pinned
         # by mistake)
@@ -2267,6 +2469,8 @@ async def close_app_researcher(app: Any) -> None:
 __all__ = [
     "ANSWERED",
     "ANSWER_MODES",
+    "ATTRIBUTE_MAX",
+    "ATTRIBUTIONS",
     "CITE_PROMPT_VERSION",
     "DROP_REASONS",
     "INSUFFICIENT",
@@ -2274,16 +2478,20 @@ __all__ = [
     "MAX_ATTEMPTS",
     "MAX_CALLS",
     "MAX_CALLS_NO_SELECT",
+    "MAX_CALLS_ATTRIBUTE",
     "PROSE_PROMPT_VERSION",
     "SELECT_MAX",
     "TASK",
     "Claim",
     "Excerpt",
+    "LineSim",
     "ResearchUnavailable",
     "Researcher",
     "Validated",
     "answer_user",
     "app_researcher",
+    "attribute",
+    "attribute_user",
     "assemble",
     "assemble_cited",
     "assemble_prose",
@@ -2301,10 +2509,12 @@ __all__ = [
     "literal_supported",
     "literals_ok",
     "merge_check",
+    "parse_attribute",
     "parse_plan",
     "parse_select",
     "plan_user",
     "prose_check",
+    "prose_kept",
     "prose_user",
     "qnorm",
     "refine_user",

@@ -1363,13 +1363,21 @@ class _ScriptedRun(rsv._Run):
     excerpt ids each JOB was shown."""
 
     def __init__(
-        self, outputs: dict[str, object], *, select: bool = True, time_s: float = 60.0, mode: str = "cite"
+        self,
+        outputs: dict[str, object],
+        *,
+        select: bool = True,
+        time_s: float = 60.0,
+        mode: str = "cite",
+        attribution: str = "sources",
     ) -> None:
         import asyncio
 
         from hlmemo.config import get_settings
 
-        settings = get_settings(research_answer_mode=mode, research_select=select)
+        settings = get_settings(
+            research_answer_mode=mode, research_select=select, research_attribution=attribution
+        )
         super().__init__(
             conn=None,
             ctx=None,
@@ -1543,9 +1551,11 @@ def test_d162_literal_in_a_non_source_excerpt_is_kept_and_attributed_there() -> 
     assert v.answered and [c.state for c in v.claims] == ["kept", "kept"] and v.sources == ["v10.0"]
     first, second = v.kept
     assert [h for h, _q in first.support] == ["v13.0"] and "14 daily dumps" in first.support[0][1]
-    # D-165: the inline cite is a tie-break, not the pool: v11.0 states "p95 target" too (2nd source)
-    assert second.text == "The p95 target is 1.2 s." and [h for h, _q in second.support] == ["v10.0", "v11.0"]
-    assert "[v10.0]" not in v.answer and v.primary == ["v13.0", "v10.0", "v11.0"]
+    assert second.text == "The p95 target is 1.2 s." and [h for h, _q in second.support] == ["v10.0"]
+    assert "[v10.0]" not in v.answer and v.primary == ["v13.0", "v10.0"]
+    # D-165 wide: the inline cite is a tie-break, not the pool: v11.0 states "p95 target" too
+    wide = rs.validate_prose(_prose(answer, ["v10.0", "v99.9"]), shown, strategy="wide")
+    assert [h for h, _q in wide.kept[1].support] == ["v10.0", "v11.0"]
 
 
 def test_d165_prose_has_no_polarity_flag() -> None:
@@ -1674,10 +1684,10 @@ async def test_d162_prose_run_answers_and_sets_its_flags() -> None:
     v = await run.answer(list(EXS))
     assert run.steps == ["prose"] and run.shown_to["prose"] == [e.handle for e in EXS]
     assert run.excerpts_shown == run.shown_to["prose"]  # D-165 meta.excerpts_shown
-    assert v.answered and v.answer == "The retrieval p95 target is now 1.2 s." and v.primary[0] == "v10.0"
+    assert v.answered and v.answer == "The retrieval p95 target is now 1.2 s." and v.primary == ["v10.0"]
+    assert run.flags["attribution"] == "sources" and "attr_embed" not in run.flags
     assert run.flags["dropped_literal"] == 1 and "polarity_flagged" not in run.flags
-    # no embedder in this run (deps=None): literal + word attribution
-    assert (run.flags["attr_embed"], run.flags["attr_embedded"], run.sim) == ("off", 0, None)
+    assert run.sim is None and run.llm_cites is None  # the default: sources, no embedding, no call
     assert run.flags["dropped_claims"] == 1 and run.flags["main_dropped"] is False
     assert run.prose and not run.cite and not run.claims_mode
 
@@ -1729,7 +1739,7 @@ TR_SENTENCE = "Yedekleme her gece çalışır."
 def test_d165_tr_sentence_is_attributed_to_the_en_excerpt_that_states_it() -> None:
     emb = _StubEmbedder()
     sim = rs.LineSim(emb.embed_queries)
-    v = rs.validate_prose(_prose(TR_SENTENCE, ["v51.0"]), TR_SHOWN, sim=sim)
+    v = rs.validate_prose(_prose(TR_SENTENCE, ["v51.0"]), TR_SHOWN, strategy="wide", embed=sim)
     assert v.answered and v.kept[0].support == [
         ("v50.0", "The backup job runs nightly and keeps fourteen daily dumps.")
     ]
@@ -1744,9 +1754,14 @@ def test_d165_tr_sentence_is_attributed_to_the_en_excerpt_that_states_it() -> No
         "Restores are rehearsed monthly.",
     }
     assert (sim.state, sim.embedded, sim.wanted) == ("full", 4, 4)
-    # without the embedder (literals + words only) the one shared word and the source bonus win
-    lexical = rs.validate_prose(_prose(TR_SENTENCE, ["v51.0"]), TR_SHOWN)
-    assert [h for h, _q in lexical.kept[0].support] == ["v51.0"]
+    # without the embedder (literals + words only) the one shared word and the source bonus win; so
+    # does the default (sources: the model's source)
+    for strategy in ("wide", "sources"):
+        lexical = rs.validate_prose(_prose(TR_SENTENCE, ["v51.0"]), TR_SHOWN, strategy=strategy)
+        assert [h for h, _q in lexical.kept[0].support] == ["v51.0"]
+    # a plain embed callable works too (the pure function wraps it)
+    again = rs.attribute([TR_SENTENCE], TR_SHOWN, "wide", model_sources=["v51.0"], embed=emb.embed_queries)
+    assert [h for h, _q in again[0]] == ["v50.0"]
 
 
 def test_d165_literal_in_a_non_source_excerpt_outranks_shared_words() -> None:
@@ -1754,23 +1769,28 @@ def test_d165_literal_in_a_non_source_excerpt_outranks_shared_words() -> None:
         "v60.0": _ex("v60.0", "The nightly backup job keeps daily dumps of the database."),
         "v61.0": _ex("v61.0", "Retention policy: 14 dumps are kept."),
     }
-    v = rs.validate_prose(_prose("The nightly backup keeps 14 daily dumps.", ["v60.0"]), shown)
-    # v60.0 (the model's source) shares 5 words; v61.0 states the value: literals dominate
-    assert [h for h, _q in v.kept[0].support] == ["v61.0", "v60.0"]
-    assert v.kept[0].support[0][1] == "Retention policy: 14 dumps are kept." and v.primary[0] == "v61.0"
+    for strategy in ("sources", "wide"):  # sources: v61.0 joins as it states a literal v60.0 lacks
+        v = rs.validate_prose(
+            _prose("The nightly backup keeps 14 daily dumps.", ["v60.0"]), shown, strategy=strategy
+        )
+        # v60.0 (the model's source) shares 5 words; v61.0 states the value: literals dominate
+        assert [h for h, _q in v.kept[0].support] == ["v61.0", "v60.0"]
+        assert v.kept[0].support[0][1] == "Retention policy: 14 dumps are kept." and v.primary[0] == "v61.0"
     # the same with the stub embedder: the similarity never outweighs a stated value
     sim = rs.LineSim(_StubEmbedder().embed_queries)
-    v2 = rs.validate_prose(_prose("The nightly backup keeps 14 daily dumps.", ["v60.0"]), shown, sim=sim)
+    v2 = rs.validate_prose(
+        _prose("The nightly backup keeps 14 daily dumps.", ["v60.0"]), shown, strategy="wide", embed=sim
+    )
     assert [h for h, _q in v2.kept[0].support] == ["v61.0", "v60.0"]
 
 
 def test_d165_fallback_without_a_working_embedder_is_the_lexical_attribution() -> None:
     answer = "The retrieval p95 target is now 1.2 s. The owner decided it after R3. " + TR_SENTENCE
     shown = {**SHOWN, **TR_SHOWN}
-    lexical = rs.validate_prose(_prose(answer, ["v11.0", "v51.0"]), shown)
+    lexical = rs.validate_prose(_prose(answer, ["v11.0", "v51.0"]), shown, strategy="wide")
     failing = _StubEmbedder(fail=True)
     sim = rs.LineSim(failing.embed_queries)
-    broken = rs.validate_prose(_prose(answer, ["v11.0", "v51.0"]), shown, sim=sim)
+    broken = rs.validate_prose(_prose(answer, ["v11.0", "v51.0"]), shown, strategy="wide", embed=sim)
     assert len(failing.calls) == 1 and (sim.state, sim.embedded) == ("off", 0)
     assert [c.support for c in broken.kept] == [c.support for c in lexical.kept]
     assert broken.answer == lexical.answer and broken.primary == lexical.primary
@@ -1792,8 +1812,8 @@ def test_d165_embedding_caps_budget_and_one_call_per_request() -> None:
     # the re-check (prose_check again, same sim) embeds nothing and attributes the same way
     emb2 = _StubEmbedder()
     sim2 = rs.LineSim(emb2.embed_queries)
-    first, _r = rs.prose_check([(TR_SENTENCE, False)], ["v51.0"], TR_SHOWN, sim2)
-    again, _r = rs.prose_check([(TR_SENTENCE, False)], ["v51.0"], TR_SHOWN, sim2)
+    first, _r = rs.prose_check([(TR_SENTENCE, False)], ["v51.0"], TR_SHOWN, "wide", embed=sim2)
+    again, _r = rs.prose_check([(TR_SENTENCE, False)], ["v51.0"], TR_SHOWN, "wide", embed=sim2)
     assert len(emb2.calls) == 1 and first[0].support == again[0].support
     assert [h for h, _q in again[0].support] == ["v50.0"]
     # long texts are cut, lines per excerpt are capped
@@ -1817,21 +1837,164 @@ async def test_d165_prose_run_embeds_with_the_servers_embedder() -> None:
     from types import SimpleNamespace
 
     emb = _StubEmbedder()
-    run = _ScriptedRun({"prose": _prose(TR_SENTENCE, ["v51.0"])}, select=False, mode="prose")
+    run = _ScriptedRun(
+        {"prose": _prose(TR_SENTENCE, ["v51.0"])}, select=False, mode="prose", attribution="wide"
+    )
     run.deps = SimpleNamespace(embedder=emb)
     v = await run.answer([*TR_SHOWN.values()])
     assert v.answered and [h for h, _q in v.kept[0].support] == ["v50.0"]
     assert run.sim is not None and len(emb.calls) == 1
     assert (run.flags["attr_embed"], run.flags["attr_embedded"]) == ("full", 4)
     assert run.flags["attr_embed_ms"] >= 0 and "polarity_flagged" not in run.flags
+    assert run.flags["attribution"] == "wide" and run.steps == ["prose"]
     # too little time left: no embedding (literal + word attribution)
     late = _ScriptedRun(
         {"prose": _prose(TR_SENTENCE, ["v51.0"])},
         select=False,
         mode="prose",
+        attribution="wide",
         time_s=rsv.RECHECK_RESERVE_S + rsv.ATTR_MIN_LEFT_S - 0.5,
     )
     late.deps = SimpleNamespace(embedder=_StubEmbedder())
     lv = await late.answer([*TR_SHOWN.values()])
     assert late.sim is None and late.flags["attr_embed"] == "off"
     assert [h for h, _q in lv.kept[0].support] == ["v51.0"]
+
+
+# --------------------------------------------------------------------------- D-165 attribution strategies
+def test_d165_pure_attribute_replays_the_three_strategies() -> None:
+    """``rs.attribute`` is pure: the same saved answer replayed with each strategy."""
+    shown = {**SHOWN, **TR_SHOWN}
+    sentences = ["The retrieval p95 target is now 1.2 s.", TR_SENTENCE, "It is fine [v12.3]."]
+    src = rs.attribute(sentences, shown, "sources", model_sources=["v11.0", "v51.0", "v404"])
+    # V16: nothing shared enough (one word) -> the first source's first line
+    assert [[h for h, _q in s] for s in src] == [["v10.0", "v11.0"], ["v11.0"], ["v12.3"]]
+    wide = rs.attribute(
+        sentences, shown, "wide", model_sources=["v11.0", "v51.0"], embed=_StubEmbedder().embed_queries
+    )
+    assert [h for h, _q in wide[1]] == ["v50.0"]  # the EN excerpt that states the TR sentence
+    cites = [["v10.0", "v404", "v10.0"], ["v50.0", "v51.0", "v11.0", "v12.3"], []]
+    llm = rs.attribute(sentences, shown, "llm", model_sources=["v11.0", "v51.0"], llm_cites=cites)
+    assert llm[0] == [("v10.0", SHOWN["v10.0"].text.split(" The owner")[0])]  # its best line
+    assert [h for h, _q in llm[1]] == ["v50.0", "v51.0", "v11.0"]  # ≤ ATTRIBUTE_MAX, shown ids only
+    assert llm[1][0] == ("v50.0", "## Backup")  # nothing shared (TR/EN): its first line, as today
+    assert llm[1][2] == ("v11.0", _cut_first(SHOWN["v11.0"].text))  # nothing shared: its first line
+    assert llm[2] == src[2]  # [] -> the sources scoring
+    # no llm_cites (a failed call): exactly sources
+    assert rs.attribute(sentences, shown, "llm", model_sources=["v11.0", "v51.0"]) == src
+    assert rs.attribute(sentences, {}, "llm", model_sources=[]) == [[], [], []]
+
+
+def _cut_first(text: str) -> str:
+    return text.splitlines()[0].strip()
+
+
+def test_d165_parse_attribute_and_the_job() -> None:
+    sentences = ["First.", "Second.", "Third."]
+    obj = {
+        "cites": [
+            {"s": 1, "ids": ["v10.0", "v99.9", "v10.0", "v11.0", "v12.3", "v13.0"]},
+            {"s": "2", "ids": "v11.0"},
+            {"s": 2, "ids": ["v12.3"]},  # a second entry for the same sentence: the first wins
+            {"s": 9, "ids": ["v10.0"]},  # no such sentence
+            {"s": "x", "ids": ["v10.0"]},
+            "junk",
+        ]
+    }
+    got = rs.parse_attribute(obj, sentences, ["v10.0", "v11.0", "v12.3", "v13.0"])
+    assert got == {"First.": ["v10.0", "v11.0", "v12.3"], "Second.": ["v11.0"], "Third.": []}
+    assert rs.parse_attribute(None, sentences, ["v10.0"]) == dict.fromkeys(sentences, [])
+    assert rs.parse_attribute({"cites": 7}, ["A."], ["v10.0"]) == {"A.": []}
+    # the prompt: numbered kept sentences, excerpts as id/title/text, values redacted
+    secret = "SuperSecret123456"
+    ex = rs.Excerpt("v30.0", 30, "T", "docs/c.md", "2026-09-26", f'The password = "{secret}" rotates.')
+    msg = rs.attribute_user("Q?", ["One.", "Two."], [ex])
+    payload = json.loads(msg.split("INPUT: ", 1)[1])
+    assert msg.startswith("JOB: attribute\n") and secret not in msg
+    assert payload["sentences"] == [{"n": 1, "text": "One."}, {"n": 2, "text": "Two."}]
+    assert list(payload["excerpts"][0]) == ["id", "title", "text"] and payload["question"] == "Q?"
+    # the JOB: prompt research/v3 only, its shape, its max_tokens, the call cap with llm attribution
+    from hlmemo.config import get_settings
+
+    v3 = load_task("research", rs.PROSE_PROMPT_VERSION)
+    assert 'JOB "attribute"' in v3.system
+    assert all('JOB "attribute"' not in load_task("research", v).system for v in (1, 2))
+    rule = (
+        "For each numbered sentence, list the ids of the excerpts (1 to 3) that state what the sentence "
+        "says; use only ids from EXCERPTS; if none states it, use []."
+    )
+    assert rule in v3.system
+    assert v3.schema_errors({"cites": [{"s": 1, "ids": ["v1.2"]}, {"s": 2, "ids": []}]}) is None
+    assert v3.schema_errors({"cites": 7})
+    check = rs.job_validator("attribute")
+    assert check({"cites": []}) is None and check({"ids": []}) == "cites missing"
+    assert "attribute" in rs.JOBS and rs.JOB_MAX_TOKENS["attribute"] == 1500
+    r = rs.Researcher(get_settings(research_answer_mode="prose", research_attribution="llm"))
+    assert r.attribution == "llm" and r.max_calls == rs.MAX_CALLS_ATTRIBUTE == 5
+    assert r.job_spec("attribute").max_tokens == 1500
+    for mode, attribution in (("prose", "sources"), ("prose", "wide"), ("claims", "llm"), ("cite", "llm")):
+        r = rs.Researcher(get_settings(research_answer_mode=mode, research_attribution=attribution))
+        assert r.max_calls == rs.MAX_CALLS_NO_SELECT
+    assert get_settings().research_attribution == "sources"
+
+
+async def test_d165_llm_attribution_run_uses_one_attribute_call() -> None:
+    answer = "The retrieval p95 target is now 1.2 s. The owner decided it after R3. " + TR_SENTENCE
+    attribute = {"cites": [{"s": 1, "ids": ["v11.0"]}, {"s": 2, "ids": []}, {"s": 3, "ids": ["v50.0"]}]}
+    exs = [*EXS, *TR_SHOWN.values()]
+    run = _ScriptedRun(
+        {"prose": _prose(answer, ["v10.0", "v51.0"]), "attribute": attribute},
+        select=False,
+        mode="prose",
+        attribution="llm",
+    )
+    v = await run.answer(exs)
+    assert run.steps == ["prose", "attribute"] and run.shown_to["attribute"] == run.shown_to["prose"]
+    assert [[h for h, _q in c.support] for c in v.kept] == [["v11.0"], ["v10.0"], ["v50.0"]]
+    assert run.flags["attribution"] == "llm" and run.flags["attr_fallback"] is False
+    assert run.flags["attr_llm_cited"] == 2 and run.attribution == "llm"
+    assert run.llm_cites == {
+        "The retrieval p95 target is now 1.2 s.": ["v11.0"],
+        "The owner decided it after R3.": [],
+        TR_SENTENCE: ["v50.0"],
+    }
+    # the re-check attributes the same way, with the ids still citable (v50.0 gone -> sources)
+    ok = {h: e for h, e in {e.handle: e for e in exs}.items() if h != "v50.0"}
+    again, _r = rs.prose_check(
+        [(c.text, c.line_end) for c in v.kept], ["v10.0", "v51.0"], ok, "llm", llm_cites=run.llm_cites
+    )
+    assert [[h for h, _q in c.support] for c in again] == [["v11.0"], ["v10.0"], ["v10.0"]]
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    [rs.ResearchUnavailable("timeout"), None, {"cites": "bad"}],
+    ids=["failed", "not_made", "malformed"],
+)
+async def test_d165_llm_attribution_falls_back_to_sources(attribute: object) -> None:
+    answer = "The retrieval p95 target is now 1.2 s. " + TR_SENTENCE
+    run = _ScriptedRun(
+        {"prose": _prose(answer, ["v10.0", "v51.0"]), "attribute": attribute},
+        select=False,
+        mode="prose",
+        attribution="llm",
+    )
+    v = await run.answer([*EXS, *TR_SHOWN.values()])
+    plain = rs.validate_prose(
+        _prose(answer, ["v10.0", "v51.0"]), {e.handle: e for e in [*EXS, *TR_SHOWN.values()]}
+    )
+    assert v.answered and [c.support for c in v.kept] == [c.support for c in plain.kept]
+    assert run.steps == ["prose", "attribute"]
+    if isinstance(attribute, dict):  # a malformed output parses to no ids: every sentence as sources
+        assert run.flags["attribution"] == "llm" and run.flags["attr_llm_cited"] == 0
+    else:
+        assert run.flags["attribution"] == "sources" and run.flags["attr_fallback"] is True
+        assert run.attribution == "sources" and run.llm_cites is None
+    # an abstaining prose makes no attribute call
+    none = _ScriptedRun(
+        {"prose": {"status": "insufficient_evidence", "answer": "", "related": []}},
+        select=False,
+        mode="prose",
+        attribution="llm",
+    )
+    assert not (await none.answer(list(EXS))).answered and none.steps == ["prose"]
