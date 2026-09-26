@@ -130,6 +130,7 @@ from hlmemo.core.budget import BudgetError, Meter, validate_budget
 from hlmemo.core.clues import InvalidClue, decode_clue
 from hlmemo.core.errors import ToolError
 from hlmemo.core.read_service import ReadDeps, _read_project
+from hlmemo.core.research_trace import TraceRecorder, sha256
 from hlmemo.core.write_models import SLUG_RE
 from hlmemo.db import auth_queries
 from hlmemo.db import librarian_queries as lq
@@ -294,25 +295,69 @@ def collapse(handles: list[str], limit: int) -> list[str]:
     """Keep handles in order, skipping a chunk handle already covered by the ±1 neighbourhood of a
     kept chunk handle of the same item (a drilled chunk comes with its neighbours) or by a kept
     whole-item handle."""
+    return collapse_explain(handles, limit)[0]
+
+
+def collapse_explain(handles: list[str], limit: int) -> tuple[list[str], list[tuple[str, str]]]:
+    """``collapse`` and (D-189, the trace) every handle it left out with its reason: ``invalid``,
+    ``dedupe`` (the same handle, or covered by a kept chunk's ±1 or a kept whole item) or ``cap``."""
     kept: list[str] = []
+    dropped: list[tuple[str, str]] = []
     covered: set[tuple[int, int]] = set()
     whole: set[int] = set()
-    for h in handles:
+    for i, h in enumerate(handles):
+        if len(kept) >= limit:
+            dropped += [(x, "cap") for x in handles[i:]]
+            break
         try:
             c = decode_clue(h)
         except InvalidClue:
+            dropped.append((h, "invalid"))
             continue
         v, o = c.version_id, c.ordinal
         if v in whole or h in kept or (o is not None and (v, o) in covered):
+            dropped.append((h, "dedupe"))
             continue
         kept.append(h)
         if o is None:
             whole.add(v)
         else:
             covered.update({(v, o - 1), (v, o), (v, o + 1)})
-        if len(kept) >= limit:
-            break
-    return kept
+    return kept, dropped
+
+
+def rrf_explain(lists: list[list[dict[str, Any]]], k: int = RRF_K) -> dict[str, Any]:
+    """D-189 (the trace): the chunk fusion (``rrf``) and the item fusion (``rrf_items``) with each
+    handle's / item's rank in every hit list and its fused score, in fused order."""
+    chunks: dict[str, dict[str, Any]] = {}
+    items: dict[int, dict[str, Any]] = {}
+    for li, hits in enumerate(lists):
+        voted: set[int] = set()
+        for r, h in enumerate(hits, start=1):
+            c = str(h.get("clue"))
+            e = chunks.setdefault(c, {"handle": c, "score": 0.0, "ranks": [None] * len(lists)})
+            e["score"] += 1.0 / (k + r)
+            e["ranks"][li] = r
+            try:
+                vid = decode_clue(c).version_id
+            except InvalidClue:
+                continue
+            if vid in voted:
+                continue
+            voted.add(vid)
+            it = items.setdefault(vid, {"version_id": vid, "score": 0.0, "ranks": [None] * len(lists)})
+            it["score"] += 1.0 / (k + r)
+            it["ranks"][li] = r
+    order = {c: i for i, c in enumerate(rrf(lists))}
+    rep = {decode_clue(h).version_id: h for h in rrf_items(lists)}
+    item_order = {vid: i for i, vid in enumerate(rep)}
+    return {
+        "chunks": sorted(chunks.values(), key=lambda e: order.get(e["handle"], 1 << 30)),
+        "items": [
+            {**it, "handle": rep.get(it["version_id"])}
+            for it in sorted(items.values(), key=lambda e: item_order.get(e["version_id"], 1 << 30))
+        ],
+    }
 
 
 def drill_order(sections: list[str], best: list[str], fused: list[str], skip: set[str]) -> list[str]:
@@ -340,6 +385,12 @@ class _Run:
     end: float
     reconnect: Callable[[], AbstractAsyncContextManager[AsyncConnection]] | None
     released: bool = False
+    #: D-189: the request's trace recorder (None: off); it records copies only
+    trace: TraceRecorder | None = None
+    #: D-189: the last call's LlmResult (the trace's model/usage/cost)
+    last_result: Any = None
+    #: D-189: which retrieval phase runs ("plan" or "refine"), for the trace's query records
+    phase: str = "plan"
     #: D-184: the question's time (the map phase's clock): supersedes links valid at it apply
     t_start: Any = None
     view: dict[int, mm.ViewItem] = field(default_factory=dict)
@@ -462,6 +513,24 @@ class _Run:
             if not queries_done:
                 for q in queries:
                     lists.append(await self._search(c, fresh, q))
+            tp: dict[str, Any] | None = None
+            if self.trace is not None:  # D-189: this phase's fusion, drill and drops
+                tp = {
+                    "phase": self.phase,
+                    "queries": list(queries),
+                    "sections": list(sections),
+                    "dropped": [],
+                }
+                tp.update(rrf_explain(lists))
+                tp["dropped"] += [
+                    {
+                        "handle": h,
+                        "stage": "fusion",
+                        "reason": "excluded" if self._excluded(h) else "not_in_view",
+                    }
+                    for h in rrf(lists)
+                    if not self._handle_in_view(h)
+                ]
             fused = [h for h in rrf(lists) if self._handle_in_view(h)]
             # D-165 (D-163 what-if: gold-in-excerpts 20 -> 21 of 25, no losses): the top DOC_TOP
             # ITEMS (fused per item) drill their best in-document chunk right after the sections,
@@ -470,13 +539,49 @@ class _Run:
             best = await self._doc_best(c, items, [self.question, *queries])
             focus = None
             if self.prose:  # D-188: a long top item shows its best chunk, not its other hit chunks
+                before = fused
                 fused = self._long_items_best_only(items, best, fused)
+                if tp is not None:
+                    tp["dropped"] += [
+                        {"handle": h, "stage": "fusion", "reason": "long_item_best_only"}
+                        for h in before
+                        if h not in fused
+                    ]
                 focus = set().union(*(rs.content_words(t) for t in [self.question, *queries]))
-            excerpts = await self._drill(c, drill_order(sections, best, fused, skip), focus)
+            wanted = drill_order(sections, best, fused, skip)
+            if tp is not None:
+                tp["doc_best"] = [{"item_hit": hit, "best": b} for hit, b in zip(items, best, strict=False)]
+                tp["drill_order"] = wanted
+                candidates = [*sections, *best, *fused]
+                tp["dropped"] += [
+                    {"handle": h, "stage": "drill_order", "reason": "already_read"}
+                    for h in candidates
+                    if h in skip
+                ]
+                _kept, cut = collapse_explain([h for h in candidates if h not in skip], MAX_DRILL)
+                tp["dropped"] += [{"handle": h, "stage": "drill_order", "reason": why} for h, why in cut]
+            excerpts = await self._drill(c, wanted, focus, tp)
             if self.prose:  # D-184: supersession status, the superseder pull-in; D-188: xrefs
                 texts = [self.question, *queries]
-                excerpts = await self._temporal(c, fresh, excerpts, texts, skip, focus)
+                excerpts = await self._temporal(c, fresh, excerpts, texts, skip, focus, tp)
+            if tp is not None:
+                tp["excerpts"] = [
+                    {
+                        "handle": e.handle,
+                        "version_id": e.version_id,
+                        "status": e.status,
+                        "status_vid": e.status_vid,
+                    }
+                    for e in excerpts
+                ]
+                self.trace.append("retrieval", tp, key="phases")
         return excerpts, lists
+
+    def _excluded(self, handle: str) -> bool:
+        try:
+            return decode_clue(handle).version_id in self.excluded
+        except InvalidClue:
+            return False
 
     def _long_items_best_only(self, items: list[str], best: list[str], fused: list[str]) -> list[str]:
         """D-188: for a top item of more than ``LONG_ITEM_CHUNKS`` chunks whose best chunk for the
@@ -548,6 +653,7 @@ class _Run:
         texts: list[str],
         skip: set[str],
         focus: set[str] | None = None,
+        tp: dict[str, Any] | None = None,
     ) -> list[rs.Excerpt]:
         """D-184: the statuses of ``excerpts``, then the superseder pull-in: for superseded excerpts
         whose superseding item is not shown (nor in ``skip``), that item's best in-document chunk
@@ -566,20 +672,25 @@ class _Run:
         )
         if want:
             best = await self._doc_best(c, [f"v{vid}.0" for vid in want[:SUPERSEDER_EXTRA]], texts)
-            pulled = await self._drill(c, [h for h in best if h not in skip], focus)
+            pulled = await self._drill(c, [h for h in best if h not in skip], focus, tp)
             await self._statuses(c, fresh, pulled)
+            if tp is not None:
+                tp["superseders_pulled"] = [e.handle for e in pulled]
             self.flags["superseders_pulled"] = self.flags.get("superseders_pulled", 0) + len(pulled)
         seen = shown | {e.version_id for e in pulled}
-        xrefs = await self._xrefs(c, [*excerpts, *pulled], texts, skip, seen, focus)
+        xrefs = await self._xrefs(c, [*excerpts, *pulled], texts, skip, seen, focus, tp)
         if xrefs:
             await self._statuses(c, fresh, xrefs)
             self.flags["xref_pulled"] = self.flags.get("xref_pulled", 0) + len(xrefs)
-        return self._with_extra(excerpts, [*pulled, *xrefs])
+        return self._with_extra(excerpts, [*pulled, *xrefs], tp["dropped"] if tp is not None else None)
 
     @staticmethod
-    def _with_extra(excerpts: list[rs.Excerpt], extra: list[rs.Excerpt]) -> list[rs.Excerpt]:
+    def _with_extra(
+        excerpts: list[rs.Excerpt], extra: list[rs.Excerpt], dropped: list[dict[str, Any]] | None = None
+    ) -> list[rs.Excerpt]:
         """``excerpts`` and then the pulled ``extra``; past ``EXCERPT_BUDGET_CHARS`` of text, the
-        lowest-ranked CURRENT excerpts (no status) of ``excerpts`` make room for them."""
+        lowest-ranked CURRENT excerpts (no status) of ``excerpts`` make room for them (D-189:
+        noted in ``dropped``, the trace's)."""
         if not extra:
             return excerpts
         out = list(excerpts)
@@ -588,7 +699,10 @@ class _Run:
             drop = next((i for i in range(len(out) - 1, -1, -1) if not out[i].status), None)
             if drop is None:
                 break
-            size -= len(out.pop(drop).text)
+            gone = out.pop(drop)
+            size -= len(gone.text)
+            if dropped is not None:
+                dropped.append({"handle": gone.handle, "stage": "extra", "reason": "budget"})
         return out + extra
 
     async def _xrefs(
@@ -599,6 +713,7 @@ class _Run:
         skip: set[str],
         shown: set[int],
         focus: set[str] | None,
+        tp: dict[str, Any] | None = None,
     ) -> list[rs.Excerpt]:
         """D-188: the cross-reference pull-in. The D-ids (``D-026``) and repo paths (``docs/….md``,
         ``deploy/…``) the shown ``excerpts`` mention whose row or item is not shown, ranked by mention
@@ -644,9 +759,17 @@ class _Run:
                 spans = await rq.chunk_spans(c, vid, clue.ordinal or 0, clue.ordinal or 0)
                 text = spans[0].text if spans else ""
             if handle not in skip:
-                cands.append((-(counts[ref] + len(qwords & rs.content_words(text))), i, handle))
+                overlap = len(qwords & rs.content_words(text))
+                cands.append((-(counts[ref] + overlap), i, handle))
+                if tp is not None:
+                    tp.setdefault("xrefs", []).append(
+                        {"ref": ref, "mentions": counts[ref], "question_overlap": overlap, "handle": handle}
+                    )
         chosen = list(dict.fromkeys(h for _s, _i, h in sorted(cands)))[:XREF_EXTRA]
-        return await self._drill(c, chosen, focus) if chosen else []
+        if tp is not None:
+            tp["xrefs_found"] = counts
+            tp["xrefs_pulled"] = chosen
+        return await self._drill(c, chosen, focus, tp) if chosen else []
 
     async def _did_row(self, c: AsyncConnection, did: str, vids: list[int]) -> tuple[int, int, str] | None:
         """D-188: ``(version_id, ordinal, text)`` of the chunk of the caller's view holding the row
@@ -662,7 +785,54 @@ class _Run:
         return rows[0] if rows else None
 
     async def _search(self, c: AsyncConnection, fresh: AuthContext, query: str) -> list[dict[str, Any]]:
-        return await _search(c, fresh, self.slug, query, self.deps)
+        if self.trace is None:
+            return await _search(c, fresh, self.slug, query, self.deps)
+        explain: dict[str, Any] = {}
+        hits = await _search(c, fresh, self.slug, query, self.deps, explain)
+        self.trace_query(query, self.phase, hits, explain)
+        return hits
+
+    def trace_query(
+        self, query: str, phase: str, hits: list[dict[str, Any]], explain: dict[str, Any]
+    ) -> None:
+        """D-189: one query's ordered hit list, with its component ranks and view membership."""
+        if self.trace is None:
+            return
+        comp = {h.get("clue"): h for h in explain.get("head", [])}
+        rows = []
+        for rank, h in enumerate(hits, start=1):
+            clue = str(h.get("clue"))
+            try:
+                vid: int | None = decode_clue(clue).version_id
+            except InvalidClue:
+                vid = None
+            item = self.view.get(vid) if vid is not None else None
+            c = comp.get(clue, {})
+            rows.append(
+                {
+                    "rank": rank,
+                    "handle": clue,
+                    "version_id": vid,
+                    "title": h.get("title"),
+                    "path": item.path if item is not None else None,
+                    "in_view": self._handle_in_view(clue),
+                    "score": h.get("score"),
+                    **{k: c.get(k) for k in ("lexical_rank", "trigram_rank", "vector_rank", "title_rank")},
+                }
+            )
+        self.trace.append(
+            "retrieval",
+            {
+                "query": query,
+                "phase": phase,
+                "hits": rows,
+                **{
+                    k: explain.get(k)
+                    for k in ("candidates", "ordered", "hidden_superseded", "partial_superseded")
+                },
+            },
+            key="queries",
+        )
 
     async def _doc_best(self, c: AsyncConnection, ranked: list[str], texts: list[str]) -> list[str]:
         """For each of the ``DOC_TOP`` top-ranked items of ``ranked`` (handles, D-165: one per item
@@ -699,7 +869,11 @@ class _Run:
             return False
 
     async def _drill(
-        self, c: AsyncConnection, handles: list[str], focus: set[str] | None = None
+        self,
+        c: AsyncConnection,
+        handles: list[str],
+        focus: set[str] | None = None,
+        tp: dict[str, Any] | None = None,
     ) -> list[rs.Excerpt]:
         """The internal drill: what ``memory.drilldown`` returns for each handle (a chunk with its
         ±1 neighbours, or a whole item), under the caller's scope, WITHOUT its access event. D-188:
@@ -713,14 +887,21 @@ class _Run:
             clue = decode_clue(h)
             item = self.view.get(clue.version_id)
             if item is None or clue.version_id in self.excluded:
+                if tp is not None:
+                    why = "not_in_view" if item is None else "excluded"
+                    tp["dropped"].append({"handle": h, "stage": "drill", "reason": why})
                 continue
             v = await rq.version_live(c, clue.version_id, self.project_id, scopes, now, now, ["active"])
             if v is None:
+                if tp is not None:
+                    tp["dropped"].append({"handle": h, "stage": "drill", "reason": "not_live"})
                 continue
             context = ""
             if clue.ordinal is not None:
                 spans = await rq.chunk_spans(c, v.version_id, clue.ordinal - 1, clue.ordinal + 1)
                 if not any(s.ordinal == clue.ordinal for s in spans):
+                    if tp is not None:
+                        tp["dropped"].append({"handle": h, "stage": "drill", "reason": "no_chunk"})
                     continue
                 text = v.body[spans[0].char_start : spans[-1].char_end]
                 if self.prose:  # D-184: where the excerpt sits, from the stored body (read time)
@@ -760,6 +941,51 @@ class _Run:
         return self.end - asyncio.get_running_loop().time() - RECHECK_RESERVE_S
 
     async def call(
+        self, job: str, build: Callable[[], tuple[str, list[int]]], cap_s: float
+    ) -> dict[str, Any] | None:
+        """One logical LLM call (``_call``); D-189: with a trace, recorded with every attempt."""
+        if self.trace is None:
+            return await self._call(job, build, cap_s)
+        last: dict[str, Any] = {}
+
+        def traced() -> tuple[str, list[int]]:
+            user, ids = build()
+            last.update(user=user, gate_ids=list(ids))
+            return user, ids
+
+        rows0 = len(self.researcher.attempt_rows(self.lineage))
+        events0 = len(self.trace.events)
+        record: dict[str, Any] = {"job": job, "cap_s": cap_s}
+        try:
+            out = await self._call(job, traced, cap_s)
+            if out is None and not last:
+                record["skipped"] = "call_cap"
+            else:
+                res = self.last_result
+                record.update(
+                    profile=res.profile,
+                    model=res.model_id,
+                    latency_ms=res.latency_ms,
+                    cost_usd=res.cost_usd,
+                    usage=res.usage,
+                    output=out,
+                )
+            return out
+        except BaseException as exc:
+            record["error"] = f"{type(exc).__name__}: {getattr(exc, 'reason', exc)}"
+            raise
+        finally:
+            with contextlib.suppress(Exception):
+                rows = self.researcher.attempt_rows(self.lineage)[rows0:]
+                record.update(
+                    system_sha256=sha256(self.researcher.job_spec(job).system),
+                    **last,
+                    attempts=[{"attempt": i + 1, **r} for i, r in enumerate(rows)],
+                    outputs=self.trace.events[events0:],
+                )
+                self.trace.call(record)
+
+    async def _call(
         self, job: str, build: Callable[[], tuple[str, list[int]]], cap_s: float
     ) -> dict[str, Any] | None:
         """One logical LLM call. ``build()`` → ``(user message, version ids whose text it carries)``;
@@ -810,6 +1036,7 @@ class _Run:
                         deadline=deadline,
                         lineage=self.lineage,
                         attempt_guard=self.attempt_guard,
+                        observe=self.trace.observe if self.trace is not None else None,
                     )
             except PrivacyDenied:
                 continue  # changed between our gate and the attempt's: gate (and rebuild) again
@@ -833,6 +1060,7 @@ class _Run:
             self.steps.append(job)
             self.sent |= set(ids)
             self.last_profile = res.profile
+            self.last_result = res
             return res.output
         raise rs.ResearchUnavailable("privacy")
 
@@ -888,6 +1116,8 @@ class _Run:
     async def plan(self, m: mm.MemoryMap) -> tuple[list[str], list[str]]:
         def build() -> tuple[str, list[int]]:
             cur = self.render_map() if self.excluded else m
+            if self.trace is not None:  # D-189: the map exactly as the planner gets it
+                self.trace.set("map", {"text": self.redact(cur.text), "tokens": cur.tokens})
             return rs.plan_user(self.question, CONTEXT, cur.text, self.redact), cur.gate_ids()
 
         try:
@@ -895,6 +1125,8 @@ class _Run:
         except rs.ResearchUnavailable:
             return [], []  # the loop still runs on the question alone
         queries, sections = rs.parse_plan(obj, self.question)
+        if self.trace is not None:
+            self.trace.enrich_last(queries=queries, sections=sections)
         return queries, sections
 
     def prune(self, v: rs.Validated, excerpts: list[rs.Excerpt]) -> rs.Validated:
@@ -928,6 +1160,8 @@ class _Run:
 
         def build() -> tuple[str, list[int]]:
             ex = [e for e in excerpts if e.version_id not in self.excluded]
+            if self.trace is not None:
+                self.trace.set("excerpts", [e.shown() for e in ex])
             if draft is None:
                 return rs.answer_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
             cur = self.prune(draft, excerpts)  # the draft's quotes come only from admitted excerpts
@@ -985,6 +1219,8 @@ class _Run:
 
         def build() -> tuple[str, list[int]]:
             ex = [e for e in chosen if e.version_id not in self.excluded]
+            if self.trace is not None:
+                self.trace.set("excerpts", [e.shown() for e in ex])
             return rs.write_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
 
         obj = await self.call("write", build, ANSWER_CAP_S)
@@ -1017,6 +1253,8 @@ class _Run:
 
         def build() -> tuple[str, list[int]]:
             ex = self.admitted(excerpts)
+            if self.trace is not None:  # D-189: exactly as the writer sees them
+                self.trace.set("excerpts", [e.shown(temporal=True) for e in ex])
             return rs.prose_user(self.question, ex, redact=self.redact), self.gate_ids(ex)
 
         since = len(self.researcher.attempts(self.lineage))
@@ -1028,6 +1266,10 @@ class _Run:
         if obj is None:
             return rs.validate_prose(obj, shown, self.researcher.redactor.text)
         self.flags["writer_used"] = self.last_profile
+        if self.trace is not None:
+            self.trace.enrich_last(
+                parsed={k: obj.get(k) for k in ("status", "answer", "sources", "related", "confidence")}
+            )
         self.excerpts_shown = list(shown)
         self.flags["superseded_shown"] = sum(1 for e in self.admitted(excerpts) if e.status)
         if self.researcher.expand:
@@ -1045,6 +1287,7 @@ class _Run:
         elif strategy == "wide":
             self.sim = self.line_sim()
         self.attribution = strategy
+        explain: list[dict[str, Any]] | None = [] if self.trace is not None else None
         v = await asyncio.to_thread(
             rs.validate_prose,
             obj,
@@ -1054,7 +1297,30 @@ class _Run:
             embed=self.sim,
             llm_cites=self.llm_cites,
             added=added,
+            explain=explain,
         )
+        if self.trace is not None:  # D-189: the validation and attribution verdicts
+            self.trace.update(
+                "validation",
+                units=explain,
+                drop_reasons=v.drop_reasons,
+                dropped_claims=v.dropped_claims,
+                expand_added=v.expand_added,
+                expand_dropped=v.expand_dropped,
+            )
+            self.trace.update(
+                "attribution",
+                configured=self.researcher.attribution,
+                strategy=strategy,
+                fallback=self.flags.get("attr_fallback", False),
+                llm_cites=self.llm_cites,
+                embedding=(
+                    {"state": self.sim.state, "embedded": self.sim.embedded, "seconds": self.sim.seconds}
+                    if self.sim is not None
+                    else None
+                ),
+                support=[{"text": c.text, "support": c.support} for c in v.kept],
+            )
         if self.researcher.expand:
             self.flags["expand_added"] = v.expand_added
             self.flags["expand_dropped"] = v.expand_dropped
@@ -1099,7 +1365,10 @@ class _Run:
         if out is None:
             self.flags["expand_skipped"] = True
             return None
-        return rs.parse_expand(out, sentences)
+        added = rs.parse_expand(out, sentences)
+        if self.trace is not None:
+            self.trace.enrich_last(numbered=sentences, added=added)
+        return added
 
     async def attribute_call(
         self, obj: dict[str, Any], shown: dict[str, rs.Excerpt], added: list[str] | None = None
@@ -1125,7 +1394,10 @@ class _Run:
         if out is None:
             return None
         admitted = [e.handle for e in excerpts if e.version_id not in self.excluded]
-        return rs.parse_attribute(out, sentences, admitted)
+        cites = rs.parse_attribute(out, sentences, admitted)
+        if self.trace is not None:
+            self.trace.enrich_last(numbered=sentences, cites=cites)
+        return cites
 
     def line_sim(self) -> rs.LineSim | None:
         """D-165: the attribution's similarity over the server's own embedder (``deps.embedder``, the
@@ -1142,11 +1414,21 @@ class _Run:
 
 
 async def _search(
-    c: AsyncConnection, ctx: AuthContext, slug: str, query: str, deps: ReadDeps
+    c: AsyncConnection,
+    ctx: AuthContext,
+    slug: str,
+    query: str,
+    deps: ReadDeps,
+    explain: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """One internal ``memory.query`` (the caller's scope; it writes nothing): its hits."""
+    """One internal ``memory.query`` (the caller's scope; it writes nothing): its hits. ``explain``
+    (D-189, the trace): its component ranks (``read_service.query_parts``), read-only."""
     packed, _librarian = await read_service.query_parts(
-        c, ctx, {"project": slug, "query": query[:QUESTION_MAX], "token_budget": QUERY_BUDGET}, deps=deps
+        c,
+        ctx,
+        {"project": slug, "query": query[:QUESTION_MAX], "token_budget": QUERY_BUDGET},
+        deps=deps,
+        explain=explain,
     )
     return list(packed.get("hits") or [])
 
@@ -1173,9 +1455,38 @@ async def ask(
     """``conn``: over the API the request transaction (``detach`` commits and releases it after the
     map phase; ``reconnect`` yields fresh pooled connections for the later DB phases); a direct
     caller passes an idle connection and no ``detach`` (each phase then commits its own short
-    transaction on it). No transaction is open during any LLM call (D-062)."""
-    t0 = time.perf_counter()
+    transaction on it). No transaction is open during any LLM call (D-062). D-189: with
+    ``HLM_RESEARCH_TRACE_DIR`` the request is traced (``research_trace``): the same answer, plus one
+    trace file; a trace failure never fails the request."""
     settings = settings or get_settings()
+    trace = TraceRecorder.maybe(settings, str(args.get("question") or ""))
+    kw = {"deps": deps, "researcher": researcher, "detach": detach, "reconnect": reconnect}
+    if trace is None:
+        return await _ask(conn, ctx, args, settings=settings, trace=None, **kw)
+    try:
+        out = await _ask(conn, ctx, args, settings=settings, trace=trace, **kw)
+        trace.set("response", out)
+        return out
+    except BaseException as exc:
+        trace.update("response", error=f"{type(exc).__name__}: {exc}", details=getattr(exc, "details", None))
+        raise
+    finally:
+        await asyncio.to_thread(trace.write)
+
+
+async def _ask(
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    args: dict[str, Any],
+    *,
+    deps: ReadDeps,
+    researcher: rs.Researcher | None,
+    detach: Callable[..., Awaitable[bool]] | None,
+    reconnect: Callable[[], AbstractAsyncContextManager[AsyncConnection]] | None,
+    settings: Any,
+    trace: TraceRecorder | None,
+) -> dict[str, Any]:
+    t0 = time.perf_counter()
     req = parse_request(args)
     if researcher is None or not researcher.enabled:
         raise ToolError("E_UNAVAILABLE", "memory.ask is disabled on this server", reason="disabled")
@@ -1202,7 +1513,8 @@ async def ask(
             t_start = await rq.clock_now(conn)
             # the ORIGINAL question's search, here: no DB work may overlap a provider call (D-062,
             # review 80 #2), and this transaction is released before the first one
-            first = [await _search(conn, ctx, project.slug, req.question, deps)]
+            explain: dict[str, Any] | None = {} if trace is not None else None
+            first = [await _search(conn, ctx, project.slug, req.question, deps, explain)]
         run = _Run(
             conn=conn,
             ctx=ctx,
@@ -1218,7 +1530,27 @@ async def ask(
             entries=entries,
             summaries=summaries,
             t_start=t_start,
+            trace=trace,
         )
+        if trace is not None:  # D-189: the request, and the original question's hit list
+            trace.set(
+                "request",
+                {
+                    "question": req.question,
+                    "project": project.slug,
+                    "token_budget": req.token_budget,
+                    "answer_mode": researcher.answer_mode,
+                    "attribution": researcher.attribution,
+                    "writer_profile": researcher.writer_profile,
+                    "expand": researcher.expand,
+                    "select": researcher.select,
+                    "lineage": run.lineage,
+                    "started_at": trace.started.isoformat(),
+                    "db_time": t_start,
+                    "view_items": len(view),
+                },
+            )
+            run.trace_query(req.question, "question", first[0], explain or {})
         if run.cite:  # D-156: the cite mode's own counts (meta.flags)
             run.flags.update({"dropped_sentences": 0, "uncited": 0})
             run.flags.update({f"dropped_{why}": 0 for why in rs.DROP_REASONS})
@@ -1325,10 +1657,16 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
             q2, s2 = rs.parse_plan(obj, q)
             q2 = [x for x in q2 if x not in run.queries]
             s2 = [s for s in s2 if m.drillable(s) and run._handle_in_view(s)][: rs.MAX_SECTIONS]
+            if run.trace is not None:
+                run.trace.enrich_last(queries=q2, sections=s2)
             seen = {e.handle for e in excerpts}
             if q2 or s2:
+                run.phase = "refine"
                 new, _ = await run.retrieve(q2, s2, [], seen)
-                new = [e for e in new if e.handle not in seen][:REFINE_MAX_NEW]
+                fresh_new = [e for e in new if e.handle not in seen]
+                new = fresh_new[:REFINE_MAX_NEW]
+                if run.trace is not None and len(fresh_new) > len(new):
+                    run.trace.update("retrieval", refine_cut=[e.handle for e in fresh_new[REFINE_MAX_NEW:]])
                 run.queries += q2
                 if new:
                     widened = excerpts + new
@@ -1432,6 +1770,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
         # literal none of them states drops it) and attributed again over them (D-165: the same
         # strategy; wide reads the answer's cached similarity, llm its ids still citable)
         sources = [h for h in v.sources if h in ok]
+        recheck: list[dict[str, Any]] | None = [] if run.trace is not None else None
         prose_claims, _reasons = await asyncio.to_thread(
             rs.prose_check,
             [(cl.text, cl.line_end) for cl in v.kept],
@@ -1440,7 +1779,10 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             run.attribution,
             embed=run.sim,
             llm_cites=run.llm_cites,
+            explain=recheck,
         )
+        if run.trace is not None:
+            run.trace.update("validation", recheck=recheck, recheck_excerpts=sorted(ok))
         before, settled = len(v.kept), v.confidence
         v = rs.assemble_prose(
             rs.ANSWERED,

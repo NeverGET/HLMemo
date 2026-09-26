@@ -2048,14 +2048,18 @@ def attribute(
 
 
 def _prose_keep(
-    sentences: list[tuple[str, bool]], shown: dict[str, Excerpt], added_from: int | None = None
+    sentences: list[tuple[str, bool]],
+    shown: dict[str, Excerpt],
+    added_from: int | None = None,
+    explain: list[dict[str, Any]] | None = None,
 ) -> tuple[list[Claim], dict[str, int], list[str]]:
     """D-162: the literal check of prose sentences: ``(claims, drop counts by reason, the kept
     sentences as written)``. A sentence is DROPPED only when one of its hard literals is in no shown
     excerpt (texts, titles and dates together: what the model was shown), or (``unsupported``) when
     nothing was shown; every other one is KEPT (its support is ``attribute``'s). Sentences past
     ``ANSWER_MAX_CHARS`` of kept text are not checked. D-170: the sentences from index
-    ``added_from`` on are the expand pass's (``Claim.added``)."""
+    ``added_from`` on are the expand pass's (``Claim.added``). D-189: with ``explain`` (the trace),
+    one entry per checked unit is appended: its literals, where each was found, its verdict."""
     hay = "\n".join(_hay([e.title, e.date, e.text]) for e in shown.values())
     derived = _derived_numbers(hay)
 
@@ -2076,7 +2080,12 @@ def _prose_keep(
     for i, (raw, brk) in enumerate(sentences):
         added = added_from is not None and i >= added_from
         if is_block(raw):  # D-187: a fenced block, checked line by line
-            text, lines_dropped = _check_block(raw, ok, shown)
+            lines_explain: list[dict[str, Any]] | None = [] if explain is not None else None
+            text, lines_dropped = _check_block(raw, ok, shown, lines_explain)
+            if explain is not None:
+                explain.append(
+                    {"unit": "block", "text": raw, "added": added, "lines": lines_explain, "kept_text": text}
+                )
             reasons["block_lines"] += lines_dropped
             if text is not None and size and size + 1 + len(text) > ANSWER_MAX_CHARS:
                 break
@@ -2097,10 +2106,22 @@ def _prose_keep(
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
             break
         why = None
-        if not all(ok(x) for x in hard_literals(body, shown)):
+        lits = hard_literals(body, shown)
+        if not all(ok(x) for x in lits):
             why = "literal"
         elif not shown:
             why = "unsupported"
+        if explain is not None:
+            explain.append(
+                {
+                    "unit": "sentence",
+                    "text": text,
+                    "added": added,
+                    "literals": [_explain_literal(x, hay, derived, shown) for x in lits],
+                    "verdict": "dropped" if why else "kept",
+                    "reason": why,
+                }
+            )
         if why is not None:
             reasons[why] += 1
             claims.append(Claim(text, [], "dropped", line_end=brk, added=added))
@@ -2124,6 +2145,10 @@ def _prose_keep(
             c.state = "dropped"
             reasons["dangling"] += 1
             carry(c.line_end, before=i)
+            if explain is not None:
+                explain.append(
+                    {"unit": "dangling", "text": c.text, "verdict": "dropped", "reason": "dangling"}
+                )
     raws = [r for c, r in zip(claims, raw_of, strict=True) if c.state == "kept"]
     return claims, reasons, raws
 
@@ -2162,7 +2187,26 @@ def _is_derived(literal: str, derived: frozenset[Decimal]) -> bool:
     return Decimal(c).normalize() in derived
 
 
-def _check_block(block: str, ok: Callable[[str], bool], shown: dict[str, Excerpt]) -> tuple[str | None, int]:
+def _explain_literal(
+    x: str, hay: str, derived: frozenset[Decimal], shown: dict[str, Excerpt]
+) -> dict[str, Any]:
+    """D-189 (trace): one hard literal: stated (and in which shown excerpts), or derived."""
+    stated = literal_supported(x, hay)
+    found = (
+        [h for h, e in shown.items() if literal_supported(x, _hay([e.title, e.date, e.text]))]
+        if stated
+        else []
+    )
+    derived_ok = not stated and _is_derived(x, derived)
+    return {"literal": str(x), "supported": stated or derived_ok, "found_in": found, "derived": derived_ok}
+
+
+def _check_block(
+    block: str,
+    ok: Callable[[str], bool],
+    shown: dict[str, Excerpt],
+    explain: list[dict[str, Any]] | None = None,
+) -> tuple[str | None, int]:
     """D-187: ``(the block with only its supported lines, lines dropped)``, or ``(None, ...)`` when no
     command line survives. A command line is checked as a code span (every token not a placeholder,
     a trailing shell comment left out); a comment line (# or //) only for its hard literals; an empty
@@ -2184,7 +2228,10 @@ def _check_block(block: str, ok: Callable[[str], bool], shown: dict[str, Excerpt
         comment = bare.startswith(("#", "//"))
         code = "" if comment else _SHELL_COMMENT.sub("", bare).replace("`", "").strip()
         lits = hard_literals(bare, shown) if comment else (hard_literals(f"`{code}`", shown) if code else [])
-        if all(ok(x) for x in lits):
+        verdict = all(ok(x) for x in lits)
+        if explain is not None:
+            explain.append({"line": line, "literals": [str(x) for x in lits], "kept": verdict})
+        if verdict:
             kept.append(line)
             commands += not comment
         else:
@@ -2217,6 +2264,7 @@ def prose_check(
     embed: Embed | LineSim | None = None,
     llm_cites: dict[str, list[str]] | None = None,
     added_from: int | None = None,
+    explain: list[dict[str, Any]] | None = None,
 ) -> tuple[list[Claim], dict[str, int]]:
     """D-162: the deterministic check of prose sentences (``split_sentences``) against the excerpts
     the answer was written from: ``(claims, drop counts by reason)``. A sentence is dropped only for
@@ -2224,7 +2272,7 @@ def prose_check(
     every other one is kept and attributed by ``attribute`` with ``strategy`` (D-165; ``llm_cites``:
     the JOB attribute's ids per kept sentence TEXT). There is no polarity check (D-165: its flags were
     false positives)."""
-    claims, reasons, raws = _prose_keep(sentences, shown, added_from)
+    claims, reasons, raws = _prose_keep(sentences, shown, added_from, explain)
     kept = [c for c in claims if c.state == "kept"]
     cites = [llm_cites.get(c.text, []) for c in kept] if llm_cites is not None else None
     supports = attribute(raws, shown, strategy, model_sources=sources, llm_cites=cites, embed=embed)
@@ -2319,6 +2367,7 @@ def validate_prose(
     embed: Embed | LineSim | None = None,
     llm_cites: dict[str, list[str]] | None = None,
     added: list[str] | None = None,
+    explain: list[dict[str, Any]] | None = None,
 ) -> Validated:
     """D-162: the deterministic check of a ``prose`` output against the excerpts it was shown
     (``prose_check``): sentences with a fabricated hard literal are dropped (``drop_reasons``), the
@@ -2328,7 +2377,14 @@ def validate_prose(
     status, conf, sources, related_hint, answer = _prose_fields(obj, shown)
     sentences, start = _prose_sentences(answer, added if status == ANSWERED else None)
     claims, reasons = prose_check(
-        sentences, sources, shown, strategy, embed=embed, llm_cites=llm_cites, added_from=start
+        sentences,
+        sources,
+        shown,
+        strategy,
+        embed=embed,
+        llm_cites=llm_cites,
+        added_from=start,
+        explain=explain,
     )
     kept_added = sum(1 for c in claims if c.added and c.state == "kept")
     return assemble_prose(
@@ -2656,10 +2712,24 @@ class _TeeLedger:
         self.tally: dict[str, list[Any]] = {}
         #: D-172: ``(profile, outcome)`` of every attempt per lineage, in order
         self.outcomes: dict[str, list[tuple[str, str]]] = {}
+        #: D-189: every attempt's row facts per lineage, in order (the trace recorder reads them)
+        self.rows: dict[str, list[dict[str, Any]]] = {}
 
     async def record(self, row: LedgerRow) -> None:
         if row.lineage is not None:
             self.outcomes.setdefault(row.lineage, []).append((row.profile, row.outcome))
+            self.rows.setdefault(row.lineage, []).append(
+                {
+                    "profile": row.profile,
+                    "model": row.model_id,
+                    "outcome": row.outcome,
+                    "input_tokens": row.input_tokens,
+                    "output_tokens": row.output_tokens,
+                    "reserved_usd": str(row.reserved_usd) if row.reserved_usd is not None else None,
+                    "cost_usd": str(row.cost_usd) if row.cost_usd is not None else None,
+                    "latency_ms": row.latency_ms,
+                }
+            )
             acc = self.tally.setdefault(row.lineage, [0, Decimal(0), 0])
             if row.outcome in NETWORK_OUTCOMES:
                 acc[0] += 1
@@ -2678,6 +2748,7 @@ class _TeeLedger:
 
     def take(self, lineage: str) -> tuple[int, Decimal]:
         self.outcomes.pop(lineage, None)
+        self.rows.pop(lineage, None)
         acc = self.tally.pop(lineage, [0, Decimal(0), 0])
         return int(acc[0]), Decimal(acc[1])
 
@@ -2893,6 +2964,12 @@ class Researcher:
         ledger = self.provider.ledger if self.provider is not None else None
         return list(ledger.outcomes.get(lineage, [])) if isinstance(ledger, _TeeLedger) else []
 
+    def attempt_rows(self, lineage: str) -> list[dict[str, Any]]:
+        """D-189: copies of the ledger facts of the attempts of ``lineage`` so far, in order."""
+        ledger = self.provider.ledger if self.provider is not None else None
+        rows = ledger.rows.get(lineage, []) if isinstance(ledger, _TeeLedger) else []
+        return [dict(r) for r in rows]
+
     def spent(self, lineage: str) -> tuple[Decimal, int]:
         ledger = self.provider.ledger if self.provider is not None else None
         if isinstance(ledger, _TeeLedger):
@@ -2923,6 +3000,7 @@ class Researcher:
         lineage: str,
         carried_ids: list[int] | None = None,
         attempt_guard: AttemptGuard | None = None,
+        observe: Callable[[dict[str, Any]], None] | None = None,
     ) -> LlmResult:
         """One logical call. Before EVERY attempt (retries and the fallback included), and before any
         byte is sent: the strict privacy gate over ``gate_ids`` (the text of this prompt) and the
@@ -2956,6 +3034,7 @@ class Researcher:
             precheck=precheck,
             chain=self.chain_for_job(job),  # D-171: a writer job's own chain, else the task's
             variant=variant if job in TEXT_JOBS else None,
+            observe=observe,  # D-189: the trace recorder (read-only)
             deadline=deadline,
             lineage=lineage,
             attempt_policy="latency",

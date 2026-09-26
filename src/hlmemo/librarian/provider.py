@@ -110,6 +110,24 @@ _PRECHECK: contextvars.ContextVar[Callable[[], Awaitable[None]] | None] = contex
 #: (its own prices) and worst-case tokens; it raises to stop the call (a per-question budget)
 AttemptGuard = Callable[[LlmProfile, Decimal, int], Awaitable[None]]
 _GUARD: contextvars.ContextVar[AttemptGuard | None] = contextvars.ContextVar("hlm_llm_guard", default=None)
+#: D-189: a caller's read-only observer of each attempt (the messages sent, the raw output)
+_OBSERVE: contextvars.ContextVar[Callable[[dict[str, Any]], None] | None] = contextvars.ContextVar(
+    "hlm_llm_observe", default=None
+)
+
+
+def _emit(event: dict[str, Any]) -> None:
+    """D-189: hand one attempt's facts to the caller's observer; an observer failure is logged and
+    never changes the call."""
+    observe = _OBSERVE.get()
+    if observe is None:
+        return
+    try:
+        observe(event)
+    except Exception:  # noqa: BLE001 - an observer is diagnostics only
+        log.warning("llm observer failed", exc_info=True)
+
+
 #: the caller's deadline on the event-loop clock (``complete(deadline=)``, e.g. the API's 4 s risk
 #: judge cap): each HTTP timeout is budgeted to end DEADLINE_MARGIN_S before it, and no attempt,
 #: reservation or backoff starts without MIN_ATTEMPT_S of room (DeadlineExceeded instead)
@@ -508,6 +526,7 @@ class Provider:
         attempt_policy: str = "background",
         attempt_guard: AttemptGuard | None = None,
         variant: Variant | None = None,
+        observe: Callable[[dict[str, Any]], None] | None = None,
     ) -> LlmResult:
         """``deadline`` (event-loop time): the caller's hard cap. HTTP timeouts are budgeted to end
         before it and no attempt starts without room (``DeadlineExceeded``), so an outer
@@ -515,13 +534,16 @@ class Provider:
         ``attempt_policy``: ``background`` (retry/backoff) or ``latency`` (one bounded attempt per
         profile, then the next one; see the module doc). ``attempt_guard``: see ``AttemptGuard``.
         ``variant`` (D-178): per PROFILE of the chain, ``(user message, parser)`` to use instead of
-        ``user`` and the JSON parser (a text protocol for a profile without JSON mode), or None."""
+        ``user`` and the JSON parser (a text protocol for a profile without JSON mode), or None.
+        ``observe`` (D-189): a read-only callback per attempt (profile, attempt, the messages sent,
+        the raw output, its outcome); it never changes the call."""
         if attempt_policy not in ATTEMPT_POLICIES:
             raise LlmConfigError(f"unknown attempt_policy {attempt_policy!r}")
         token = _LINEAGE.set(lineage) if lineage is not None else None
         ptoken = _PRECHECK.set(precheck)
         dtoken = _DEADLINE.set(deadline)
         gtoken = _GUARD.set(attempt_guard)
+        otoken = _OBSERVE.set(observe)
         try:
             return await self._complete(
                 task,
@@ -533,6 +555,7 @@ class Provider:
                 variant=variant,
             )
         finally:
+            _OBSERVE.reset(otoken)
             _GUARD.reset(gtoken)
             _DEADLINE.reset(dtoken)
             _PRECHECK.reset(ptoken)
@@ -678,6 +701,23 @@ class Provider:
             obj, err = parse(att.content)
             if obj is not None:
                 err = task.schema_errors(obj) or (validate(obj) if validate else None)
+            if _OBSERVE.get() is not None:  # D-189: diagnostics only
+                _emit(
+                    {
+                        "profile": profile.name,
+                        "model": profile.model_id,
+                        "attempt": schema_fails + 1,
+                        "outcome": ("ok" if schema_fails == 0 else "schema_retry_ok")
+                        if err is None
+                        else "schema_fail",
+                        "error": err,
+                        "system_sha256": _sha(messages[0]["content"].encode("utf-8")),
+                        "user": messages[1]["content"],
+                        "content": att.content,
+                        "latency_ms": att.latency_ms,
+                        "usage": dict(att.usage or {}),
+                    }
+                )
             if err is None:
                 att.row.outcome = "ok" if schema_fails == 0 else "schema_retry_ok"
                 await _finalize(self.ledger.record(att.row))

@@ -1603,6 +1603,123 @@ async def test_ask_long_item_shows_its_best_chunk_centred(connect, world, deps, 
     assert "The trigram fix for G-L3 is parked" in excerpts[0].text
 
 
+# --------------------------------------------------------------------------- D-189 trace recorder
+TRACE_QUESTION = "What is the current retrieval p95 target and what was it before?"
+
+
+async def _traced_ask(connect, world, deps, db_dsn, trace_dir):  # noqa: ANN001, ANN202
+    """One prose ask (expand + llm attribution, a part link) through the same mock provider."""
+    fake = FakeResearcher(
+        facts=["1.2 s", "1,6 s on the VPS"],
+        expand_add=["The owner decided it after the R3 release.", "On staging it is 0.3 s."],
+    )
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(
+        db_dsn,
+        llm,
+        research_answer_mode="prose",
+        research_expand=True,
+        research_attribution="llm",
+        research_trace_dir=str(trace_dir) if trace_dir is not None else None,
+    )
+    try:
+        out = await ask(connect, world, deps, r, TRACE_QUESTION)
+    finally:
+        await r.aclose()
+    return out, llm
+
+
+def _without_latency(out: dict[str, Any]) -> dict[str, Any]:
+    out = json.loads(json.dumps(out))
+    out["meta"].pop("latency_ms")
+    return out
+
+
+async def test_ask_trace_changes_nothing_and_records_every_section(
+    connect, world, deps, db_dsn, tmp_path
+) -> None:  # noqa: ANN001
+    """D-189: with HLM_RESEARCH_TRACE_DIR the response and every provider request are IDENTICAL to a
+    run without it (the same mock provider); one trace file holds every section."""
+    from hlmemo.core import research_trace as rt
+
+    d001, d004 = world.versions["D-001"], world.versions["D-004"]
+    links = [await _supersedes(connect, d004, d001, "part", "The retrieval p95 target is 1,6 s on the VPS.")]
+    try:
+        plain, llm_plain = await _traced_ask(connect, world, deps, db_dsn, None)
+        traced, llm_traced = await _traced_ask(connect, world, deps, db_dsn, tmp_path / "traces")
+    finally:
+        await _drop_links(connect, links)
+    assert _without_latency(traced) == _without_latency(plain)  # the same answer, byte for byte
+    assert llm_traced.requests == llm_plain.requests  # the same prompts, request bodies and order
+    (path,) = list((tmp_path / "traces").glob("*.json"))
+    assert path.name.endswith(f"-{rt.sha256(TRACE_QUESTION)[:8]}.json")
+    t = json.loads(path.read_text())
+    assert list(t) == list(rt.SECTIONS)
+    # 1. the request; 2. the map as the planner got it
+    assert t["request"]["question"] == TRACE_QUESTION and t["request"]["answer_mode"] == "prose"
+    assert t["request"]["attribution"] == "llm" and t["request"]["writer_profile"] == "stub-primary"
+    assert t["request"]["finished_at"] and t["request"]["elapsed_ms"] >= 0
+    assert t["map"]["tokens"] > 0 and t["map"]["text"] in llm_plain.requests[0]["messages"][1]["content"]
+    # 3. the plan call: the system sha, the full user message, the raw output, the parsed plan
+    (plan,) = t["plan"]
+    assert (
+        plan["job"] == "plan" and plan["user"].startswith("JOB: plan\n") and len(plan["system_sha256"]) == 64
+    )
+    assert plan["outputs"][0]["content"] and plan["outputs"][0]["outcome"] == "ok" and "queries" in plan
+    assert plan["attempts"] == [
+        {**plan["attempts"][0], "attempt": 1, "profile": "stub-primary", "outcome": "ok"}
+    ]
+    assert plan["model"] == "stub/stub-primary" and plan["cost_usd"] and plan["usage"]["prompt_tokens"] == 100
+    # 4. retrieval: every query's hits with component ranks; fusion; drill order; drops; statuses
+    queries = t["retrieval"]["queries"]
+    assert queries[0]["query"] == TRACE_QUESTION and queries[0]["phase"] == "question"
+    hit = queries[0]["hits"][0]
+    assert {"rank", "handle", "version_id", "title", "path", "score", "lexical_rank", "vector_rank"} <= set(
+        hit
+    )
+    assert queries[0]["candidates"]["vector"] >= 1
+    (phase,) = t["retrieval"]["phases"]
+    assert phase["chunks"] and phase["items"] and phase["drill_order"] and "dropped" in phase
+    assert all(len(c["ranks"]) == len(queries) for c in phase["chunks"])
+    assert any(e["status"] for e in phase["excerpts"])  # the part-superseded D-001
+    # 5. the excerpts exactly as the writer saw them
+    shown = request_job(llm_plain.requests[1])[1]["excerpts"]
+    assert t["excerpts"] == shown
+    # 6. the write: the exact message, the raw output, the parsed answer
+    (write,) = t["write"]
+    assert write["job"] == "prose" and write["user"] == llm_plain.requests[1]["messages"][1]["content"]
+    assert write["parsed"]["status"] == "answered" and write["outputs"][0]["content"]
+    assert t["expand"][0]["added"] == [
+        "The owner decided it after the R3 release.",
+        "On staging it is 0.3 s.",
+    ]
+    # 7. validation: every sentence, its literals, where they were found, the verdict
+    units = t["validation"]["units"]
+    staging = next(u for u in units if "staging" in u.get("text", ""))
+    assert staging["verdict"] == "dropped" and staging["reason"] == "literal"
+    assert any(lit["found_in"] for u in units for lit in u.get("literals", []))
+    assert t["validation"]["drop_reasons"]["literal"] == 1 and "recheck" in t["validation"]
+    # 8. attribution: the call, the cites, the final support pairs
+    assert t["attribution"]["strategy"] == "llm" and t["attribution"]["calls"][0]["job"] == "attribute"
+    assert t["attribution"]["support"] and t["attribution"]["calls"][0]["cites"]
+    # 9. the response, and every call recorded
+    assert t["response"] == json.loads(json.dumps(traced))
+    assert (
+        [c["job"] for c in t["calls"]] == traced["meta"]["steps"] == ["plan", "prose", "expand", "attribute"]
+    )
+    assert "OPENROUTER_API_KEY" not in path.read_text() and "test-key-not-secret" not in path.read_text()
+
+
+async def test_ask_trace_write_failure_never_fails_the_request(
+    connect, world, deps, db_dsn, tmp_path, caplog
+) -> None:  # noqa: ANN001
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("a file where the trace directory should be")
+    out, _llm = await _traced_ask(connect, world, deps, db_dsn, blocker)
+    assert out["abstained"] is False and "1.2 s" in out["answer"]
+    assert "trace not written" in caplog.text and blocker.read_text().startswith("a file")
+
+
 # --------------------------------------------------------------------------- over MCP (detach)
 @contextlib.asynccontextmanager
 async def ask_app(db_dsn: str, llm: ScriptedLLM, **kw: Any) -> AsyncIterator[httpx.AsyncClient]:

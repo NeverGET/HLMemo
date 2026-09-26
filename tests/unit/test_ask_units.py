@@ -3097,3 +3097,64 @@ def test_d188_pulled_excerpts_replace_the_lowest_ranked_current_ones_past_the_bu
         "deploy/RUNBOOK.md",
         "deploy/backup/backup.sh",
     ]
+
+
+# --------------------------------------------------------------------------- D-189 trace recorder
+def test_d189_recorder_keeps_copies_and_never_raises(tmp_path, caplog) -> None:  # noqa: ANN001
+    from decimal import Decimal
+
+    from hlmemo.config import get_settings
+    from hlmemo.core import research_trace as rt
+
+    assert rt.TraceRecorder.maybe(get_settings(), "Q?") is None  # unset: off
+    rec = rt.TraceRecorder.maybe(get_settings(research_trace_dir=str(tmp_path)), "Q?")
+    assert rec is not None and list(rec.data) == list(rt.SECTIONS)
+    live = {"hits": [1, 2], "cost": Decimal("0.5"), "ex": _ex("v1.0", "text")}
+    rec.set("map", live)
+    live["hits"].append(3)  # the live object changes afterwards: the trace does not
+    assert rec.data["map"]["hits"] == [1, 2] and rec.data["map"]["cost"] == "0.5"
+    assert rec.data["map"]["ex"]["handle"] == "v1.0"  # a dataclass, as a dict copy
+    rec.enrich_last(x=1)  # no call yet: nothing to enrich, no error
+    rec.call({"job": "plan", "user": "JOB: plan"})
+    rec.call({"job": "attribute"})
+    rec.call({"job": "prose"})
+    assert [c["job"] for c in rec.data["calls"]] == ["plan", "attribute", "prose"]
+    assert len(rec.data["plan"]) == len(rec.data["write"]) == len(rec.data["attribution"]["calls"]) == 1
+    rec.append("retrieval", {"q": 1}, key="queries")
+    rec.update("plan", x=1)  # "plan" is a list: a bad record is logged, never raised
+    assert "a record failed" in caplog.text and len(rec.data["plan"]) == 1
+    path = rec.write()
+    assert path is not None and json.loads(path.read_text())["map"]["hits"] == [1, 2]
+    bad = rt.TraceRecorder(tmp_path / "f.json" / "sub", "Q?")
+    (tmp_path / "f.json").write_text("x")
+    assert bad.write() is None and "trace not written" in caplog.text
+
+
+async def test_d189_a_failing_observer_never_changes_a_provider_call() -> None:
+    import httpx
+
+    from hlmemo.librarian.ledger import MemoryLedger
+    from hlmemo.librarian.provider import Provider
+
+    provider = Provider(
+        [_task_profile()],
+        mode="live",
+        ledger=MemoryLedger(),
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json=_chat(_JOB_OUT["prose"]))),
+        budget_disabled=True,
+    )
+    seen: list[dict] = []
+
+    def observe(event: dict) -> None:
+        seen.append(event)
+        raise RuntimeError("a broken recorder")
+
+    try:
+        spec = load_task("research", rs.PROSE_PROMPT_VERSION)
+        res = await provider.complete(
+            spec, "JOB: prose\nINPUT: {}", observe=observe, attempt_policy="latency"
+        )
+    finally:
+        await provider.aclose()
+    assert res.output["status"] == "answered" and len(seen) == 1
+    assert seen[0]["user"] == "JOB: prose\nINPUT: {}" and seen[0]["outcome"] == "ok" and seen[0]["content"]

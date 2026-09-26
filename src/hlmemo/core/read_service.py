@@ -194,10 +194,13 @@ async def query_parts(
     req: QueryRequest | dict[str, Any],
     *,
     deps: ReadDeps,
+    explain: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """``memory.query`` without its optional ``librarian`` block: ``(packed result, block | None)``.
     ``query`` packs the block after the hits; the W2e synthesis (``synthesis_service``) packs it
-    after the hits AND the synthesis, so one exact ``budget.used`` covers everything (G2)."""
+    after the hits AND the synthesis, so one exact ``budget.used`` covers everything (G2).
+    ``explain`` (D-189, the memory.ask trace): filled with the candidate counts per list, the
+    D-057 hidden items and, per ranked hit, its fused score and component ranks; read-only."""
     request = parse_request(QueryRequest, req)
     budget = _budget(request.token_budget)
     async with conn.transaction():
@@ -260,6 +263,30 @@ async def query_parts(
         head = newer_first_on_ties(head)  # D-057: exact RRF tie, same title -> newer first
         if partial:  # D-076 fact-level supersession, only for a query that matched the outdated span
             head = demote_partially_superseded(head, partial, terms.terms)  # the 6a96ba1 term set
+        if explain is not None:  # D-189: diagnostics only (copies of numbers)
+            explain.update(
+                candidates={
+                    "lexical": len(lexical),
+                    "trigram": len(trigram),
+                    "vector": len(vector),
+                    "title": len(title),
+                },
+                ordered=len(ordered),
+                hidden_superseded=sorted(hidden),
+                partial_superseded=[[s, d] for s, d, _q in partial],
+                head=[
+                    {
+                        "clue": encode_clue(f.row.version_id, f.row.ordinal) if f.row is not None else None,
+                        "logical_id": f.logical_id,
+                        "score": f.score,
+                        "lexical_rank": f.lexical_rank,
+                        "trigram_rank": f.trigram_rank,
+                        "vector_rank": f.vector_rank,
+                        "title_rank": f.title_rank,
+                    }
+                    for f in head
+                ],
+            )
         librarian = await pending_block(conn, ctx, project.project_id, now)
 
         card: CardInput | None = None

@@ -290,6 +290,10 @@ class Settings(BaseSettings):
     # only. A writer attempt that runs past it fails like a transport failure and the task profile
     # writes (the writer's fallback, with its normal timeout); the question deadline still binds.
     research_writer_timeout_s: float = Field(default=12.0, gt=0, le=120)
+    # D-189: a directory for the memory.ask TRACE (one JSON file per request: every step, prompt,
+    # LLM attempt, hit list, drop and verdict). Unset = off. Diagnostics only: it never changes an
+    # answer; it holds the (redacted) prompts and excerpts, so treat the directory as memory data.
+    research_trace_dir: str | None = None
     # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
     # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
     # (the others stay drillable in `related`); an empty or failed select writes over them all.
