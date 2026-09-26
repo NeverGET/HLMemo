@@ -694,3 +694,24 @@ D-153 | 2026-09-26 | ACCEPTED | **The review-79/80 hardening cost correctness th
 - At n = 25 answerable questions, the binomial SE at p ≈ .55 is ±.10, so the "±.04 noise" in D-149 was optimistic. Levers must be judged on large effects, or on more questions or replicates.
 - The gate needs .80 against about .55, so a big lever is required.
 **Gate not reached, so there is no release.** Next: a key-fact miss taxonomy on the 7f900ba outputs, then a ceiling-first prototype of the lever it points to. Morning spend is about $0.65; the shared balance is about $10.6, keeping ≥ $9 for prod.
+D-154 | 2026-09-26 | ACCEPTED | **Kept claims that the answer summary dropped are appended (wf-memory-ask 4e88bc0).**
+The miss taxonomy on 7f900ba:
+- 13 misses: compression 6, retrieval 4 (2 of them really lost at quote level), abstain 1, contradiction 1, facet 1.
+- In 4 misses a kept, verified claim held the key fact but the free-text summary left it out.
+The fix: `validate_answer` appends every kept claim the answer does not cover, i.e. does not state all its literals plus ≥ 60% of its content words. There is no extra LLM call.
+Offline re-judge: +1 (12 → 13 of 25).
+It is small because the claims themselves are compressed: "10-20 MB", "STATUS.md" and "REST 64 KiB" never enter a claim. Appending the primary sources' verbatim quotes also changes nothing, because the facts sit in other, uncited documents or lines.
+D-155 | 2026-09-26 | ACCEPTED | **Ceiling-first on the metric itself: the D-130 gate is reachable, and the bottleneck is the answer CONTRACT, not the model or retrieval.**
+Oracles on the same 25 answerable dev questions, same strict judge:
+| Variant | Setup | Correct |
+|---|---|---|
+| O-span | The candidate is the gold source text itself | .84: the judge ceiling on this set |
+| O-ans | The product's answer model (openai/gpt-6-luna, effort low) with a plain "complete and specific" prompt over the gold spans ±3 lines | .84, c+partial .88, 0 contradictions, $0.00015/q |
+| **ORACLE-sel** | The same plain prompt over the sources memory.ask ITSELF cited (primary + related) | **.76** |
+| memory.ask 7f900ba | Claims + verbatim-quote contract | .48–.52 |
+**Conclusion:** about .24 of the gap is the claims + verbatim-quote answer contract, which makes the model compress. Only about .08 is retrieval/selection. The judge accepts complete answers: D021 and D054, suspected judge false negatives, pass for O-ans. The D-150 luna-pro and D-151 slot-filling probes changed the model and the plan, but never this contract.
+**Next: V13 "write, then cite".**
+1. The model writes a complete answer with a [handle] after each sentence.
+2. The server picks each sentence's supporting lines deterministically (greedy cover, at most 3 lines of the cited excerpts).
+3. The literal, coverage and polarity checks run as now, and failing sentences are dropped.
+This keeps the faithfulness guarantees without the quote contract. It is prototyped offline over the ORACLE-sel contexts first (ceiling-first); spend is cents.
