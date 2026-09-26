@@ -204,6 +204,15 @@ def test_literal_support_uses_the_same_numeral_rule() -> None:
     assert not rs.literals_ok("It is 16 s.", hay)  # 16 is not a token of 1,6
 
 
+def test_literal_support_tr_apostrophe_suffixes() -> None:
+    """Turkish case suffixes after an apostrophe are not part of a literal (live smoke finding)."""
+    assert rs.literals("Özetler bütçenin en fazla %40’ını kullanabilir.") == ["40"]
+    assert rs.literals("D-130'da karar verildi; v12.3'ün içinde.") == ["D-130", "v12.3"]
+    hay = rs._lit_norm("Summaries take at most 40 % of it. D-130 decided it; see v12.3.")
+    assert rs.literals_ok("Özetler en fazla %40’ını kullanabilir; D-130'da karar verildi.", hay)
+    assert not rs.literals_ok("Özetler en fazla %41’ini kullanabilir.", hay)
+
+
 # --------------------------------------------------------------------------- answer contract
 def _ex(handle: str, text: str, vid: int | None = None) -> rs.Excerpt:
     return rs.Excerpt(

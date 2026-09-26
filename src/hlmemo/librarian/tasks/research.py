@@ -185,8 +185,22 @@ def literal_supported(literal: str, hay: str) -> bool:
     return False
 
 
+#: a Turkish case suffix after an apostrophe (``%40’ını``, ``D-130'da``): not part of the literal
+_APOS_SUFFIX = re.compile(r"^(.*?[\w%])['’][^\W\d_]{1,8}$")
+
+
+def literals(text: str) -> list[str]:
+    """The checkable literals of ``text`` (``synthesis.claims``), with a Turkish apostrophe suffix
+    removed so ``%40’ını`` is checked as ``40`` and ``D-130'da`` as ``D-130``."""
+    out = []
+    for lit in literal_claims(text):
+        m = _APOS_SUFFIX.match(lit)
+        out.append(m.group(1).lstrip("%") if m else lit)
+    return [x for x in out if x]
+
+
 def literals_ok(text: str, hay: str) -> bool:
-    return all(literal_supported(x, hay) for x in literal_claims(text))
+    return all(literal_supported(x, hay) for x in literals(text))
 
 
 # --------------------------------------------------------------------------- excerpts and prompts
