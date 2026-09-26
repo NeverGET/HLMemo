@@ -1448,14 +1448,19 @@ async def test_ask_temporal_status_whole_and_part_links_and_the_superseder_pull_
     assert part[0].status.startswith(
         f"superseded in part by v{runbook} (deploy/RUNBOOK.md): «The trigram fix"
     )
-    assert by[first_status].status == "" and by[f"v{d002}.0"].status == ""  # no link: current, no field
-    # neither superseder was shown: both pulled in, after the ranked excerpts, themselves current
-    pulled = excerpts[-2:]
-    assert {e.version_id for e in pulled} == {d004, runbook} and all(not e.status for e in pulled)
-    assert flags["superseders_pulled"] == 2
+    assert by[f"v{d002}.0"].status == ""  # no link: current, no field
+    # D-188: STATUS (> 3 chunks) shows its best chunk for the question, not its first hit chunk
+    assert (
+        first_status not in by
+        and {e.handle for e in excerpts if e.version_id == status_vid} <= trigram_chunks
+    )
+    # neither superseder was shown: both pulled in after the ranked excerpts, themselves current;
+    # the pulled D-004 row mentions D-001, whose row then follows as a cross-reference (D-188)
+    pulled = [e for e in excerpts if e.version_id in (d004, runbook)]
+    assert len(pulled) == 2 and all(not e.status for e in pulled) and flags["superseders_pulled"] == 2
+    assert excerpts[-1].version_id == world.versions["D-001"] and flags["xref_pulled"] == 1
     # the read-time context labels (a decision row; a heading path)
     assert by[f"v{d003}.0"].context == "DECISIONS.md › row D-003 (2026-09-12)"
-    assert by[first_status].context == "STATUS.md › STATUS"
     assert all(e.context.startswith("STATUS.md › STATUS") for e in excerpts if e.version_id == status_vid)
 
 
@@ -1517,6 +1522,85 @@ async def test_ask_prose_mode_writer_sees_status_and_context(connect, world, dep
     for body in llm2.requests[1:]:
         for e in request_job(body)[1].get("excerpts", []):
             assert "status" not in e and "context" not in e
+
+
+# --------------------------------------------------------------------------- D-188 retrieval
+async def test_ask_xref_to_a_d_id_pulls_its_row(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-188: the shown D-004 row mentions D-001, whose row is not shown: its row chunk is pulled in
+    (prose mode); a mentioned D-id whose row is shown is not."""
+    d001, d004 = world.versions["D-001"], world.versions["D-004"]
+    excerpts, flags = await _temporal_retrieve(connect, world, deps, db_dsn, [f"v{d004}.0"])
+    assert [e.version_id for e in excerpts] == [d004, d001] and flags["xref_pulled"] == 1
+    assert excerpts[1].handle == f"v{d001}.0" and excerpts[1].text.startswith("D-001 | 2026-09-01")
+    assert excerpts[1].context == "DECISIONS.md › row D-001 (2026-09-01)"
+    shown_both, flags2 = await _temporal_retrieve(connect, world, deps, db_dsn, [f"v{d004}.0", f"v{d001}.0"])
+    assert [e.version_id for e in shown_both] == [d004, d001] and flags2.get("xref_pulled", 0) == 0
+
+
+async def test_ask_xref_to_a_path_pulls_its_best_chunk_and_the_cap_holds(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """D-188: a repo path pulls that item at its best chunk for the question; of five references at
+    most XREF_EXTRA are drilled, ranked by mention count plus the question words their chunk shares."""
+    v = world.versions
+    async with await connect() as conn:
+        view = await mm.load_view(conn, world.ctx_reader, world.projects[MAIN])
+        spans = await rq_mod.chunk_spans(conn, v["status"])
+        await conn.commit()
+    trigram = {f"v{v['status']}.{sp.ordinal}" for sp in spans if "trigram fix" in sp.text}
+    mentions = rs.Excerpt(
+        f"v{v['D-004']}.0", v["D-004"], "T", "docs/decisions/DECISIONS.md#D-004", "2026-09-26",
+        "See docs/status/STATUS.md and deploy/RUNBOOK.md; the rules are D-001, D-002 and D-003"
+        " (see D-002, D-002).",  # D-002: 3 mentions; STATUS: 1 + 3 question words in its best chunk
+    )  # fmt: skip
+    r = make_researcher(db_dsn, ScriptedLLM(default={}), research_answer_mode="prose")
+    try:
+        async with await connect() as conn:
+            await conn.commit()
+            run = _HitsRun(
+                conn=conn,
+                ctx=world.ctx_reader,
+                researcher=r,
+                deps=deps,
+                settings=r.settings,
+                question="Is the trigram fix for G-L3 parked?",
+                slug=MAIN,
+                project_id=world.projects[MAIN],
+                end=0.0,
+                reconnect=None,
+                view={x.version_id: x for x in view},
+            )
+            texts = [run.question]
+            focus = rs.content_words(run.question)
+            pulled = await run._xrefs(conn, [mentions], texts, set(), {v["D-004"]}, focus)
+            await conn.rollback()
+    finally:
+        await r.aclose()
+    assert len(pulled) == rsv.XREF_EXTRA == 3
+    # STATUS (1 mention, but its best chunk shares the question's words) first, D-002 (3 mentions),
+    # then D-001 (first of the single-mention rows); D-003 and RUNBOOK are left out by the cap
+    assert [e.version_id for e in pulled] == [v["status"], v["D-002"], v["D-001"]]
+    assert pulled[0].handle in trigram and "trigram fix" in pulled[0].text
+
+
+async def test_ask_long_item_shows_its_best_chunk_centred(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-188: a top item of more than LONG_ITEM_CHUNKS chunks whose first hit is not its best
+    chunk for the question shows only its best chunk (prose mode), clipped around the match."""
+    status = world.versions["status"]
+    async with await connect() as conn:
+        spans = await rq_mod.chunk_spans(conn, status)
+        await conn.commit()
+    trigram = {f"v{status}.{sp.ordinal}" for sp in spans if "trigram fix" in sp.text}
+    far = next(
+        f"v{status}.{sp.ordinal}"
+        for sp in spans
+        if all(abs(sp.ordinal - int(t.split(".")[1])) > 1 for t in trigram)
+    )
+    assert len(spans) > rsv.LONG_ITEM_CHUNKS
+    excerpts, _flags = await _temporal_retrieve(connect, world, deps, db_dsn, [far])
+    handles = [e.handle for e in excerpts]
+    assert far not in handles and set(handles) <= trigram and len(handles) == 1
+    assert "The trigram fix for G-L3 is parked" in excerpts[0].text
 
 
 # --------------------------------------------------------------------------- over MCP (detach)

@@ -81,6 +81,11 @@ carries a ``status`` when a live ``supersedes`` link (valid at the question's ti
 whose superseder is not shown pulls the superseder's best in-document chunk in (≤
 ``SUPERSEDER_EXTRA`` beyond the cap, replacing the lowest-ranked current excerpts when the excerpt
 budget binds). A chunk excerpt carries a read-time ``context`` label (``research.context_label``).
+D-188 (prose mode): the D-ids and repo paths the shown excerpts mention, whose row or item is not
+shown, pull their row chunk / best chunk in (≤ ``XREF_EXTRA``, the same budget rule; ``xref_pulled``);
+a long top item (> ``LONG_ITEM_CHUNKS`` chunks) shows its best chunk for the question instead of its
+other hit chunks; an excerpt longer than ``research.EXCERPT_CHARS`` is clipped around its
+best-matching part (``research.clip`` with the question's words).
 
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write), ``research.MAX_CALLS_ATTRIBUTE`` (5) with
@@ -159,6 +164,14 @@ DOC_TOP = 4
 #: (characters) past which a pulled superseder replaces the lowest-ranked current excerpts instead
 SUPERSEDER_EXTRA = 2
 EXCERPT_BUDGET_CHARS = MAX_DRILL * rs.EXCERPT_CHARS
+#: D-188 (prose mode): the cross-references (D-ids, repo paths) of the shown excerpts pulled in
+#: beyond the cap, the candidates considered for it, and an item long enough that its best chunk
+#: for the question replaces its other hit chunks
+XREF_EXTRA = 3
+XREF_CANDIDATES = 8
+LONG_ITEM_CHUNKS = 3
+_DID = re.compile(r"(?<![\w-])D-\d{3}(?!\d)")
+_REPO_PATH = re.compile(r"(?<![\w/.-])((?:docs/[\w./-]*?\.md)|(?:deploy/[\w./-]*\w))(?![\w/])")
 REFINE_MAX_NEW = 8
 RRF_K = 60
 #: per-call caps (seconds) inside the whole request's HLM_RESEARCH_TIMEOUT_S
@@ -455,10 +468,34 @@ class _Run:
             # TAKING slots; the remaining slots keep the chunk-fused order
             items = [h for h in rrf_items(lists) if self._handle_in_view(h)]
             best = await self._doc_best(c, items, [self.question, *queries])
-            excerpts = await self._drill(c, drill_order(sections, best, fused, skip))
-            if self.prose:  # D-184: supersession status and the superseder pull-in
-                excerpts = await self._temporal(c, fresh, excerpts, [self.question, *queries], skip)
+            focus = None
+            if self.prose:  # D-188: a long top item shows its best chunk, not its other hit chunks
+                fused = self._long_items_best_only(items, best, fused)
+                focus = set().union(*(rs.content_words(t) for t in [self.question, *queries]))
+            excerpts = await self._drill(c, drill_order(sections, best, fused, skip), focus)
+            if self.prose:  # D-184: supersession status, the superseder pull-in; D-188: xrefs
+                texts = [self.question, *queries]
+                excerpts = await self._temporal(c, fresh, excerpts, texts, skip, focus)
         return excerpts, lists
+
+    def _long_items_best_only(self, items: list[str], best: list[str], fused: list[str]) -> list[str]:
+        """D-188: for a top item of more than ``LONG_ITEM_CHUNKS`` chunks whose best chunk for the
+        question (``_doc_best`` over the WHOLE item) is not its top hit, the fused list keeps only
+        that best chunk of it: its other hit chunks give their slots to other items."""
+        only: dict[int, str] = {}
+        for hit, b in zip(items, best, strict=False):
+            vid = decode_clue(b).version_id
+            item = self.view.get(vid)
+            if item is not None and item.n_chunks > LONG_ITEM_CHUNKS and b != hit:
+                only[vid] = b
+        if not only:
+            return fused
+        out = []
+        for h in fused:
+            vid = decode_clue(h).version_id
+            if vid not in only or h == only[vid]:
+                out.append(h)
+        return out
 
     async def _statuses(self, c: AsyncConnection, fresh: AuthContext, excerpts: list[rs.Excerpt]) -> None:
         """D-184: set ``status``/``status_vid`` of each excerpt from the live ``supersedes`` links
@@ -510,36 +547,119 @@ class _Run:
         excerpts: list[rs.Excerpt],
         texts: list[str],
         skip: set[str],
+        focus: set[str] | None = None,
     ) -> list[rs.Excerpt]:
         """D-184: the statuses of ``excerpts``, then the superseder pull-in: for superseded excerpts
         whose superseding item is not shown (nor in ``skip``), that item's best in-document chunk
         for the question (``_doc_best``, as item fusion) joins the set, at most ``SUPERSEDER_EXTRA``
-        beyond the cap; when the excerpts' text would pass ``EXCERPT_BUDGET_CHARS``, a pulled one
-        replaces the lowest-ranked current excerpt instead."""
+        beyond the cap. D-188: then the cross-reference pull-in (``_xrefs``, at most
+        ``XREF_EXTRA``). The pulled excerpts follow the ranked ones (``_with_extra``: past
+        ``EXCERPT_BUDGET_CHARS`` they replace the lowest-ranked current excerpts)."""
         await self._statuses(c, fresh, excerpts)
         shown = {e.version_id for e in excerpts}
         for h in skip:
             with contextlib.suppress(InvalidClue):
                 shown.add(decode_clue(h).version_id)
+        pulled: list[rs.Excerpt] = []
         want = list(
             dict.fromkeys(e.status_vid for e in excerpts if e.status_vid and e.status_vid not in shown)
         )
-        if not want:
+        if want:
+            best = await self._doc_best(c, [f"v{vid}.0" for vid in want[:SUPERSEDER_EXTRA]], texts)
+            pulled = await self._drill(c, [h for h in best if h not in skip], focus)
+            await self._statuses(c, fresh, pulled)
+            self.flags["superseders_pulled"] = self.flags.get("superseders_pulled", 0) + len(pulled)
+        seen = shown | {e.version_id for e in pulled}
+        xrefs = await self._xrefs(c, [*excerpts, *pulled], texts, skip, seen, focus)
+        if xrefs:
+            await self._statuses(c, fresh, xrefs)
+            self.flags["xref_pulled"] = self.flags.get("xref_pulled", 0) + len(xrefs)
+        return self._with_extra(excerpts, [*pulled, *xrefs])
+
+    @staticmethod
+    def _with_extra(excerpts: list[rs.Excerpt], extra: list[rs.Excerpt]) -> list[rs.Excerpt]:
+        """``excerpts`` and then the pulled ``extra``; past ``EXCERPT_BUDGET_CHARS`` of text, the
+        lowest-ranked CURRENT excerpts (no status) of ``excerpts`` make room for them."""
+        if not extra:
             return excerpts
-        best = await self._doc_best(c, [f"v{vid}.0" for vid in want[:SUPERSEDER_EXTRA]], texts)
-        pulled = await self._drill(c, [h for h in best if h not in skip])
-        if not pulled:
-            return excerpts
-        await self._statuses(c, fresh, pulled)
-        self.flags["superseders_pulled"] = self.flags.get("superseders_pulled", 0) + len(pulled)
         out = list(excerpts)
-        size = sum(len(e.text) for e in out) + sum(len(e.text) for e in pulled)
+        size = sum(len(e.text) for e in out) + sum(len(e.text) for e in extra)
         while size > EXCERPT_BUDGET_CHARS:
             drop = next((i for i in range(len(out) - 1, -1, -1) if not out[i].status), None)
             if drop is None:
                 break
             size -= len(out.pop(drop).text)
-        return out + pulled
+        return out + extra
+
+    async def _xrefs(
+        self,
+        c: AsyncConnection,
+        excerpts: list[rs.Excerpt],
+        texts: list[str],
+        skip: set[str],
+        shown: set[int],
+        focus: set[str] | None,
+    ) -> list[rs.Excerpt]:
+        """D-188: the cross-reference pull-in. The D-ids (``D-026``) and repo paths (``docs/….md``,
+        ``deploy/…``) the shown ``excerpts`` mention whose row or item is not shown, ranked by mention
+        count plus the question words their target chunk shares (≤ ``XREF_CANDIDATES`` considered);
+        the top ``XREF_EXTRA`` are drilled: a D-id's row chunk (``_did_row``), a path's item at its
+        best chunk for the question (``_doc_best``)."""
+        counts: dict[str, int] = {}
+        for e in excerpts:
+            for ref in [*_DID.findall(e.text), *_REPO_PATH.findall(e.text)]:
+                counts[ref] = counts.get(ref, 0) + 1
+        if not counts:
+            return []
+        visible = {vid: item for vid, item in self.view.items() if vid not in self.excluded}
+        by_path: dict[str, list[int]] = {}
+        for vid, item in visible.items():
+            by_path.setdefault(item.path.split("#", 1)[0], []).append(vid)
+        shown_paths = {visible[v].path.split("#", 1)[0] for v in shown if v in visible}
+
+        def row_shown(did: str) -> bool:
+            row = re.compile(rf"(?m)^\|?[ \t]*{did}[ \t]*\|")
+            return any(row.search(e.text) or e.path.endswith(f"#{did}") for e in excerpts)
+
+        refs = []
+        for ref in sorted(counts, key=lambda r: -counts[r]):
+            if ref.startswith("D-") and not row_shown(ref):
+                refs.append(ref)
+            elif not ref.startswith("D-") and ref in by_path and ref not in shown_paths:
+                refs.append(ref)
+        qwords = rs.content_words(self.question)
+        cands: list[tuple[int, int, str]] = []  # (-score, order, handle)
+        for i, ref in enumerate(refs[:XREF_CANDIDATES]):
+            if ref.startswith("D-"):
+                found = await self._did_row(c, ref, sorted(visible))
+                if found is None or found[0] in shown:
+                    continue
+                handle, text = f"v{found[0]}.{found[1]}", found[2]
+            else:
+                vid = next((v for v in by_path[ref] if v not in shown), None)
+                if vid is None:
+                    continue
+                handle = (await self._doc_best(c, [f"v{vid}.0"], texts))[0]
+                clue = decode_clue(handle)
+                spans = await rq.chunk_spans(c, vid, clue.ordinal or 0, clue.ordinal or 0)
+                text = spans[0].text if spans else ""
+            if handle not in skip:
+                cands.append((-(counts[ref] + len(qwords & rs.content_words(text))), i, handle))
+        chosen = list(dict.fromkeys(h for _s, _i, h in sorted(cands)))[:XREF_EXTRA]
+        return await self._drill(c, chosen, focus) if chosen else []
+
+    async def _did_row(self, c: AsyncConnection, did: str, vids: list[int]) -> tuple[int, int, str] | None:
+        """D-188: ``(version_id, ordinal, text)`` of the chunk of the caller's view holding the row
+        START of decision ``did`` (``D-026 | …`` at a line start, a leading pipe allowed); an item
+        whose path names DECISIONS first."""
+        cur = await c.execute(
+            "SELECT version_id, ordinal, text FROM chunks WHERE version_id = ANY(%s) AND text ~ %s"
+            " ORDER BY version_id, ordinal LIMIT 20",
+            (vids, rf"(^|\n)\|?[ \t]*{did}[ \t]*\|"),
+        )
+        rows = [(int(v), int(o), str(t)) for v, o, t in await cur.fetchall()]
+        rows.sort(key=lambda r: "DECISIONS" not in (self.view[r[0]].path if r[0] in self.view else ""))
+        return rows[0] if rows else None
 
     async def _search(self, c: AsyncConnection, fresh: AuthContext, query: str) -> list[dict[str, Any]]:
         return await _search(c, fresh, self.slug, query, self.deps)
@@ -578,9 +698,13 @@ class _Run:
         except InvalidClue:
             return False
 
-    async def _drill(self, c: AsyncConnection, handles: list[str]) -> list[rs.Excerpt]:
+    async def _drill(
+        self, c: AsyncConnection, handles: list[str], focus: set[str] | None = None
+    ) -> list[rs.Excerpt]:
         """The internal drill: what ``memory.drilldown`` returns for each handle (a chunk with its
-        ±1 neighbours, or a whole item), under the caller's scope, WITHOUT its access event."""
+        ±1 neighbours, or a whole item), under the caller's scope, WITHOUT its access event. D-188:
+        with ``focus`` (the question's words, prose mode) a text longer than an excerpt is clipped to
+        a window centred on its best-matching part instead of its head."""
         now = await rq.clock_now(c)
         scopes = mm.view_scopes(self.ctx)
         redact = self.researcher.redactor.text
@@ -610,7 +734,7 @@ class _Run:
                     v.title,
                     item.path,
                     v.valid_from.date().isoformat(),
-                    redact(rs.clip(text)),
+                    redact(rs.clip(text, focus=focus)),
                     context=context,
                 )
             )
@@ -1110,6 +1234,7 @@ async def ask(
             run.flags.update({"writer_timeout": False, "writer_used": None})
             # D-184: superseded excerpts the writer was shown, superseders pulled in
             run.flags.update({"superseded_shown": 0, "superseders_pulled": 0})
+            run.flags["xref_pulled"] = 0  # D-188: cross-referenced rows/items pulled in
             if researcher.expand:  # D-170
                 run.flags.update(
                     {"expand_added": 0, "expand_dropped": 0, "expand_skipped": False, "expand_failed": False}

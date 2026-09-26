@@ -703,9 +703,31 @@ def status_label(handle: str, path: str, quote: str, part: bool) -> str:
     return f"{head}: «{q}»" if q else head
 
 
-def clip(text: str, limit: int = EXCERPT_CHARS) -> str:
+#: D-188: the sentence/line units of a text an excerpt window may be centred on
+_CLIP_UNIT = re.compile(r"[^\n.!?]+[.!?]*")
+
+
+def clip(text: str, limit: int = EXCERPT_CHARS, focus: set[str] | None = None) -> str:
+    """``text`` cut to ``limit`` characters (" …" marks a cut): its head, or (D-188, with ``focus``:
+    the question's content words) a window centred on the sentence or line that shares the most
+    ``focus`` words, starting at a line (else word) boundary; the head when nothing shares."""
     text = text.strip()
-    return text if len(text) <= limit else text[:limit] + " …"
+    if len(text) <= limit:
+        return text
+    best, at = 0, 0
+    for m in _CLIP_UNIT.finditer(text) if focus else ():
+        score = len(focus & _content(m.group(0)))  # type: ignore[operator]
+        if score > best:
+            best, at = score, (m.start() + m.end()) // 2
+    if best == 0:
+        return text[:limit] + " …"
+    start = max(0, min(at - limit // 2, len(text) - limit))
+    if start > 0:
+        nl = text.find("\n", start, start + 200)
+        sp = text.find(" ", start, start + 40)
+        start = nl + 1 if nl >= 0 else (sp + 1 if sp >= 0 else start)
+    end = min(len(text), start + limit)
+    return ("… " if start > 0 else "") + text[start:end].strip() + (" …" if end < len(text) else "")
 
 
 Redact = Callable[[str], str]

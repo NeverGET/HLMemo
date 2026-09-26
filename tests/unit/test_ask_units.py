@@ -3060,3 +3060,40 @@ def test_d187_small_integers_and_computed_totals_are_not_fabrications() -> None:
     bad = rs.validate_prose(_prose("In total 61 dumps are kept.", ["v80.0"]), RUNBOOK_SHOWN)
     assert not bad.answered and bad.drop_reasons["literal"] == 1  # neither stated nor derived
     assert len(rs._derived_numbers(" ".join(str(i) for i in range(1000)))) <= rs.DERIVED_NUMBERS_MAX**2
+
+
+# --------------------------------------------------------------------------- D-188 retrieval
+def test_d188_clip_centres_on_the_best_matching_part() -> None:
+    filler = "The research librarian is being built on branch wf-memory-ask.\n" * 60
+    text = filler + "The trigram fix for G-L3 is parked until the research loop needs it.\n" + filler
+    focus = rs.content_words("Is the trigram fix for G-L3 parked?")
+    out = rs.clip(text, 800, focus)
+    assert "The trigram fix for G-L3 is parked" in out and out.startswith("… ") and out.endswith(" …")
+    assert out[2:].startswith("The research librarian")  # the window starts at a line start
+    assert len(out) <= 800 + 4
+    assert rs.clip(text, 800) == text[:800] + " …"  # no focus: the head, as before
+    assert rs.clip(text, 800, {"nothing", "matches"}) == text[:800] + " …"
+    assert rs.clip("short", 800, focus) == "short"
+    tail = filler + "The trigram fix is parked."
+    assert rs.clip(tail, 300, focus).endswith("The trigram fix is parked.")  # clamped at the end
+
+
+def test_d188_pulled_excerpts_replace_the_lowest_ranked_current_ones_past_the_budget(monkeypatch) -> None:  # noqa: ANN001
+    ranked = [_ex(f"v{i}.0", "x" * 100) for i in range(1, 5)]
+    ranked[3].status = "superseded by v9 (docs/a.md)"  # the lowest-ranked is superseded: it stays
+    extra = [_ex("v9.0", "y" * 150)]
+    assert [e.handle for e in rsv._Run._with_extra(ranked, extra)] == ["v1.0", "v2.0", "v3.0", "v4.0", "v9.0"]
+    monkeypatch.setattr(rsv, "EXCERPT_BUDGET_CHARS", 500)  # 400 + 150 > 500: one current goes
+    assert [e.handle for e in rsv._Run._with_extra(ranked, extra)] == ["v1.0", "v2.0", "v4.0", "v9.0"]
+    assert rsv._Run._with_extra(ranked, []) == ranked
+    assert rsv.XREF_EXTRA == 3 and rsv.LONG_ITEM_CHUNKS == 3
+    # the reference patterns: D-ids and repo paths
+    text = (
+        "See D-026, D-1234 (not an id), docs/status/STATUS.md, deploy/RUNBOOK.md and deploy/backup/backup.sh."
+    )
+    assert rsv._DID.findall(text) == ["D-026"]
+    assert rsv._REPO_PATH.findall(text) == [
+        "docs/status/STATUS.md",
+        "deploy/RUNBOOK.md",
+        "deploy/backup/backup.sh",
+    ]
