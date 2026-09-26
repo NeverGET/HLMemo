@@ -963,3 +963,23 @@ The same applies to answered NEGATIVE questions (C4). A premise correction groun
 - correct .68, abstain 1.00, faithful (item) .878, contradiction .04, recall .94, p95 11.5 s, $.004/q;
 - 97 sentences LLM-cited, 7 fallbacks.
 Current best profile. Its C3 is decided by the D-165 adjudication.
+D-169 | 2026-09-26 | ACCEPTED | **First complete dev picture under the frozen final protocol (a0d91d0, prose + llm attribution): 5 of 7 consumer-gate criteria pass. C2 and C3 fail, both on writer behaviour.**
+| Criterion | memory.ask | NotebookLM | Gate | Result |
+|---|---|---|---|---|
+| C1 consumer utility (blind fresh-Claude rater, rubric consumer_v1 + drill rule) | **1.97** (U2 .97, U0 0) | 1.85 (U2 .85) | ≥ 1.6, ≥ NLM − .05, U0 ≤ .10 | PASS |
+| C2 correct (judge + blind codex adjudication, D-168) | **.72** (judge 17/25; D009 overturned → 18/25; 0/4 false accepts) | .88 (judge 22; D054 overturned, D050 a false accept) | ≥ .80 and ≥ .83 | FAIL (−3 questions) |
+| C3 faithful (item scope + blind adjudication, D-165) | **.867** | .71 (judge, quote scope) | ≥ .95; contradiction ≤ .04 | FAIL |
+| C4 abstain (adjudicated) | **1.00** (B-D079 = premise correction) | .375 (5 of 8 fabricated) | ≥ .90 | PASS |
+| C5 source recall | .94 | – | ≥ .85 | PASS |
+| C6 p95 / cost | 11.5 s / $.004 | 37 s / – | ≤ 20 s / ≤ $.01 | PASS |
+| C7 isolation | review-79 T1 tests green | – | + probe at the final run | PASS (probe pending) |
+**C3 breakdown** (11 judge rejections): S 4 (judge errors), E 2 (attribution), **P 4 (overreach: added causal glue or rationale, e.g. "this created compatibility and maintenance burden")**, **C 1 ("STATUS.md says X", but X is only in D-050)**. Sampled false-accept rate: 1/16 (P).
+**C2 misses:**
+- omitted specifics: D018 "10–20 MB", D053 the REST 64 KiB limit, D061 the command and flag names, D022 the actor (Codex) and the "entrenches mistakes" warning;
+- retrieval: D002, D050;
+- a judgement call: D017.
+**The rater** (fresh Claude) found memory.ask actionable in 32/33 cases and gave NotebookLM 1s for invented reasons on negatives. It rated B-D079 1, because it never literally says "no Elasticsearch".
+**Next, prompt research/v3.1 for the prose JOB only, with two short rules:**
+- **(a) No overreach:** state only what the excerpts state; no cause, effect, purpose or conclusion they do not state; never attribute a statement to a document that does not contain it.
+- **(b) Specifics:** give every value, name, command, flag, path, limit and actor the excerpts state for what the question asks, including sibling values in the same statement (other routes, earlier values); when rejecting a false premise, say explicitly that the memory has no such thing.
+Then one end-to-end run and the same adjudication.
