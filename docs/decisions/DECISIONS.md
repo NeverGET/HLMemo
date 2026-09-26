@@ -486,3 +486,15 @@ Causes:
 - (3) A RUBRIC INCONSISTENCY: for corpus B the scorer used ALL gold facts as must-mention, whereas the blind PR set uses 1–3 key atomic facts.
 **Fix:** for every set, must_mention = 1–3 key atomic facts per question. For sealed B they are derived ONCE from the gold answer by a fixed prompt, cached and frozen before any system answer is scored; the PR set keeps its own. The judge, the thresholds and all other criteria stay unchanged. The change is recorded before the sealed or PR sets are touched, and it is not tuned on results.
 Tonight's spend: the evaluator $0.60 (budget reached); the total is about $2.1 of $6.
+D-138 | 2026-09-26 | ACCEPTED | **Fair dev baseline under gate v1 (with the D-137 rubric), and the iteration plan.** Frozen 1–3 key-fact files: B-dev sha256 4211fb8d…f7f9 and sealed B f76fe319…b2a. They were derived verbatim, by index, from the gold facts with prompt derive.md v2 (499e619, committed before sealed was touched). Sealed B's gold was read only for this derivation; no system has run on it. Disclosure: the first dev derivation dropped a key fact, so the prompt was fixed using dev gold only; the discarded file is kept.
+B-dev prototype baseline:
+| Variant | Correct | Abstain | Faithful | Source recall | p95 |
+|---|---|---|---|---|---|
+| V3 | .472 | 1.00 | .456 | .898 | 9.3 s |
+| V5 | .486 | 1.00 | .573 (quote check .925) | .905 | 11.9 s |
+Both miss about a third of the key facts, and V5 contradicts gold on .167 of questions.
+**Iteration plan on B-dev only, about $0.4 per run:**
+- (1) memory.ask with claims[] and fully entailing 1–3 quotes, plus a completeness pass;
+- (2) if still short: a stronger model (luna-pro) for the answer/completeness steps only, planning stays on luna. Expected ~$0.007/q, inside the $0.01 gate;
+- (3) retrieval for the remaining misses.
+The final gate runs only once the dev numbers clear the thresholds with margin. Total spend tonight so far is about $2.3 of $6.
