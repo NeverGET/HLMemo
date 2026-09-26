@@ -658,3 +658,18 @@ D-151 | 2026-09-26 | ACCEPTED | **V11 slot-filling is fast but too narrow; overn
 Why: the plan makes one slot for two-fact questions (9 cases). About 1.5 slots get filled and 1.4 claims written, against 3.5 in V10. Secondary key facts are stated .48 of the time, against .88.
 **Lesson:** slot decomposition under-generates. The combination worth trying next is slots per FACT plus a completeness pass over the filled slots; the latency headroom that V11 bought allows it.
 The overnight experiments are closed. Next steps are the owner's morning decision (see OVERNIGHT-2026-09-26.md). The review-79 fixes on memory.ask continue; they need no LLM spend.
+D-152 | 2026-09-26 | ACCEPTED (D-125: max 2 review rounds; a HIGH is closed by a reproducing test, not a third round) | **Review 80 (round 2, astra-low + gpt-5.6-sol xhigh, from a clean export of bc333bd): T1, T2, T4-high, T4-med and T5 FIXED (both reviewers agree); T6 was still OPEN and is now fixed at wf-memory-ask 8398656.**
+**T6 (both reproduced it).** `polarity_ok` asked only whether the claim had ANY negation, so an unrelated "not" excused a dropped one:
+- the quote "The release gate is not enabled by default. It runs weekly, not daily." accepted the claim "… is enabled by default and runs weekly, not daily." (astra) and "… enabled by default and not disabled." (sol).
+**Fix: polarity per proposition.**
+- Each negation or modal scope in the quotes whose words the claim states must be matched by a claim scope about the same words, and vice versa.
+- A scope is the governed side of the polarity word: the right side for EN/DE; the left side for TR değil/yok/olabilir; the other side only when that side is empty. It never crosses a sentence end.
+- A first symmetric-window attempt pulled the shared subject ("release gate") into every scope, which blocked a true claim about the other proposition. This was caught by a new test before commit.
+**Tests.** Both reviewers' scenarios are regression tests (unit and `validate_answer`), plus true-claim, inserted-negation and sentence-boundary cases. Results: unit 645 passed; memory.ask integration 39 passed on a fresh DB.
+**The RUNBOOK:697 residual is fixed in the same commit:** the convergence step names the template's marker, not r3.
+**Residuals for the owner (accept/reject, D-125):**
+- (1) `map_summary.py:321`: a DB write failure after provider success skips `_failed`, so on an idle DB the retry waits for the next event.
+- (2) `provider.py:723-785`: a timeout or unknown-usage attempt charges worst-case USD but not tokens against the per-question token cap.
+- (3) Turkish suffix negation ("etkin değildir" is caught, but a verb suffix like "-me/-ma" is not) remains unsupported.
+None of these is a leak or an overspend: (1) is a delayed retry; for (2), the USD cap still binds; (3) is a known language limit.
+The review-79/80 hardening (contiguous quotes plus polarity) can cost correctness, so memory.ask @ 8398656 is re-measured on the same 34-question dev subset. The result is D-153.
