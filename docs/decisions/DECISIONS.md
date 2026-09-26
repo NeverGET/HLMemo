@@ -1347,3 +1347,41 @@ Findings:
 - (a) Gate the xref pull-in on relevance: a D-id or path overlapping the question, or ≥ 2 question words; cap 2.
 - (b) Writer coverage for how-to questions: the complete ordered steps with exact commands and flags from the excerpts.
 - (c) Recency for "what is current" questions: a planner query for the latest status and the latest decision rows. Contradictions are dominated by the writer answering from an older source when the current one was not retrieved.
+D-192 | 2026-09-26 | ACCEPTED | **Trace "brain surgery" on memory.ask (owner request, $5 budget, $2.17 spent): the low real-memory score is not an LLM ceiling. Six mechanical problems stack, and the writer ignoring shown evidence explains 1 of 31 wrong answers.**
+Method:
+- An opt-in trace recorder `HLM_RESEARCH_TRACE_DIR` (wf-memory-ask **fad3354**; its commit subject mislabels it D-189). One JSON file per request holds the map, the plan, the per-query ranked hits, fusion, drops with reasons, the exact excerpts, the writer I/O, the validator verdicts and the attribution. It is behaviour-neutral (identical responses and requests, tested).
+- Three traced pr-dev runs on fresh copies of the PR-set memory: A = as measured before; A2 = A repeated; B = with Memory Map summaries.
+- A deterministic funnel (first loss per must-mention fact), then independent reading of every fact the funnel blamed on the writer (it was refuted for 30/31).
+- memory.ask keeps no conversation memory: access events, the spend ledger and map summaries are the only read-path writes, and none feeds ranking (the ledger only via budget stops).
+
+| Run | Correct | Contradiction | Faithful | Recall |
+|---|---|---|---|---|
+| A | .38 | .28 | .863 | .842 |
+| A2 | .50 | .30 | .820 | .876 |
+| B | .30 | .32 | .788 | .840 |
+| c7e066f (earlier) | .42 | .26 | .818 | .844 |
+
+Findings:
+- **F1:** gate/dev scripts never started the librarian worker, so ALL earlier measurements ran WITHOUT map summaries, while the frozen protocol and deploy/llm.env.example say they are ON. With summaries the run is worse (.30).
+- **F2:** the ~6k-token Memory Map shows big sources as an evenly spaced sample. DECISIONS (136 items) shows 54 ids without summaries and 8 with them; the newest decisions are mostly invisible to the planner. Gold items in the map: 44% → 20% with summaries.
+- **F3:** run noise. The same config scored .42 / .38 / .50. A vs A2 flips 12 of 50. Raw-question retrieval and the map are deterministic (60/60), the planner output never is (0/60 identical), and 11 of the 12 flips are planner-driven. Over 3 runs: 14 always correct, 31 at least once, 19 never.
+- **F4 (15/31 wrong answers):** retrieved evidence doesn't reach the writer.
+  - The 12-slot cap favours hub documents: 27 of 32 cap-dropped gold items were ranked by one query only, at median fused position 19.
+  - Xref pull-ins took 156 slots, with 6% gold. 71% of excerpts hold no needed fact.
+  - Wrong chunk or clipping.
+  - `_doc_best` re-picks a chunk by word overlap and ignores the retrieval rank (it dropped the rank-1 answer chunk in PD-031).
+- **F5 (7/31):** the hard-literal guard drops correct sentences: placeholders in inline code are mangled, question literals, notation. Procedure answers are the most affected.
+- **F6 (6/31):** the judge marks present facts missing (3 wrong answers are judge-only, all Turkish), and the pr-dev gold stops at D-133 while the replica holds D-136.
+- **F7:** the temporal layer is inert on real memory. All 252 explicit links are PHASE0-SPEC merged_from; there are no decision/status links. 1 of 1,065 excerpts is marked superseded. Real supersession is implicit. 6 of 14 contradictions present an older fact as current.
+
+Consequences:
+- **Proposed order (owner to decide):**
+  - (1) Fix the measurement: judge cross-language matching, gold refresh, mean of 3 runs.
+  - (2) The validator.
+  - (3) Evidence selection (doc_best rank, a per-query slot guarantee, gated xref, clipping).
+  - (4) A recency-aware Memory Map; summaries stay OFF until then (a protocol deviation).
+  - (5) Implicit temporal ordering.
+  - (6) Planner variance.
+  - (7) Re-measure ×3.
+- Steps 2–6 can be replayed offline against the 180 saved traces with no LLM spend.
+- Full report: docs/private/realdata-hlmemo/TRACE-REPORT-2026-09-26.md (private: it contains dev questions).
