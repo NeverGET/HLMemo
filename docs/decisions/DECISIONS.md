@@ -948,3 +948,18 @@ End-to-end on wf-memory-ask 0db86e2 (prose mode, 33 dev questions, item scope):
 2. `meta.excerpts_shown` so strategies can be replayed OFFLINE on the SAME answers; only the judge costs.
 3. A pure `attribute(...)` function for that replay.
 The winner is chosen by faithfulness (item scope, same answers), then adjudicated per D-165.
+D-168 | 2026-09-26 | ACCEPTED (pre-registered BEFORE any adjudication result; consult 81: "if gold/judge defects are verified, fix the measurement and rescore both systems") | **Symmetric correctness adjudication for C2, and the llm attribution result.**
+**Why:** on free prose the key-fact judge shows errors that the claims-mode audit (D-150, 0 FN) never saw:
+- B-D009 states both key facts but writes the log path in full (`/opt/hlmemo/.deploy-runs/<run-id>/log` against the gold's `.deploy-runs/<run-id>/log`), and is marked a CONTRADICTION.
+- B-D017 states both reasons, but the gold also lists the backend names.
+- B-D053 wording ("Caddy limit" against "Caddyfile max_size").
+**Protocol (dev now, final run later, identical for memory.ask AND the NotebookLM reference):**
+1. Every answerable question the judge marks incorrect goes to blind codex adjudication, plus a random 20% of those it marks correct.
+2. The adjudicator sees the question, the frozen key facts and the answer, with no system identity. It labels ALL (every element of every key fact stated: paraphrase and equivalent formatting accepted, parentheticals count as elements), MISSING (list them) or CONTRADICTS (states something incompatible with a key fact; extra CORRECT detail such as a fuller path is not a contradiction).
+3. Adjudicated correct = ALL.
+4. C2 uses adjudicated correctness for both systems, and the raw judge numbers are reported alongside.
+The same applies to answered NEGATIVE questions (C4). A premise correction grounded in memory ("HLMemo does not use Elasticsearch; lexical search is Postgres tsvector", B-D079) is adjudicated as ABSTAIN-EQUIVALENT or FABRICATED.
+**llm attribution (wf-memory-ask a0d91d0, HLM_RESEARCH_ATTRIBUTION=llm):**
+- correct .68, abstain 1.00, faithful (item) .878, contradiction .04, recall .94, p95 11.5 s, $.004/q;
+- 97 sentences LLM-cited, 7 fallbacks.
+Current best profile. Its C3 is decided by the D-165 adjudication.
