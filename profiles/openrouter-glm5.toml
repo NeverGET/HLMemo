@@ -4,12 +4,15 @@
 HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
 HLM_LLM_MODEL     = "z-ai/glm-5"
 HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
-# Reasoning: under measurement (latency probe); unset = the endpoint's default. The final value goes
-# here, e.g. HLM_LLM_REASONING = '{"effort":"low"}'.
+# D-175 latency probes (34 questions, same contexts): reasoning ON 22/25 correct but p95 31.9-33 s;
+# reasoning OFF 21/25 (within noise), median 6.0 s, 0 reasoning tokens ('{"effort":"low"}' is ignored
+# by this model; '{"enabled": false}' works). The slow upstream (Baidu: 21 s median) is excluded and the
+# fastest endpoints are preferred; the residual tail is cut by HLM_RESEARCH_WRITER_TIMEOUT_S (fallback
+# to the task profile).
+HLM_LLM_REASONING = '{"enabled": false}'
 # No temperature (as gpt-6-luna). require_parameters: only endpoints that honour response_format
-# serve the call (D-093). A provider `sort` (e.g. sort = "latency") joins the provider table once
-# the latency probe has chosen it.
-extra = { response_format = { type = "json_object" }, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# serve the call (D-093).
+extra = { response_format = { type = "json_object" }, provider = { data_collection = "deny", require_parameters = true, sort = "latency", ignore = ["Baidu"] }, usage = { include = true } }
 # USD per 1M tokens (reservation worst case; actual cost is settled from usage).
 price_in_per_m  = 0.60
 price_out_per_m = 1.92

@@ -49,6 +49,10 @@ class LlmProfile:
     #: D-094, set on a chain's PRIMARY by ``profile_chain``: task -> that task's own fallback profile
     #: (``None``: the override names the primary itself, i.e. no fallback for the task)
     task_fallbacks: Mapping[str, LlmProfile | None] = field(default_factory=dict, repr=False, compare=False)
+    #: D-172: a caller's per-ROLE attempt cap (never read from a profile file): an attempt of this
+    #: profile ends after at most this many seconds (HTTP timeout and wall clock), in place of the
+    #: ``latency`` policy's share; the chain then moves on (e.g. the research writer -> the task)
+    attempt_timeout_s: float | None = None
 
     @property
     def priced(self) -> bool:

@@ -69,7 +69,10 @@ appended and pass the same literal check, then the attribution runs over all sen
 skipped with less than ``EXPAND_MIN_S`` left (``expand_skipped``); a failure keeps the answer.
 D-171 ``HLM_RESEARCH_WRITER_PROFILE``: the JOBs prose and expand run on that named profile (its
 fallback: the research profile; ``research.Researcher.chain_for_job``), the others on the task's;
-``meta.writer_profile`` names the profile that writes.
+``meta.writer_profile`` names the profile that writes. D-172: a writer attempt ends after
+``HLM_RESEARCH_WRITER_TIMEOUT_S`` and the task profile writes instead (the writer jobs' call cap
+grows by that timeout so the fallback keeps its own; the question deadline still binds);
+``meta.flags.writer_timeout`` / ``writer_used`` say what happened.
 
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write), ``research.MAX_CALLS_ATTRIBUTE`` (5) with
@@ -322,6 +325,8 @@ class _Run:
     attribution: str = "sources"
     sim: rs.LineSim | None = None
     llm_cites: dict[str, list[str]] | None = None
+    #: D-172: the profile that answered the last call (``LlmResult.profile``)
+    last_profile: str | None = None
     #: D-165 (meta.excerpts_shown): the excerpt handles the LAST answer step (answer/check, write,
     #: prose) was shown, in prompt order
     excerpts_shown: list[str] = field(default_factory=list)
@@ -601,8 +606,25 @@ class _Run:
             self.calls += 1
             self.steps.append(job)
             self.sent |= set(ids)
+            self.last_profile = res.profile
             return res.output
         raise rs.ResearchUnavailable("privacy")
+
+    def cap_for(self, job: str, cap_s: float) -> float:
+        """D-172: a writer job's call cap grows by the writer's attempt timeout, so the task profile
+        that writes after a timed-out writer attempt keeps its own ``cap_s`` (the deadline binds)."""
+        chain = self.researcher.chain_for_job(job)
+        extra = chain[0].attempt_timeout_s if chain else None
+        return cap_s + extra if extra else cap_s
+
+    def writer_timed_out(self, since: int) -> bool:
+        """D-172: a writer-profile attempt of this question timed out after its first ``since``
+        attempts."""
+        chain = self.researcher.chain_for_job("prose")
+        if not chain:
+            return False
+        name = chain[0].name
+        return any(p == name and o == "timeout" for p, o in self.researcher.attempts(self.lineage)[since:])
 
     async def attempt_guard(self, _profile: Any, worst_usd: Decimal, worst_tokens: int) -> None:
         """Review 79 T4: before EVERY provider attempt (a schema retry and the fallback included),
@@ -751,12 +773,22 @@ class _Run:
             ex = [e for e in excerpts if e.version_id not in self.excluded]
             return rs.prose_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
 
-        obj = await self.call("prose", build, ANSWER_CAP_S)
+        since = len(self.researcher.attempts(self.lineage))
+        try:
+            obj = await self.call("prose", build, self.cap_for("prose", ANSWER_CAP_S))
+        finally:
+            self.flags["writer_timeout"] = self.writer_timed_out(since)
         shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
         if obj is None:
             return rs.validate_prose(obj, shown, self.researcher.redactor.text)
+        self.flags["writer_used"] = self.last_profile
         self.excerpts_shown = list(shown)
-        added = await self.expand_call(obj, shown) if self.researcher.expand else None
+        if self.researcher.expand:
+            since = len(self.researcher.attempts(self.lineage))
+            added = await self.expand_call(obj, shown)
+            self.flags["writer_timeout"] = self.flags["writer_timeout"] or self.writer_timed_out(since)
+        else:
+            added = None
         strategy, self.sim, self.llm_cites = self.researcher.attribution, None, None
         if strategy == "llm":
             self.llm_cites = await self.attribute_call(obj, shown, added)
@@ -813,7 +845,7 @@ class _Run:
             return rs.expand_user(self.question, sentences, ex, self.redact), [e.version_id for e in ex]
 
         try:
-            out = await self.call("expand", build, min(EXPAND_CAP_S, left - reserve))
+            out = await self.call("expand", build, min(self.cap_for("expand", EXPAND_CAP_S), left - reserve))
         except rs.ResearchUnavailable:
             self.flags["expand_failed"] = True
             return None
@@ -950,6 +982,8 @@ async def ask(
                 run.flags.update({"attr_embed": "off", "attr_embedded": 0, "attr_embed_ms": 0})
             if researcher.attribution == "llm":
                 run.flags.update({"attr_fallback": False, "attr_llm_cited": 0})
+            # D-172: whether a writer attempt timed out, and the profile that wrote the answer
+            run.flags.update({"writer_timeout": False, "writer_used": None})
             if researcher.expand:  # D-170
                 run.flags.update(
                     {"expand_added": 0, "expand_dropped": 0, "expand_skipped": False, "expand_failed": False}

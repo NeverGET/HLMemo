@@ -610,6 +610,11 @@ async def test_ask_prose_mode_writer_profile_writes_prose_and_expand(connect, wo
         await r.aclose()
     assert out["abstained"] is False and out["meta"]["writer_profile"] == "openrouter-glm5"
     assert out["meta"]["steps"] == ["plan", "prose", "expand", "attribute"]
+    # D-172: a fast writer is used normally
+    assert (
+        out["meta"]["flags"]["writer_used"] == "openrouter-glm5"
+        and out["meta"]["flags"]["writer_timeout"] is False
+    )
     sent = [(request_job(b)[0], b["model"], host) for b, host in zip(llm.requests, llm.hosts, strict=True)]
     assert sent == [
         ("plan", "stub/stub-primary", "stub-primary.invalid"),
@@ -634,6 +639,54 @@ async def test_ask_prose_mode_writer_profile_writes_prose_and_expand(connect, wo
         await r2.aclose()
     assert out2["meta"]["writer_profile"] == "stub-primary"
     assert {b["model"] for b in llm2.requests} == {"stub/stub-primary"}
+    assert (
+        out2["meta"]["flags"]["writer_used"] == "stub-primary"
+        and out2["meta"]["flags"]["writer_timeout"] is False
+    )
+
+
+async def test_ask_prose_mode_slow_writer_times_out_and_the_task_writes(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-172 HLM_RESEARCH_WRITER_TIMEOUT_S: a writer attempt that stalls past its timeout is cut
+    there (not at the call's deadline), charged its worst case, and the task profile writes the
+    answer; meta.flags.writer_timeout / writer_used say so."""
+    import time
+
+    fake = FakeResearcher(facts=["1.2 s", "1,6 s on the VPS"])
+
+    def model(body: dict[str, Any]) -> Any:
+        return ("stall", 5.0, fake(body)) if body["model"] == "z-ai/glm-5" else fake(body)
+
+    llm = ScriptedLLM(default=model)
+    r = make_researcher(
+        db_dsn,
+        llm,
+        research_answer_mode="prose",
+        research_writer_profile="openrouter-glm5",
+        research_writer_timeout_s=0.5,
+    )
+    t0 = time.perf_counter()
+    try:
+        out = await ask(
+            connect, world, deps, r, "What is the current retrieval p95 target and what was it before?"
+        )
+    finally:
+        await r.aclose()
+    assert time.perf_counter() - t0 < 4.0  # the 5 s stall was cut at the writer's 0.5 s
+    assert (
+        out["abstained"] is False and "1.2 s" in out["answer"] and out["meta"]["steps"] == ["plan", "prose"]
+    )
+    flags = out["meta"]["flags"]
+    assert flags["writer_timeout"] is True and flags["writer_used"] == "stub-primary"
+    assert out["meta"]["writer_profile"] == "openrouter-glm5"  # configured; the task wrote this time
+    assert [(request_job(b)[0], b["model"]) for b in llm.requests] == [
+        ("plan", "stub/stub-primary"),
+        ("prose", "z-ai/glm-5"),
+        ("prose", "stub/stub-primary"),
+    ]
+    assert out["meta"]["attempts"] == 3  # plan, the cut writer attempt, the task's prose
+    # the spend guard is disabled in these settings, so no worst case is reserved and the cut attempt
+    # costs 0 here (its worst-case charge with the guard on: test_d172_writer_past_its_timeout_...)
+    assert out["meta"]["cost_usd"] == round(2 * (100 * 1.0 + 20 * 2.0) / 1_000_000, 6)
 
 
 async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001

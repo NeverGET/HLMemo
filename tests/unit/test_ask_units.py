@@ -2221,7 +2221,14 @@ def _task_profile():  # noqa: ANN202
     )
 
 
-def _writer_researcher(handler, *, writer: str | None = "w-writer", budget=None, mode: str = "prose"):  # noqa: ANN001, ANN202
+def _writer_researcher(  # noqa: ANN202
+    handler,  # noqa: ANN001
+    *,
+    writer: str | None = "w-writer",
+    budget=None,  # noqa: ANN001
+    mode: str = "prose",
+    **settings_kw,  # noqa: ANN003
+):
     import httpx
 
     from hlmemo.config import get_settings
@@ -2235,6 +2242,7 @@ def _writer_researcher(handler, *, writer: str | None = "w-writer", budget=None,
         llm_mode="live",
         research_answer_mode=mode,
         research_writer_profile=writer,
+        **{"research_max_usd": 1.0, **settings_kw},  # the test writer's $5/$10 per M: as ask_settings
     )
     provider = Provider(
         [_task_profile()],
@@ -2242,6 +2250,7 @@ def _writer_researcher(handler, *, writer: str | None = "w-writer", budget=None,
         budget=budget,
         ledger=MemoryLedger(),
         transport=httpx.MockTransport(handler),
+        timeout_s=rs.HTTP_TIMEOUT_S,  # as the Researcher builds it
     )
     r = rs.Researcher(settings, provider=provider)
 
@@ -2401,3 +2410,102 @@ def test_d171_writer_chain_resolution(writer_profiles, caplog) -> None:  # noqa:
         assert r.chain_for_job("plan") is None and (r.chain_for_job("prose") is None) is (not expect)
     assert "no-such-profile" in caplog.text and "w-unq" in caplog.text
     assert rs.writer_chain(type("S", (), {"research_writer_profile": "w-writer"})(), []) == []
+
+
+# --------------------------------------------------------------------------- D-172 writer timeout
+def _timed_handler(stall_s: float, seen: list):  # noqa: ANN001, ANN202
+    """A mock provider: the writer model answers after ``stall_s`` seconds, the task at once; it
+    records ``(model, read timeout)`` of every request."""
+    import asyncio
+
+    import httpx
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append((body["model"], request.extensions["timeout"]["read"]))
+        if body["model"] == "stub/w-writer" and stall_s:
+            await asyncio.sleep(stall_s)
+        return httpx.Response(200, json=_chat(_JOB_OUT[_job_of(body)]))
+
+    return handler
+
+
+def _real_run(r) -> rsv._Run:  # noqa: ANN001
+    """A ``_Run`` over a real Researcher (its provider on the mock transport; no DB)."""
+    import asyncio
+
+    run = rsv._Run(
+        conn=None,
+        ctx=None,
+        researcher=r,
+        deps=None,
+        settings=r.settings,
+        question="What is the retrieval p95 target?",
+        slug="p",
+        project_id=1,
+        end=asyncio.get_running_loop().time() + 30.0,
+        reconnect=None,
+    )
+    run.flags.update({"writer_timeout": False, "writer_used": None})
+    return run
+
+
+async def test_d172_writer_past_its_timeout_falls_back_and_the_task_writes(writer_profiles) -> None:  # noqa: ANN001
+    import time
+
+    from hlmemo.librarian.budget import MemoryBudget
+
+    seen: list = []
+    budget = MemoryBudget(1)
+    r = _writer_researcher(_timed_handler(2.0, seen), budget=budget, research_writer_timeout_s=0.3)
+    run = _real_run(r)
+    t0 = time.perf_counter()
+    try:
+        v = await run.answer(list(EXS))
+        attempts = r.attempts(run.lineage)
+        rows = list(r.provider.ledger.inner.rows)
+    finally:
+        await r.aclose()
+    elapsed = time.perf_counter() - t0
+    assert v.answered and v.answer == "The target is 1.2 s." and run.steps == ["prose"]
+    assert run.flags["writer_timeout"] is True and run.flags["writer_used"] == "t-task"
+    assert attempts == [("w-writer", "timeout"), ("t-task", "ok")] and elapsed < 1.5  # not the 2 s stall
+    # the writer attempt was cut at ITS timeout; the task wrote with its own (normal) timeout
+    assert seen[0] == ("stub/w-writer", pytest.approx(0.3, abs=0.01))
+    assert seen[1][0] == "stub/t-task" and rsv.ANSWER_CAP_S - 1.5 < seen[1][1] <= rs.HTTP_TIMEOUT_S
+    # the timed-out attempt is charged its worst case (billing unknown), like any other attempt
+    timeout_row = rows[0]
+    assert timeout_row.outcome == "timeout" and timeout_row.cost_usd == timeout_row.reserved_usd > 0
+    assert budget.spent == timeout_row.cost_usd + rows[1].cost_usd and budget.reserved == 0
+    assert r.provider.breaker("w-writer").failures == 1  # the writer's breaker, not the task's
+
+
+async def test_d172_fast_writer_is_used_with_its_own_cap(writer_profiles) -> None:  # noqa: ANN001
+    seen: list = []
+    r = _writer_researcher(_timed_handler(0.0, seen))  # the default HLM_RESEARCH_WRITER_TIMEOUT_S
+    run = _real_run(r)
+    try:
+        v = await run.answer(list(EXS))
+    finally:
+        await r.aclose()
+    assert v.answered and run.flags["writer_timeout"] is False and run.flags["writer_used"] == "w-writer"
+    assert r.settings.research_writer_timeout_s == rs.WRITER_TIMEOUT_S == 12.0
+    # its attempt timeout is its own cap, not the latency policy's share of the (grown) call cap
+    assert seen == [("stub/w-writer", 12.0)]
+    assert run.cap_for("prose", rsv.ANSWER_CAP_S) == rsv.ANSWER_CAP_S + 12.0
+    assert run.cap_for("plan", rsv.PLAN_CAP_S) == rsv.PLAN_CAP_S  # other jobs: unchanged
+
+
+async def test_d172_no_writer_profile_keeps_the_task_timeout(writer_profiles) -> None:  # noqa: ANN001
+    seen: list = []
+    r = _writer_researcher(_timed_handler(0.0, seen), writer=None, research_writer_timeout_s=0.3)
+    run = _real_run(r)
+    try:
+        v = await run.answer(list(EXS))
+    finally:
+        await r.aclose()
+    assert v.answered and run.flags["writer_timeout"] is False and run.flags["writer_used"] == "t-task"
+    assert r.writer_chain == [] and r.chain[0].attempt_timeout_s is None
+    assert run.cap_for("prose", rsv.ANSWER_CAP_S) == rsv.ANSWER_CAP_S
+    # the task's attempt: the provider's timeout budgeted to the call's deadline, as before D-172
+    assert seen[0][0] == "stub/t-task" and rsv.ANSWER_CAP_S - 1.0 < seen[0][1] <= rsv.ANSWER_CAP_S

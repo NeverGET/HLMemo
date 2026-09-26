@@ -107,6 +107,8 @@ EXPAND_MAX = 6
 #: D-171: the JOBs that write the prose answer: they use ``HLM_RESEARCH_WRITER_PROFILE`` when set
 WRITER_JOBS = frozenset({"prose", "expand"})
 WRITER_ENV = "HLM_RESEARCH_WRITER_PROFILE"
+#: D-172: the default attempt timeout of the writer profile (``HLM_RESEARCH_WRITER_TIMEOUT_S``)
+WRITER_TIMEOUT_S = 12.0
 #: the opt-in prompt versions of the cite and prose modes (``prompts.OPT_IN_VERSIONS``: never the
 #: default)
 CITE_PROMPT_VERSION = 2
@@ -2269,9 +2271,12 @@ class _TeeLedger:
     def __init__(self, inner: Ledger) -> None:
         self.inner = inner
         self.tally: dict[str, list[Any]] = {}
+        #: D-172: ``(profile, outcome)`` of every attempt per lineage, in order
+        self.outcomes: dict[str, list[tuple[str, str]]] = {}
 
     async def record(self, row: LedgerRow) -> None:
         if row.lineage is not None:
+            self.outcomes.setdefault(row.lineage, []).append((row.profile, row.outcome))
             acc = self.tally.setdefault(row.lineage, [0, Decimal(0), 0])
             if row.outcome in NETWORK_OUTCOMES:
                 acc[0] += 1
@@ -2289,6 +2294,7 @@ class _TeeLedger:
         return await self.inner.claim(lineage, cap)
 
     def take(self, lineage: str) -> tuple[int, Decimal]:
+        self.outcomes.pop(lineage, None)
         acc = self.tally.pop(lineage, [0, Decimal(0), 0])
         return int(acc[0]), Decimal(acc[1])
 
@@ -2312,7 +2318,8 @@ def research_chain(settings: Any) -> list[LlmProfile]:
 def writer_chain(settings: Any, task_chain: list[LlmProfile]) -> list[LlmProfile]:
     """D-171: the chain of the jobs that write the prose answer (``WRITER_JOBS``): the named profile
     ``HLM_RESEARCH_WRITER_PROFILE`` (resolved like ``HLM_FALLBACK_PROFILE__<TASK>``: its own file,
-    never the env's ``HLM_LLM_*``), then the research task's own profile as its fallback. ``[]`` (the
+    never the env's ``HLM_LLM_*``; D-172: its attempts capped at ``HLM_RESEARCH_WRITER_TIMEOUT_S``,
+    ``LlmProfile.attempt_timeout_s``), then the research task's own profile as its fallback. ``[]`` (the
     task chain writes) when unset, naming the task profile, without a task chain, unknown or broken
     (logged), or not qualified for ``research`` (its ``disabled_tasks``, D-071; logged)."""
     name = str(getattr(settings, "research_writer_profile", None) or "").strip()
@@ -2326,7 +2333,9 @@ def writer_chain(settings: Any, task_chain: list[LlmProfile]) -> list[LlmProfile
     if TASK in writer.disabled_tasks:
         log.warning("%s=%r lists %r in disabled_tasks: the research profile writes", WRITER_ENV, name, TASK)
         return []
-    return [writer, task_chain[0]]
+    # D-172: the writer's attempts end after HLM_RESEARCH_WRITER_TIMEOUT_S (then the task profile)
+    timeout = float(getattr(settings, "research_writer_timeout_s", WRITER_TIMEOUT_S))
+    return [replace(writer, attempt_timeout_s=timeout), task_chain[0]]
 
 
 class Researcher:
@@ -2496,6 +2505,11 @@ class Researcher:
         usd = head.worst_usd(tokens_in, spec.max_tokens) if head is not None and head.priced else Decimal(0)
         return usd, -(-tokens_in * 11 // 10) + spec.max_tokens
 
+    def attempts(self, lineage: str) -> list[tuple[str, str]]:
+        """D-172: ``(profile, outcome)`` of the attempts of ``lineage`` so far, in order."""
+        ledger = self.provider.ledger if self.provider is not None else None
+        return list(ledger.outcomes.get(lineage, [])) if isinstance(ledger, _TeeLedger) else []
+
     def spent(self, lineage: str) -> tuple[Decimal, int]:
         ledger = self.provider.ledger if self.provider is not None else None
         if isinstance(ledger, _TeeLedger):
@@ -2606,6 +2620,7 @@ __all__ = [
     "SELECT_MAX",
     "TASK",
     "WRITER_JOBS",
+    "WRITER_TIMEOUT_S",
     "Claim",
     "Excerpt",
     "LineSim",

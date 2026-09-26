@@ -699,13 +699,16 @@ class Provider:
         try:
             await self._run_precheck()
             await self._claim_call(job_id)
-            http_timeout = self.timeout_s
+            cap = profile.attempt_timeout_s  # D-172: a per-role cap (the research writer)
+            http_timeout = self.timeout_s if cap is None else min(self.timeout_s, cap)
             remaining = _remaining_s()
             if remaining is not None:  # the prechecks used time: budget this request to the deadline
                 if remaining < MIN_ATTEMPT_S:
                     raise DeadlineExceeded(f"prechecks left no room for task {task.name}")
                 budget_s = remaining * share if share is not None else remaining
-                http_timeout = min(self.timeout_s, max(budget_s, MIN_ATTEMPT_S))
+                if cap is not None:  # its own cap replaces the share (the fallback gets the rest)
+                    budget_s = min(cap, remaining)
+                http_timeout = min(http_timeout, max(budget_s, MIN_ATTEMPT_S))
         except BaseException:
             # nothing was sent: release the reservation (to completion, even when cancelled)
             await _finalize(self.budget.settle(call_id, Decimal(0)))
@@ -713,12 +716,15 @@ class Provider:
 
         t0 = time.perf_counter()
         try:
-            resp = await self._client(profile).post(
-                "/chat/completions",
-                json=body,
-                headers={"Authorization": f"Bearer {profile.api_key or ''}"},
-                timeout=http_timeout,
-            )
+            # D-172: a capped profile's attempt also ends on the WALL clock (an HTTP read timeout
+            # restarts with every byte, e.g. a keep-alive trickle); that is this attempt's timeout
+            async with asyncio.timeout(http_timeout if profile.attempt_timeout_s is not None else None):
+                resp = await self._client(profile).post(
+                    "/chat/completions",
+                    json=body,
+                    headers={"Authorization": f"Bearer {profile.api_key or ''}"},
+                    timeout=http_timeout,
+                )
         except asyncio.CancelledError:
             # cut mid-flight by the caller: billing unknown -> worst case; the ledger row is written.
             # Cut AT the caller's deadline, the profile did not answer in time: a failure of THIS
@@ -745,7 +751,7 @@ class Provider:
 
             await _finalize(abandoned())
             raise
-        except httpx.TimeoutException:
+        except (httpx.TimeoutException, TimeoutError):
             # unknown whether billed: charge the worst case
             await _finalize(self.budget.settle(call_id, None))
             await _finalize(

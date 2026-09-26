@@ -282,6 +282,10 @@ class Settings(BaseSettings):
     # own profile as their fallback; plan, refine and attribute keep the task profile. Empty = the
     # task profile writes too. Its own prices, breaker, spend guard and ledger rows apply.
     research_writer_profile: str | None = None
+    # D-172: the attempt timeout (seconds; HTTP and wall clock) of the writer profile's attempts
+    # only. A writer attempt that runs past it fails like a transport failure and the task profile
+    # writes (the writer's fallback, with its normal timeout); the question deadline still binds.
+    research_writer_timeout_s: float = Field(default=12.0, gt=0, le=120)
     # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
     # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
     # (the others stay drillable in `related`); an empty or failed select writes over them all.
