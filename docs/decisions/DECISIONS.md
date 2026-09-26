@@ -715,3 +715,22 @@ Oracles on the same 25 answerable dev questions, same strict judge:
 2. The server picks each sentence's supporting lines deterministically (greedy cover, at most 3 lines of the cited excerpts).
 3. The literal, coverage and polarity checks run as now, and failing sentences are dropped.
 This keeps the faithfulness guarantees without the quote contract. It is prototyped offline over the ORACLE-sel contexts first (ceiling-first); spend is cents.
+D-156 | 2026-09-26 | ACCEPTED | **Free prose with source citations beats the claims + verbatim-quote contract on BOTH correctness and faithfulness, so memory.ask moves to "V14: write freely, cite handles, verify deterministically".**
+Same 25 answerable dev questions, same sources (the handles memory.ask cited), same model (gpt-6-luna), strict judge:
+| Answer contract | Correct | Faithful (judge) | Det. check |
+|---|---|---|---|
+| memory.ask 7f900ba: atomic claims + verbatim quotes | .52 | .89 | 1.00 |
+| Free prose ("complete and specific"), each sentence judged against its sources | **.76** | **.922** | .98 |
+| V13b: cite exact LINES, then drop sentences whose literals or polarity fail on those lines | .20 | .756 | 1.00 |
+| V13: server picks quote lines by word overlap | 14/25 abstain | not judged | – |
+Findings:
+- The quote contract does not buy faithfulness; it only costs completeness.
+- Line-level citation by a cheap model is imprecise: 24% of the kept sentences are not supported by their cited lines.
+- Word-overlap quote selection cannot work for TR answers over EN sources.
+**V14 design:**
+1. The answer step writes complete prose with `[handle]` after each sentence. The handles are excerpt handles; there are no quotes and no lines.
+2. The server runs deterministic checks on each sentence against the TEXT of its cited excerpt(s): literals, and polarity.
+3. It fixes the literal extraction faults found here: a TR suffix after a closing backtick, slash-joined code spans, and "…" inside code.
+4. Failing sentences are dropped. A sentence with no valid citation may be checked against all shown excerpts.
+**Measurement:** a sentence's faithfulness is judged against the full text of the cited source unit, which the caller can drill into (D-130: "every source is a handle the caller can drill"). Before, it was judged against a displayed quote. This is recorded as a gate-measurement choice and flagged to the owner with the gate-definition question.
+Spend for the oracle and prototype series: about $0.5.
