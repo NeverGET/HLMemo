@@ -606,3 +606,21 @@ D-148 | 2026-09-26 | ACCEPTED (orchestrator) | **Review 79, round 1 of 2 on memo
 | T5 | HIGH | The new features default to ON, so an R3 env on this image silently enables memory.ask and summary spend. They must default OFF, and an R4 manifest must pin the flags, fallbacks and fingerprint. |
 | T6 | HIGH | The quote matcher's word-skipping fallback accepts a quote with its "not" removed (a negation flip). It must be a contiguous normalised match, with changes to negation or modality words rejected. |
 T3 (mutation) and the migration DDL had no findings. Round 2 is the last: a verification of these fixes only. After that, any residual goes to the owner, per D-125.
+D-149 | 2026-09-26 | ACCEPTED | **The server memory.ask (9bceb59) on dev matches the prototype, but the D-130 gate is NOT reached, so there is no final-gate run and no release tonight.** Measured on the same 34-question B-dev subset with the strict judge: correct .577, faithful .874, recall .814, abstain 1.00, p95 21.3 s, $.0044/q, 3.3 LLM calls per question on average. V10 on the same subset: .615 / .849 / .872 / 1.00 / 28.5 s. The map summaries for this corpus cost $0.013 (89/89).
+Misses: missing key fact 8 (6 of them the main fact), retrieval 2, contradiction 1.
+Gap to the gate: correct −.22, faithful −.08, recall −.04, p95 +1.3 s.
+Overnight trajectory under the strict judge:
+| Stage | Correct |
+|---|---|
+| W2e synthesis | .25 |
+| Map loop V3 | .47 |
+| V8 | .62 |
+| memory.ask | .58 (within ±.04 run noise) |
+Faithful rose from .46 to .87.
+Per D-130 and D-125 the release does not self-certify, and the sealed B and PR sets stay untouched. The review-79 round-1 fixes (T1/T2/T4/T5/T6) are in progress; round 2 is verification only.
+Tonight's spend is about $4.8 of $6.
+Next levers, for the owner's morning decision:
+- (a) a stronger answer step only (luna-pro), budget-checked against p95;
+- (b) structured evidence → facts extraction before composing, to fight compression;
+- (c) a re-audit of judge faithfulness false negatives on the memory.ask outputs (the D-140 audit had an 11% FN rate);
+- (d) retrieval recall .81 → .85.
