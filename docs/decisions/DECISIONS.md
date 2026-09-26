@@ -1060,3 +1060,18 @@ The sweep held everything else fixed:
 - (2) Per-job writer profile `HLM_RESEARCH_WRITER_PROFILE` plus an `openrouter-glm5` profile (configuration, D-017).
 - (3) An end-to-end run with the D-165 and D-168 adjudication and the C1 rater.
 The estimated full cost with the glm-5 writer is about $0.013/q, roughly $8–20/month at 20–50 questions a day.
+D-175 | 2026-09-26 | ACCEPTED | **Writer configuration chosen: glm-5 with reasoning OFF, Baidu excluded, latency-sorted providers, plus a writer timeout that falls back to the task profile.**
+Latency and quality probes over the same 34 end-to-end contexts:
+| Variant | Correct | Abstain | Contradictions | Latency median / p95 | $/q (writer) |
+|---|---|---|---|---|---|
+| glm-5 default (reasoning on) | 22/25 | 7/8 | 0 | 10.3 / 31.9 s | .0099 |
+| glm-5, provider sort=latency (replicate) | **22/25** | 6/8 | 1 | 11.4 / 33.0 s | .011 |
+| **glm-5, reasoning `{"enabled": false}`, sort=latency, ignore Baidu** | **21/25** | 6/8 (premise cases → adjudication) | 1 | **6.0** / 29.2 s | **.0075** |
+**Findings:**
+- The .88 is reproducible (22/25 twice).
+- Turning reasoning off costs at most one question (within noise), halves the median latency and cuts cost by 25%.
+- `{"effort":"low"}` is ignored by this model.
+- Baidu is the slow upstream (21 s median).
+- The remaining tail (3/34 at 29–42 s) is upstream variance. It is cut by `HLM_RESEARCH_WRITER_TIMEOUT_S` (default 12 s): on timeout the task profile (gpt-6-luna, 2–4 s) writes the answer. The expected cost is about 9% of questions at luna quality, ≈ −.014 correct.
+**Profile** `profiles/openrouter-glm5.toml` carries the final values. The estimated full cost per question is about $0.010 (writer $0.0075 plus plan and attribution on luna), roughly $6–15/month at 20–50 questions a day.
+**Next:** the end-to-end run with the writer profile and timeout, then the D-165 and D-168 adjudication and the C1 rater. terra and sol stay unrun: they are no longer needed unless glm-5 fails end-to-end.
