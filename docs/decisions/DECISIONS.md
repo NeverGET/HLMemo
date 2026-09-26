@@ -1415,3 +1415,25 @@ Replay:
 7. Re-measure.
 
 Budget: $2.86 of $5 spent. A new hold-out is needed before the next final. Details: docs/private/realdata-hlmemo/MEASUREMENTS-2026-09-27.md.
+D-194 | 2026-09-27 | ACCEPTED | **Measurement fix (step 1 of D-193): the judge rubric v2 FAILED its calibration gate, so the automatic judge stays v1, and its false negatives are corrected by independently READING every judged-incorrect answer (the D-168 adjudication rule). The pr-dev gold is refreshed to the replica (D-136).**
+Gold refresh:
+- An independent auditor (memory only, never saw system output) made 12 proposals. Accepted: 6 (PD-002 and PD-003 changed substantively, since D-136 makes memory.ask the R4 core and sets its answer contract; PD-014, 046, 051 and 059 got context and traps).
+- Rejected: 6 alternate-anchor-only additions (the schema has no alternatives, so they would lower anchor_share).
+- pr-dev hashes: v1 94144c2955871047 (kept as questions.v1.jsonl) → v2 2e0ffe3d0f771b19.
+
+Judge v2 (wf-research-proto 2441ce4, `--gate v2`; v1 byte-identical). The rubric allows cross-language paraphrase, id prefixes and number formats, and defines a contradiction as an asserted incompatible fact. Calibrated on 66 questions labelled by the readers; spend $0.35.
+
+| Calibration check | v1 | v2a |
+|---|---|---|
+| Missed facts recovered | 0/20 | 15/20 |
+| False accepts | 0/33 | 1/33 |
+| Judge-error contradictions cleared | 0/3 | 3/3 |
+| Real contradictions kept | 11/11 | **7/11** |
+| Stability | 28/28 | **23/28** |
+
+v2b, checked on a subset, is projected to fail as well. Loosening the rubric trades directly against contradiction detection.
+
+Consequences:
+- v1 remains the automatic judge. Every measurement reports the judge number AND an adjudicated number, where independent readers (Claude now, codex after 09-30) read every judged-incorrect answer.
+- gate_v2 stays marked "CALIBRATION NOT PASSED".
+- Scorer bug to fix: a judge budget stop is caught as a runaway and scored all-false instead of unscored.
