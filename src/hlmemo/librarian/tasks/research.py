@@ -216,44 +216,87 @@ _NT = re.compile(r"(?i)(\w)n['’]t\b")
 POLARITY_WINDOW = 3
 
 
+#: a sentence end: a polarity word's window never crosses it
+_SENT_END = re.compile(r"(?<=[.!?;])\s+")
+_BOUNDARY = "\x00"
+
+
 def _polarity_words(text: str) -> list[str]:
+    """The normalised words of ``text``, with ``_BOUNDARY`` between its sentences."""
     text = _NT.sub(r"\1 not", unicodedata.normalize("NFC", text))
-    return [w for w, _s, _e in _words(text)]
-
-
-def _about(words: list[str], cls: frozenset[str]) -> list[set[str]]:
-    """For each word of ``cls`` in ``words``: the content words within ``POLARITY_WINDOW``."""
-    out = []
-    for i, w in enumerate(words):
-        if w in cls:
-            near = words[max(0, i - POLARITY_WINDOW) : i] + words[i + 1 : i + 1 + POLARITY_WINDOW]
-            out.append({x for x in near if len(x) >= 3 and x not in _STOP and x not in _NEGATION | _MODAL})
+    out: list[str] = []
+    for sent in _SENT_END.split(text):
+        if out:
+            out.append(_BOUNDARY)
+        out.extend(w for w, _s, _e in _words(sent))
     return out
 
 
+#: polarity words that FOLLOW what they negate/hedge ("etkin değil", "etkin olabilir"); every other
+#: one precedes it ("not enabled", "nicht aktiviert", "may be enabled")
+_POSTPOSITIVE = frozenset("değil yok olabilir olabilirler".split())
+
+
+def _scope_words(words: list[str]) -> set[str]:
+    return {x for x in words if len(x) >= 3 and x not in _STOP and x not in _NEGATION | _MODAL}
+
+
+def _about(words: list[str], cls: frozenset[str]) -> list[set[str]]:
+    """For each word of ``cls`` in ``words``: the content words it negates (hedges) — up to
+    ``POLARITY_WINDOW`` words on its governed side (the other side when that one has none), never
+    across a sentence end. Round 2: a symmetric window took the shared subject ("release gate") into
+    every scope, so any claim about the subject looked like a claim about the negated predicate."""
+    out = []
+    for i, w in enumerate(words):
+        if w not in cls:
+            continue
+        left = words[max(0, i - POLARITY_WINDOW) : i]
+        right = words[i + 1 : i + 1 + POLARITY_WINDOW]
+        if _BOUNDARY in left:
+            left = left[len(left) - left[::-1].index(_BOUNDARY) :]
+        if _BOUNDARY in right:
+            right = right[: right.index(_BOUNDARY)]
+        first, second = (left, right) if w in _POSTPOSITIVE else (right, left)
+        out.append(_scope_words(first) or _scope_words(second))
+    return out
+
+
+def _hits(scope: set[str], words: set[str]) -> int:
+    """How many of ``scope`` are in ``words``; a word also matches its inflections (one is a prefix of
+    the other: run/runs, enable/enabled, etkin/etkinleştirildi)."""
+    return sum(1 for w in scope if w in words or any(x.startswith(w) or w.startswith(x) for x in words))
+
+
 def _shares(scope: set[str], words: set[str]) -> bool:
-    """At least two (or all, when fewer) of ``scope`` are in ``words``; a word also matches its
-    inflections (one is a prefix of the other: run/runs, enable/enabled, etkin/etkinleştirildi)."""
-    hits = sum(1 for w in scope if w in words or any(x.startswith(w) or w.startswith(x) for x in words))
-    return bool(scope) and hits >= min(2, len(scope))
+    """At least two (or all, when fewer) of ``scope`` are in ``words``."""
+    return bool(scope) and _hits(scope, words) >= min(2, len(scope))
+
+
+def _same_scope(a: set[str], b: set[str]) -> bool:
+    """Two polarity scopes are about the same words: they share two (or all of the smaller)."""
+    return bool(a) and bool(b) and _hits(a, b) >= min(2, len(a), len(b))
 
 
 def polarity_ok(text: str, quotes: list[str]) -> bool:
-    """Review 79 T6: ``text`` (a claim, or an answer sentence) keeps the polarity of ``quotes``. It
-    fails when a quote negates (or hedges with a modal) words that ``text`` states with no negation
-    (modal) at all — a DROPPED "not" — or when ``text`` negates (hedges) words that the quotes state
-    with none — an INSERTED one. EN/TR/DE word lists; a TR negative verb suffix is not seen."""
+    """Review 79 T6: ``text`` (a claim, or an answer sentence) keeps the polarity of ``quotes``. Per
+    proposition: each negation (modal) in the quotes whose words ``text`` also states must have a
+    negation (modal) in ``text`` about the same words — else a "not" was DROPPED — and each negation
+    (modal) in ``text`` whose words the quotes state must have one in the quotes — else one was
+    INSERTED. Round 2: an unrelated "not" elsewhere in ``text`` ("… is enabled and runs weekly, not
+    daily") no longer excuses a dropped one. EN/TR/DE word lists; a TR negative verb suffix is not
+    seen."""
     tw = _polarity_words(text)
-    qw = [w for q in quotes for w in _polarity_words(q)]
+    qw = [w for q in quotes for w in [*_polarity_words(q), _BOUNDARY]]
     t_content = {w for w in tw if len(w) >= 3 and w not in _STOP}
     q_content = {w for w in qw if len(w) >= 3 and w not in _STOP}
     for cls in (_NEGATION, _MODAL):
-        t_has = any(w in cls for w in tw)
-        q_has = any(w in cls for w in qw)
-        if not t_has and any(_shares(sc, t_content) for sc in _about(qw, cls)):
-            return False  # the quotes say "not X"; the claim says "X"
-        if not q_has and any(_shares(sc, q_content) for sc in _about(tw, cls)):
-            return False  # the claim says "not X"; the quotes say "X"
+        t_scopes, q_scopes = _about(tw, cls), _about(qw, cls)
+        for sc in q_scopes:
+            if _shares(sc, t_content) and not any(_same_scope(sc, ts) for ts in t_scopes):
+                return False  # the quotes say "not X"; the claim says "X"
+        for sc in t_scopes:
+            if _shares(sc, q_content) and not any(_same_scope(sc, qs) for qs in q_scopes):
+                return False  # the claim says "not X"; the quotes say "X"
     return True
 
 

@@ -694,8 +694,8 @@ kill anywhere converges on a re-run of the same command:
   librarian containers were created with; otherwise deploy and rollback stop before anything
   changes ("finish the env switch").
 - `install_llm_env.sh` on a deployed host is ONE step under the deploy lock: journal
-  (`env_switch`), write `llm.env`, recreate `librarian api` together, `evaluate --release r3`
-  against the file, clear the journal. If it is interrupted, deploy and rollback refuse until the
+  (`env_switch`), write `llm.env`, recreate `librarian api` together, `evaluate --release <marker>`
+  (the template's `HLM_ENV_RELEASE`: r3 or r4) against the file, clear the journal. If it is interrupted, deploy and rollback refuse until the
   same `install_llm_env.sh` command is re-run; the re-run finishes the step. It refuses on a
   checkout that predates R3 (Order B). It keeps the operator's hand-edited caps and key in the
   installed `llm.env` (D-121); `--reset-operator-values` replaces them with the template's caps and

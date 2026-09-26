@@ -318,6 +318,57 @@ def test_polarity_keeps_true_claims_and_unrelated_negations() -> None:
     )
 
 
+WEEKLY_GATE = {
+    "v22.0": rs.Excerpt(
+        "v22.0",
+        22,
+        "Gates",
+        "docs/gates.md",
+        "2026-09-26",
+        "The release gate is not enabled by default. It runs weekly, not daily.",
+    )
+}
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        # review 80 (astra): an unrelated "not" elsewhere in the claim hid the dropped one
+        "The release gate is enabled by default and runs weekly, not daily.",
+        # review 80 (sol): a "not" about other words ("disabled") hid it too
+        "The release gate is enabled by default and not disabled.",
+    ],
+)
+def test_an_unrelated_negation_does_not_excuse_a_dropped_one(claim: str) -> None:
+    quote = "The release gate is not enabled by default. It runs weekly, not daily."
+    assert not rs.polarity_ok(claim, [quote])
+    v = rs.validate_answer(
+        {
+            "status": "answered",
+            "answer": claim,
+            "claims": [_claim(claim, ("v22.0", quote))],
+            "confidence": "high",
+        },
+        WEEKLY_GATE,
+    )
+    assert not v.answered and v.primary == [], claim
+    assert all(c.state != "kept" for c in v.claims)
+
+
+def test_per_proposition_polarity_keeps_true_claims() -> None:
+    quote = "The release gate is not enabled by default. It runs weekly, not daily."
+    for claim in (
+        "The release gate is not enabled by default and runs weekly, not daily.",
+        "By default the release gate isn't enabled.",
+        "The release gate runs weekly, not daily.",
+    ):
+        assert rs.polarity_ok(claim, [quote]), claim
+    # a "not" inserted about one proposition while the other keeps its own
+    assert not rs.polarity_ok("The release gate is not enabled by default and does not run weekly.", [quote])
+    # a window never crosses a sentence end: the second quote sentence does not bind the first's words
+    assert rs.polarity_ok("The gate runs weekly.", ["The gate is not enabled. It runs weekly."])
+
+
 def test_failed_quote_is_requoted_from_its_line_before_dropping() -> None:
     """Addendum 2: a claim whose quotes are all wrong is re-quoted from the cited item's line that
     holds its literals and most of its words; dropped only when no line qualifies; flags recorded."""
