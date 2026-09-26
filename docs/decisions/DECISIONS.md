@@ -832,3 +832,23 @@ Under the pre-registered C2, memory.ask must reach **≥ .83** (NotebookLM .88 �
 | The product's V14 write prompt, JSON sentences + cites (V14-on-sel) | .52 |
 Validation dropped only 4/61 and 2/59 sentences, so the loss is in GENERATION. Asking the cheap model to write and cite at once makes it compress.
 **Next: V15.** The write step gets the plain prompt and no citation duty (longer answers allowed). A separate small attribution call maps each sentence to excerpt ids, then `validate_cited` runs as in V14. Ceiling-first: V15-on-sel attributes the existing ORACLE-sel prose offline.
+D-161 | 2026-09-26 | ACCEPTED | **On free prose, every validation layer we tried loses true facts without raising judged faithfulness, and a longer writing prompt adds nothing. The remaining levers are the MODEL (configuration, D-017) and a realistic faithfulness calibration.**
+Offline: same 25 answerable dev questions, same ORACLE-sel sources (the handles memory.ask cited), same luna model, strict judge, faithfulness in source scope.
+| Variant | Correct | Faithful | What it adds |
+|---|---|---|---|
+| Free prose, unvalidated (ORACLE-sel) | **.76** | **.922** | – |
+| Free prose, "exhaustive, 5–12 short sentences" | .72 | – | +24% length |
+| + separate attribution + product `validate_cited` (V15) | .52 | .918 | 17/102 sentences dropped: literal 11, polarity 5 |
+| same, re-attributing literal failures (V15r) | – | – | 3 of 11 were attribution errors; the other 8 are checker false positives |
+| + LLM verifier (luna, supported true/false) + hard-literal check (V15b) | .44 | .894 | 14 supported=false and 3 hard-literal drops |
+**The checker false positives are extraction limits, not hallucinations:**
+- a slash joining code and a word;
+- bold markup plus a TR suffix;
+- "…" inside a code span splitting a sentence;
+- quoted prose phrases and § references taken as literals;
+- TR future negation (-mayacak) and semantic negation ("replaced", "preventing", "neither…nor").
+A cheap verifier disagrees with the judge in both directions.
+**Conclusion:** the deterministic and cheap-LLM checks cannot tell a paraphrase from a fabrication on free prose. Each one costs correctness, and none reached the judged faithfulness of the unvalidated prose.
+**Two measurements are next, both offline:**
+- (a) a model sweep with the plain prompt over the ORACLE-sel sources: gemini-3.8-flash, claude-haiku-4.5 and kimi-k2.6. DeepSeek is excluded because it is the judge's family.
+- (b) NotebookLM's own faithfulness against its citations, to learn whether ≥ .95 under this judge is realistic for a strong system before any calibration argument.
