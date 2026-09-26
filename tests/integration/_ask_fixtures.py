@@ -268,6 +268,9 @@ class FakeResearcher:
     #: D-156 cite mode: sentences the JOB write adds after the facts' own ({"text", "cite"?}; no cite
     #: = the first fact's excerpt)
     write_extra: list[dict[str, Any]] = field(default_factory=list)
+    #: D-159 JOB select: None = the first excerpt holding each fact (in the facts' order); else
+    #: exactly these ids
+    select_ids: list[str] | None = None
     jobs: list[str] = field(default_factory=list)
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -276,6 +279,8 @@ class FakeResearcher:
         if job in ("plan", "refine"):
             return {"queries": self.queries, "sections": self.sections}
         excerpts = inp.get("excerpts") or []
+        if job == "select":
+            return self._select(excerpts)
         if job == "write":
             return self._write(excerpts)
         facts = self.facts + (self.check_adds if job == "check" else [])
@@ -310,6 +315,17 @@ class FakeResearcher:
                 **out,
             }
         return out
+
+    def _select(self, excerpts: list[dict[str, Any]]) -> dict[str, Any]:
+        """D-159 JOB select: the excerpts that state the facts, most important (first fact) first."""
+        if self.select_ids is not None:
+            return {"ids": list(self.select_ids)}
+        ids: list[str] = []
+        for needle in self.facts:
+            hit = next((ex["id"] for ex in excerpts if sentence_with(ex["text"], needle)), None)
+            if hit is not None and hit not in ids:
+                ids.append(hit)
+        return {"ids": ids}
 
     def _write(self, excerpts: list[dict[str, Any]]) -> dict[str, Any]:
         """D-156 JOB write: each fact's sentence, citing the excerpt it was copied from."""

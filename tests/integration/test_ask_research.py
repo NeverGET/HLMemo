@@ -394,6 +394,99 @@ async def test_ask_cite_mode_unverifiable_sentences_are_a_guarded_abstention(
     assert out["meta"]["flags"]["dropped_literal"] == 1 and out["meta"]["flags"]["main_dropped"] is True
 
 
+# --------------------------------------------------------------------------- D-159 select, then write
+async def test_ask_cite_mode_selects_then_writes(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-159 (HLM_RESEARCH_SELECT): plan -> select -> write. The select sees the excerpts exactly as
+    the write would; the write sees, cites and is verified against ONLY the selected ones, in the
+    select's order; the retrieved excerpts it left out follow in ``related`` (drillable)."""
+    fake = FakeResearcher(facts=["1.2 s", "1,6 s on the VPS"])
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="cite", research_select=True)
+    try:
+        out = await ask(
+            connect, world, deps, r, "What is the current retrieval p95 target and what was it before?"
+        )
+    finally:
+        await r.aclose()
+    jobs = [request_job(b) for b in llm.requests]
+    assert [j for j, _ in jobs] == ["plan", "select", "write"]
+    assert out["meta"]["steps"] == ["plan", "select", "write"] and out["meta"]["calls"] == 3
+    assert out["meta"]["attempts"] == 3 and llm.requests[1]["max_tokens"] == rs.JOB_MAX_TOKENS["select"]
+    assert llm.requests[1]["messages"][1]["content"].startswith("JOB: select\n")
+    offered = jobs[1][1]["excerpts"]
+    written = jobs[2][1]["excerpts"]
+    selected = [e["id"] for e in written]
+    assert handle_re(world.versions["D-004"]).fullmatch(selected[0])
+    assert handle_re(world.versions["D-001"]).fullmatch(selected[1]) and len(selected) == 2
+    by_id = {e["id"]: e for e in offered}
+    assert all(by_id[e["id"]] == e for e in written) and len(offered) > len(written)  # same excerpts
+    flags = out["meta"]["flags"]
+    assert flags["selected"] == 2 and flags["select_fallback"] is False
+    assert out["abstained"] is False and "1.2 s" in out["answer"] and "1,6 s" in out["answer"]
+    assert {s["handle"] for c in out["claims"] for s in c["support"]} <= set(selected)
+    assert {p["handle"] for p in out["primary"]} <= set(selected)
+    related = [h["handle"] for h in out["related"]]
+    unselected = [e["id"] for e in offered if e["id"] not in selected]
+    assert len(related) == min(rs.MAX_RELATED, len(unselected)) >= 1
+    assert related == unselected[: len(related)]  # the retrieved excerpts the select left out
+    assert_no_secret(sent_text(llm), world)
+    assert out["budget"]["used"] <= out["budget"]["limit"]
+
+
+@pytest.mark.parametrize("picked", [[], ["v999999.0"]], ids=["empty", "unknown"])
+async def test_ask_cite_mode_select_fallback_writes_over_every_excerpt(
+    connect, world, deps, db_dsn, picked: list[str]
+) -> None:  # noqa: ANN001
+    """D-159: a select that picks nothing (or only ids it was never shown) never makes the question
+    abstain: the write sees every excerpt (``select_fallback``) and answers."""
+    fake = FakeResearcher(facts=["1.2 s"], select_ids=picked)
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="cite", research_select=True)
+    try:
+        out = await ask(connect, world, deps, r, "What is the retrieval p95 target?")
+    finally:
+        await r.aclose()
+    jobs = [request_job(b) for b in llm.requests]
+    assert [j for j, _ in jobs] == ["plan", "select", "write"]
+    assert jobs[2][1]["excerpts"] == jobs[1][1]["excerpts"]  # the write saw everything retrieved
+    flags = out["meta"]["flags"]
+    assert flags["select_fallback"] is True and flags["selected"] == 0
+    assert out["abstained"] is False and "1.2 s" in out["answer"]
+    assert handle_re(world.versions["D-004"]).fullmatch(out["primary"][0]["handle"])
+
+
+async def test_ask_cite_mode_select_runs_again_after_a_refinement(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-159: the first write abstains -> refine -> one more retrieval -> the select runs again over
+    the WIDENED excerpt set, and the second write sees only what it picked (6 calls at most)."""
+    fake = FakeResearcher(facts=["14 daily dumps"], queries=["retrieval latency target"])
+    writes = []
+
+    def two_rounds(body: dict[str, Any]) -> dict[str, Any]:
+        job, _inp = request_job(body)
+        if job == "refine":
+            return {"queries": ["nightly backup script daily dumps"], "sections": []}
+        if job == "write" and not writes:
+            writes.append(1)
+            return {"status": "insufficient_evidence", "sentences": [], "related": [], "confidence": "low"}
+        return fake(body)
+
+    llm = ScriptedLLM(default=two_rounds)
+    r = make_researcher(db_dsn, llm, research_answer_mode="cite", research_select=True)
+    try:
+        out = await ask(connect, world, deps, r, "What is the retrieval p95 target on the VPS?")
+    finally:
+        await r.aclose()
+    jobs = [request_job(b) for b in llm.requests]
+    assert [j for j, _ in jobs] == ["plan", "select", "write", "refine", "select", "write"]
+    assert out["meta"]["calls"] == rs.MAX_CALLS == 6
+    first, second = [e["id"] for e in jobs[1][1]["excerpts"]], [e["id"] for e in jobs[4][1]["excerpts"]]
+    assert second[: len(first)] == first and len(second) > len(first)  # the widened set
+    runbook = world.versions["runbook"]
+    assert [e["id"] for e in jobs[5][1]["excerpts"]] == [h for h in second if handle_re(runbook).fullmatch(h)]
+    assert out["abstained"] is False and "14 daily dumps" in out["answer"]
+    assert out["meta"]["flags"]["selected"] == 1 and out["meta"]["flags"]["select_fallback"] is False
+
+
 # --------------------------------------------------------------------------- no mutation
 async def test_ask_writes_no_event_or_mutation(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
     before = await snapshot(connect)

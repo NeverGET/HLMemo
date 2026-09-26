@@ -7,9 +7,9 @@ answer + claims, each with 1-3 verbatim supporting quotes), ``check`` (the COMPL
 the question's sub-asks against the draft and the same excerpts → the full revised answer; a missing
 fact is added only as a new quoted claim, and each claim flagged by the deterministic copy-through /
 attribution checks is repaired in the same call) and ``refine`` (one more search round, only when the
-answer abstained). At most 4 sequential steps (addendum 7). The per-task fallback is therefore
-``HLM_FALLBACK_PROFILE__RESEARCH`` (D-094); a profile listing ``research`` in ``disabled_tasks`` is
-not used (D-071).
+answer abstained). At most 4 sequential steps (addendum 7; 6 with the D-159 select). The per-task
+fallback is therefore ``HLM_FALLBACK_PROFILE__RESEARCH`` (D-094); a profile listing ``research`` in
+``disabled_tasks`` is not used (D-071).
 
 Guards (the W2e/W2d ones): privacy default-deny before EVERY attempt (``precheck``: the strict
 ``librarian.privacy`` gate over exactly the version ids whose text is in the prompt), redaction of
@@ -42,6 +42,11 @@ its cited excerpts (a sentence citing no shown excerpt is checked against all of
 its literals (``literals_ok`` rules) and its polarity against the excerpt lines/sentences that share
 a literal or ≥ 2 content words with it; a failing sentence is dropped, the answer is the kept
 sentences, and each cited handle is displayed with its best-matching line.
+
+D-159 ``HLM_RESEARCH_SELECT`` (cite mode only; "select, then write"): before each ``write``, the JOB
+``select`` sees the same excerpts and returns the ids of the ≤ ``SELECT_MAX`` that state the answer
+(``parse_select``: shown ids only, in its order); the ``write`` sees and may cite only those, and the
+others stay drillable as ``related``. An empty or failed select writes over every excerpt.
 """
 
 from __future__ import annotations
@@ -51,7 +56,7 @@ import json
 import logging
 import re
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
@@ -74,21 +79,24 @@ from hlmemo.librarian.tasks.synthesis import claims as literal_claims
 log = logging.getLogger("hlmemo.librarian.research")
 
 TASK = "research"
-JOBS = ("plan", "answer", "check", "refine", "write")
+JOBS = ("plan", "answer", "check", "refine", "write", "select")
 #: D-156: ``claims`` (the default: quoted claims + the completeness pass, research/v1) or ``cite``
 #: (V14 "write, then cite": sentences citing excerpt handles, verified deterministically, research/v2)
 ANSWER_MODES = ("claims", "cite")
 #: the opt-in prompt version of the cite mode (``prompts.OPT_IN_VERSIONS``: never the default)
 CITE_PROMPT_VERSION = 2
 #: sequential LLM steps of one question (addendum 7): plan, answer, completeness+repair — or, when
-#: the answer abstained, plan, answer, refine, answer
-MAX_CALLS = 4
+#: the answer abstained, plan, answer, refine, answer (``MAX_CALLS_NO_SELECT``). D-159 select-then-
+#: write (cite mode + ``HLM_RESEARCH_SELECT``) adds one select before each write: plan, select,
+#: write — or plan, select, write, refine, select, write (``MAX_CALLS``)
+MAX_CALLS = 6
+MAX_CALLS_NO_SELECT = 4
 #: provider requests of one question (schema retries and fallbacks included), DB-enforced per lineage
 MAX_ATTEMPTS = 9
 MAX_IN_FLIGHT = 4
 #: addendum 5: an explicit max_tokens on EVERY call, per JOB (reasoning tokens included); a
 #: runaway output is cut there, and the per-question budget reserves exactly this worst case
-JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000, "write": 3000}
+JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000, "write": 3000, "select": 300}
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
 BREAKER_MAX_OPEN_S = 900.0
@@ -100,6 +108,8 @@ MAX_CLAIMS = 12
 #: cited excerpts one sentence is checked against
 MAX_SENTENCES = 24
 MAX_CITES = 6
+#: D-159: the excerpts one ``select`` may pick for the ``write`` (the prompt says "at most 6")
+SELECT_MAX = 6
 #: verbatim quotes per claim (together they must state the whole claim)
 MAX_SUPPORT = 3
 QUOTE_MIN_CHARS = 12
@@ -576,6 +586,12 @@ def write_user(question: str, excerpts: list[Excerpt], redact: Redact | None = N
     return "JOB: write\n" + _input(payload, redact)
 
 
+def select_user(question: str, excerpts: list[Excerpt], redact: Redact | None = None) -> str:
+    """D-159: the JOB ``select`` (the question and the excerpts exactly as ``write_user`` shows them)."""
+    payload = {"question": question, "excerpts": [e.shown() for e in excerpts]}
+    return "JOB: select\n" + _input(payload, redact)
+
+
 def check_user(
     question: str,
     draft: dict[str, Any],
@@ -640,8 +656,15 @@ def job_validator(job: str) -> Callable[[dict[str, Any]], str | None]:
             return "answered without sentences"
         return None
 
+    def select(obj: dict[str, Any]) -> str | None:
+        if not isinstance(obj.get("ids"), list):
+            return "ids missing"
+        return None
+
     if job in ("plan", "refine"):
         return plan
+    if job == "select":
+        return select
     return write if job == "write" else answer
 
 
@@ -659,6 +682,23 @@ def parse_plan(obj: dict[str, Any] | None, question: str) -> tuple[list[str], li
             queries.append(q)
     sections = [str(s).strip() for s in obj.get("sections") or [] if _HANDLE.match(str(s).strip())]
     return queries[:MAX_QUERIES], list(dict.fromkeys(sections))[: MAX_SECTIONS * 2]
+
+
+def parse_select(obj: dict[str, Any] | None, shown: Iterable[str]) -> list[str]:
+    """D-159: the excerpt ids a ``select`` picked, in its order: ids of ``shown`` only (an unknown id
+    is ignored), each once, at most ``SELECT_MAX``; ``[]`` for no or a malformed output."""
+    raw = obj.get("ids") if isinstance(obj, dict) else None
+    if not isinstance(raw, list):
+        return []
+    known = set(shown)
+    out: list[str] = []
+    for x in raw:
+        h = x.strip() if isinstance(x, str) else ""
+        if h in known and h not in out:
+            out.append(h)
+            if len(out) >= SELECT_MAX:
+                break
+    return out
 
 
 # --------------------------------------------------------------------------- answer validation
@@ -700,6 +740,9 @@ class Validated:
     # dropped sentences by reason (literal / polarity / unsupported)
     uncited: int = 0
     drop_reasons: dict[str, int] = field(default_factory=dict)
+    # D-159: the handles the answer was written over when a select narrowed them (None: all shown);
+    # the re-check verifies its sentences against these only
+    written_over: list[str] | None = None
 
     @property
     def answered(self) -> bool:
@@ -1522,6 +1565,9 @@ class Researcher:
             self.chain = list(chain) if chain is not None else research_chain(settings)
         mode = getattr(settings, "research_answer_mode", "claims")
         self.answer_mode: str = mode if mode in ANSWER_MODES else "claims"
+        # D-159: select-then-write, only in the cite mode (its prompt has the JOB select)
+        self.select: bool = self.answer_mode == "cite" and bool(getattr(settings, "research_select", False))
+        self.max_calls: int = MAX_CALLS if self.select else MAX_CALLS_NO_SELECT
         # D-156: the cite mode's prompt is an opt-in version; the claims mode keeps the default (v1,
         # or a pin) unless that prompt has no JOB "answer" (a cite prompt pinned by mistake)
         if self.answer_mode == "cite":
@@ -1729,6 +1775,8 @@ __all__ = [
     "JOBS",
     "MAX_ATTEMPTS",
     "MAX_CALLS",
+    "MAX_CALLS_NO_SELECT",
+    "SELECT_MAX",
     "TASK",
     "Claim",
     "Excerpt",
@@ -1753,6 +1801,7 @@ __all__ = [
     "literals_ok",
     "merge_check",
     "parse_plan",
+    "parse_select",
     "plan_user",
     "qnorm",
     "refine_user",
@@ -1767,6 +1816,7 @@ __all__ = [
     "unattributed",
     "support_hay",
     "research_chain",
+    "select_user",
     "split_inline_cites",
     "validate_answer",
     "validate_cited",

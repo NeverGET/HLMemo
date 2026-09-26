@@ -245,7 +245,7 @@ class Settings(BaseSettings):
     # earlier release (R3) on this image never serves it and never spends; the R4 release manifest
     # (deploy/scripts/check_librarian.py) pins it on in the R4 llm.env.
     research_enabled: bool = False
-    # The whole memory.ask request (DB phases + at most 5 LLM calls), seconds.
+    # The whole memory.ask request (DB phases + at most 4 LLM calls, 6 with research_select), seconds.
     research_timeout_s: float = Field(default=25.0, gt=0, le=120)
     # A runaway guard PER QUESTION (addendum 5): actual spend so far + the next call's worst case
     # (its max_tokens) must stay within these, else the remaining steps are skipped and the answer
@@ -259,6 +259,10 @@ class Settings(BaseSettings):
     # sentences citing excerpt handles, each checked deterministically against its cited excerpts'
     # full text (literals, polarity); no completeness call (prompt research/v2).
     research_answer_mode: Literal["claims", "cite"] = "claims"
+    # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
+    # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
+    # (the others stay drillable in `related`); an empty or failed select writes over them all.
+    research_select: bool = False
     # Memory Map L2 summaries (task map_summary, librarian process only): a cycle every
     # map_summary_every_s refreshes at most map_summary_per_cycle stale source summaries whose
     # newest change is older than map_summary_debounce_s (debounce during bursts and imports).

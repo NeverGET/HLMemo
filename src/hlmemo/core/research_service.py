@@ -44,11 +44,20 @@ with ``write`` too, and steps 6 and 7 do not run (no completeness call, no attri
 sentence is verified against its cited excerpts' full text); the re-check (8) verifies each kept
 sentence again against the excerpts still citable.
 
-At most ``MAX_CALLS`` (5) logical LLM calls; provider requests (schema retries, fallback) are capped
-per question by the lineage ceiling (``research.MAX_ATTEMPTS``). Before every call the strict privacy
-gate runs over exactly the version ids whose text is in the prompt: denied items are removed and the
-prompt rebuilt; an item that was already SENT and is now denied for a privacy reason aborts the
-question (``E_UNAVAILABLE``, retryable). The provider re-runs the gate before each attempt.
+D-159 ``HLM_RESEARCH_SELECT`` (cite mode only, "select, then write"): before each ``write`` the JOB
+``select`` sees the same excerpts and picks the ≤ 6 that state the answer; the ``write`` sees, cites
+and is verified against those only (the re-check too), and the retrieved excerpts it left out follow
+the write's own ``related`` (≤ 5). An empty, unknown-only or failed select, or too little time left
+for select AND write, writes over every excerpt (``meta.flags.select_fallback``); after a refinement
+the select runs again over the widened set.
+
+At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
+D-159 select (plan, select, write, refine, select, write); provider requests (schema retries,
+fallback) are capped per question by the lineage ceiling (``research.MAX_ATTEMPTS``). Before every
+call the strict privacy gate runs over exactly the version ids whose text is in the prompt: denied
+items are removed and the prompt rebuilt; an item that was already SENT and is now denied for a
+privacy reason aborts the question (``E_UNAVAILABLE``, retryable). The provider re-runs the gate
+before each attempt.
 
 memory.ask writes nothing but the spend guard's ledger (``llm_calls``, ``llm_budget``,
 ``llm_reservations``, ``llm_lineage_calls``): no event, no version, no access event, no job, no map
@@ -120,6 +129,9 @@ PLAN_CAP_S = 10.0
 ANSWER_CAP_S = 18.0
 CHECK_CAP_S = 16.0
 REFINE_CAP_S = 9.0
+#: D-159: the select call's cap, and the time it must leave for the write (else no select)
+SELECT_CAP_S = 8.0
+SELECT_WRITE_RESERVE_S = 8.0
 #: an optional step starts only with this much time left (the re-check keeps RECHECK_RESERVE_S)
 MIN_REFINE_S = 16.0
 MIN_CHECK_S = 7.0
@@ -444,7 +456,7 @@ class _Run:
         """One logical LLM call. ``build()`` → ``(user message, version ids whose text it carries)``;
         it is re-run after denied items are excluded. Returns the model output, or None when the
         call could not be made in time or at all (``rs.ResearchUnavailable`` carries the reason)."""
-        if self.calls >= rs.MAX_CALLS:
+        if self.calls >= self.researcher.max_calls:
             return None
         if self.flags["budget_stop"]:  # a per-question budget stop is final: nothing more is sent
             raise rs.ResearchUnavailable("question_budget")
@@ -587,17 +599,56 @@ class _Run:
             self.flags["main_dropped"] = v.main_dropped
         return v
 
-    async def write(self, excerpts: list[rs.Excerpt]) -> rs.Validated:
-        """D-156 cite mode: the JOB ``write`` over the admitted excerpts, checked sentence by sentence
-        (``rs.validate_cited``); the flags describe the LAST validated answer."""
+    async def select(self, excerpts: list[rs.Excerpt]) -> list[rs.Excerpt]:
+        """D-159: the JOB ``select`` over the admitted excerpts → the ones the ``write`` sees, in the
+        order it picked them (``rs.parse_select``). ``[]`` (nothing picked, unknown ids only, a failed
+        call, or too little time left for select AND write) means the write sees every excerpt
+        (``select_fallback``): a question never abstains because the select found nothing. A budget
+        stop here is raised by the write's own call."""
+
+        def admitted() -> list[rs.Excerpt]:
+            return [e for e in excerpts if e.version_id not in self.excluded]
 
         def build() -> tuple[str, list[int]]:
-            ex = [e for e in excerpts if e.version_id not in self.excluded]
+            ex = admitted()
+            return rs.select_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
+
+        ids: list[str] = []
+        left = self.remaining() - SELECT_WRITE_RESERVE_S
+        if left >= MIN_CALL_S and admitted():
+            try:
+                obj = await self.call("select", build, min(SELECT_CAP_S, left))
+            except rs.ResearchUnavailable:
+                obj = None
+            ids = rs.parse_select(obj, [e.handle for e in admitted()])
+        by_handle = {e.handle: e for e in excerpts}
+        picked = [by_handle[h] for h in ids]
+        self.flags["selected"] = len(picked)
+        self.flags["select_fallback"] = not picked
+        return picked
+
+    async def write(self, excerpts: list[rs.Excerpt]) -> rs.Validated:
+        """D-156 cite mode: the JOB ``write`` over the admitted excerpts (D-159: only the selected
+        ones when the select picked any), checked sentence by sentence against exactly the excerpts
+        it was shown (``rs.validate_cited``); the flags describe the LAST validated answer."""
+        picked = await self.select(excerpts) if self.researcher.select else []
+        chosen = picked or excerpts
+
+        def build() -> tuple[str, list[int]]:
+            ex = [e for e in chosen if e.version_id not in self.excluded]
             return rs.write_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
 
         obj = await self.call("write", build, ANSWER_CAP_S)
-        shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
+        shown = {e.handle: e for e in chosen if e.version_id not in self.excluded}
         v = rs.validate_cited(obj, shown, self.researcher.redactor.text)
+        if picked:
+            # D-159: verified (now and at the re-check) against the selected excerpts only; the
+            # retrieved ones the select left out stay drillable after the write's own related
+            v.written_over = list(shown)
+            if v.answered:
+                rest = [e.handle for e in excerpts if e.version_id not in self.excluded]
+                rest = [h for h in rest if h not in shown]
+                v.related = list(dict.fromkeys([*v.related, *rest]))[: rs.MAX_RELATED]
         if obj is not None:
             self.flags["dropped_claims"] = v.dropped_claims
             self.flags["main_dropped"] = v.main_dropped
@@ -688,6 +739,8 @@ async def ask(
         if run.cite:  # D-156: the cite mode's own counts (meta.flags)
             run.flags.update({"dropped_sentences": 0, "uncited": 0})
             run.flags.update({f"dropped_{why}": 0 for why in rs.DROP_REASONS})
+        if researcher.select:  # D-159
+            run.flags.update({"selected": 0, "select_fallback": False})
         readable = (
             {p for v in view for p in v.project_ids} | {project.project_id}
             if ctx.is_admin
@@ -754,7 +807,8 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
         v = rs.validate_answer(None, {})
     # 5. refine (only when the answer abstained, addendum 7), time permitting
     refined = False
-    if not v.answered and run.remaining() >= MIN_REFINE_S and run.calls <= 2:
+    need = 3 if run.researcher.select else 2  # refine, (select,) answer
+    if not v.answered and run.remaining() >= MIN_REFINE_S and run.calls + need <= run.researcher.max_calls:
         refined = True
         read = list(excerpts)
 
@@ -851,14 +905,16 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
     if v.answered and run.cite:
         # D-156: each kept sentence is checked again against its cited excerpts that are still
         # citable (a sentence whose every cited source is gone is dropped; an uncited one against
-        # every citable excerpt); the answer is the sentences left
+        # every citable excerpt); the answer is the sentences left. D-159: only against the
+        # excerpts its write was shown (the selected ones)
+        pool = ok if v.written_over is None else {h: e for h, e in ok.items() if h in v.written_over}
         cited_claims = []
         cache: dict[str, Any] = {}
         for cl in v.kept:
-            cites = [h for h in cl.cited if h in ok]
+            cites = [h for h in cl.cited if h in pool]
             if cl.cited and not cites:
                 continue
-            why, sup = rs.cite_check(cl.text, cites, ok, cache)
+            why, sup = rs.cite_check(cl.text, cites, pool, cache)
             if why is None and sup:
                 cited_claims.append(rs.Claim(cl.text, sup, "kept", cites))
         before = len(v.kept)

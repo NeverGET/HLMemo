@@ -1281,3 +1281,132 @@ def test_d156_write_job_prompt_and_mode() -> None:
     msg = rs.write_user(text, [rs.Excerpt("v30.0", 30, text, "docs/c.md", "2026-09-26", text)])
     assert msg.startswith("JOB: write\nINPUT: ") and secret not in msg
     assert "⟦REDACTED:assignment:" in msg and secret in Redactor().text(json.dumps({"q": text}))
+
+
+# --------------------------------------------------------------------------- D-159 select, then write
+def test_d159_parse_select_keeps_shown_ids_in_order_drops_unknown_and_caps() -> None:
+    assert rs.SELECT_MAX == 6
+    out = rs.parse_select({"ids": ["v11.0", "v99.0", " v10.0 ", "v11.0", "v12.3"]}, SHOWN)
+    assert out == ["v11.0", "v10.0", "v12.3"]  # the model's order; unknown and repeated ids dropped
+    many = [f"v{i}.0" for i in range(20, 30)]
+    assert rs.parse_select({"ids": many}, many) == many[: rs.SELECT_MAX]  # > 6 truncated
+    assert rs.parse_select({"ids": ["v99.0", *many]}, many) == many[: rs.SELECT_MAX]
+    for bad in (None, {}, {"ids": "v10.0"}, {"ids": [7, None, "v98.1"]}, {"ids": []}):
+        assert rs.parse_select(bad, SHOWN) == []
+
+
+def test_d159_select_job_prompt_validator_and_flag() -> None:
+    from hlmemo.config import get_settings
+
+    v2 = load_task("research", rs.CITE_PROMPT_VERSION)
+    assert 'JOB "select" -> {"ids":' in v2.system and f"at most {rs.SELECT_MAX}." in v2.system
+    assert "Use [] when no excerpt states the answer" in v2.system
+    assert v2.schema_errors({"ids": ["v10.0", "v11.0"]}) is None and v2.schema_errors({"ids": "v1"})
+    sel = rs.job_validator("select")
+    assert sel({"ids": []}) is None and sel({"queries": []}) == "ids missing"
+    assert "select" in rs.JOBS and rs.JOB_MAX_TOKENS["select"] <= rs.JOB_MAX_TOKENS["plan"]
+    ex = list(SHOWN.values())
+    s, w = rs.select_user("Q?", ex), rs.write_user("Q?", ex)
+    assert s.startswith("JOB: select\nINPUT: ") and s.split("\n", 1)[1] == w.split("\n", 1)[1]
+    assert (rs.MAX_CALLS, rs.MAX_CALLS_NO_SELECT) == (6, 4)
+    for mode, flag, on in (("cite", True, True), ("cite", False, False), ("claims", True, False)):
+        r = rs.Researcher(get_settings(research_answer_mode=mode, research_select=flag))
+        assert r.select is on and r.max_calls == (rs.MAX_CALLS if on else rs.MAX_CALLS_NO_SELECT)
+        assert r.job_spec("select").max_tokens == rs.JOB_MAX_TOKENS["select"]
+    assert get_settings().research_select is False  # default off
+
+
+EXS = [
+    *SHOWN.values(),
+    _ex("v13.0", "## Backup\nRun `bash deploy/backup/backup.sh` nightly; it keeps 14 daily dumps."),
+]
+
+
+class _ScriptedRun(rsv._Run):
+    """A cite-mode ``_Run`` whose LLM calls are scripted per JOB (no DB, no provider): it records the
+    excerpt ids each JOB was shown."""
+
+    def __init__(self, outputs: dict[str, object], *, select: bool = True, time_s: float = 60.0) -> None:
+        import asyncio
+
+        from hlmemo.config import get_settings
+
+        settings = get_settings(research_answer_mode="cite", research_select=select)
+        super().__init__(
+            conn=None,
+            ctx=None,
+            researcher=rs.Researcher(settings),
+            deps=None,
+            settings=settings,
+            question="What is the retrieval p95 target and what was it before?",
+            slug="p",
+            project_id=1,
+            end=asyncio.get_running_loop().time() + time_s,
+            reconnect=None,
+        )
+        self.outputs = outputs
+        self.shown_to: dict[str, list[str]] = {}
+
+    async def call(self, job, build, cap_s):  # noqa: ANN001, ANN201
+        user, _ids = build()
+        self.shown_to[job] = [e["id"] for e in json.loads(user.split("INPUT: ", 1)[1])["excerpts"]]
+        self.calls += 1
+        self.steps.append(job)
+        out = self.outputs.get(job)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+
+async def test_d159_write_sees_and_cites_only_the_selected_excerpts() -> None:
+    run = _ScriptedRun(
+        {
+            "select": {"ids": ["v11.0", "v99.9", "v10.0"]},
+            "write": _written(
+                ("The retrieval p95 target is now 1.2 s.", ["v10.0"]),
+                ("It was 1,6 s on the VPS.", ["v11.0"]),
+                ("The backup keeps 14 daily dumps.", ["v13.0"]),  # not shown to the write
+                related=["v12.3", "v11.0"],
+            ),
+        }
+    )
+    v = await run.write(list(EXS))
+    assert run.steps == ["select", "write"]
+    assert run.shown_to["select"] == ["v10.0", "v11.0", "v12.3", "v13.0"]  # everything retrieved
+    assert run.shown_to["write"] == ["v11.0", "v10.0"]  # only the selected, in the select's order
+    assert v.answered and v.written_over == ["v11.0", "v10.0"]
+    # the sentence citing an excerpt the write never saw is checked against the selected ones only
+    assert [c.text for c in v.kept] == ["The retrieval p95 target is now 1.2 s.", "It was 1,6 s on the VPS."]
+    assert v.uncited == 1 and v.drop_reasons["literal"] == 1
+    assert {h for c in v.kept for h, _q in c.support} <= {"v10.0", "v11.0"}
+    assert set(v.primary) == {"v10.0", "v11.0"}
+    assert v.related == ["v12.3", "v13.0"]  # the retrieved excerpts the select left out
+    assert run.flags["selected"] == 2 and run.flags["select_fallback"] is False
+
+
+@pytest.mark.parametrize(
+    "select",
+    [{"ids": []}, {"ids": ["v99.0", "v98.1"]}, rs.ResearchUnavailable("schema_fail"), None],
+    ids=["empty", "unknown", "failed", "no_time"],
+)
+async def test_d159_empty_or_invalid_select_falls_back_to_every_excerpt(select: object) -> None:
+    write = _written(("The retrieval p95 target is now 1.2 s.", ["v10.0"]), related=["v12.3"])
+    run = _ScriptedRun(
+        {"select": select, "write": write},
+        # no_time: too little left for select AND write, so no select call at all
+        time_s=60.0 if select is not None else rsv.RECHECK_RESERVE_S + rsv.SELECT_WRITE_RESERVE_S + 1.0,
+    )
+    v = await run.write(list(EXS))
+    assert run.shown_to["write"] == [e.handle for e in EXS]  # the write saw everything retrieved
+    assert run.steps == (["write"] if select is None else ["select", "write"])
+    assert v.answered and v.written_over is None and v.primary == ["v10.0"]
+    assert v.related == ["v12.3"]  # nothing was left out: no extra related
+    assert run.flags["select_fallback"] is True and run.flags["selected"] == 0
+
+
+async def test_d159_select_off_writes_without_a_select_call() -> None:
+    write = _written(("The retrieval p95 target is now 1.2 s.", ["v10.0"]))
+    run = _ScriptedRun({"write": write}, select=False)
+    v = await run.write(list(EXS))
+    assert run.steps == ["write"] and v.answered and v.written_over is None
+    assert "selected" not in run.flags and "select_fallback" not in run.flags
