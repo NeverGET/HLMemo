@@ -51,6 +51,12 @@ the write's own ``related`` (≤ 5). An empty, unknown-only or failed select, or
 for select AND write, writes over every excerpt (``meta.flags.select_fallback``); after a refinement
 the select runs again over the widened set.
 
+D-162 ``HLM_RESEARCH_ANSWER_MODE=prose`` (V16): step 4 is the JOB ``prose`` (free prose and the sources
+it draws on, checked by ``research.validate_prose``: a sentence is dropped only for a hard literal no
+shown excerpt states; every other one is kept and attributed to its best source lines, a polarity
+mismatch flagged), a refinement re-answers with ``prose``, and steps 6 and 7 do not run; the re-check
+(8) checks and attributes each kept sentence again over the excerpts still citable.
+
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write); provider requests (schema retries,
 fallback) are capped per question by the lineage ceiling (``research.MAX_ATTEMPTS``). Before every
@@ -316,6 +322,16 @@ class _Run:
         """D-156: the V14 "write, then cite" answer mode."""
         return self.researcher.answer_mode == "cite"
 
+    @property
+    def prose(self) -> bool:
+        """D-162: the V16 "prose" answer mode."""
+        return self.researcher.answer_mode == "prose"
+
+    @property
+    def claims_mode(self) -> bool:
+        """The default answer mode: quoted claims, the completeness pass and the attribution pass."""
+        return not (self.cite or self.prose)
+
     def redact(self, text: str) -> str:
         """The provider's redactor (its configured rules), applied to every prompt value before the
         JSON serialisation (review 79 T2)."""
@@ -577,6 +593,8 @@ class _Run:
     ) -> rs.Validated:
         if self.cite and draft is None:
             return await self.write(excerpts)
+        if self.prose and draft is None:
+            return await self.write_prose(excerpts)
 
         def build() -> tuple[str, list[int]]:
             ex = [e for e in excerpts if e.version_id not in self.excluded]
@@ -656,6 +674,25 @@ class _Run:
             self.flags["uncited"] = v.uncited
             for why in rs.DROP_REASONS:
                 self.flags[f"dropped_{why}"] = v.drop_reasons.get(why, 0)
+        return v
+
+    async def write_prose(self, excerpts: list[rs.Excerpt]) -> rs.Validated:
+        """D-162 prose mode: the JOB ``prose`` over the admitted excerpts, checked and attributed
+        sentence by sentence against exactly the excerpts it was shown (``rs.validate_prose``); the
+        flags describe the LAST validated answer."""
+
+        def build() -> tuple[str, list[int]]:
+            ex = [e for e in excerpts if e.version_id not in self.excluded]
+            return rs.prose_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
+
+        obj = await self.call("prose", build, ANSWER_CAP_S)
+        shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
+        v = rs.validate_prose(obj, shown, self.researcher.redactor.text)
+        if obj is not None:
+            self.flags["dropped_claims"] = v.dropped_claims
+            self.flags["main_dropped"] = v.main_dropped
+            self.flags["dropped_literal"] = v.drop_reasons.get("literal", 0)
+            self.flags["polarity_flagged"] = v.polarity_flagged
         return v
 
 
@@ -741,6 +778,8 @@ async def ask(
             run.flags.update({f"dropped_{why}": 0 for why in rs.DROP_REASONS})
         if researcher.select:  # D-159
             run.flags.update({"selected": 0, "select_fallback": False})
+        if run.prose:  # D-162: the prose mode's own counts (meta.flags)
+            run.flags.update({"dropped_literal": 0, "polarity_flagged": 0})
         readable = (
             {p for v in view for p in v.project_ids} | {project.project_id}
             if ctx.is_admin
@@ -841,8 +880,8 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
                     if v2 is not None and (v2.answered or not v.answered):
                         v, excerpts = v2, widened
     # 6. completeness + repair on an answer (not after a refinement: at most 4 sequential steps; not
-    # in the cite mode, D-156: its sentences are complete prose, verified one by one)
-    if v.answered and not refined and not run.cite and run.remaining() >= MIN_CHECK_S:
+    # in the cite or prose modes, D-156/D-162: their sentences are complete prose, checked one by one)
+    if v.answered and not refined and run.claims_mode and run.remaining() >= MIN_CHECK_S:
         try:
             checked = await run.answer(excerpts, job="check", draft=v)
         except rs.ResearchUnavailable:
@@ -852,7 +891,7 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
                 v, checked, {e.handle: e for e in excerpts if e.version_id not in run.excluded}
             )
     # 7. a claim still naming a subject that neither its quotes nor its sources state is dropped
-    if v.answered and not run.cite:
+    if v.answered and run.claims_mode:
         shown = {e.handle: e for e in excerpts if e.version_id not in run.excluded}
         v = rs.enforce_attribution(v, shown, run.researcher.redactor.text)
     # 8. re-check and assemble
@@ -926,6 +965,25 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             ok,
             run.researcher.redactor.text,
         )
+        if not v.answered and before:
+            abstain_reason = "sources_changed"
+    elif v.answered and run.prose:
+        # D-162: each kept sentence is checked again against the excerpts still citable (a hard
+        # literal none of them states drops it) and attributed again over them
+        sources = [h for h in v.sources if h in ok]
+        prose_claims, _reasons = rs.prose_check([(cl.text, cl.line_end) for cl in v.kept], sources, ok)
+        before, settled = len(v.kept), v.confidence
+        v = rs.assemble_prose(
+            rs.ANSWERED,
+            prose_claims,
+            sources,
+            [h for h in v.related if h in ok],
+            settled,
+            ok,
+            run.researcher.redactor.text,
+        )
+        if v.answered and len(v.kept) == before:
+            v.confidence = settled  # its drops and flags already lowered it: nothing new was dropped
         if not v.answered and before:
             abstain_reason = "sources_changed"
     elif v.answered:

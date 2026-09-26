@@ -47,6 +47,16 @@ D-159 ``HLM_RESEARCH_SELECT`` (cite mode only; "select, then write"): before eac
 ``select`` sees the same excerpts and returns the ids of the ≤ ``SELECT_MAX`` that state the answer
 (``parse_select``: shown ids only, in its order); the ``write`` sees and may cite only those, and the
 others stay drillable as ``related``. An empty or failed select writes over every excerpt.
+
+D-162 ``HLM_RESEARCH_ANSWER_MODE=prose`` ("V16: write freely, keep all but fabricated values"): the
+prompt is research/v3 (opt-in) and the answer step is the JOB ``prose``: free prose plus the
+``sources`` it draws on, no per-sentence citation duty and no ``check`` call. ``validate_prose``
+splits the answer into sentences (``split_sentences``: never inside a code span) and drops a sentence
+ONLY when one of its HARD literals (``hard_literals``: a digit, or a backticked identifier) is in no
+shown excerpt (texts, titles and dates together): the fabricated-value guard. Every other sentence is
+kept and attributed deterministically (display and measurement) to ≤ 2 excerpts and their best
+line; a polarity mismatch against those lines FLAGS the claim (``flags: ["polarity"]``), it never
+drops it.
 """
 
 from __future__ import annotations
@@ -79,14 +89,18 @@ from hlmemo.librarian.tasks.synthesis import claims as literal_claims
 log = logging.getLogger("hlmemo.librarian.research")
 
 TASK = "research"
-JOBS = ("plan", "answer", "check", "refine", "write", "select")
+JOBS = ("plan", "answer", "check", "refine", "write", "select", "prose")
 #: D-156: ``claims`` (the default: quoted claims + the completeness pass, research/v1) or ``cite``
-#: (V14 "write, then cite": sentences citing excerpt handles, verified deterministically, research/v2)
-ANSWER_MODES = ("claims", "cite")
-#: the opt-in prompt version of the cite mode (``prompts.OPT_IN_VERSIONS``: never the default)
+#: (V14 "write, then cite": sentences citing excerpt handles, verified deterministically, research/v2);
+#: D-162: ``prose`` (V16: free prose, only fabricated values dropped, research/v3)
+ANSWER_MODES = ("claims", "cite", "prose")
+#: the opt-in prompt versions of the cite and prose modes (``prompts.OPT_IN_VERSIONS``: never the
+#: default)
 CITE_PROMPT_VERSION = 2
+PROSE_PROMPT_VERSION = 3
 #: sequential LLM steps of one question (addendum 7): plan, answer, completeness+repair — or, when
-#: the answer abstained, plan, answer, refine, answer (``MAX_CALLS_NO_SELECT``). D-159 select-then-
+#: the answer abstained, plan, answer, refine, answer (``MAX_CALLS_NO_SELECT``; the prose mode: plan,
+#: prose — or plan, prose, refine, prose). D-159 select-then-
 #: write (cite mode + ``HLM_RESEARCH_SELECT``) adds one select before each write: plan, select,
 #: write — or plan, select, write, refine, select, write (``MAX_CALLS``)
 MAX_CALLS = 6
@@ -96,7 +110,15 @@ MAX_ATTEMPTS = 9
 MAX_IN_FLIGHT = 4
 #: addendum 5: an explicit max_tokens on EVERY call, per JOB (reasoning tokens included); a
 #: runaway output is cut there, and the per-question budget reserves exactly this worst case
-JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000, "write": 3000, "select": 800}
+JOB_MAX_TOKENS = {
+    "plan": 800,
+    "refine": 800,
+    "answer": 3000,
+    "check": 3000,
+    "write": 3000,
+    "select": 800,
+    "prose": 3000,
+}
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
 BREAKER_MAX_OPEN_S = 900.0
@@ -110,6 +132,10 @@ MAX_SENTENCES = 24
 MAX_CITES = 6
 #: D-159: the excerpts one ``select`` may pick for the ``write`` (the prompt says "at most 6")
 SELECT_MAX = 6
+#: D-162 prose mode: the model's ``sources`` kept (the prompt says "at most 6") and the excerpts one
+#: sentence is attributed to
+PROSE_MAX_SOURCES = 6
+PROSE_ATTRIBUTE = 2
 #: verbatim quotes per claim (together they must state the whole claim)
 MAX_SUPPORT = 3
 QUOTE_MIN_CHARS = 12
@@ -493,10 +519,32 @@ def _unglue(lit: str) -> list[str]:
     """D-156 (a)(b): a token glued to a code span is not one literal. A suffix after the closing
     backtick (```profile-v2.3`dır``, ```127.0.0.1:8765/mcp`’dir``) is dropped; code spans joined by a
     slash (```CLAUDE.md`/`AGENTS.md```) are two literals. Each part is a literal again only when it is
-    literal-like and holds a letter or a digit."""
+    literal-like and holds a letter or a digit. D-162: the slash joining a code span and a plain word
+    (```prose`/cite``) belongs to neither (the word alone is a literal only when it is literal-like)."""
     if "`" not in lit or isinstance(lit, _CodeSpan) or _WS.search(lit):
         return [lit]
-    return [x for part in lit.split("`") for x in literal_claims(part) if any(ch.isalnum() for ch in x)]
+    return [
+        x for part in lit.split("`") for x in literal_claims(part.strip("/")) if any(ch.isalnum() for ch in x)
+    ]
+
+
+#: D-162 (D-161 false positives): a TR/EN suffix glued after CLOSING bold markup (``**1.2.8**’dir``,
+#: ``__D-130__'da``): the literal is what the bold wraps. ``__x__`` without a suffix is unwrapped
+#: only around a digit (``__init__`` is an identifier)
+_STAR_SUFFIX = re.compile(r"^([^*\s]+?)\*\*['’]?[^\W\d_]{1,8}$")
+_UNDER_SUFFIX = re.compile(r"^__([^_\s].*?)__(['’]?[^\W\d_]{1,8})?$")
+
+
+def _unbold(lit: str, codes: set[str]) -> str:
+    if lit in codes:  # a code span's own text is never markup
+        return lit
+    m = _STAR_SUFFIX.match(lit)
+    if m:
+        return type(lit)(m.group(1))
+    m = _UNDER_SUFFIX.match(lit)
+    if m and (m.group(2) or any(ch.isdigit() for ch in m.group(1))):
+        return type(lit)(m.group(1))
+    return lit
 
 
 def literals(text: str) -> list[str]:
@@ -504,13 +552,16 @@ def literals(text: str) -> list[str]:
     (``%40’ını`` is checked as ``40``, ``D-130'da`` as ``D-130``) and a plain ``a/b`` word pair is
     not a literal (addendum 3 #2). D-156: a suffix glued after a code span and slash-joined code
     spans are split off (``_unglue``); a code span with inner whitespace is ONE literal
-    (``_CodeSpan``), its tokens are not literals of their own."""
+    (``_CodeSpan``), its tokens are not literals of their own. D-162: a suffix glued after closing
+    bold markup is removed too (``**1.2.8**’dir`` is checked as ``1.2.8``)."""
+    codes = {m.group(1) for m in _CODE_SPAN.finditer(text)}
     spaced = [m.group(1) for m in _CODE_SPAN.finditer(text) if _spaced(m.group(1))]
     if spaced:
         text = _CODE_SPAN.sub(lambda m: " " if _spaced(m.group(1)) else m.group(0), text)
     out: list[str] = []
     for raw in [*(_CodeSpan(x) for x in spaced), *literal_claims(text)]:
         for lit in _unglue(raw):
+            lit = _unbold(lit, codes)
             m = _APOS_SUFFIX.match(lit)
             lit = type(lit)(m.group(1).lstrip("%")) if m else lit
             if lit and not _WORD_PAIR.match(lit):
@@ -592,6 +643,12 @@ def select_user(question: str, excerpts: list[Excerpt], redact: Redact | None = 
     return "JOB: select\n" + _input(payload, redact)
 
 
+def prose_user(question: str, excerpts: list[Excerpt], redact: Redact | None = None) -> str:
+    """D-162 prose mode: the JOB ``prose`` (the question and the excerpts, as ``write_user``)."""
+    payload = {"question": question, "excerpts": [e.shown() for e in excerpts]}
+    return "JOB: prose\n" + _input(payload, redact)
+
+
 def check_user(
     question: str,
     draft: dict[str, Any],
@@ -661,10 +718,19 @@ def job_validator(job: str) -> Callable[[dict[str, Any]], str | None]:
             return "ids missing"
         return None
 
+    def prose(obj: dict[str, Any]) -> str | None:
+        if obj.get("status") not in (ANSWERED, INSUFFICIENT):
+            return "status missing"
+        if obj["status"] == ANSWERED and not (isinstance(obj.get("answer"), str) and obj["answer"].strip()):
+            return "answered without an answer"
+        return None
+
     if job in ("plan", "refine"):
         return plan
     if job == "select":
         return select
+    if job == "prose":
+        return prose
     return write if job == "write" else answer
 
 
@@ -708,12 +774,22 @@ class Claim:
     support: list[tuple[str, str]]  # (handle, verbatim span of that excerpt), 1..MAX_SUPPORT
     state: str  # kept | downgraded | dropped
     cited: list[str] = field(default_factory=list)  # every shown handle the model named for it
+    #: D-162 prose mode: doubts that do not drop the claim ("polarity": it may contradict its best
+    #: source line), and whether a line break followed it in the answer (kept when re-joined)
+    flags: list[str] = field(default_factory=list)
+    line_end: bool = False
 
     def draft(self) -> dict[str, Any]:
         return {"text": self.text, "support": [{"id": h, "quote": q} for h, q in self.support]}
 
     def out(self) -> dict[str, Any]:
-        return {"text": self.text, "support": [{"handle": h, "quote": q} for h, q in self.support]}
+        out: dict[str, Any] = {
+            "text": self.text,
+            "support": [{"handle": h, "quote": q} for h, q in self.support],
+        }
+        if self.flags:
+            out["flags"] = list(self.flags)
+        return out
 
 
 @dataclass(slots=True)
@@ -743,6 +819,10 @@ class Validated:
     # D-159: the handles the answer was written over when a select narrowed them (None: all shown);
     # the re-check verifies its sentences against these only
     written_over: list[str] | None = None
+    # D-162 prose mode: the kept claims flagged for polarity, and the model's valid ``sources`` (the
+    # re-check attributes the sentences again over the ones still citable)
+    polarity_flagged: int = 0
+    sources: list[str] = field(default_factory=list)
 
     @property
     def answered(self) -> bool:
@@ -1367,6 +1447,248 @@ def validate_cited(
     )
 
 
+# --------------------------------------------------------------------------- D-162 prose mode
+#: a sentence or line boundary of a prose answer: after . ! ? … and whitespace, or a line break
+_PROSE_BREAK = re.compile(r"(?<=[.!?…])\s+(?=\S)|\s*\n\s*")
+#: a list or heading number that is all of a sentence so far ("1.", "- 2)", "### 3.", "**4.**"):
+#: the boundary after it is not a sentence end
+_ITEM_HEAD, _ITEM_NUM = r"\s*(?:#{1,6}\s+)?(?:[-*+•◦▪]\s+)?", r"(?:\*\*|__)?\d{1,3}[.)](?:\*\*|__)?"
+_ITEM_ONLY = re.compile(_ITEM_HEAD + _ITEM_NUM)
+#: a list/heading marker at the start of a sentence: layout, never a literal or a checked word
+_ITEM_MARK = re.compile(rf"{_ITEM_HEAD}(?:{_ITEM_NUM}(?=\s|$))?\s*")
+#: abbreviations a sentence does not end at
+_ABBREV_END = re.compile(r"(?:^|[\s(])(?:e\.g|i\.e|vs|cf|z\.b|bzw|vb|approx|ca)\.$")
+#: an excerpt handle written bare in a sentence ("see v12.3"): a reference, not a value
+_BARE_HANDLE = re.compile(rf"(?<![\w.-]){_H}(?!\w)")
+
+
+def split_sentences(text: str) -> list[tuple[str, bool]]:
+    """D-162: a prose answer as ``(sentence, a line break follows it)``. It is split after . ! ? …
+    followed by whitespace (the ``_SENTENCE`` rule) and at line breaks, but NEVER inside a backtick
+    code span (D-161: "…" or "." inside `…`), after a bare list or heading number ("1. ") or after a
+    common abbreviation ("e.g."). Whitespace is collapsed inside a sentence; a piece without a letter
+    or digit (a table rule, "---") is layout and is left out."""
+    code = [(m.start(), m.end()) for m in _CODE_SPAN.finditer(text)]
+    out: list[tuple[str, bool]] = []
+    start = 0
+    for m in _PROSE_BREAK.finditer(text):
+        at = m.start()
+        if any(a <= at < b for a, b in code):
+            continue
+        head, brk = text[start:at], "\n" in m.group(0)
+        if not brk and (_ITEM_ONLY.fullmatch(head) or _ABBREV_END.search(head.casefold())):
+            continue
+        out.append((head, brk))
+        start = m.end()
+    out.append((text[start:], False))
+    return [(" ".join(s.split()), brk) for s, brk in out if any(ch.isalnum() for ch in s)]
+
+
+def _body(sentence: str) -> str:
+    """A sentence without its list/heading marker: what is checked and attributed."""
+    m = _ITEM_MARK.match(sentence)
+    return sentence[m.end() :] if m else sentence
+
+
+def hard_literals(text: str, handles: Iterable[str] = ()) -> list[str]:
+    """D-162: the literals of a sentence whose absence from every shown excerpt proves a fabricated
+    value: the ``literals`` that hold a digit or come from a backtick code span (edge punctuation
+    stripped: ```foo()``` is ``foo``). A quoted prose phrase and a § reference are not hard (D-161:
+    wording, not values; a digit token inside a quote is a literal of its own), and neither is one of
+    ``handles`` (an excerpt id the model was shown: a reference, not a value)."""
+    codes = {_lit_norm(m.group(1).strip(_TOKEN_EDGE)) for m in _CODE_SPAN.finditer(text)}
+    skip = set(handles)
+    out: list[str] = []
+    for lit in literals(text):
+        if "§" in lit or (not isinstance(lit, _CodeSpan) and _WS.search(lit)):
+            continue
+        core = type(lit)(lit.strip(_TOKEN_EDGE))
+        if not core or core in skip or core in out:
+            continue
+        if isinstance(core, _CodeSpan) or any(ch.isdigit() for ch in core) or _lit_norm(core) in codes:
+            out.append(core)
+    return out
+
+
+def _attribute(
+    body: str,
+    lits: list[str],
+    preferred: list[str],
+    shown: dict[str, Excerpt],
+    hay_of: dict[str, str],
+    cache: dict[str, list[_Unit]],
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """D-162: ``(support, polarity lines)`` of one kept sentence. The candidates are ``preferred``
+    (the handles it named, then the model's sources; none valid → every shown excerpt), plus any
+    other shown excerpt that states one of its hard literals the candidates lack. The ≤
+    ``PROSE_ATTRIBUTE`` candidates sharing the most hard literals with it, then content words (≥ 1
+    literal or ≥ 2 words), are its support, each with its best line (``_units``/``_display``; the
+    excerpt's first line when only its title shares). Sharing nothing, it is attributed to the first
+    candidate and no line is compared for polarity."""
+    pool = [h for h in dict.fromkeys(preferred) if h in shown] or list(shown)
+    if not pool:
+        return [], []
+    have = "\n".join(hay_of[h] for h in pool)
+    missing = [x for x in lits if not literal_supported(x, have)]
+    if missing:
+        pool += [h for h in shown if h not in pool and any(literal_supported(x, hay_of[h]) for x in missing)]
+    words = _content(body)
+    ranked: list[tuple[tuple[int, int, int], int, str, str]] = []
+    for i, h in enumerate(pool):
+        here = [x for x in lits if literal_supported(x, hay_of[h])]
+        score, line = (0, 0), ""
+        for unit, cw, uhay in _units(shown[h], cache):
+            s = (sum(1 for x in here if literal_supported(x, uhay)), _hits(words, cw))
+            if s > score:
+                score, line = s, unit
+        ranked.append(((len(here), *score), i, h, line))
+    ranked.sort(key=lambda r: (-r[0][0], -r[0][1], -r[0][2], r[1]))
+    chosen = [r for r in ranked if r[0][0] >= 1 or r[0][2] >= 2][:PROSE_ATTRIBUTE]
+    if not chosen:
+        return [(pool[0], _cut(_first_line(shown[pool[0]])))], []
+    support: list[tuple[str, str]] = []
+    lines: list[str] = []
+    for (_n, in_line, hits), _i, h, line in chosen:
+        if line and (in_line >= 1 or hits >= 2):
+            support.append((h, _display(line, lits)))
+            lines.append(line)
+        else:
+            support.append((h, _cut(_first_line(shown[h]))))
+    return support, lines
+
+
+def prose_check(
+    sentences: list[tuple[str, bool]], sources: list[str], shown: dict[str, Excerpt]
+) -> tuple[list[Claim], dict[str, int]]:
+    """D-162: the deterministic check of prose sentences (``split_sentences``) against the excerpts
+    the answer was written from: ``(claims, drop counts by reason)``.
+
+    - literal: a sentence is DROPPED only when one of its hard literals (``hard_literals``) is in no
+      shown excerpt (their texts, titles and dates together: what the model was shown);
+    - every other sentence is KEPT and attributed (``_attribute``); a polarity mismatch against its
+      best lines adds ``"polarity"`` to its flags, it never drops it;
+    - unsupported: only when nothing was shown (no excerpt to attribute to).
+    Handles written in a sentence ("[v12.3]" is removed from the text, a bare shown handle stays)
+    are its preferred sources. Sentences past ``ANSWER_MAX_CHARS`` of kept text are not checked."""
+    hay_of = {h: _hay([e.title, e.date, e.text]) for h, e in shown.items()}
+    hay = "\n".join(hay_of.values())
+    cache: dict[str, list[_Unit]] = {}
+    claims: list[Claim] = []
+    reasons = {"literal": 0, "unsupported": 0}
+    size = 0
+
+    def carry(brk: bool) -> None:  # a dropped sentence's line break stays in the answer
+        last = next((c for c in reversed(claims) if c.state == "kept"), None)
+        if last is not None and brk:
+            last.line_end = True
+
+    for raw, brk in sentences:
+        text, inline = split_inline_cites(raw, shown)
+        body = _body(text)
+        if not any(ch.isalnum() for ch in body):
+            continue
+        if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
+            break
+        refs = [h for h in _BARE_HANDLE.findall(body) if h in shown]
+        lits = hard_literals(body, shown)
+        if not all(literal_supported(x, hay) for x in lits):
+            reasons["literal"] += 1
+            claims.append(Claim(text, [], "dropped", line_end=brk))
+            carry(brk)
+            continue
+        support, lines = _attribute(body, lits, [*inline, *refs, *sources], shown, hay_of, cache)
+        if not support:
+            reasons["unsupported"] += 1
+            claims.append(Claim(text, [], "dropped", line_end=brk))
+            carry(brk)
+            continue
+        size += len(text) + (1 if size else 0)
+        flags = [] if not lines or polarity_ok(body, lines) else ["polarity"]
+        claims.append(Claim(text, support, "kept", [h for h, _q in support], flags, brk))
+    return claims, reasons
+
+
+def _join_prose(kept: list[Claim], redact: Callable[[str], str]) -> str:
+    """The kept sentences in order, a line break where the answer had one."""
+    parts: list[str] = []
+    for i, c in enumerate(kept):
+        if i:
+            parts.append("\n" if kept[i - 1].line_end else " ")
+        parts.append(c.text)
+    return redact("".join(parts))[:ANSWER_MAX_CHARS]
+
+
+def assemble_prose(
+    status: str | None,
+    claims: list[Claim],
+    sources: list[str],
+    related_hint: list[str],
+    conf: str,
+    shown: dict[str, Excerpt],
+    redact: Callable[[str], str],
+    **extra: Any,
+) -> Validated:
+    """The prose-mode answer: the kept sentences; primary = the excerpts attributed to the most kept
+    sentences (≤ ``MAX_PRIMARY``); related = the model's related, its other sources, the other
+    attributed excerpts, then the remaining retrieved ones (≤ ``MAX_RELATED``). A dropped sentence or
+    a polarity flag lowers the confidence. Nothing kept → an abstention (guard when the model
+    answered; related = the closest ≤ 3: its sources, then its related)."""
+    kept = [c for c in claims if c.state == "kept"]
+    dropped = len(claims) - len(kept)
+    flagged = sum(1 for c in kept if "polarity" in c.flags)
+    text = _join_prose(kept, redact) if status == ANSWERED else ""
+    if status != ANSWERED or not text.strip():
+        hint = [*sources, *related_hint] if status == ANSWERED else related_hint
+        closest = [h for h in dict.fromkeys(hint) if h in shown][:3]
+        return Validated(
+            INSUFFICIENT, status, "", claims, [], closest, "low", guard=status == ANSWERED,
+            dropped_sentences=dropped, sources=list(sources), **extra,
+        )  # fmt: skip
+    ranked = rank_sources(claims)
+    primary = ranked[:MAX_PRIMARY]
+    related = [
+        h
+        for h in dict.fromkeys([*related_hint, *sources, *ranked[MAX_PRIMARY:], *shown])
+        if h in shown and h not in primary
+    ][:MAX_RELATED]
+    return Validated(
+        ANSWERED, status, text, claims, primary, related, _lower(conf) if dropped or flagged else conf,
+        dropped_sentences=dropped, polarity_flagged=flagged, sources=list(sources), **extra,
+    )  # fmt: skip
+
+
+def validate_prose(
+    obj: dict[str, Any] | None, shown: dict[str, Excerpt], redact: Callable[[str], str] = lambda s: s
+) -> Validated:
+    """D-162: the deterministic check of a ``prose`` output against the excerpts it was shown
+    (``prose_check``): sentences with a fabricated hard literal are dropped (``drop_reasons``), the
+    rest is the answer, attributed; the model's ``sources`` (shown ids only, ≤
+    ``PROSE_MAX_SOURCES``) are the attribution candidates. Never cites a handle that was not shown."""
+    obj = obj or {}
+    status = obj.get("status") if obj.get("status") in (ANSWERED, INSUFFICIENT) else None
+    conf = obj.get("confidence") if obj.get("confidence") in _CONF else "low"
+    raw = obj.get("sources")
+    raw = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+    sources = [h for h in dict.fromkeys(x.strip() for x in raw if isinstance(x, str)) if h in shown]
+    sources = sources[:PROSE_MAX_SOURCES]
+    rel = obj.get("related") if isinstance(obj.get("related"), list) else []
+    related_hint = [h.strip() for h in rel if isinstance(h, str)]
+    answer = obj.get("answer") if status == ANSWERED and isinstance(obj.get("answer"), str) else ""
+    claims, reasons = prose_check(split_sentences(answer), sources, shown)
+    return assemble_prose(
+        status,
+        claims,
+        sources,
+        related_hint,
+        conf,
+        shown,
+        redact,
+        dropped_claims=sum(1 for c in claims if c.state != "kept"),
+        main_dropped=bool(claims) and claims[0].state != "kept",
+        drop_reasons=reasons,
+    )
+
+
 # --------------------------------------------------------------------------- addendum 6
 _ID_LIKE = re.compile(
     r"^(?=[^\s]*\d)(?=[^\s]*[A-Z])[A-Za-z0-9][A-Za-z0-9._-]+$|^[A-Z]{1,3}-[A-Z0-9][A-Za-z0-9-]*$"
@@ -1568,10 +1890,13 @@ class Researcher:
         # D-159: select-then-write, only in the cite mode (its prompt has the JOB select)
         self.select: bool = self.answer_mode == "cite" and bool(getattr(settings, "research_select", False))
         self.max_calls: int = MAX_CALLS if self.select else MAX_CALLS_NO_SELECT
-        # D-156: the cite mode's prompt is an opt-in version; the claims mode keeps the default (v1,
-        # or a pin) unless that prompt has no JOB "answer" (a cite prompt pinned by mistake)
+        # D-156/D-162: the cite and prose modes' prompts are opt-in versions; the claims mode keeps the
+        # default (v1, or a pin) unless that prompt has no JOB "answer" (another mode's prompt pinned
+        # by mistake)
         if self.answer_mode == "cite":
             self.spec: TaskSpec = load_task(TASK, CITE_PROMPT_VERSION)
+        elif self.answer_mode == "prose":
+            self.spec = load_task(TASK, PROSE_PROMPT_VERSION)
         else:
             self.spec = load_task(TASK)
             if 'JOB "answer"' not in self.spec.system:
@@ -1776,6 +2101,7 @@ __all__ = [
     "MAX_ATTEMPTS",
     "MAX_CALLS",
     "MAX_CALLS_NO_SELECT",
+    "PROSE_PROMPT_VERSION",
     "SELECT_MAX",
     "TASK",
     "Claim",
@@ -1787,12 +2113,14 @@ __all__ = [
     "app_researcher",
     "assemble",
     "assemble_cited",
+    "assemble_prose",
     "cite_check",
     "check_user",
     "clip",
     "close_app_researcher",
     "best_line",
     "find_verbatim",
+    "hard_literals",
     "locate_quote",
     "polarity_ok",
     "redact_values",
@@ -1803,6 +2131,8 @@ __all__ = [
     "parse_plan",
     "parse_select",
     "plan_user",
+    "prose_check",
+    "prose_user",
     "qnorm",
     "refine_user",
     "rank_sources",
@@ -1818,7 +2148,9 @@ __all__ = [
     "research_chain",
     "select_user",
     "split_inline_cites",
+    "split_sentences",
     "validate_answer",
     "validate_cited",
+    "validate_prose",
     "write_user",
 ]

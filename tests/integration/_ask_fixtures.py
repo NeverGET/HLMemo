@@ -271,6 +271,8 @@ class FakeResearcher:
     #: D-159 JOB select: None = the first excerpt holding each fact (in the facts' order); else
     #: exactly these ids
     select_ids: list[str] | None = None
+    #: D-162 prose mode: sentences the JOB prose appends to the facts' own
+    prose_extra: list[str] = field(default_factory=list)
     jobs: list[str] = field(default_factory=list)
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -283,6 +285,8 @@ class FakeResearcher:
             return self._select(excerpts)
         if job == "write":
             return self._write(excerpts)
+        if job == "prose":
+            return self._prose(excerpts)
         facts = self.facts + (self.check_adds if job == "check" else [])
         claims = []
         for needle in facts:
@@ -349,6 +353,34 @@ class FakeResearcher:
             "status": "answered",
             "sentences": sentences,
             "related": [e["id"] for e in excerpts if e["id"] != first][:3] + self.extra_primary,
+            "confidence": "high",
+        }
+
+    def _prose(self, excerpts: list[dict[str, Any]]) -> dict[str, Any]:
+        """D-162 JOB prose: the facts' sentences as one answer, with the excerpts they came from."""
+        sentences: list[str] = []
+        sources: list[str] = []
+        for needle in self.facts:
+            for ex in excerpts:
+                s = sentence_with(ex["text"], needle)
+                if s:
+                    sentences.append(s)
+                    if ex["id"] not in sources:
+                        sources.append(ex["id"])
+                    break
+        if self.abstain or not sentences:
+            return {
+                "status": "insufficient_evidence",
+                "answer": "",
+                "sources": [],
+                "related": [e["id"] for e in excerpts[:2]],
+                "confidence": "low",
+            }
+        return {
+            "status": "answered",
+            "answer": " ".join([*sentences, *self.prose_extra]),
+            "sources": sources + self.extra_primary,
+            "related": [e["id"] for e in excerpts if e["id"] not in sources][:3] + self.extra_primary,
             "confidence": "high",
         }
 

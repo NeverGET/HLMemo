@@ -7,7 +7,8 @@ response must satisfy). ``load_task(name)`` picks the highest version unless one
 ``HLM_LIBRARIAN_PROMPT_PINS="relate=1,relate_verify=1"`` environment variable — a rollback that
 needs no code change; the G-LIVE-B runner's ``--prompts v1`` uses it). An OPT-IN version
 (``OPT_IN_VERSIONS``) is never the default: it is loaded only when asked for by number (research/v2,
-the D-156 cite-mode prompt, is selected by ``HLM_RESEARCH_ANSWER_MODE=cite``). Model quirks are never
+the D-156 cite-mode prompt, is selected by ``HLM_RESEARCH_ANSWER_MODE=cite``; research/v3, the D-162
+prose-mode prompt, by ``HLM_RESEARCH_ANSWER_MODE=prose``). Model quirks are never
 written here: a profile's ``prompt_overrides[<task>].system_append`` is appended at request time
 (D-017).
 """
@@ -48,9 +49,10 @@ MAX_TOKENS: dict[str, int] = {
 #: the replaced statements; relate_verify/v2 adds replaces_all and adds_detail)
 MAX_TOKENS_VERSION: dict[tuple[str, int], int] = {("relate", 2): 2000, ("relate_verify", 2): 900}
 #: versions loaded only by number (a pin or ``load_task(name, version)``), never as the default;
-#: research/v2 is the D-156 "write, then cite" prompt of ``HLM_RESEARCH_ANSWER_MODE=cite``, so the
-#: default (claims) mode keeps research/v1 byte for byte
-OPT_IN_VERSIONS: dict[str, frozenset[int]] = {"research": frozenset({2})}
+#: research/v2 is the D-156 "write, then cite" prompt of ``HLM_RESEARCH_ANSWER_MODE=cite`` and
+#: research/v3 the D-162 "prose" prompt of ``HLM_RESEARCH_ANSWER_MODE=prose``, so the default (claims)
+#: mode keeps research/v1 byte for byte
+OPT_IN_VERSIONS: dict[str, frozenset[int]] = {"research": frozenset({2, 3})}
 _PINS: dict[str, int] = {}
 
 

@@ -257,8 +257,12 @@ class Settings(BaseSettings):
     # D-156: how memory.ask answers. "claims" (default): atomic claims with verbatim quotes plus the
     # completeness/repair pass (prompt research/v1). "cite" (V14 "write, then cite"): complete prose
     # sentences citing excerpt handles, each checked deterministically against its cited excerpts'
-    # full text (literals, polarity); no completeness call (prompt research/v2).
-    research_answer_mode: Literal["claims", "cite"] = "claims"
+    # full text (literals, polarity); no completeness call (prompt research/v2). D-162 "prose" (V16):
+    # free prose plus the sources it draws on; a sentence is dropped only when a hard literal of it (a
+    # digit, a backticked identifier) is in no shown excerpt, every other one is kept and attributed
+    # to its best source lines (a polarity mismatch is flagged, not dropped); no completeness call
+    # (prompt research/v3).
+    research_answer_mode: Literal["claims", "cite", "prose"] = "claims"
     # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
     # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
     # (the others stay drillable in `related`); an empty or failed select writes over them all.

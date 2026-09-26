@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research/v3 (D-162 prose mode: one schema for the JOBs plan, prose and refine; the JOB's own shape is checked by librarian.tasks.research)",
+  "type": "object",
+  "properties": {
+    "queries": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 400}},
+    "sections": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 32}},
+    "status": {"enum": ["answered", "insufficient_evidence"]},
+    "answer": {"type": "string", "maxLength": 20000},
+    "sources": {"type": ["array", "string"], "maxItems": 16, "maxLength": 64, "items": {"type": "string", "maxLength": 32}},
+    "related": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 32}},
+    "confidence": {"enum": ["high", "medium", "low"]}
+  }
+}

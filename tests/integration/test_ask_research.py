@@ -394,6 +394,95 @@ async def test_ask_cite_mode_unverifiable_sentences_are_a_guarded_abstention(
     assert out["meta"]["flags"]["dropped_literal"] == 1 and out["meta"]["flags"]["main_dropped"] is True
 
 
+# --------------------------------------------------------------------------- D-162 prose mode
+async def test_ask_prose_mode_keeps_free_prose_and_drops_only_fabricated_values(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """D-162 V16 (HLM_RESEARCH_ANSWER_MODE=prose): plan -> prose -> finish, no check call. A sentence
+    stating a value no shown excerpt states is dropped; the others are kept and attributed to their
+    best source lines; handles the model was never shown are ignored."""
+    secret = [f"v{v}.0" for v in world.secret_versions.values()][:2]
+    fake = FakeResearcher(
+        facts=["1.2 s", "1,6 s on the VPS"],
+        extra_primary=secret,
+        prose_extra=["The p95 target on the dev replica is 0.4 s."],
+    )
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose")
+    try:
+        out = await ask(
+            connect, world, deps, r, "What is the current retrieval p95 target and what was it before?"
+        )
+    finally:
+        await r.aclose()
+    assert out["abstained"] is False and out["confidence"] == "medium"  # a sentence was dropped
+    assert out["meta"]["steps"] == ["plan", "prose"] and out["meta"]["calls"] == 2
+    assert out["meta"]["answer_mode"] == "prose" and out["meta"]["attempts"] == 2
+    flags = out["meta"]["flags"]
+    assert (flags["dropped_literal"], flags["polarity_flagged"], flags["main_dropped"]) == (1, 0, False)
+    assert "0.4 s" not in out["answer"] and "1.2 s" in out["answer"] and "1,6 s" in out["answer"]
+    d004 = world.versions["D-004"]
+    assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
+    assert "1.2 s" in out["primary"][0]["quote"]
+    assert out["primary"][0]["path"] == "docs/decisions/DECISIONS.md#D-004"
+    # the claims are the kept sentences, the answer is exactly them, each shown with its source lines
+    assert out["answer"] == " ".join(c["text"] for c in out["claims"]) and len(out["claims"]) == 2
+    assert all(1 <= len(c["support"]) <= rs.PROSE_ATTRIBUTE and "flags" not in c for c in out["claims"])
+    assert all(s["quote"] for c in out["claims"] for s in c["support"])
+    assert {p["handle"] for p in out["primary"]} <= {s["handle"] for c in out["claims"] for s in c["support"]}
+    shown = {h["handle"] for h in (*out["primary"], *out["related"])}
+    assert not shown & set(secret) and len(out["related"]) <= 5
+    assert_no_secret(json.dumps({k: v for k, v in out.items() if k != "meta"}, ensure_ascii=False), world)
+    assert out["budget"]["used"] <= out["budget"]["limit"] and METER.count(out) == out["budget"]["used"]
+    assert [request_job(b)[0] for b in llm.requests] == ["plan", "prose"]
+    assert llm.requests[1]["max_tokens"] == rs.JOB_MAX_TOKENS["prose"] == 3000
+    system = llm.requests[1]["messages"][0]["content"]
+    assert 'JOB "prose"' in system and 'JOB "write"' not in system and 'JOB "check"' not in system
+    assert llm.requests[1]["messages"][1]["content"].startswith("JOB: prose\n")
+    assert_no_secret(sent_text(llm), world)
+
+
+async def test_ask_prose_mode_flags_a_polarity_mismatch_without_dropping_it(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """D-162: a sentence that drops the "no" of its best source line is KEPT with flags ["polarity"];
+    the confidence is lowered once (the re-check does not lower it again)."""
+    fake = FakeResearcher(
+        facts=["1.2 s", "SQLite was rejected"], prose_extra=["SQLite has concurrent writers."]
+    )
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose")
+    try:
+        out = await ask(connect, world, deps, r, "What is the p95 target, and why was SQLite rejected?")
+    finally:
+        await r.aclose()
+    assert out["abstained"] is False and out["answer"].endswith("SQLite has concurrent writers.")
+    flagged = out["claims"][-1]
+    assert flagged["text"] == "SQLite has concurrent writers." and flagged["flags"] == ["polarity"]
+    assert handle_re(world.versions["D-001"]).fullmatch(flagged["support"][0]["handle"])
+    assert "no concurrent writers" in flagged["support"][0]["quote"]
+    assert all("flags" not in c for c in out["claims"][:-1])
+    assert out["meta"]["flags"]["polarity_flagged"] == 1 and out["meta"]["flags"]["dropped_literal"] == 0
+    assert out["confidence"] == "medium"  # high, lowered once for the flag
+
+
+async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    fake = FakeResearcher(facts=[], abstain=True)
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose")
+    try:
+        out = await ask(connect, world, deps, r, "Which colour is the office coffee machine?")
+    finally:
+        await r.aclose()
+    assert out["abstained"] is True and out["answer"] == "" and out["primary"] == [] and out["claims"] == []
+    assert out["confidence"] == "low" and out["meta"]["abstain_reason"] == "no_evidence"
+    assert out["meta"]["answer_mode"] == "prose" and out["meta"]["calls"] <= rs.MAX_CALLS_NO_SELECT
+    steps = out["meta"]["steps"]
+    assert steps[:3] == ["plan", "prose", "refine"] and set(steps) <= {"plan", "prose", "refine"}
+    assert set(fake.jobs) <= {"plan", "prose", "refine"} and len(out["related"]) <= 3
+    assert out["meta"]["flags"]["dropped_literal"] == 0
+
+
 # --------------------------------------------------------------------------- D-159 select, then write
 async def test_ask_cite_mode_selects_then_writes(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
     """D-159 (HLM_RESEARCH_SELECT): plan -> select -> write. The select sees the excerpts exactly as
