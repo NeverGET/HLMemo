@@ -1596,7 +1596,31 @@ def split_sentences(text: str) -> list[tuple[str, bool]]:
     followed by whitespace (the ``_SENTENCE`` rule) and at line breaks, but NEVER inside a backtick
     code span (D-161: "…" or "." inside `…`), after a bare list or heading number ("1. ") or after a
     common abbreviation ("e.g."). Whitespace is collapsed inside a sentence; a piece without a letter
-    or digit (a table rule, "---") is layout and is left out."""
+    or digit (a table rule, "---") is layout and is left out. D-187: a FENCED code block (a line
+    starting with ``` or ~~~, to its closing fence or the end) is ONE unit of its own, its lines kept
+    as written (``is_block``; checked line by line)."""
+    out: list[tuple[str, bool]] = []
+    at = 0
+    for m in _FENCED.finditer(text):
+        out += _split_prose(text[at : m.start()])
+        block = "\n".join(line.rstrip() for line in m.group(0).strip("\n").split("\n"))
+        if any(ch.isalnum() for ch in block):
+            out.append((block, True))
+        at = m.end()
+    return out + _split_prose(text[at:])
+
+
+#: D-187: a fenced code block (its fence at a line start) to its closing fence, or to the end
+_FENCED = re.compile(r"(?ms)^[ \t]*(```|~~~)[^\n]*\n.*?^[ \t]*\1[ \t]*$|^[ \t]*(?:```|~~~)[^\n]*(?:\n.*)?\Z")
+_FENCE_LINE = re.compile(r"^[ \t]*(```|~~~)")
+
+
+def is_block(text: str) -> bool:
+    """D-187: a unit of ``split_sentences`` that is a fenced code block."""
+    return _FENCE_LINE.match(text) is not None
+
+
+def _split_prose(text: str) -> list[tuple[str, bool]]:
     code = [(m.start(), m.end()) for m in _CODE_SPAN.finditer(text)]
     out: list[tuple[str, bool]] = []
     start = 0
@@ -1619,12 +1643,36 @@ def _body(sentence: str) -> str:
     return sentence[m.end() :] if m else sentence
 
 
+#: D-187: placeholders a writer fills in or leaves for the reader, never a fabricated value:
+#: ``<name>``, ``${VAR}``, ``$VAR``, ``{name}``, ``…`` / ``...``; and an ALL-CAPS single word
+_PLACEHOLDER = re.compile(
+    r"<[^<>\n]{1,60}>|\$\{[^}\n]{0,60}\}|\$[A-Za-z_][A-Za-z0-9_]*|\{[^{}\n]{1,60}\}|…|\.\.\."
+)
+_CAPS_WORD = re.compile(r"^[A-Z]{2,}$")
+#: D-187: a bare integer up to this is never a hard literal (counts, steps, small settings)
+SMALL_INT_MAX = 20
+
+
+def _placeholder_word(tok: str) -> bool:
+    """An ALL-CAPS single word (``STATE``, ``HOST``): a placeholder, never guarded."""
+    return bool(_CAPS_WORD.match(tok.strip(_TOKEN_EDGE + ".")))
+
+
+def _small_int(core: str) -> bool:
+    """A bare integer ≤ ``SMALL_INT_MAX`` (a count, a step): not a hard literal on its own (inside a
+    code span it is part of the span's value, e.g. ``Postgres 18``, and stays guarded)."""
+    return core.isdigit() and int(core) <= SMALL_INT_MAX
+
+
 def hard_literals(text: str, handles: Iterable[str] = ()) -> list[str]:
     """D-162: the literals of a sentence whose absence from every shown excerpt proves a fabricated
     value: the ``literals`` that hold a digit or come from a backtick code span (edge punctuation
     stripped: ```foo()``` is ``foo``). A quoted prose phrase and a § reference are not hard (D-161:
     wording, not values; a digit token inside a quote is a literal of its own), and neither is one of
-    ``handles`` (an excerpt id the model was shown: a reference, not a value)."""
+    ``handles`` (an excerpt id the model was shown: a reference, not a value). D-187: placeholders
+    (``_PLACEHOLDER``, ALL-CAPS single words) are never hard (a code span keeps its other tokens),
+    nor is a bare integer ≤ ``SMALL_INT_MAX``."""
+    text = _PLACEHOLDER.sub(" ", text)
     codes = {_lit_norm(m.group(1).strip(_TOKEN_EDGE)) for m in _CODE_SPAN.finditer(text)}
     skip = set(handles)
     out: list[str] = []
@@ -1632,9 +1680,17 @@ def hard_literals(text: str, handles: Iterable[str] = ()) -> list[str]:
         if "§" in lit or (not isinstance(lit, _CodeSpan) and _WS.search(lit)):
             continue
         core = type(lit)(lit.strip(_TOKEN_EDGE))
-        if not core or core in skip or core in out:
+        if isinstance(core, _CodeSpan):
+            toks = [t for t in core.split() if not _placeholder_word(t)]
+            core = _CodeSpan(" ".join(toks)) if len(toks) > 1 else (toks[0] if toks else "")
+            code = True
+        else:
+            code = _lit_norm(core) in codes
+        if not core.strip() or core in skip or core in out or _placeholder_word(core):
             continue
-        if isinstance(core, _CodeSpan) or any(ch.isdigit() for ch in core) or _lit_norm(core) in codes:
+        if not code and _small_int(core):
+            continue
+        if isinstance(core, _CodeSpan) or code or any(ch.isdigit() for ch in core):
             out.append(core)
     return out
 
@@ -1979,38 +2035,141 @@ def _prose_keep(
     ``ANSWER_MAX_CHARS`` of kept text are not checked. D-170: the sentences from index
     ``added_from`` on are the expand pass's (``Claim.added``)."""
     hay = "\n".join(_hay([e.title, e.date, e.text]) for e in shown.values())
+    derived = _derived_numbers(hay)
+
+    def ok(x: str) -> bool:  # stated, or (D-187) the sum/difference of two stated numbers
+        return literal_supported(x, hay) or _is_derived(x, derived)
+
     claims: list[Claim] = []
-    reasons = {"literal": 0, "unsupported": 0}
-    raws: list[str] = []
+    raw_of: list[str] = []
+    reasons = {"literal": 0, "unsupported": 0, "block_lines": 0, "dangling": 0}
     size = 0
 
-    def carry(brk: bool) -> None:  # a dropped sentence's line break stays in the answer
-        last = next((c for c in reversed(claims) if c.state == "kept"), None)
+    def carry(brk: bool, before: int | None = None) -> None:  # a dropped unit's line break stays
+        pool = claims if before is None else claims[:before]
+        last = next((c for c in reversed(pool) if c.state == "kept"), None)
         if last is not None and brk:
             last.line_end = True
 
     for i, (raw, brk) in enumerate(sentences):
+        added = added_from is not None and i >= added_from
+        if is_block(raw):  # D-187: a fenced block, checked line by line
+            text, lines_dropped = _check_block(raw, ok, shown)
+            reasons["block_lines"] += lines_dropped
+            if text is not None and size and size + 1 + len(text) > ANSWER_MAX_CHARS:
+                break
+            if text is None or not shown:
+                reasons["literal" if shown else "unsupported"] += 1
+                claims.append(Claim(raw, [], "dropped", line_end=True, added=added))
+                raw_of.append(raw)
+                carry(True)
+                continue
+            size += len(text) + (1 if size else 0)
+            claims.append(Claim(text, [], "kept", line_end=True, added=added))
+            raw_of.append(text)
+            continue
         text, _inline = split_inline_cites(raw, shown)
         body = _body(text)
-        added = added_from is not None and i >= added_from
         if not any(ch.isalnum() for ch in body):
             continue
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
             break
         why = None
-        if not all(literal_supported(x, hay) for x in hard_literals(body, shown)):
+        if not all(ok(x) for x in hard_literals(body, shown)):
             why = "literal"
         elif not shown:
             why = "unsupported"
         if why is not None:
             reasons[why] += 1
             claims.append(Claim(text, [], "dropped", line_end=brk, added=added))
+            raw_of.append(raw)
             carry(brk)
             continue
         size += len(text) + (1 if size else 0)
         claims.append(Claim(text, [], "kept", line_end=brk, added=added))
-        raws.append(raw)
+        raw_of.append(raw)
+    # D-187: a lead-in ("…, run:") whose block or list was dropped, or that ends the answer, goes too
+    for i, c in enumerate(claims):
+        if c.state != "kept" or not c.text.rstrip().endswith(":"):
+            continue
+        j = i + 1
+        while j < len(claims) and (is_block(claims[j].text) or _LIST_ITEM.match(claims[j].text)):
+            j += 1
+        follow = claims[i + 1 : j]
+        if (follow and all(f.state != "kept" for f in follow)) or (
+            not follow and not any(f.state == "kept" for f in claims[i + 1 :])
+        ):
+            c.state = "dropped"
+            reasons["dangling"] += 1
+            carry(c.line_end, before=i)
+    raws = [r for c, r in zip(claims, raw_of, strict=True) if c.state == "kept"]
     return claims, reasons, raws
+
+
+#: D-187: a list item unit (its marker): what a lead-in ending with ":" introduces
+_LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+•◦▪]|\d{1,3}[.)])[ \t]+")
+_SHELL_COMMENT = re.compile(r"[ \t]+#[ \t].*$")
+#: D-187: the numbers of the shown excerpts whose pairwise sums and differences are "derived"
+#: (a count or total the writer computed), at most this many distinct ones (bounded work)
+DERIVED_NUMBERS_MAX = 150
+_NUMBER = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?![\w])")
+
+
+def _derived_numbers(hay: str) -> frozenset[Decimal]:
+    """D-187: the sums and (absolute) differences of two numbers stated in ``hay`` (the first
+    ``DERIVED_NUMBERS_MAX`` distinct ones)."""
+    nums: list[Decimal] = []
+    for m in _NUMBER.finditer(hay):
+        d = Decimal(m.group(0))
+        if d not in nums:
+            nums.append(d)
+            if len(nums) >= DERIVED_NUMBERS_MAX:
+                break
+    out: set[Decimal] = set()
+    for i, a in enumerate(nums):
+        for b in nums[i + 1 :]:
+            out.add((a + b).normalize())
+            out.add(abs(a - b).normalize())
+    return frozenset(out)
+
+
+def _is_derived(literal: str, derived: frozenset[Decimal]) -> bool:
+    c = _THOUSANDS.sub("", _lit_norm(literal))
+    if not re.fullmatch(r"\d+(?:\.\d+)?", c):
+        return False
+    return Decimal(c).normalize() in derived
+
+
+def _check_block(block: str, ok: Callable[[str], bool], shown: dict[str, Excerpt]) -> tuple[str | None, int]:
+    """D-187: ``(the block with only its supported lines, lines dropped)``, or ``(None, ...)`` when no
+    command line survives. A command line is checked as a code span (every token not a placeholder,
+    a trailing shell comment left out); a comment line (# or //) only for its hard literals; an empty
+    line stays. An unclosed block gets its closing fence."""
+    lines = block.split("\n")
+    fence = _FENCE_LINE.match(lines[0])
+    assert fence is not None
+    head, inner = lines[0], lines[1:]
+    tail = fence.group(1)
+    if inner and _FENCE_LINE.match(inner[-1]) and inner[-1].strip().startswith(fence.group(1)):
+        tail, inner = inner[-1], inner[:-1]
+    kept: list[str] = []
+    dropped = commands = 0
+    for line in inner:
+        bare = line.strip()
+        if not bare:
+            kept.append(line)
+            continue
+        comment = bare.startswith(("#", "//"))
+        code = "" if comment else _SHELL_COMMENT.sub("", bare).replace("`", "").strip()
+        lits = hard_literals(bare, shown) if comment else (hard_literals(f"`{code}`", shown) if code else [])
+        if all(ok(x) for x in lits):
+            kept.append(line)
+            commands += not comment
+        else:
+            dropped += 1
+    if not commands:
+        return None, dropped
+    return "\n".join([head, *kept, tail]), dropped
 
 
 def _prose_sentences(answer: str, added: list[str] | None) -> tuple[list[tuple[str, bool]], int]:
@@ -2854,6 +3013,7 @@ __all__ = [
     "best_line",
     "find_verbatim",
     "hard_literals",
+    "is_block",
     "locate_quote",
     "polarity_ok",
     "redact_values",

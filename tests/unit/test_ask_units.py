@@ -1504,11 +1504,13 @@ def test_d162_literal_extraction_fixes() -> None:
     assert rs.literals("Use `prose`/cite mode.") == ["prose"]  # was also "/cite"
     assert set(rs.literals("Files `CLAUDE.md`/`AGENTS.md`.")) == {"CLAUDE.md", "AGENTS.md"}
     # hard: a digit or a code span; the rest of literals() is not a fabricated-value signal
-    assert rs.hard_literals("Set HLM_RESEARCH_SELECT and `prose` to 3 via deploy/llm.env.") == ["prose", "3"]
+    # D-187: a small integer (<= 20) is never hard
+    assert rs.hard_literals("Set HLM_RESEARCH_SELECT and `prose` to 3 via deploy/llm.env.") == ["prose"]
+    assert rs.hard_literals("Set `prose` to 30 via deploy/llm.env.") == ["prose", "30"]
     quoted = 'It says "write freely, then cite 2 handles" in §3.2 and “v16 mode”.'
     assert "write freely, then cite 2 handles" in rs.literals(quoted)  # claims/cite still check it
-    assert rs.hard_literals(quoted) == ["2", "v16"]  # the phrase and the § reference are not hard
-    assert rs.hard_literals("Call `foo()` with v12.3 and 14 dumps.", ["v12.3"]) == ["foo", "14"]
+    assert rs.hard_literals(quoted) == ["v16"]  # the phrase and the § reference are not hard; 2 is small
+    assert rs.hard_literals("Call `foo()` with v12.3 and 44 dumps.", ["v12.3"]) == ["foo", "44"]
     spaced = rs.hard_literals("Run `bash deploy/backup/backup.sh --yes` nightly.")
     assert spaced == ["bash deploy/backup/backup.sh --yes"] and isinstance(spaced[0], rs._CodeSpan)
     hay = rs._lit_norm("Version 1.2.8 ships the prose mode; run bash deploy/backup/backup.sh --yes.")
@@ -1518,12 +1520,13 @@ def test_d162_literal_extraction_fixes() -> None:
 def test_d162_fabricated_number_drops_only_its_sentence() -> None:
     answer = (
         "The retrieval p95 target is now 1.2 s; it was 1,6 s before (D-001). "
-        "On the dev replica the target is 0.4 s. "
+        "On the dev replica the target is 0.7 s. "  # D-187: not a sum/difference of shown numbers
         "The owner decided it after R3. The store is `Postgres 18`."
     )
     v = rs.validate_prose(_prose(answer, ["v10.0", "v11.0"]), SHOWN)
     assert v.answered and [c.state for c in v.claims] == ["kept", "dropped", "kept", "dropped"]
-    assert v.drop_reasons == {"literal": 2, "unsupported": 0} and v.dropped_sentences == 2
+    assert v.drop_reasons == {"literal": 2, "unsupported": 0, "block_lines": 0, "dangling": 0}
+    assert v.dropped_sentences == 2
     kept = (
         "The retrieval p95 target is now 1.2 s; it was 1,6 s before (D-001). The owner decided it after R3."
     )
@@ -1683,7 +1686,7 @@ def test_d162_prose_job_prompt_and_mode() -> None:
 
 
 async def test_d162_prose_run_answers_and_sets_its_flags() -> None:
-    answer = "The retrieval p95 target is now 1.2 s. On the dev replica it is 0.4 s."
+    answer = "The retrieval p95 target is now 1.2 s. On the dev replica it is 0.7 s."
     run = _ScriptedRun({"prose": _prose(answer, ["v10.0"])}, select=False, mode="prose")
     v = await run.answer(list(EXS))
     assert run.steps == ["prose"] and run.shown_to["prose"] == [e.handle for e in EXS]
@@ -1771,19 +1774,19 @@ def test_d165_tr_sentence_is_attributed_to_the_en_excerpt_that_states_it() -> No
 def test_d165_literal_in_a_non_source_excerpt_outranks_shared_words() -> None:
     shown = {
         "v60.0": _ex("v60.0", "The nightly backup job keeps daily dumps of the database."),
-        "v61.0": _ex("v61.0", "Retention policy: 14 dumps are kept."),
+        "v61.0": _ex("v61.0", "Retention policy: 45 dumps are kept."),  # > SMALL_INT_MAX: a hard literal
     }
     for strategy in ("sources", "wide"):  # sources: v61.0 joins as it states a literal v60.0 lacks
         v = rs.validate_prose(
-            _prose("The nightly backup keeps 14 daily dumps.", ["v60.0"]), shown, strategy=strategy
+            _prose("The nightly backup keeps 45 daily dumps.", ["v60.0"]), shown, strategy=strategy
         )
         # v60.0 (the model's source) shares 5 words; v61.0 states the value: literals dominate
         assert [h for h, _q in v.kept[0].support] == ["v61.0", "v60.0"]
-        assert v.kept[0].support[0][1] == "Retention policy: 14 dumps are kept." and v.primary[0] == "v61.0"
+        assert v.kept[0].support[0][1] == "Retention policy: 45 dumps are kept." and v.primary[0] == "v61.0"
     # the same with the stub embedder: the similarity never outweighs a stated value
     sim = rs.LineSim(_StubEmbedder().embed_queries)
     v2 = rs.validate_prose(
-        _prose("The nightly backup keeps 14 daily dumps.", ["v60.0"]), shown, strategy="wide", embed=sim
+        _prose("The nightly backup keeps 45 daily dumps.", ["v60.0"]), shown, strategy="wide", embed=sim
     )
     assert [h for h, _q in v2.kept[0].support] == ["v61.0", "v60.0"]
 
@@ -2973,3 +2976,87 @@ async def test_d184_excerpt_fields_reach_only_the_v3_prose_and_expand_jobs() -> 
     assert run.gate_ids([ex, plain]) == [10, 12, 11]
     run.excluded = {11}
     assert [e.status for e in run.admitted([ex, plain])] == ["", ""] and ex.status  # a copy, not in place
+
+
+# --------------------------------------------------------------------------- D-187 procedure answers
+RUNBOOK_SHOWN = {
+    "v80.0": _ex(
+        "v80.0",
+        "## Devices\nList them with `hlm device list`. Revoke one with"
+        " `hlm device revoke <id> --token <token>` as the admin (the token is HLM_ADMIN_TOKEN)."
+        " Backups keep 14 daily and 46 weekly dumps.",
+    )
+}
+PROCEDURE = (
+    "To revoke a device, run:\n"
+    "```bash\n"
+    "hlm device list\n"
+    "hlm device revoke <device> --token $HLM_TOKEN   # the admin token\n"
+    "```\n"
+    "The device loses access at once."
+)
+
+
+def test_d187_a_fenced_block_with_placeholders_survives_whole() -> None:
+    assert rs.split_sentences(PROCEDURE)[1] == (
+        PROCEDURE.split("\n", 1)[1].rsplit("\n", 1)[0],
+        True,
+    )  # lines kept
+    v = rs.validate_prose(_prose(PROCEDURE, ["v80.0"]), RUNBOOK_SHOWN)
+    assert v.answered and v.answer == PROCEDURE  # the block, its lines and the lead-in, as written
+    assert [c.state for c in v.claims] == ["kept", "kept", "kept"]
+    assert v.drop_reasons["block_lines"] == 0 and v.drop_reasons["literal"] == 0
+    assert v.kept[1].text.startswith("```bash\nhlm device list\n") and v.kept[1].support  # attributed
+    # placeholders are never guarded, anywhere: <…>, $VAR, ${…}, {…}, …, ALL-CAPS words
+    assert rs.hard_literals("Run `hlm device revoke <device> --token $HLM_TOKEN ${X} {project} … HOST`.") == [
+        "hlm device revoke --token"
+    ]
+
+
+def test_d187_one_fabricated_flag_drops_only_its_line() -> None:
+    answer = PROCEDURE.replace(
+        "hlm device list\n", "hlm device list\nhlm device revoke <device> --purge-all\n"
+    )
+    v = rs.validate_prose(_prose(answer, ["v80.0"]), RUNBOOK_SHOWN)
+    assert v.answered and v.answer == PROCEDURE  # only the fabricated line is gone
+    assert v.drop_reasons["block_lines"] == 1 and v.drop_reasons["literal"] == 0
+    # the re-check (the kept block as a unit again) keeps it as it is
+    again, _r = rs.prose_check([(c.text, c.line_end) for c in v.kept], ["v80.0"], RUNBOOK_SHOWN)
+    assert [c.text for c in again] == [c.text for c in v.kept]
+
+
+def test_d187_inline_code_is_still_guarded_and_no_lead_in_dangles() -> None:
+    # an inline code span with an unsupported identifier drops its sentence (the fabrication guard)
+    v = rs.validate_prose(
+        _prose("Revoke it with `hlm device purge-all`. List them with `hlm device list`.", ["v80.0"]),
+        RUNBOOK_SHOWN,
+    )
+    assert [c.state for c in v.claims] == ["dropped", "kept"] and v.drop_reasons["literal"] == 1
+    # a block whose every command is fabricated goes, and its lead-in with it (no dangling "run:")
+    bad = (
+        "To rotate the key, run:\n```\nhlm key rotate --algo ed448\n```\nList devices with `hlm device list`."
+    )
+    v = rs.validate_prose(_prose(bad, ["v80.0"]), RUNBOOK_SHOWN)
+    assert v.answer == "List devices with `hlm device list`." and v.drop_reasons["dangling"] == 1
+    # a lead-in whose list items are all dropped goes too; one surviving item keeps it
+    listed = "Steps:\n- Run `hlm key rotate`.\n- Run `hlm key purge`.\nThe device loses access."
+    v = rs.validate_prose(_prose(listed, ["v80.0"]), RUNBOOK_SHOWN)
+    assert v.answer == "The device loses access." and v.drop_reasons["dangling"] == 1
+    kept = "Steps:\n- Run `hlm key rotate`.\n- Run `hlm device list`."
+    assert (
+        rs.validate_prose(_prose(kept, ["v80.0"]), RUNBOOK_SHOWN).answer == "Steps:\n- Run `hlm device list`."
+    )
+    # a lead-in that ends the answer dangles
+    end = rs.validate_prose(_prose("List them with `hlm device list`. Then run:", ["v80.0"]), RUNBOOK_SHOWN)
+    assert end.answer == "List them with `hlm device list`." and end.drop_reasons["dangling"] == 1
+
+
+def test_d187_small_integers_and_computed_totals_are_not_fabrications() -> None:
+    ok = rs.validate_prose(
+        _prose("It takes 3 steps. In total 60 dumps are kept (14 + 46).", ["v80.0"]), RUNBOOK_SHOWN
+    )
+    assert [c.state for c in ok.claims] == ["kept", "kept"]  # 3 is small; 60 = 14 + 46; 32 = 46 - 14
+    assert rs.validate_prose(_prose("The difference is 32 dumps.", ["v80.0"]), RUNBOOK_SHOWN).answered
+    bad = rs.validate_prose(_prose("In total 61 dumps are kept.", ["v80.0"]), RUNBOOK_SHOWN)
+    assert not bad.answered and bad.drop_reasons["literal"] == 1  # neither stated nor derived
+    assert len(rs._derived_numbers(" ".join(str(i) for i in range(1000)))) <= rs.DERIVED_NUMBERS_MAX**2

@@ -408,7 +408,7 @@ async def test_ask_prose_mode_keeps_free_prose_and_drops_only_fabricated_values(
     fake = FakeResearcher(
         facts=["1.2 s", "1,6 s on the VPS"],
         extra_primary=secret,
-        prose_extra=["The p95 target on the dev replica is 0.4 s."],
+        prose_extra=["The p95 target on the dev replica is 0.7 s."],  # D-187: not 1.6 - 1.2
     )
     llm = ScriptedLLM(default=fake)
     r = make_researcher(db_dsn, llm, research_answer_mode="prose")
@@ -424,7 +424,7 @@ async def test_ask_prose_mode_keeps_free_prose_and_drops_only_fabricated_values(
     flags = out["meta"]["flags"]
     assert (flags["dropped_literal"], flags["main_dropped"]) == (1, False) and "polarity_flagged" not in flags
     assert flags["attribution"] == "sources" and "attr_embed" not in flags  # D-165: the default
-    assert "0.4 s" not in out["answer"] and "1.2 s" in out["answer"] and "1,6 s" in out["answer"]
+    assert "0.7 s" not in out["answer"] and "1.2 s" in out["answer"] and "1,6 s" in out["answer"]
     d004 = world.versions["D-004"]
     assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
     assert "1.2 s" in out["primary"][0]["quote"]
