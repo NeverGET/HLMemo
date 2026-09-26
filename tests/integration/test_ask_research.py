@@ -606,9 +606,22 @@ async def test_ask_superseded_then_policy_off_is_not_masked(connect, world, deps
         await r.aclose()
 
 
-async def test_ask_no_transaction_is_open_during_any_provider_call(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+async def test_ask_no_transaction_is_open_during_any_provider_call(
+    connect, world, deps, db_dsn, monkeypatch
+) -> None:  # noqa: ANN001
     """Review 80 #2 (HIGH) / D-062: while ANY provider request is in flight, no connection of this
-    database is inside a transaction (no lock, no device FOR SHARE held across an LLM call)."""
+    database is inside a transaction (no lock, no device FOR SHARE held across an LLM call). Each
+    internal search is slowed INSIDE its transaction, so an overlap could not hide in timing."""
+    from hlmemo.core import read_service
+
+    original = read_service.query_parts
+
+    async def slow_query_parts(*a: Any, **kw: Any) -> Any:
+        out = await original(*a, **kw)
+        await asyncio.sleep(0.3)
+        return out
+
+    monkeypatch.setattr(read_service, "query_parts", slow_query_parts)
     seen: list[tuple[str, list[Any]]] = []
 
     async def probe(body_: dict[str, Any]) -> None:
