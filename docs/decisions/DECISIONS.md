@@ -817,3 +817,18 @@ Same 33 dev questions, consumer gate v2.1 criteria:
 - The 7 `budget_stop`s are 6 negative questions plus B-D010: select [] → write → refine → select [] → no budget for a second write. The abstentions come out right, just at higher cost.
 **Kept from the experiment:** the select-job output cap is 800 tokens, because reasoning counts against the cap.
 **Next:** an offline test of the product's V14 write prompt + `validate_cited` over the ORACLE-sel contexts. It separates the context-selection effect from the answer-format effect in the .60 → .76 gap.
+D-160 | 2026-09-26 | ACCEPTED | **The NotebookLM reference is measured, and the per-sentence citation instruction by itself costs about .3 correct. Next: V15 "write freely, then attribute separately".**
+**Reference (D-158):** notebook `0a2e5f63-704c-4b78-83f9-91d4971a4b12` holds all 91 dev-DB items (bodies) as 36 sources, secret-scanned with 0 hits. It was asked the same 33 questions, each through a fresh `nlm query` CLI process: the MCP tool reuses the notebook's cached conversation, which would make every question a follow-up.
+| System | Correct | c+partial | Abstain | Contradiction | p50 / p95 | Median answer |
+|---|---|---|---|---|---|---|
+| **NotebookLM** | **.88** | .92 | **.125** (fabricates on 7/8 negatives) | .04 | 22.9 / 37.0 s | 1,305 chars |
+| memory.ask V14 D-157 | .60 | .64 | .875 | .04 | 5.7 / 12.7 s | ~400 chars |
+Under the pre-registered C2, memory.ask must reach **≥ .83** (NotebookLM .88 − .05) as well as ≥ .80. NotebookLM itself would fail C4 (abstain) and C6 (p95).
+**Citation finding (same model, same ORACLE-sel sources):**
+| Variant | Correct |
+|---|---|
+| Plain "complete and specific" prose, no citations (ORACLE-sel) | .76 |
+| Same prompt + "cite [handle] after every sentence", validated by the product (V13-prod) | .44 |
+| The product's V14 write prompt, JSON sentences + cites (V14-on-sel) | .52 |
+Validation dropped only 4/61 and 2/59 sentences, so the loss is in GENERATION. Asking the cheap model to write and cite at once makes it compress.
+**Next: V15.** The write step gets the plain prompt and no citation duty (longer answers allowed). A separate small attribution call maps each sentence to excerpt ids, then `validate_cited` runs as in V14. Ceiling-first: V15-on-sel attributes the existing ORACLE-sel prose offline.
