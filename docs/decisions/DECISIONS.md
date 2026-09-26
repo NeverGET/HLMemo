@@ -566,3 +566,13 @@ Remaining misses (10 of 26): missing key fact 7 (6 of them the main fact), retri
 Safety lesson: without per-call caps a specificity prompt can run away to 65k output tokens, so memory.ask gets per-call max_tokens, a per-question $ and token budget and a wall-clock deadline (sent to the implementer).
 The prototype spend guard now reserves the worst case for in-flight calls; there was an overshoot of $0.018 with 4 parallel judges.
 Tonight's spend is about $3.9 of $6. The final gate is NOT run: the dev numbers have not cleared the thresholds.
+D-144 | 2026-09-26 | ACCEPTED (orchestrator) | **$0 diagnosis of V8-cap gives the next three levers.**
+1. **Missed facts:** 10 missed facts across 7 questions.
+   - Present in the evidence (7): still compressed 5, all of them main facts whose identifier or value was not carried into the claim; a different related fact chosen 1.
+   - Not in the evidence (3): all 3 were not drilled (the document was retrieved, but its chunk was never read).
+2. **Rejected claims:** 18 of 82 claims were rejected. The causes were added inference 13 (8 of them attributions naming a source, actor, gate or workstream the quote does not name, and 5 an added relation or consequence), over-claim 2, merge 1, and judge error 2.
+**Levers, applied as prototype V9 and memory.ask addendum 6:**
+- (a) Deterministic COPY-THROUGH: the question-relevant identifiers and values in a claim's quote must appear in the claim, with one targeted rewrite otherwise. This fixes 5 of 7.
+- (b) NO ATTRIBUTION: provenance lives in the handle, and a check requires every named subject in a claim to occur in its quotes. This fixes 8 of 18.
+- (c) A doc-level best-chunk drill for top-ranked documents. This fixes 3.
+Expected if they hold: correct ≈ .80, faithful ≈ .88.
