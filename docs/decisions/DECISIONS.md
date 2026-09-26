@@ -509,3 +509,26 @@ Misses are mostly the MAIN key fact (V6 12/15, V6-pro 10/12), not secondary deta
 - (A) classify why the quotes failed (whitespace/markdown/table vs a true paraphrase) and how many would survive a normalised match;
 - (B) a judge audit: 30 answers independently adjudicated against the frozen key facts, to measure the judge's false negatives/positives before trusting it for the final gate.
 memory.ask gets: normalised quote matching (the raw quote kept for display), a re-quote attempt instead of a silent drop, and the main answer as the first claim.
+D-140 | 2026-09-26 | ACCEPTED (orchestrator) | **Offline diagnosis ($0): the judge is valid, and the quote/value checks drop true claims.** Files: gate-v1/diag-drops-and-judge-audit.json.
+**Judge audit:** 30 answers and 109 claims, independently adjudicated.
+- Correct: agreement .967, judge FN 1/16, FP 0/14, so the pinned judge (deepseek-v4-pro) is kept.
+- Faithful: agreement .899, FN 10/92 (9 of those 10 are subject-less quote fragments), FP 1/17.
+**Dropped claims:** 33 dropped in V6/V6-pro.
+- Only 4 failed the quote match itself: markdown bold next to punctuation (3) and a quote that skipped table cells (1).
+- 29 had verbatim quotes but failed the claim-value check:
+  | Cause | Claims |
+  |---|---|
+  | TR/EN suffixes glued to numbers or names | 10 |
+  | A plain "a/b" phrase read as an identifier | 5 |
+  | The value sits elsewhere in the excerpt | 4 |
+  | The value is reformatted | 5 |
+  | A dash variant | 3 |
+  | Truly unsupported | 2 |
+- 25/33 would survive with suffix-tolerant, excerpt-level value checks.
+- In V6, artefact drops removed a key fact in 6 of 15 misses.
+**Product fixes sent to memory.ask:**
+- markup stripping without inserted spaces, NFC, dash/quote unification;
+- a suffix-tolerant value check, where "a/b" prose is not an identifier and values are checked against the cited excerpt, with reformatting accepted;
+- self-contained quotes that name their subject, with the heading or row key as a second quote;
+- the main fact first, and a re-quote attempt before any drop.
+The scorer's own quote/value check is NOT changed. It stays as pinned, and any change to it would need its own recorded decision.
