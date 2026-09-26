@@ -581,3 +581,18 @@ D-145 | 2026-09-26 | ACCEPTED | **V9 isolates the levers.** V9 = V8-cap + copy-t
 - The doc-level drill HURTS: under the 12-chunk cap it displaced ranked chunks 7–12, so gold-in-evidence fell from .712 to .538 (6 questions worse, 0 better), correct fell by 5 answers, and p95 rose.
 Decision: V10 = V8-cap + copy-through + no-attribution; the doc-level drill is allowed only in FREE drill slots. The same correction went to memory.ask. Spend $0.30; tonight's total is about $4.2 of $6.
 D-146 | 2026-09-26 | ACCEPTED | **V10 is the best prototype on quality, but it misses latency; prototype iteration stops (budget).** V10 = V8-cap + copy-through + no-attribution, with the doc drill only for free slots (it never ran). On the 34-question subset under the strict judge: correct .615, faithful .849, recall .872, abstain 1.00, p95 28.5 s (FAIL; the separate repair call runs in sequence), $.0038/q. Correct is unchanged from V8: the same 6 main-fact misses remain. memory.ask gets the repair folded into the completeness call, parallel queries/drills and ≤ 4 sequential steps. Tonight's spend is about $4.5 of $6; the rest is reserved for evaluating memory.ask on dev and, only if dev clears, the final gate. Honest status at 05:00: the research librarian is much better than the old synthesis (correct .25 → .62, faithful → .85 under a strict judge), but the D-130 gate (.80/.95) is NOT reached yet.
+D-147 | 2026-09-26 | ACCEPTED | **memory.ask is built on the server (wf-memory-ask @ 9bceb59, 11 commits, not merged).**
+- **Memory Map:** a rebuildable projection of the CALLER's view, about 6k tokens: a path tree of `vN(k)` item handles and `vN.M` section handles, spread by bit-reversal. L2 summaries come from the async `map_summary` task (digest-cached, debounced, backed off, spend-guarded, fallback key `map_summary`).
+- **Loop:** plan → parallel queries + drill (the doc-level drill only in free slots) → answer → completeness plus repair (copy-through and no-attribution folded in) → refine only on abstain. At most 4 sequential steps and 9 attempts.
+- **Limits:** per-JOB max_tokens; a per-question budget of $0.01 or 100k tokens with a partial answer; a 25 s deadline (D-084 policy).
+- **Safety:** a privacy precheck on every send; no DB transaction held across any LLM call; a locked final re-check.
+- **Claims:** each carries 1–3 quotes, checked deterministically with the D-140 normalisation.
+- **Migration:** 0009_memory_map (create-only, not in replay). G-SURF 2978/3000.
+- **Tests:** scope isolation (map, prompts, answer, summaries) and no-mutation / no-open-transaction tests are present.
+- **Live smoke:** 5/5, p50 7.6 s / p95 11.7 s under load; build spend about $0.055.
+- **Gates:** unit 617, integration shards 0 failed, G3 0.980, G4 p95 263 ms, G-L3 p95 344/362 ms.
+- **Open:** load_view scales linearly; a one-time prod map_summary spend of about $0.2–0.5; no MCP outputSchema; the param is named `token_budget`; an unused `verdicts` field; the release manifest is not updated.
+- **Disclosure:** the implementer once grepped docs/private by accident (one prototype result line was printed, and not used).
+**Next, in parallel:**
+- a dev evaluation of the server build on the 34-question subset (≤ $0.40, summaries included);
+- dual review 79 against a written threat model T1–T6 (scope, privacy, mutation, spend, migration, output honesty), capped at 2 rounds.
