@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research/v2 (D-156 cite mode: one schema for the JOBs plan, write and refine; the JOB's own shape is checked by librarian.tasks.research)",
+  "type": "object",
+  "properties": {
+    "queries": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 400}},
+    "sections": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 32}},
+    "status": {"enum": ["answered", "insufficient_evidence"]},
+    "sentences": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "maxLength": 1500},
+          "cite": {
+            "type": ["array", "string"],
+            "maxItems": 8,
+            "maxLength": 64,
+            "items": {"type": "string", "maxLength": 32}
+          }
+        },
+        "required": ["text"]
+      }
+    },
+    "related": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 32}},
+    "confidence": {"enum": ["high", "medium", "low"]}
+  }
+}

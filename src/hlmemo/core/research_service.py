@@ -38,6 +38,12 @@ completeness pass):
    the provider lost the caller's authority meanwhile, the answer and the queries are withheld
    (they may carry its content) and the result is an abstention.
 
+D-156 ``HLM_RESEARCH_ANSWER_MODE=cite`` (V14 "write, then cite"): step 4 is the JOB ``write`` (complete
+sentences citing excerpt handles, checked by ``research.validate_cited``), a refinement re-answers
+with ``write`` too, and steps 6 and 7 do not run (no completeness call, no attribution pass: each
+sentence is verified against its cited excerpts' full text); the re-check (8) verifies each kept
+sentence again against the excerpts still citable.
+
 At most ``MAX_CALLS`` (5) logical LLM calls; provider requests (schema retries, fallback) are capped
 per question by the lineage ceiling (``research.MAX_ATTEMPTS``). Before every call the strict privacy
 gate runs over exactly the version ids whose text is in the prompt: denied items are removed and the
@@ -292,6 +298,11 @@ class _Run:
         )
         await _read_project(c, fresh, self.slug)
         return fresh
+
+    @property
+    def cite(self) -> bool:
+        """D-156: the V14 "write, then cite" answer mode."""
+        return self.researcher.answer_mode == "cite"
 
     def redact(self, text: str) -> str:
         """The provider's redactor (its configured rules), applied to every prompt value before the
@@ -552,6 +563,9 @@ class _Run:
     async def answer(
         self, excerpts: list[rs.Excerpt], job: str = "answer", draft: rs.Validated | None = None
     ) -> rs.Validated:
+        if self.cite and draft is None:
+            return await self.write(excerpts)
+
         def build() -> tuple[str, list[int]]:
             ex = [e for e in excerpts if e.version_id not in self.excluded]
             if draft is None:
@@ -571,6 +585,26 @@ class _Run:
             self.flags["completed"] += v.completed
             self.flags["dropped_claims"] = v.dropped_claims
             self.flags["main_dropped"] = v.main_dropped
+        return v
+
+    async def write(self, excerpts: list[rs.Excerpt]) -> rs.Validated:
+        """D-156 cite mode: the JOB ``write`` over the admitted excerpts, checked sentence by sentence
+        (``rs.validate_cited``); the flags describe the LAST validated answer."""
+
+        def build() -> tuple[str, list[int]]:
+            ex = [e for e in excerpts if e.version_id not in self.excluded]
+            return rs.write_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
+
+        obj = await self.call("write", build, ANSWER_CAP_S)
+        shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
+        v = rs.validate_cited(obj, shown, self.researcher.redactor.text)
+        if obj is not None:
+            self.flags["dropped_claims"] = v.dropped_claims
+            self.flags["main_dropped"] = v.main_dropped
+            self.flags["dropped_sentences"] = v.dropped_sentences
+            self.flags["uncited"] = v.uncited
+            for why in rs.DROP_REASONS:
+                self.flags[f"dropped_{why}"] = v.drop_reasons.get(why, 0)
         return v
 
 
@@ -651,6 +685,9 @@ async def ask(
             entries=entries,
             summaries=summaries,
         )
+        if run.cite:  # D-156: the cite mode's own counts (meta.flags)
+            run.flags.update({"dropped_sentences": 0, "uncited": 0})
+            run.flags.update({f"dropped_{why}": 0 for why in rs.DROP_REASONS})
         readable = (
             {p for v in view for p in v.project_ids} | {project.project_id}
             if ctx.is_admin
@@ -749,8 +786,9 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
                         v2 = None
                     if v2 is not None and (v2.answered or not v.answered):
                         v, excerpts = v2, widened
-    # 6. completeness + repair on an answer (not after a refinement: at most 4 sequential steps)
-    if v.answered and not refined and run.remaining() >= MIN_CHECK_S:
+    # 6. completeness + repair on an answer (not after a refinement: at most 4 sequential steps; not
+    # in the cite mode, D-156: its sentences are complete prose, verified one by one)
+    if v.answered and not refined and not run.cite and run.remaining() >= MIN_CHECK_S:
         try:
             checked = await run.answer(excerpts, job="check", draft=v)
         except rs.ResearchUnavailable:
@@ -760,7 +798,7 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
                 v, checked, {e.handle: e for e in excerpts if e.version_id not in run.excluded}
             )
     # 7. a claim still naming a subject that neither its quotes nor its sources state is dropped
-    if v.answered:
+    if v.answered and not run.cite:
         shown = {e.handle: e for e in excerpts if e.version_id not in run.excluded}
         v = rs.enforce_attribution(v, shown, run.researcher.redactor.text)
     # 8. re-check and assemble
@@ -810,7 +848,31 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
         run.queries = [run.question]
         abstain_reason = "authority_changed"
     ok = {h: e for h, e in shown.items() if e.version_id in citable}
-    if v.answered:
+    if v.answered and run.cite:
+        # D-156: each kept sentence is checked again against its cited excerpts that are still
+        # citable (a sentence whose every cited source is gone is dropped; an uncited one against
+        # every citable excerpt); the answer is the sentences left
+        cited_claims = []
+        cache: dict[str, Any] = {}
+        for cl in v.kept:
+            cites = [h for h in cl.cited if h in ok]
+            if cl.cited and not cites:
+                continue
+            why, sup = rs.cite_check(cl.text, cites, ok, cache)
+            if why is None and sup:
+                cited_claims.append(rs.Claim(cl.text, sup, "kept", cites))
+        before = len(v.kept)
+        v = rs.assemble_cited(
+            rs.ANSWERED,
+            cited_claims,
+            [h for h in v.related if h in ok],
+            v.confidence,
+            ok,
+            run.researcher.redactor.text,
+        )
+        if not v.answered and before:
+            abstain_reason = "sources_changed"
+    elif v.answered:
         # a quote whose version is no longer citable is removed; a claim its remaining quotes no
         # longer fully support is dropped; the answer is grounded again on what is left
         claims = []
@@ -860,6 +922,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             "excerpts": len(excerpts),
             "map_tokens": run.map_tokens,
             "flags": run.flags,
+            "answer_mode": run.researcher.answer_mode,
         },
     }
     if not answered:

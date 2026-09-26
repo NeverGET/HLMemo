@@ -309,6 +309,91 @@ async def test_ask_unverifiable_answer_is_an_abstention(connect, world, deps, db
     assert out["abstained"] is True and out["meta"]["abstain_reason"] == "guard" and out["primary"] == []
 
 
+# --------------------------------------------------------------------------- D-156 cite mode
+async def test_ask_cite_mode_writes_then_cites(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-156 V14 (HLM_RESEARCH_ANSWER_MODE=cite): plan -> write -> finish, no check call; each
+    sentence is verified against its cited excerpt's full text: a sentence stating a value no source
+    states is dropped, handles the model was never shown are ignored."""
+    secret = [f"v{v}.0" for v in world.secret_versions.values()][:2]
+    fake = FakeResearcher(
+        facts=["1.2 s", "1,6 s on the VPS"],
+        extra_primary=secret,
+        write_extra=[{"text": "The p95 target on the dev replica is 0.4 s."}],
+    )
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="cite")
+    try:
+        out = await ask(
+            connect, world, deps, r, "What is the current retrieval p95 target and what was it before?"
+        )
+    finally:
+        await r.aclose()
+    assert out["abstained"] is False and out["confidence"] == "medium"  # a sentence was dropped
+    assert out["meta"]["steps"] == ["plan", "write"] and out["meta"]["calls"] == 2
+    assert out["meta"]["answer_mode"] == "cite" and out["meta"]["attempts"] == 2
+    flags = out["meta"]["flags"]
+    assert (flags["dropped_sentences"], flags["dropped_literal"], flags["uncited"]) == (1, 1, 0)
+    assert flags["main_dropped"] is False and flags["dropped_polarity"] == 0
+    assert "0.4 s" not in out["answer"] and "1.2 s" in out["answer"] and "1,6 s" in out["answer"]
+    d004 = world.versions["D-004"]
+    assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
+    assert "1.2 s" in out["primary"][0]["quote"]
+    assert out["primary"][0]["path"] == "docs/decisions/DECISIONS.md#D-004"
+    # the claims are the kept sentences, the answer is exactly them, each shown with its source line
+    assert out["answer"] == " ".join(c["text"] for c in out["claims"])
+    assert out["claims"] and all(1 <= len(c["support"]) <= 3 for c in out["claims"])
+    assert {p["handle"] for p in out["primary"]} <= {s["handle"] for c in out["claims"] for s in c["support"]}
+    shown = {h["handle"] for h in (*out["primary"], *out["related"])}
+    assert not shown & set(secret) and len(out["related"]) <= 5
+    assert_no_secret(json.dumps({k: v for k, v in out.items() if k != "meta"}, ensure_ascii=False), world)
+    assert out["budget"]["used"] <= out["budget"]["limit"] and METER.count(out) == out["budget"]["used"]
+    assert [request_job(b)[0] for b in llm.requests] == ["plan", "write"]
+    system = llm.requests[1]["messages"][0]["content"]
+    assert 'JOB "write"' in system and 'JOB "check"' not in system  # research/v2
+    assert llm.requests[1]["messages"][1]["content"].startswith("JOB: write\n")
+
+
+async def test_ask_cite_mode_abstains_and_refines_with_write(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    fake = FakeResearcher(facts=[], abstain=True)
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="cite")
+    try:
+        out = await ask(connect, world, deps, r, "Which colour is the office coffee machine?")
+    finally:
+        await r.aclose()
+    assert out["abstained"] is True and out["answer"] == "" and out["primary"] == [] and out["claims"] == []
+    assert out["confidence"] == "low" and out["meta"]["abstain_reason"] == "no_evidence"
+    assert out["meta"]["answer_mode"] == "cite" and out["meta"]["calls"] <= rs.MAX_CALLS
+    steps = out["meta"]["steps"]
+    assert steps[:3] == ["plan", "write", "refine"] and set(steps) <= {"plan", "write", "refine"}
+    assert set(fake.jobs) <= {"plan", "write", "refine"}
+
+
+async def test_ask_cite_mode_unverifiable_sentences_are_a_guarded_abstention(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    def liar(body: dict[str, Any]) -> dict[str, Any]:
+        job, inp = request_job(body)
+        if job in ("plan", "refine"):
+            return {"queries": ["latency"], "sections": []}
+        ex = (inp.get("excerpts") or [{"id": "v1.0"}])[0]
+        return {
+            "status": "answered",
+            "sentences": [{"text": "The p95 target is 0.4 s.", "cite": [ex["id"]]}],
+            "related": [],
+            "confidence": "high",
+        }
+
+    llm = ScriptedLLM(default=liar)
+    r = make_researcher(db_dsn, llm, research_answer_mode="cite")
+    try:
+        out = await ask(connect, world, deps, r, "What is the p95 target?")
+    finally:
+        await r.aclose()
+    assert out["abstained"] is True and out["meta"]["abstain_reason"] == "guard" and out["primary"] == []
+    assert out["meta"]["flags"]["dropped_literal"] == 1 and out["meta"]["flags"]["main_dropped"] is True
+
+
 # --------------------------------------------------------------------------- no mutation
 async def test_ask_writes_no_event_or_mutation(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
     before = await snapshot(connect)

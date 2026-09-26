@@ -5,7 +5,9 @@ provider prompt caching applies, D-019) and ``<task>/v<N>.schema.json`` (the JSO
 response must satisfy). ``load_task(name)`` picks the highest version unless one is pinned: per call
 (``load_task(name, version)``), or process-wide (``pin_versions({"relate": 1})`` or the
 ``HLM_LIBRARIAN_PROMPT_PINS="relate=1,relate_verify=1"`` environment variable — a rollback that
-needs no code change; the G-LIVE-B runner's ``--prompts v1`` uses it). Model quirks are never
+needs no code change; the G-LIVE-B runner's ``--prompts v1`` uses it). An OPT-IN version
+(``OPT_IN_VERSIONS``) is never the default: it is loaded only when asked for by number (research/v2,
+the D-156 cite-mode prompt, is selected by ``HLM_RESEARCH_ANSWER_MODE=cite``). Model quirks are never
 written here: a profile's ``prompt_overrides[<task>].system_append`` is appended at request time
 (D-017).
 """
@@ -45,6 +47,10 @@ MAX_TOKENS: dict[str, int] = {
 #: per-version ``max_tokens`` where a version's answer is longer (relate/v2 adds scope, refiner and
 #: the replaced statements; relate_verify/v2 adds replaces_all and adds_detail)
 MAX_TOKENS_VERSION: dict[tuple[str, int], int] = {("relate", 2): 2000, ("relate_verify", 2): 900}
+#: versions loaded only by number (a pin or ``load_task(name, version)``), never as the default;
+#: research/v2 is the D-156 "write, then cite" prompt of ``HLM_RESEARCH_ANSWER_MODE=cite``, so the
+#: default (claims) mode keeps research/v1 byte for byte
+OPT_IN_VERSIONS: dict[str, frozenset[int]] = {"research": frozenset({2})}
 _PINS: dict[str, int] = {}
 
 
@@ -105,7 +111,8 @@ def load_task(name: str, version: int | None = None) -> TaskSpec:
     available = versions(name)
     if not available:
         raise FileNotFoundError(f"no prompt for task {name!r} under {PROMPT_DIR}")
-    v = version if version is not None else _PINS.get(name, available[-1])
+    default = [x for x in available if x not in OPT_IN_VERSIONS.get(name, frozenset())] or available
+    v = version if version is not None else _PINS.get(name, default[-1])
     return _load(name, v)
 
 
@@ -128,6 +135,7 @@ def _load(name: str, v: int) -> TaskSpec:
 __all__ = [
     "MAX_TOKENS",
     "MAX_TOKENS_VERSION",
+    "OPT_IN_VERSIONS",
     "PROMPT_DIR",
     "TaskSpec",
     "load_task",

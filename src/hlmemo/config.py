@@ -254,6 +254,11 @@ class Settings(BaseSettings):
     research_max_tokens: int = Field(default=100_000, gt=0)
     # The Memory Map's budget in the planning prompt (o200k tokens, D-136: about 6k).
     research_map_tokens: int = Field(default=6000, ge=500, le=20000)
+    # D-156: how memory.ask answers. "claims" (default): atomic claims with verbatim quotes plus the
+    # completeness/repair pass (prompt research/v1). "cite" (V14 "write, then cite"): complete prose
+    # sentences citing excerpt handles, each checked deterministically against its cited excerpts'
+    # full text (literals, polarity); no completeness call (prompt research/v2).
+    research_answer_mode: Literal["claims", "cite"] = "claims"
     # Memory Map L2 summaries (task map_summary, librarian process only): a cycle every
     # map_summary_every_s refreshes at most map_summary_per_cycle stale source summaries whose
     # newest change is older than map_summary_debounce_s (debounce during bursts and imports).

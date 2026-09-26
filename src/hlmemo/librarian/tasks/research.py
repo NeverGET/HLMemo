@@ -33,6 +33,15 @@ about the same words (``polarity_ok``) is dropped.
 The free-text answer keeps only the sentences whose literals are in the kept claims' quotes and whose
 polarity agrees with them.
 primary = the handles supporting the most kept claims (≤ 3). No kept claim left → abstention.
+
+D-156 ``HLM_RESEARCH_ANSWER_MODE=cite`` ("V14: write, then cite"; the default ``claims`` is all of the
+above, unchanged): the prompt is research/v2 (an opt-in version) and the answer step is the JOB
+``write``: complete prose sentences, each citing the EXCERPT handles it rests on, no quotes, and no
+``check`` call. ``validate_cited`` checks every sentence deterministically against the FULL text of
+its cited excerpts (a sentence citing no shown excerpt is checked against all of them, ``uncited``):
+its literals (``literals_ok`` rules) and its polarity against the excerpt lines/sentences that share
+a literal or ≥ 2 content words with it; a failing sentence is dropped, the answer is the kept
+sentences, and each cited handle is displayed with its best-matching line.
 """
 
 from __future__ import annotations
@@ -65,7 +74,12 @@ from hlmemo.librarian.tasks.synthesis import claims as literal_claims
 log = logging.getLogger("hlmemo.librarian.research")
 
 TASK = "research"
-JOBS = ("plan", "answer", "check", "refine")
+JOBS = ("plan", "answer", "check", "refine", "write")
+#: D-156: ``claims`` (the default: quoted claims + the completeness pass, research/v1) or ``cite``
+#: (V14 "write, then cite": sentences citing excerpt handles, verified deterministically, research/v2)
+ANSWER_MODES = ("claims", "cite")
+#: the opt-in prompt version of the cite mode (``prompts.OPT_IN_VERSIONS``: never the default)
+CITE_PROMPT_VERSION = 2
 #: sequential LLM steps of one question (addendum 7): plan, answer, completeness+repair — or, when
 #: the answer abstained, plan, answer, refine, answer
 MAX_CALLS = 4
@@ -74,7 +88,7 @@ MAX_ATTEMPTS = 9
 MAX_IN_FLIGHT = 4
 #: addendum 5: an explicit max_tokens on EVERY call, per JOB (reasoning tokens included); a
 #: runaway output is cut there, and the per-question budget reserves exactly this worst case
-JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000}
+JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000, "write": 3000}
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
 BREAKER_MAX_OPEN_S = 900.0
@@ -82,6 +96,10 @@ BREAKER_MAX_OPEN_S = 900.0
 HTTP_TIMEOUT_S = 20.0
 EXCERPT_CHARS = 3200
 MAX_CLAIMS = 12
+#: cite mode: the sentences of one ``write`` answer that are checked (the rest is ignored) and the
+#: cited excerpts one sentence is checked against
+MAX_SENTENCES = 24
+MAX_CITES = 6
 #: verbatim quotes per claim (together they must state the whole claim)
 MAX_SUPPORT = 3
 QUOTE_MIN_CHARS = 12
@@ -420,6 +438,12 @@ def literal_supported(literal: str, hay: str) -> bool:
     c = _lit_norm(literal)
     if not c or _token_in(c, hay):
         return True
+    if isinstance(literal, _CodeSpan):
+        # D-156 (c): `pg_trgm.word_similarity_threshold = 0.9` vs "SET pg_trgm.… TO 0.9" or a hay
+        # whose own markup splits the span: every whitespace-free token of it is enough
+        toks = [t.strip(_TOKEN_EDGE) for t in literal.split()]
+        toks = [t for t in toks if len(t) >= 2 or t.isdigit()]
+        return bool(toks) and all(literal_supported(t, hay) for t in toks)
     if any(_token_in(v, hay) for v in _date_variants(c)):
         return True
     if _token_in(_THOUSANDS.sub("", c), _THOUSANDS.sub("", hay)):
@@ -439,18 +463,48 @@ def literal_supported(literal: str, hay: str) -> bool:
 _APOS_SUFFIX = re.compile(r"^(.*?[\w%])['’][^\W\d_]{1,8}$")
 #: two plain words joined by a slash ("read/write", "TR/EN", "and/or"): prose, not an identifier
 _WORD_PAIR = re.compile(r"^[^\W\d_]+/[^\W\d_]+$")
+_CODE_SPAN = re.compile(r"`([^`]+)`")
+#: the edge punctuation of one token of a code span (``_CodeSpan``)
+_TOKEN_EDGE = "()[]{}<>,;:!?\"'`“”‘’«»*"
+
+
+class _CodeSpan(str):
+    """A backticked span with inner whitespace, as ``literals`` returns it: supported when the whole
+    span is in the hay OR every whitespace-free token of it (≥ 2 characters, or a digit) is."""
+
+    __slots__ = ()
+
+
+def _spaced(span: str) -> bool:
+    return _WS.search(span.strip()) is not None
+
+
+def _unglue(lit: str) -> list[str]:
+    """D-156 (a)(b): a token glued to a code span is not one literal. A suffix after the closing
+    backtick (```profile-v2.3`dır``, ```127.0.0.1:8765/mcp`’dir``) is dropped; code spans joined by a
+    slash (```CLAUDE.md`/`AGENTS.md```) are two literals. Each part is a literal again only when it is
+    literal-like and holds a letter or a digit."""
+    if "`" not in lit or isinstance(lit, _CodeSpan) or _WS.search(lit):
+        return [lit]
+    return [x for part in lit.split("`") for x in literal_claims(part) if any(ch.isalnum() for ch in x)]
 
 
 def literals(text: str) -> list[str]:
     """The checkable literals of ``text`` (``synthesis.claims``): an apostrophe suffix is removed
     (``%40’ını`` is checked as ``40``, ``D-130'da`` as ``D-130``) and a plain ``a/b`` word pair is
-    not a literal (addendum 3 #2)."""
-    out = []
-    for lit in literal_claims(text):
-        m = _APOS_SUFFIX.match(lit)
-        lit = m.group(1).lstrip("%") if m else lit
-        if lit and not _WORD_PAIR.match(lit):
-            out.append(lit)
+    not a literal (addendum 3 #2). D-156: a suffix glued after a code span and slash-joined code
+    spans are split off (``_unglue``); a code span with inner whitespace is ONE literal
+    (``_CodeSpan``), its tokens are not literals of their own."""
+    spaced = [m.group(1) for m in _CODE_SPAN.finditer(text) if _spaced(m.group(1))]
+    if spaced:
+        text = _CODE_SPAN.sub(lambda m: " " if _spaced(m.group(1)) else m.group(0), text)
+    out: list[str] = []
+    for raw in [*(_CodeSpan(x) for x in spaced), *literal_claims(text)]:
+        for lit in _unglue(raw):
+            m = _APOS_SUFFIX.match(lit)
+            lit = type(lit)(m.group(1).lstrip("%")) if m else lit
+            if lit and not _WORD_PAIR.match(lit):
+                out.append(lit)
     return out
 
 
@@ -516,6 +570,12 @@ def answer_user(question: str, excerpts: list[Excerpt], redact: Redact | None = 
     return "JOB: answer\n" + _input(payload, redact)
 
 
+def write_user(question: str, excerpts: list[Excerpt], redact: Redact | None = None) -> str:
+    """D-156 cite mode: the JOB ``write`` (the question and the excerpts, as ``answer_user``)."""
+    payload = {"question": question, "excerpts": [e.shown() for e in excerpts]}
+    return "JOB: write\n" + _input(payload, redact)
+
+
 def check_user(
     question: str,
     draft: dict[str, Any],
@@ -569,7 +629,20 @@ def job_validator(job: str) -> Callable[[dict[str, Any]], str | None]:
             return "answered without claims"
         return None
 
-    return plan if job in ("plan", "refine") else answer
+    def write(obj: dict[str, Any]) -> str | None:
+        if obj.get("status") not in (ANSWERED, INSUFFICIENT):
+            return "status missing"
+        if not isinstance(obj.get("sentences"), list):
+            return "sentences missing"
+        if obj["status"] == ANSWERED and not any(
+            isinstance(x, dict) and str(x.get("text") or "").strip() for x in obj["sentences"]
+        ):
+            return "answered without sentences"
+        return None
+
+    if job in ("plan", "refine"):
+        return plan
+    return write if job == "write" else answer
 
 
 def parse_plan(obj: dict[str, Any] | None, question: str) -> tuple[list[str], list[str]]:
@@ -623,6 +696,10 @@ class Validated:
     completed: int = 0
     dropped_claims: int = 0
     main_dropped: bool = False
+    # D-156 cite mode: sentences that cited no shown excerpt (checked against all of them), and the
+    # dropped sentences by reason (literal / polarity / unsupported)
+    uncited: int = 0
+    drop_reasons: dict[str, int] = field(default_factory=dict)
 
     @property
     def answered(self) -> bool:
@@ -1042,6 +1119,209 @@ def _shown_of(*vs: Validated) -> dict[str, Excerpt]:
     return out
 
 
+# --------------------------------------------------------------------------- D-156 cite mode
+#: a handle list the model wrote INTO a sentence ("… [v12.3]", "[v4, v7.1]"; "(v12.3)" only when
+#: every handle in it was shown: "(v2)" may be prose): moved to its cites (a handle left in the text
+#: would fail the literal check, excerpts never state their own handle)
+_H = r"v[1-9][0-9]*(?:\.[0-9]+)?"
+_INLINE_CITE = re.compile(rf"\s*([\[(])\s*({_H}(?:\s*[,;]?\s*{_H})*)\s*[\])]")
+_INLINE_HANDLE = re.compile(_H)
+_SPACE_BEFORE_PUNCT = re.compile(r"\s+([.,;:!?…])")
+#: the reasons a sentence is dropped (``Validated.drop_reasons``)
+DROP_REASONS = ("literal", "polarity", "unsupported")
+_Unit = tuple[str, set[str], str]  # (a line/sentence of an excerpt, its content words, its lit form)
+
+
+def split_inline_cites(text: str, shown: dict[str, Excerpt] | None = None) -> tuple[str, list[str]]:
+    """``(sentence without inline handle lists, the handles they named)``."""
+    handles: list[str] = []
+
+    def cut(m: re.Match[str]) -> str:
+        found = _INLINE_HANDLE.findall(m.group(2))
+        if m.group(1) == "(" and not (shown is not None and all(h in shown for h in found)):
+            return m.group(0)
+        handles.extend(found)
+        return ""
+
+    out = _INLINE_CITE.sub(cut, text)
+    if handles:
+        text = _SPACE_BEFORE_PUNCT.sub(r"\1", out)
+    return " ".join(text.split()), handles
+
+
+def _units(ex: Excerpt, cache: dict[str, list[_Unit]]) -> list[_Unit]:
+    """The lines of an excerpt, each split into its sentences (a table row stays whole)."""
+    if ex.handle not in cache:
+        units = (" ".join(x.split()) for x in _SENTENCES.split(ex.text))
+        cache[ex.handle] = [(u, _content(u), _lit_norm(u)) for u in units if u]
+    return cache[ex.handle]
+
+
+def _first_line(ex: Excerpt) -> str:
+    return next((" ".join(ln.split()) for ln in ex.text.splitlines() if ln.strip()), "")
+
+
+def _display(unit: str, lits: list[str]) -> str:
+    """A unit as a displayed quote (≤ QUOTE_MAX_CHARS, a window around its first literal)."""
+    anchor = next((x for x in lits if literal_supported(x, _lit_norm(unit))), None)
+    return _window(unit, anchor) if anchor is not None else _cut(unit)
+
+
+def cite_check(
+    text: str,
+    cites: list[str],
+    shown: dict[str, Excerpt],
+    cache: dict[str, list[_Unit]] | None = None,
+) -> tuple[str | None, list[tuple[str, str]]]:
+    """D-156: the deterministic check of ONE written sentence against the FULL text of the excerpts
+    it cites (all ``shown`` ones when it cites none): ``(reason it fails or None, support)``.
+
+    - literal: every literal of the sentence (``literals``/``literal_supported``) is in the cited
+      excerpts' texts (and titles) together;
+    - polarity: ``polarity_ok`` against the lines/sentences of the cited excerpts that share a
+      literal or ≥ 2 content words (prefix-tolerant) with the sentence; skipped when none shares;
+    - support: per cited handle (the best-matching ones first, ≤ MAX_SUPPORT) its line with the most
+      shared literals, then content words (else its first non-empty line), as the displayed quote.
+      A sentence citing nothing is attributed to the excerpts that share the most with it (until
+      their texts hold all its literals); none shares anything → ``unsupported``."""
+    cache = {} if cache is None else cache
+    cited = [h for h in dict.fromkeys(cites) if h in shown]
+    pool = cited or list(shown)
+    if not pool:
+        return "unsupported", []
+    lits = literals(text)
+    hay = _hay([x for h in pool for x in (shown[h].title, shown[h].text)])
+    if not all(literal_supported(x, hay) for x in lits):
+        return "literal", []
+    words = _content(text)
+    best: dict[str, tuple[tuple[int, int], str]] = {}
+    lines: list[str] = []
+    for h in pool:
+        for unit, cw, uhay in _units(shown[h], cache):
+            score = (sum(1 for x in lits if literal_supported(x, uhay)), _hits(words, cw))
+            if score[0] >= 1 or score[1] >= 2:
+                lines.append(unit)
+                if h not in best or score > best[h][0]:
+                    best[h] = (score, unit)
+    if lines and not polarity_ok(text, lines):
+        return "polarity", []
+    order = {h: i for i, h in enumerate(pool)}
+
+    def rank(h: str) -> tuple[int, int, int]:
+        return (-best[h][0][0], -best[h][0][1], order[h]) if h in best else (1, 0, order[h])
+
+    ranked = sorted(pool, key=rank)
+    if cited:
+        chosen = ranked[:MAX_SUPPORT]
+    else:
+        chosen = []
+        for h in (h for h in ranked if h in best):
+            chosen.append(h)
+            have = _hay([x for c in chosen for x in (shown[c].title, shown[c].text)])
+            if len(chosen) >= MAX_SUPPORT or all(literal_supported(x, have) for x in lits):
+                break
+        if not chosen:
+            return "unsupported", []
+    support = [(h, _display(best[h][1], lits) if h in best else _cut(_first_line(shown[h]))) for h in chosen]
+    return None, support
+
+
+def _join(kept: list[Claim], redact: Callable[[str], str]) -> str:
+    """The kept sentences, in order, whole sentences up to ``ANSWER_MAX_CHARS``."""
+    parts: list[str] = []
+    size = 0
+    for c in kept:
+        add = len(c.text) + (1 if parts else 0)
+        if parts and size + add > ANSWER_MAX_CHARS:
+            break
+        parts.append(c.text)
+        size += add
+    return redact(" ".join(parts))[:ANSWER_MAX_CHARS]
+
+
+def assemble_cited(
+    status: str | None,
+    claims: list[Claim],
+    related_hint: list[str],
+    conf: str,
+    shown: dict[str, Excerpt],
+    redact: Callable[[str], str],
+    **extra: Any,
+) -> Validated:
+    """The cite-mode answer from checked sentences (``Claim``s): the answer is the kept sentences;
+    primary = the handles supporting the most kept sentences (≤ 3); related = the other supporting /
+    cited handles and the model's suggestions (≤ 5); nothing kept → an abstention (guard when the
+    model answered)."""
+    kept = [c for c in claims if c.state == "kept"]
+    dropped = len(claims) - len(kept)
+    text = _join(kept, redact) if status == ANSWERED else ""
+    if status != ANSWERED or not text.strip():
+        closest = [h for h in related_hint if h in shown][:3]
+        return Validated(
+            INSUFFICIENT, status, "", claims, [], list(dict.fromkeys(closest)), "low",
+            guard=status == ANSWERED, dropped_sentences=dropped, **extra,
+        )  # fmt: skip
+    ranked = rank_sources(claims)
+    primary = ranked[:MAX_PRIMARY]
+    related: list[str] = []
+    for h in [*ranked[MAX_PRIMARY:], *(h for c in kept for h in c.cited), *related_hint]:
+        if h in shown and h not in primary and h not in related:
+            related.append(h)
+    return Validated(
+        ANSWERED, status, text, claims, primary, related[:MAX_RELATED], _lower(conf) if dropped else conf,
+        dropped_sentences=dropped, **extra,
+    )  # fmt: skip
+
+
+def validate_cited(
+    obj: dict[str, Any] | None, shown: dict[str, Excerpt], redact: Callable[[str], str] = lambda s: s
+) -> Validated:
+    """D-156: the deterministic check of a ``write`` output against the excerpts it was shown. Each
+    sentence (≤ MAX_SENTENCES; handles written inside its text count as cites) is checked by
+    ``cite_check`` against its valid cites (≤ MAX_CITES; none valid → all shown excerpts, counted as
+    ``uncited``); a failing sentence is dropped (counted by reason), the rest is the answer (the
+    first dropped → ``main_dropped``; nothing kept → an abstention, guard). Never cites a handle
+    that was not shown."""
+    obj = obj or {}
+    status = obj.get("status") if obj.get("status") in (ANSWERED, INSUFFICIENT) else None
+    conf = obj.get("confidence") if obj.get("confidence") in _CONF else "low"
+    raw = obj.get("sentences") if isinstance(obj.get("sentences"), list) and status == ANSWERED else []
+    claims: list[Claim] = []
+    reasons = dict.fromkeys(DROP_REASONS, 0)
+    uncited = 0
+    cache: dict[str, list[_Unit]] = {}
+    for x in raw[:MAX_SENTENCES]:
+        if not isinstance(x, dict):
+            continue
+        text, inline = split_inline_cites(str(x.get("text") or ""), shown)
+        if not text:
+            continue
+        cite = x.get("cite")
+        cite = [cite] if isinstance(cite, str) else cite if isinstance(cite, list) else []
+        named = [str(h).strip() for h in cite]
+        cites = [h for h in dict.fromkeys([*named, *inline]) if h in shown][:MAX_CITES]
+        uncited += int(not cites)
+        why, support = cite_check(text, cites, shown, cache)
+        if why is None:
+            claims.append(Claim(text, support, "kept", cites))
+        else:
+            reasons[why] += 1
+            claims.append(Claim(text, [], "dropped", cites))
+    related_hint = [h for h in (obj.get("related") or []) if isinstance(h, str)]
+    return assemble_cited(
+        status,
+        claims,
+        related_hint,
+        conf,
+        shown,
+        redact,
+        dropped_claims=sum(1 for c in claims if c.state != "kept"),
+        main_dropped=bool(claims) and claims[0].state != "kept",
+        uncited=uncited,
+        drop_reasons=reasons,
+    )
+
+
 # --------------------------------------------------------------------------- addendum 6
 _ID_LIKE = re.compile(
     r"^(?=[^\s]*\d)(?=[^\s]*[A-Z])[A-Za-z0-9][A-Za-z0-9._-]+$|^[A-Z]{1,3}-[A-Z0-9][A-Za-z0-9-]*$"
@@ -1238,7 +1518,17 @@ class Researcher:
             self.chain = list(provider.chain)
         else:
             self.chain = list(chain) if chain is not None else research_chain(settings)
-        self.spec: TaskSpec = load_task(TASK)
+        mode = getattr(settings, "research_answer_mode", "claims")
+        self.answer_mode: str = mode if mode in ANSWER_MODES else "claims"
+        # D-156: the cite mode's prompt is an opt-in version; the claims mode keeps the default (v1,
+        # or a pin) unless that prompt has no JOB "answer" (a cite prompt pinned by mistake)
+        if self.answer_mode == "cite":
+            self.spec: TaskSpec = load_task(TASK, CITE_PROMPT_VERSION)
+        else:
+            self.spec = load_task(TASK)
+            if 'JOB "answer"' not in self.spec.system:
+                log.warning("research prompt %s has no JOB answer: using v1", self.spec.prompt_version)
+                self.spec = load_task(TASK, 1)
         self._enabled = (
             bool(getattr(settings, "research_enabled", False))
             and bool(settings.librarian_enabled)
@@ -1430,6 +1720,9 @@ async def close_app_researcher(app: Any) -> None:
 
 __all__ = [
     "ANSWERED",
+    "ANSWER_MODES",
+    "CITE_PROMPT_VERSION",
+    "DROP_REASONS",
     "INSUFFICIENT",
     "JOBS",
     "MAX_ATTEMPTS",
@@ -1443,6 +1736,8 @@ __all__ = [
     "answer_user",
     "app_researcher",
     "assemble",
+    "assemble_cited",
+    "cite_check",
     "check_user",
     "clip",
     "close_app_researcher",
@@ -1470,5 +1765,8 @@ __all__ = [
     "unattributed",
     "support_hay",
     "research_chain",
+    "split_inline_cites",
     "validate_answer",
+    "validate_cited",
+    "write_user",
 ]

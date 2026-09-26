@@ -265,6 +265,9 @@ class FakeResearcher:
     extra_primary: list[str] = field(default_factory=list)  # handles the model tries to cite anyway
     check_adds: list[str] = field(default_factory=list)  # facts only the completeness pass adds
     answer_prefix: str = ""  # prepended to the claims of the answer JOB only (an attribution to repair)
+    #: D-156 cite mode: sentences the JOB write adds after the facts' own ({"text", "cite"?}; no cite
+    #: = the first fact's excerpt)
+    write_extra: list[dict[str, Any]] = field(default_factory=list)
     jobs: list[str] = field(default_factory=list)
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -273,6 +276,8 @@ class FakeResearcher:
         if job in ("plan", "refine"):
             return {"queries": self.queries, "sections": self.sections}
         excerpts = inp.get("excerpts") or []
+        if job == "write":
+            return self._write(excerpts)
         facts = self.facts + (self.check_adds if job == "check" else [])
         claims = []
         for needle in facts:
@@ -305,6 +310,31 @@ class FakeResearcher:
                 **out,
             }
         return out
+
+    def _write(self, excerpts: list[dict[str, Any]]) -> dict[str, Any]:
+        """D-156 JOB write: each fact's sentence, citing the excerpt it was copied from."""
+        sentences = []
+        for needle in self.facts:
+            for ex in excerpts:
+                s = sentence_with(ex["text"], needle)
+                if s:
+                    sentences.append({"text": s, "cite": [ex["id"], *self.extra_primary]})
+                    break
+        if self.abstain or not sentences:
+            return {
+                "status": "insufficient_evidence",
+                "sentences": [],
+                "related": [e["id"] for e in excerpts[:2]],
+                "confidence": "low",
+            }
+        first = sentences[0]["cite"][0]
+        sentences += [{"text": x["text"], "cite": x.get("cite", [first])} for x in self.write_extra]
+        return {
+            "status": "answered",
+            "sentences": sentences,
+            "related": [e["id"] for e in excerpts if e["id"] != first][:3] + self.extra_primary,
+            "confidence": "high",
+        }
 
     def _extra(self) -> list[dict[str, str]]:
         """Support the model tries to add from handles it was never shown (must be discarded)."""

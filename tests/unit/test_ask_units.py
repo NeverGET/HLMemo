@@ -1059,3 +1059,205 @@ def test_prompt_values_are_redacted_before_json_serialisation() -> None:
         ms.user_message("c.md", "markdown:docs/c.md", [{"title": text, "text": text}], 1),
     ):
         assert secret not in msg and "⟦REDACTED:assignment:" in msg
+
+
+# --------------------------------------------------------------------------- D-156 cite mode (V14)
+def _written(*sentences: tuple[str, list[str]], **kw) -> dict:  # noqa: ANN003
+    base = {
+        "status": "answered",
+        "sentences": [{"text": t, "cite": c} for t, c in sentences],
+        "related": [],
+        "confidence": "high",
+    }
+    base.update(kw)
+    return base
+
+
+def test_d156_literal_extraction_fixes() -> None:
+    """(a) a TR/EN suffix glued after a closing backtick / apostrophe, (b) slash-joined code spans,
+    (c) a code span with inner whitespace (whole span OR every token of it)."""
+    assert set(rs.literals("Uç nokta `127.0.0.1:8765/mcp`’dir.")) == {"127.0.0.1:8765/mcp"}
+    assert set(rs.literals("Profil `profile-v2.3`dır.")) == {"profile-v2.3"}
+    assert set(rs.literals("Dosyalar `CLAUDE.md`/`AGENTS.md` olarak yazılır.")) == {"CLAUDE.md", "AGENTS.md"}
+    hay = rs._lit_norm("The api listens on 127.0.0.1:8765/mcp; profile-v2.3 is pinned; CLAUDE.md, AGENTS.md.")
+    assert rs.literals_ok("Uç nokta `127.0.0.1:8765/mcp`’dir.", hay)
+    assert rs.literals_ok("Profil `profile-v2.3`dır.", hay)
+    assert rs.literals_ok("Dosyalar `CLAUDE.md`/`AGENTS.md` olarak yazılır.", hay)
+    assert not rs.literals_ok("Dosyalar `CLAUDE.md`/`GEMINI.md` olarak yazılır.", hay)
+    assert not rs.literals_ok("Profil `profile-v2.4`tür.", hay)
+    spaced = "Set `pg_trgm.word_similarity_threshold = 0.9` per session."
+    assert rs.literals(spaced) == ["pg_trgm.word_similarity_threshold = 0.9"]  # one literal, no "="
+    for text in (
+        "SET pg_trgm.word_similarity_threshold TO 0.9;",  # every token is there
+        "`pg_trgm.word_similarity_threshold` = 0.9",  # the source's own markup splits the span
+        "pg_trgm.word_similarity_threshold = 0.9",  # the whole span
+    ):
+        assert rs.literals_ok(spaced, rs._lit_norm(text)), text
+    assert not rs.literals_ok(spaced, rs._lit_norm("SET pg_trgm.word_similarity_threshold TO 0.8;"))
+    assert not rs.literals_ok("Run `retries = 5`.", rs._lit_norm("retries = 6"))  # a digit token counts
+
+
+def test_d156_cite_mode_keeps_and_drops_sentences_by_reason() -> None:
+    obj = _written(
+        ("The retrieval p95 target is now 1.2 s.", ["v10.0"]),
+        ("It was 1,6 s before, on the VPS.", ["v11.0"]),
+        ("The target is 0.4 s on the dev replica.", ["v10.0"]),  # a value no cited excerpt states
+        ("The owner did not decide it after R3.", ["v10.0"]),  # an inserted negation
+        ("Postgres 17 with pgvector is the only store.", ["v99.0", "v11.0"]),  # an unseen handle ignored
+    )
+    v = rs.validate_cited(obj, SHOWN)
+    assert v.answered and [c.state for c in v.claims] == ["kept", "kept", "dropped", "dropped", "kept"]
+    assert v.drop_reasons == {"literal": 1, "polarity": 1, "unsupported": 0}
+    assert (v.dropped_sentences, v.dropped_claims, v.main_dropped, v.uncited) == (2, 2, False, 0)
+    assert v.answer == (
+        "The retrieval p95 target is now 1.2 s. It was 1,6 s before, on the VPS."
+        " Postgres 17 with pgvector is the only store."
+    )
+    assert v.confidence == "medium"  # something was dropped
+    assert v.primary == ["v11.0", "v10.0"] and all(h in SHOWN for h in v.primary + v.related)
+    main = v.kept[0]
+    assert main.support == [("v10.0", SHOWN["v10.0"].text.split(" The owner")[0])]  # its best line
+    assert main.cited == ["v10.0"] and v.kept[2].cited == ["v11.0"]
+    assert all(1 <= len(c.support) <= rs.MAX_SUPPORT for c in v.kept)
+
+
+def test_d156_uncited_sentence_is_checked_against_every_shown_excerpt() -> None:
+    obj = _written(
+        ("The retrieval p95 target is now 1.2 s.", []),  # no cite: all shown, attributed to v10.0
+        ("Measure the Production-Ready gate on the dev replica.", ["v404"]),  # only an unseen handle
+        ("The target is 7.5 s.", []),  # a literal no shown excerpt states
+        ("Everything is fine here.", []),  # shares nothing with any excerpt
+    )
+    v = rs.validate_cited(obj, SHOWN)
+    assert [c.state for c in v.claims] == ["kept", "kept", "dropped", "dropped"]
+    assert v.uncited == 4 and v.drop_reasons == {"literal": 1, "polarity": 0, "unsupported": 1}
+    assert [h for h, _q in v.kept[0].support] == ["v10.0"] and v.kept[0].cited == []
+    assert [h for h, _q in v.kept[1].support] == ["v12.3"]
+    assert "Production-Ready gate" in v.kept[1].support[0][1]
+
+
+def test_d156_main_dropped_still_answers_and_all_dropped_abstains() -> None:
+    v = rs.validate_cited(
+        _written(
+            ("The retrieval p95 target is 0.9 s.", ["v10.0"]),
+            ("Postgres 17 with pgvector is the store.", ["v11.0"]),
+        ),
+        SHOWN,
+    )
+    assert v.answered and v.main_dropped and v.answer == "Postgres 17 with pgvector is the store."
+    none = rs.validate_cited(_written(("The target is 0.9 s.", ["v10.0"]), related=["v11.0"]), SHOWN)
+    assert not none.answered and none.guard and none.answer == "" and none.primary == []
+    assert none.related == ["v11.0"] and none.main_dropped and none.dropped_sentences == 1
+    abstain = rs.validate_cited(
+        {"status": "insufficient_evidence", "sentences": [], "related": ["v12.3", "v7"]}, SHOWN
+    )
+    assert not abstain.answered and not abstain.guard and abstain.related == ["v12.3"]
+    assert not rs.validate_cited(None, SHOWN).answered
+
+
+def test_d156_cross_language_sentence_with_copied_literals_is_kept() -> None:
+    """A TR sentence over an EN excerpt: no shared content word, but its copied literals are in the
+    cited text (word-overlap quote picking fails here, D-156)."""
+    v = rs.validate_cited(
+        _written(
+            ("Güncel p95 hedefi 1.2 s'dir; D-001'deki eski değer 1,6 s idi.", ["v10.0"]),
+            ("Mağaza olarak yalnızca `Postgres 17` ve pgvector kullanılır.", ["v11.0"]),
+            ("Hedef 1.5 s'dir.", ["v10.0"]),
+        ),
+        SHOWN,
+    )
+    assert [c.state for c in v.claims] == ["kept", "kept", "dropped"]
+    assert v.drop_reasons["literal"] == 1
+    assert "1.2 s" in v.kept[0].support[0][1]  # the displayed line holds the copied value
+
+
+def test_d156_t6_polarity_is_still_rejected_in_cite_mode() -> None:
+    """Review 79/80 T6 in the cite mode: a dropped "not" is caught against the cited excerpt's text."""
+    shown = {"v40.0": _ex("v40.0", "The release gate is not enabled by default. It runs weekly, not daily.")}
+    bad = "The release gate is enabled by default and runs weekly, not daily."
+    v = rs.validate_cited(_written((bad, ["v40.0"])), shown)
+    assert not v.answered and v.guard and v.drop_reasons["polarity"] == 1
+    uncited = rs.validate_cited(_written((bad, [])), shown)  # the fallback to all shown checks it too
+    assert not uncited.answered and uncited.drop_reasons["polarity"] == 1
+    good = "The release gate is not enabled by default; it runs weekly, not daily."
+    ok = rs.validate_cited(_written((good, ["v40.0"])), shown)
+    assert ok.answered and ok.answer == good
+
+
+def test_d156_inline_handles_polarity_scope_and_display_line() -> None:
+    shown = {
+        "v50.2": _ex(
+            "v50.2",
+            "# Runbook\n\n## Backup\n\nRun `bash deploy/backup/backup.sh` nightly; it keeps 14 daily dumps.\n"
+            "## Restore\n\nThe api is not restarted automatically.",
+        )
+    }
+    obj = _written(
+        ("The backup keeps 14 daily dumps [v50.2].", []),
+        ("Backups run nightly with `bash deploy/backup/backup.sh` [v50.2, v9].", []),
+        ("It is simple.", ["v50.2"]),  # shares nothing: no polarity check, first line displayed
+    )
+    v = rs.validate_cited(obj, shown)
+    assert v.answered and v.uncited == 0 and [c.state for c in v.claims] == ["kept"] * 3
+    assert v.kept[0].text == "The backup keeps 14 daily dumps." and v.kept[0].cited == ["v50.2"]
+    assert v.kept[1].support[0][1].startswith("Run `bash deploy/backup/backup.sh` nightly")
+    assert v.kept[2].support == [("v50.2", "# Runbook")]
+    # an unrelated negation elsewhere in the excerpt ("not restarted") is out of scope
+    assert "[v50.2" not in v.answer and rs.split_inline_cites("A [v1.2; v3].") == ("A.", ["v1.2", "v3"])
+    # "(vN)" is a cite only when every handle in it was shown ("prompt (v2)" may be prose)
+    assert rs.split_inline_cites("Nightly (v50.2).", shown) == ("Nightly.", ["v50.2"])
+    assert rs.split_inline_cites("The prompt (v2) adds it.", shown) == ("The prompt (v2) adds it.", [])
+    one = rs.validate_cited(
+        {"status": "answered", "sentences": [{"text": "It keeps 14 daily dumps.", "cite": "v50.2"}]}, shown
+    )
+    assert one.answered and one.kept[0].cited == ["v50.2"] and one.uncited == 0  # a string cite
+
+
+def test_d156_write_job_prompt_and_mode() -> None:
+    from hlmemo.config import get_settings
+    from hlmemo.librarian.prompts import PROMPT_DIR
+
+    v1 = load_task("research")  # the default (claims) prompt is research/v1, byte for byte
+    assert v1.prompt_version == "v1" and v1.system == (PROMPT_DIR / "research/v1.md").read_text()
+    import hashlib
+
+    assert (
+        hashlib.sha256(v1.system.encode()).hexdigest()
+        == "58d5f7c8fab858af7ec06ad55cd2a788f21e6894ce9652d3764a36d999f0c3f3"
+    )
+    v2 = load_task("research", rs.CITE_PROMPT_VERSION)
+    assert v2.prompt_version == "v2" and 'JOB "write"' in v2.system
+    assert 'JOB "answer"' not in v2.system and 'JOB "check"' not in v2.system
+    for job in ('JOB "plan"', 'JOB "refine"'):  # the plan/refine JOBs are unchanged
+        block = v1.system[v1.system.index(job) :].split("\n\n")[0]
+        assert block in v2.system
+    for rule in (
+        "using ONLY what the excerpts state",
+        "Be complete and specific",
+        "When the question asks several things, answer each of them",
+        "in the language of the question",
+        "never translate an identifier",
+        "cites the ids of the 1 to 3 excerpts",
+        '"status": "insufficient_evidence", "sentences": []',
+        "give the CURRENT value",
+    ):
+        assert rule in v2.system, rule
+    assert v2.schema_errors(_written(("x", ["v1.2"]))) is None
+    w = rs.job_validator("write")
+    assert w(_written(("x", []))) is None and w({"status": "answered", "sentences": []})
+    assert w({"status": "answered"}) == "sentences missing" and w({"sentences": []}) == "status missing"
+    assert w({"status": "insufficient_evidence", "sentences": []}) is None
+    assert rs.JOB_MAX_TOKENS["write"] >= rs.JOB_MAX_TOKENS["answer"]
+    for mode, version in (("claims", "v1"), ("cite", "v2")):
+        r = rs.Researcher(get_settings(research_answer_mode=mode))
+        assert r.answer_mode == mode and r.spec.prompt_version == version
+        assert r.job_spec("write").max_tokens == rs.JOB_MAX_TOKENS["write"]
+    with pytest.raises(ValueError):
+        get_settings(research_answer_mode="quotes")
+    from hlmemo.librarian.redact import Redactor
+
+    secret = "SuperSecret123456"
+    text = f'The staging password = "{secret}" is rotated monthly.'
+    msg = rs.write_user(text, [rs.Excerpt("v30.0", 30, text, "docs/c.md", "2026-09-26", text)])
+    assert msg.startswith("JOB: write\nINPUT: ") and secret not in msg
+    assert "⟦REDACTED:assignment:" in msg and secret in Redactor().text(json.dumps({"q": text}))
