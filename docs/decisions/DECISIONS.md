@@ -1284,3 +1284,23 @@ Errors: 0. The temporal layer fired (sealed B: 5 superseded excerpts shown, 2 pu
 - (2) The capability gaps are multi-hop synthesis across items, procedures, and "what is current now" over an evolving memory. The explicit links cover almost nothing in the current tree: 252 links from ONE "MERGED" declaration.
 - (3) Per the protocol, the PR set and sealed B are now SPENT for this candidate. No tuning on them; the next candidate needs a new hold-out.
 **Next (proposed):** build a REPRESENTATIVE dev set from the current memory (the same generator as the PR set, a disjoint commit range) with multi-hop, procedure, temporal and recent questions, then attack those capabilities on it. The NotebookLM reference on these sets is still running, for context.
+D-189 | 2026-09-26 | ACCEPTED | **The real-memory regime is hard for BOTH systems. NotebookLM on the PR set: correct .42, contradiction .28. A representative dev set (pr-dev) now exists, and memory.ask's baseline on it mirrors the hold-out.**
+**NotebookLM PR reference:**
+- notebook `5250ed30-…`: all 558 items of hlm_research_cur, 44 content sources, secret-scanned with 0 hits;
+- 60/60 questions, a fresh `nlm query` per question, judge only (codex adjudication is blocked until 09-30).
+| PR set (60) | memory.ask fd83f95 | NotebookLM |
+|---|---|---|
+| Correct | .30 | .42 |
+| Contradiction | **.22** | .28 |
+| Abstain | **.70** | .40 |
+| multihop | 0/5 | 0/5 |
+| procedure | 2/10 | 3/10 |
+| temporal | 2/10 | 4/10 |
+| recent | 11/25 | 14/25 |
+| p95 | **14 s** | 43 s |
+Sealed B for NotebookLM is 36/50 done; the daily quota stopped it, and it resumes with `<scratch>/nlm-final/run_set.py`.
+**pr-dev:** 60 questions written blind by an independent writer from the migrated sources (snapshot c981973, D-001..D-133): multihop 12, procedure 12, temporal 12, recent 14, unanswerable 10; 49/50 gold answers span ≥ 2 sources. It lives at `docs/private/realdata-hlmemo/pr-dev/`, with sources converted to the hold-out's `{path, anchor}` schema.
+**memory.ask fd83f95 on pr-dev:**
+- correct .34, contradiction .26, abstain .90, faithful .84, recall .82, p95 13 s;
+- multihop 2/12, procedure 3/12, recent 7/14, temporal 5/12.
+It mirrors the PR hold-out (.30 / .22), so pr-dev is the iteration set from now on. A root-cause analysis of its failures is running.
