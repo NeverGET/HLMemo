@@ -1385,3 +1385,33 @@ Consequences:
   - (7) Re-measure ×3.
 - Steps 2–6 can be replayed offline against the 180 saved traces with no LLM spend.
 - Full report: docs/private/realdata-hlmemo/TRACE-REPORT-2026-09-26.md (private: it contains dev questions).
+D-193 | 2026-09-27 | ACCEPTED | **Measure before fixing (owner): the real ceiling of memory.ask on the real memory is ~.76–.80, not .86. Measured value per fix: judge ≈ +.1 (measurement), validator safe and useful, simple selection rules ≈ 0, ranking/salience large (the oracle gains +.13), "the newer wins" needed for 6/14 contradictions.**
+Method:
+- Offline replay of candidate fixes on 240 saved traces using the real code. Reproduction gates: excerpt selection 180/180, validator 1,189/1,189 units, map byte-identical.
+- An ORACLE run: branch eval-oracle @ 7d1a1fd, EVAL-ONLY and never merged. `HLM_RESEARCH_ORACLE_FILE` drills the gold handles first, then the normal fill to the same cap. Cost $0.69.
+- The oracle's 22 judged-wrong answers were read by 2 independent readers.
+
+| Oracle measurement (50 answerable) | Correct |
+|---|---|
+| Normal pipeline, mean of 3 runs | .43 |
+| Oracle, as judged | .56 (multihop .17) |
+| + correct judge (7/22 "wrong" answers read as fully correct) | .70 |
+| + validator fix | .72–.76 |
+| + newer-wins (6 contradictions: an older excerpt beat the newer oracle excerpt in slot 1) | .76–.80 |
+
+Replay:
+- **Validator fixes** ((a) placeholder wildcards, (b) question literals, (c) notation, (d) shell variables with a similarity floor): drops A 15→7, A2 11→6, B 16→9, O 15→6. 20+ fact-bearing units rescued; no fabrication found on reading.
+- **Simple selection rules** (doc_best by rank, per-query slot guarantee, xref gating): facts shown 116→118/122, with regressions. Not worth it as designed.
+- **Newest-10 map listing:** gold-in-map 92→125/211; newest decisions visible 4→9.
+- **Same-file temporal flagger:** unusable (5 correct vs 46 wrong flags).
+
+**Proposed order (owner to confirm):**
+1. The measurement (judge cross-language/SHA-prefix; gold refresh to D-136; mean of 3 runs).
+2. The validator.
+3. Map newest-10, with summaries OFF.
+4. A newer-wins ceiling test (oracle supersession links on the contradiction subjects), then a reviewed librarian supersession backfill.
+5. A ranking ceiling test (offline rerank of the saved hit lists).
+6. Writer completeness.
+7. Re-measure.
+
+Budget: $2.86 of $5 spent. A new hold-out is needed before the next final. Details: docs/private/realdata-hlmemo/MEASUREMENTS-2026-09-27.md.
