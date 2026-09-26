@@ -1099,3 +1099,19 @@ Together with D-176 (glm-5's timeouts moved from 4 to 17 of 34 between two runs 
 | openai/gpt-5.6-terra | 7: OpenAI, Azure, Bedrock | $2 / $12 | ≈ .04 |
 | openai/gpt-5.6-sol | – | $2 / $10 | ≈ .037 |
 The cheap stable option measured so far is gpt-5.6-luna low: 18/25 correct, 8/8 abstain, p95 5.6 s, ≈ $.006/q full.
+D-178 | 2026-09-26 | ACCEPTED (owner: "handle the task in a clever way… I will trust your decisions when you find a model"; spraying paid trials wastes credit; Haiku 4.5 was already worse and more expensive than gpt-6-luna in earlier benches) | **Writer decision method changes: evidence first, then one decisive probe. The hypothesis is that glm-5's latency and capacity problem is self-inflicted by our provider constraints.**
+**Free evidence** (OpenRouter `/models/z-ai/glm-5/endpoints`):
+| Provider | Uptime | response_format | Price $/M in / out |
+|---|---|---|---|
+| first-party **Z.AI** | 100% (1 day) | no | 1.0 / 3.2 |
+| **Novita** | 100% (1 day) | no | 1.0 / 3.2 |
+| Venice | 99.2% | yes | – |
+| StreamLake | 92% (30 min) | yes | – |
+| GMICloud | 85% | yes | – |
+| Baidu | 99.7% (slow) | yes | – |
+The writer profile forced `response_format` + `require_parameters`, which EXCLUDED Z.AI and Novita and left only the volatile third-party pool (D-176, D-177). The prose job does not need provider-enforced JSON: the prompt asks for one JSON object, the product validates the schema and retries once.
+**One decisive probe:** glm-5, provider order [Z.AI, Novita] with no fallbacks, no response_format, reasoning off, the same 34 contexts, cap $0.60.
+- **Expected if the hypothesis holds:** median ≤ about 6 s, p95 ≤ about 12 s, correctness ≈ 21–22/25, JSON-invalid ≤ 1–2 on the first try.
+- **If it holds:** the writer is glm-5 via Z.AI/Novita at about $0.017/q full (about $10–25/month at 20–50 questions a day).
+- **If not:** the stable fallback is gpt-5.6-luna (18/25, 8/8 abstain, p95 5.6 s, about $0.006/q), with the C2 residual presented to the owner.
+Dropped without spend: Haiku 4.5 (the earlier bench evidence is against it) and gpt-5.6-terra/sol (no evidence of better writing; about 3× the cost).
