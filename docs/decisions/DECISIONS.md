@@ -983,3 +983,19 @@ D-169 | 2026-09-26 | ACCEPTED | **First complete dev picture under the frozen fi
 - **(a) No overreach:** state only what the excerpts state; no cause, effect, purpose or conclusion they do not state; never attribute a statement to a document that does not contain it.
 - **(b) Specifics:** give every value, name, command, flag, path, limit and actor the excerpts state for what the question asks, including sibling values in the same statement (other routes, earlier values); when rejecting a false premise, say explicitly that the memory has no such thing.
 Then one end-to-end run and the same adjudication.
+D-170 | 2026-09-26 | ACCEPTED | **Prompt v3.1 raises faithfulness (judged .878 → .907) without moving correctness beyond noise. The next lever is a completeness ("expand") pass.**
+Same 33 dev questions; prose + llm attribution; judge, item scope.
+| Metric | a0d91d0 (v3) | **61f6712 (v3.1)** |
+|---|---|---|
+| Correct | .68 | .64 |
+| Faithful | .878 | **.907** |
+| Contradiction | .04 | .04 |
+| Abstain | 1.00 | .875 (a premise case) |
+| Recall | .94 | .88 |
+| p95 | 11.5 s | 12.5 s |
+| $/q | .004 | .004 |
+Correct changes: gained D018 ("10–20 MB" now stated) and D061; lost D010, D034, D038. Correctness keeps moving in the .64–.72 band, the ±.09 noise at n = 25.
+**Two harness faults found and fixed today:**
+- (1) The dev api's default spend caps (1/1/60) tripped after about 8 runs a day on one DB. memory.ask then correctly returned E_UNAVAILABLE, and the harness scored those as wrong answers and still paid the judge. The first 61f6712 run is quarantined under `results-research-prototype/invalid/`. Dev runs now use `--caps 2,5,60` and abort before judging when more than 2 questions error.
+- (2) A judge runaway (reasoning uses the whole output cap, no JSON) crashed the scoring. It now gets one retry at twice the cap, then independent adjudication (`judge_adjudicate` in the summary): no crash, no silent pass (wf-research-proto cbbd1b9).
+**Next:** HLM_RESEARCH_EXPAND, a second call that adds up to 6 sentences stating further question-relevant specifics from the same excerpts, under the same hard-literal guard. It targets the MISSING facts that keep C2 at about .70, where NotebookLM writes answers about 3× longer.
