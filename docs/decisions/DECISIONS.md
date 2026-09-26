@@ -787,3 +787,21 @@ D-158 | 2026-09-26 | ACCEPTED (the owner delegated the gate definition and the r
 - (1) The map_summary DB-write failure delays the retry to the next event: ACCEPTED. Summaries are a cache; a restart or any event re-arms it.
 - (2) A timeout charges USD but not tokens: ACCEPTED. The USD cap is the binding one.
 - (3) TR suffix negation: RESOLVED by D-153 (TR negative-verb suffixes are read as negation).
+D-158a | 2026-09-26 | ACCEPTED (consult 81, gpt-6-astra low, 1 round per D-125; recorded BEFORE any NotebookLM or new memory.ask result was seen) | **Consumer gate v2.1: D-158 tightened after an independent check. The implementer defined the gate, so the goalposts must not move.**
+**Adopted:**
+- (1) **C2 correct stays ≥ .80**, plus ≥ correct(NotebookLM) − .05. The .84 oracle is 21 of 25, not a proven ceiling. The .70 floor is withdrawn.
+- (2) **C3 faithful stays ≥ .95** in the source scope. A discount needs an independent blind calibration of judge accepts and rejects in that scope, done before the final run.
+- (3) **C1 floors:** mean U ≥ 1.6 on answerable questions, and U = 0 share ≤ .10, in addition to the reference comparison.
+  - A U = 1 ("one drill finishes it") counts only if that drill is actually executed on the named handle and the missing gold facts are in the returned text; otherwise it becomes 0.
+  - The rater never sees system identities.
+  - Rubric consumer_v1 is frozen (wf-research-proto fba8304).
+- (4) **C3 also at answer level:** the share of answers containing any wrong actionable claim (a contradiction, or a superseded value stated as current) must be ≤ .04. Temporal questions are reported separately.
+- (5) **C7 zero scope leakage** (from D-130) is an explicit release condition. The review-79 T1 isolation tests must be green, and a cross-project probe must pass on the release candidate.
+- (6) **The final protocol is frozen before the run:** code sha, config, prompts, rubric, corpora, question lists, and one run with no best-of-N.
+  - PR set and sealed B must pass SEPARATELY.
+  - Every final question stays in the denominator. A judge runaway gets one retry with a higher output cap; if it still fails, it goes to independent adjudication, never exclusion.
+  - The NotebookLM reference gets a same-content corpus per set (corpus B for sealed B; the current tree for the PR set).
+  - After a failed final, changes require a new hold-out.
+- (7) **C6 adds** an error/timeout rate ≤ .02 and reports p99, response tokens (median and p95), and answer-plus-drill time.
+**Partly adopted:** paired bootstrap CIs are REPORTED for every reference comparison, but the point estimate gates. At n = 50–60 the CI is about ±.10, so "the CI must exclude −.05" would be unpassable by construction.
+**Not adopted:** removing the check of uncited sentences against all excerpts. Such a sentence is shown attributed to the excerpt(s) that hold its literals and words, the judge checks entailment against exactly those, and the count is reported (`uncited`).
