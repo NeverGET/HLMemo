@@ -624,3 +624,28 @@ Next levers, for the owner's morning decision:
 - (b) structured evidence → facts extraction before composing, to fight compression;
 - (c) a re-audit of judge faithfulness false negatives on the memory.ask outputs (the D-140 audit had an 11% FN rate);
 - (d) retrieval recall .81 → .85.
+D-150 | 2026-09-26 | ACCEPTED | **The last overnight probes: model strength is not the lever, and the judge is accurate.**
+**(1) V10-pro** (luna-pro for the answer and completeness steps), on 27 of the 34 questions before the cap:
+| Variant | Correct | Faithful | Recall | p95 | $/q |
+|---|---|---|---|---|---|
+| V10-pro | .615 | .859 | .853 | 38.2 s | .0079 |
+| V10 | .615 | .844 | .872 | 28.5 s | .0037 |
+The misses are the same, so a stronger answerer does not fix compression.
+**(2) A $0 re-audit of memory.ask @ 9bceb59:**
+- Correct: the judge is exact (0/15 FN, 0/11 FP), so the true correct is .577.
+- Faithful: 4 of the 14 judge rejections are actually entailed and 0 of 20 accepted claims are false, so the true faithful is ≈ .91 against the judge's .874. It is still short of .95. The remaining unsupported claims name a person or source (4), list items beyond the quotes (3), or add a time/context frame (2).
+**True overnight state of memory.ask:**
+| Criterion | Value | Gate |
+|---|---|---|
+| Correct | .58 | .80 |
+| Faithful (true) | ≈ .91 | .95 |
+| Recall | .81 | .85 |
+| Abstain | 1.00 | .90 |
+| p95 | 21 s | 20 s |
+| $/q | .004 | .01 |
+**Next design lever, the most promising:** SLOT-FILLING against compression.
+1. Decompose the question into the exact information slots it asks for (a name, value, flag, path, list, reason).
+2. Extract each slot VERBATIM from the evidence, with its quote.
+3. Compose from the filled slots only. This targets the dominant failure directly.
+Also: remove the residual attribution and list-overreach claims with the same deterministic subject/list check.
+Overnight spend is about $5.2 of the $6 cap.

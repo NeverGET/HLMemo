@@ -30,6 +30,11 @@ It improved a lot under a strict judge, but the D-130 Production-Ready gate is *
 - **D-145, the doc-level drill hurts** when it displaces ranked chunks.
 - **Safety:** without per-call caps, a prompt can run away to 65k tokens, so caps were added (D-143).
 
+## Last probes (D-150)
+- A stronger answer model (luna-pro) does NOT raise correctness (.615, the same misses); it doubles the cost and pushes p95 to 38 s.
+- The judge is accurate: correct .577 is exact. The true faithful is about .91, against the judge's .874.
+- The next lever is SLOT-FILLING: decompose the question into the exact slots it asks for, extract each verbatim with its quote, then compose.
+
 ## Open
 - **Review 79 round 1 (FIX-NEEDED):** T1 scope isolation with exclude, T2 redaction before JSON, T4 per-attempt budget, T5 default OFF plus an R4 manifest, T6 negation-safe quote match. The fixes are in progress; round 2 is verification only.
 - **Levers for the gate:**
