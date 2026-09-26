@@ -2866,3 +2866,110 @@ async def test_d178_text_writer_falls_back_to_the_json_job_and_retries_a_bad_lay
             await _complete(r3, "prose", user)
     finally:
         await r3.aclose()
+
+
+# --------------------------------------------------------------------------- D-184 temporal layer
+HEADING_DOC = (
+    "# PHASE0-SPEC\n\nMERGED 2026-09-22 from docs/consults/03-claude-phase0-spec.md.\n\n"
+    "## §4 Retrieval algorithm\n\nStep 1 embeds the query.\n\n### Step 11: **clues**\n\n"
+    "Clues: v{version_id}.{ordinal} for hits.\n\n## §5 Models\n\nThe embedder is e5-small.\n"
+)
+ROW_DOC = (
+    "# Decisions\n\nThe append-only log.\n\n"
+    "D-025 | 2026-09-21 | ACCEPTED | **Chunk at 512 tokens.**\nIts rationale line.\n"
+    "D-026 | 2026-09-22 | ACCEPTED | **Use the official SDK low-level Server rather than MCPServer "
+    "decorators** because the decorators hide the tool list.\n- a bullet of D-026\n- another bullet\n"
+    "| D-027 | 2026-09-23 | ACCEPTED | a table-style row |\n\n## Appendix\n\nNotes after the log.\n"
+)
+
+
+def test_d184_context_label_for_a_heading_doc() -> None:
+    at = HEADING_DOC.index
+    path = "docs/decisions/PHASE0-SPEC.md#spec"
+    assert rs.context_label(path, HEADING_DOC, at("MERGED")) == "PHASE0-SPEC.md › PHASE0-SPEC"
+    assert (
+        rs.context_label(path, HEADING_DOC, at("Step 1 embeds"))
+        == "PHASE0-SPEC.md › PHASE0-SPEC › §4 Retrieval algorithm"
+    )
+    # at most 2 heading levels (the deepest), markup stripped
+    assert (
+        rs.context_label(path, HEADING_DOC, at("Clues:"))
+        == "PHASE0-SPEC.md › §4 Retrieval algorithm › Step 11: clues"
+    )
+    # a sibling heading closes the deeper one
+    assert (
+        rs.context_label(path, HEADING_DOC, at("The embedder")) == "PHASE0-SPEC.md › PHASE0-SPEC › §5 Models"
+    )
+    assert rs.context_label(path, "No heading here.\nNor here.", 10) == ""  # nothing to name: no field
+    assert (
+        rs.doc_name("docs/decisions/DECISIONS.md#D-004") == "DECISIONS.md"
+        and rs.doc_name("A title") == "A title"
+    )
+
+
+def test_d184_context_label_for_a_table_row_doc_including_mid_row() -> None:
+    at = ROW_DOC.index
+    path = "docs/decisions/DECISIONS.md"
+    assert rs.context_label(path, ROW_DOC, at("D-026 |")) == "DECISIONS.md › row D-026 (2026-09-22)"
+    # a chunk that starts mid-row (inside the row line, or in its bullets) names the row it cuts
+    assert (
+        rs.context_label(path, ROW_DOC, at("decorators** because")) == "DECISIONS.md › row D-026 (2026-09-22)"
+    )
+    assert rs.context_label(path, ROW_DOC, at("another bullet")) == "DECISIONS.md › row D-026 (2026-09-22)"
+    assert rs.context_label(path, ROW_DOC, at("Its rationale")) == "DECISIONS.md › row D-025 (2026-09-21)"
+    assert rs.context_label(path, ROW_DOC, at("a table-style row")) == "DECISIONS.md › row D-027 (2026-09-23)"
+    # before the first row: the heading; after a later heading: the heading again
+    assert rs.context_label(path, ROW_DOC, at("The append-only")) == "DECISIONS.md › Decisions"
+    assert rs.context_label(path, ROW_DOC, at("Notes after")) == "DECISIONS.md › Decisions › Appendix"
+
+
+def test_d184_quote_overlap_and_status_label() -> None:
+    text = "D-004 | 2026-09-20 | ACCEPTED | The retrieval p95 target is now 1.2 s (it was 1,6 s in D-001)."
+    assert rs.quote_overlaps("The retrieval p95 target is now 1.2 s", text)
+    # a quote cut at the chunk boundary still overlaps (6 consecutive words are enough)
+    assert rs.quote_overlaps("The retrieval p95 target is now 1.2 s and it is measured weekly", text)
+    assert not rs.quote_overlaps("The backup keeps 14 daily dumps of the database", text)
+    assert not rs.quote_overlaps("", text) and rs.quote_overlaps(
+        "p95 target", text
+    )  # a short quote: all of it
+    assert (
+        rs.status_label(
+            "v67", "docs/decisions/PHASE0-SPEC.md", "MERGED 2026-09-22 from docs/consults/x.md", False
+        )
+        == "superseded by v67 (docs/decisions/PHASE0-SPEC.md): «MERGED 2026-09-22 from docs/consults/x.md»"
+    )
+    assert rs.status_label("v9", "docs/a.md", "", True) == "superseded in part by v9 (docs/a.md)"
+    assert len(rs.status_label("v9", "p", "word " * 200, False)) < rs.STATUS_QUOTE_CHARS + 40
+
+
+async def test_d184_excerpt_fields_reach_only_the_v3_prose_and_expand_jobs() -> None:
+    ex = rs.Excerpt(
+        "v10.0", 10, "T", "docs/DECISIONS.md", "2026-09-26", "The text.",
+        context="DECISIONS.md › row D-001 (2026-09-01)",
+        status="superseded by v11 (docs/b.md)",
+        status_vid=11,
+    )  # fmt: skip
+    plain = rs.Excerpt("v12.0", 12, "T2", "docs/c.md", "2026-09-26", "Other text.")
+    assert ex.shown() == {"id": "v10.0", "title": "T", "date": "2026-09-26", "text": "The text."}
+    assert list(ex.shown(temporal=True)) == ["id", "title", "date", "context", "status", "text"]
+    assert plain.shown(temporal=True) == plain.shown()  # a current excerpt without context: no fields
+    for build in (
+        lambda: rs.prose_user("Q?", [ex, plain]),
+        lambda: rs.expand_user("Q?", ["A."], [ex, plain]),
+    ):
+        shown = json.loads(build().split("INPUT: ", 1)[1])["excerpts"]
+        assert shown[0]["status"] == ex.status and shown[0]["context"] == ex.context
+        assert "status" not in shown[1] and "context" not in shown[1]
+    for build in (rs.answer_user, rs.write_user, rs.select_user):  # the claims/cite modes: unchanged
+        assert "status" not in build("Q?", [ex]) and "context" not in build("Q?", [ex])
+    v3 = load_task("research", rs.PROSE_PROMPT_VERSION)
+    assert (
+        v3.system.count("An excerpt with status superseded is history: never state its content as current")
+        == 2
+    )
+    assert v3.system.count("context tells where the excerpt sits (section, decision row and date).") == 2
+    # the gate covers the superseder a status names; an excluded superseder's status is left out
+    run = _ScriptedRun({}, select=False, mode="prose")
+    assert run.gate_ids([ex, plain]) == [10, 12, 11]
+    run.excluded = {11}
+    assert [e.status for e in run.admitted([ex, plain])] == ["", ""] and ex.status  # a copy, not in place

@@ -74,6 +74,14 @@ fallback: the research profile; ``research.Researcher.chain_for_job``), the othe
 grows by that timeout so the fallback keeps its own; the question deadline still binds);
 ``meta.flags.writer_timeout`` / ``writer_used`` say what happened.
 
+D-184 (prose mode, the temporal layer; links are only READ): each excerpt the answer step is shown
+carries a ``status`` when a live ``supersedes`` link (valid at the question's time) targets its item
+(whole scope) or quotes its text (part scope, ``research.quote_overlaps``): ``superseded by vN
+(path): «quote»`` (``research.status_label``); a current excerpt carries none. A superseded excerpt
+whose superseder is not shown pulls the superseder's best in-document chunk in (≤
+``SUPERSEDER_EXTRA`` beyond the cap, replacing the lowest-ranked current excerpts when the excerpt
+budget binds). A chunk excerpt carries a read-time ``context`` label (``research.context_label``).
+
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write), ``research.MAX_CALLS_ATTRIBUTE`` (5) with
 the D-165 llm attribution (plan, prose, refine, prose, attribute), one more with the D-170 expand
@@ -100,7 +108,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any
 
@@ -119,6 +127,7 @@ from hlmemo.core.errors import ToolError
 from hlmemo.core.read_service import ReadDeps, _read_project
 from hlmemo.core.write_models import SLUG_RE
 from hlmemo.db import auth_queries
+from hlmemo.db import librarian_queries as lq
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as kq
 from hlmemo.db import synthesis_queries as sq
@@ -146,6 +155,10 @@ MAX_DRILL = 12
 PARALLEL_QUERIES = 3
 #: D-165: the top fused ITEMS whose best in-document chunk takes a drill slot (after the sections)
 DOC_TOP = 4
+#: D-184: superseders pulled into one retrieval's excerpts beyond MAX_DRILL, and the excerpt budget
+#: (characters) past which a pulled superseder replaces the lowest-ranked current excerpts instead
+SUPERSEDER_EXTRA = 2
+EXCERPT_BUDGET_CHARS = MAX_DRILL * rs.EXCERPT_CHARS
 REFINE_MAX_NEW = 8
 RRF_K = 60
 #: per-call caps (seconds) inside the whole request's HLM_RESEARCH_TIMEOUT_S
@@ -314,6 +327,8 @@ class _Run:
     end: float
     reconnect: Callable[[], AbstractAsyncContextManager[AsyncConnection]] | None
     released: bool = False
+    #: D-184: the question's time (the map phase's clock): supersedes links valid at it apply
+    t_start: Any = None
     view: dict[int, mm.ViewItem] = field(default_factory=dict)
     entries: dict[int, list[mm.Entry]] = field(default_factory=dict)
     summaries: dict[str, tuple[list[int], str]] = field(default_factory=dict)
@@ -441,7 +456,90 @@ class _Run:
             items = [h for h in rrf_items(lists) if self._handle_in_view(h)]
             best = await self._doc_best(c, items, [self.question, *queries])
             excerpts = await self._drill(c, drill_order(sections, best, fused, skip))
+            if self.prose:  # D-184: supersession status and the superseder pull-in
+                excerpts = await self._temporal(c, fresh, excerpts, [self.question, *queries], skip)
         return excerpts, lists
+
+    async def _statuses(self, c: AsyncConnection, fresh: AuthContext, excerpts: list[rs.Excerpt]) -> None:
+        """D-184: set ``status``/``status_vid`` of each excerpt from the live ``supersedes`` links
+        (valid at the question's time, authz (a), ``lq.supersessions_of``) that target its item: a
+        whole-scope link, else a part-scope link whose quote overlaps its text. The superseder must
+        be a current item of the caller's view (it is named to the writer); the newest link wins."""
+        if not excerpts:
+            return
+        vids = sorted({e.version_id for e in excerpts})
+        cur = await c.execute(
+            "SELECT version_id, logical_id FROM memory_versions WHERE version_id = ANY(%s)", (vids,)
+        )
+        lid_of = {int(v): int(lid) for v, lid in await cur.fetchall()}
+        at = self.t_start if self.t_start is not None else await rq.clock_now(c)
+        links = await lq.supersessions_of(
+            c,
+            sorted(set(lid_of.values())),
+            pid=self.project_id,
+            scopes=mm.view_scopes(fresh),
+            valid_at=at,
+            known_at=at,
+        )
+        if not links:
+            return
+        visible = [v for v in self.view if v not in self.excluded]
+        cur = await c.execute(
+            "SELECT logical_id, version_id FROM memory_versions"
+            " WHERE logical_id = ANY(%s) AND version_id = ANY(%s)",
+            (sorted({src for src, *_ in links}), visible),
+        )
+        current = {int(lid): int(v) for lid, v in await cur.fetchall()}
+        redact = self.researcher.redactor.text
+        for e in excerpts:
+            lid = lid_of.get(e.version_id)
+            mine = [x for x in links if x[1] == lid and x[0] in current and current[x[0]] != e.version_id]
+            hit = next((x for x in mine if not x[2]), None) or next(
+                (x for x in mine if x[2] and rs.quote_overlaps(x[3], e.text)), None
+            )
+            if hit is None:
+                continue
+            src_vid = current[hit[0]]
+            e.status = redact(rs.status_label(f"v{src_vid}", self.view[src_vid].path, hit[3], hit[2]))
+            e.status_vid = src_vid
+
+    async def _temporal(
+        self,
+        c: AsyncConnection,
+        fresh: AuthContext,
+        excerpts: list[rs.Excerpt],
+        texts: list[str],
+        skip: set[str],
+    ) -> list[rs.Excerpt]:
+        """D-184: the statuses of ``excerpts``, then the superseder pull-in: for superseded excerpts
+        whose superseding item is not shown (nor in ``skip``), that item's best in-document chunk
+        for the question (``_doc_best``, as item fusion) joins the set, at most ``SUPERSEDER_EXTRA``
+        beyond the cap; when the excerpts' text would pass ``EXCERPT_BUDGET_CHARS``, a pulled one
+        replaces the lowest-ranked current excerpt instead."""
+        await self._statuses(c, fresh, excerpts)
+        shown = {e.version_id for e in excerpts}
+        for h in skip:
+            with contextlib.suppress(InvalidClue):
+                shown.add(decode_clue(h).version_id)
+        want = list(
+            dict.fromkeys(e.status_vid for e in excerpts if e.status_vid and e.status_vid not in shown)
+        )
+        if not want:
+            return excerpts
+        best = await self._doc_best(c, [f"v{vid}.0" for vid in want[:SUPERSEDER_EXTRA]], texts)
+        pulled = await self._drill(c, [h for h in best if h not in skip])
+        if not pulled:
+            return excerpts
+        await self._statuses(c, fresh, pulled)
+        self.flags["superseders_pulled"] = self.flags.get("superseders_pulled", 0) + len(pulled)
+        out = list(excerpts)
+        size = sum(len(e.text) for e in out) + sum(len(e.text) for e in pulled)
+        while size > EXCERPT_BUDGET_CHARS:
+            drop = next((i for i in range(len(out) - 1, -1, -1) if not out[i].status), None)
+            if drop is None:
+                break
+            size -= len(out.pop(drop).text)
+        return out + pulled
 
     async def _search(self, c: AsyncConnection, fresh: AuthContext, query: str) -> list[dict[str, Any]]:
         return await _search(c, fresh, self.slug, query, self.deps)
@@ -495,11 +593,14 @@ class _Run:
             v = await rq.version_live(c, clue.version_id, self.project_id, scopes, now, now, ["active"])
             if v is None:
                 continue
+            context = ""
             if clue.ordinal is not None:
                 spans = await rq.chunk_spans(c, v.version_id, clue.ordinal - 1, clue.ordinal + 1)
                 if not any(s.ordinal == clue.ordinal for s in spans):
                     continue
                 text = v.body[spans[0].char_start : spans[-1].char_end]
+                if self.prose:  # D-184: where the excerpt sits, from the stored body (read time)
+                    context = redact(rs.context_label(item.path, v.body, spans[0].char_start))
             else:
                 text = v.body
             out.append(
@@ -510,6 +611,7 @@ class _Run:
                     item.path,
                     v.valid_from.date().isoformat(),
                     redact(rs.clip(text)),
+                    context=context,
                 )
             )
         return out
@@ -609,6 +711,26 @@ class _Run:
             self.last_profile = res.profile
             return res.output
         raise rs.ResearchUnavailable("privacy")
+
+    def admitted(self, excerpts: list[rs.Excerpt]) -> list[rs.Excerpt]:
+        """The excerpts a prompt may carry (not excluded); D-184: a status naming an excluded
+        superseder is left out (its title, path and quote must not reach the provider)."""
+        out = []
+        for e in excerpts:
+            if e.version_id in self.excluded:
+                continue
+            if e.status_vid is not None and e.status_vid in self.excluded:
+                e = replace(e, status="", status_vid=None)
+            out.append(e)
+        return out
+
+    @staticmethod
+    def gate_ids(excerpts: list[rs.Excerpt]) -> list[int]:
+        """The version ids whose text a prompt of ``excerpts`` carries: theirs and (D-184) the
+        superseders their statuses name (a title, a path and a link quote)."""
+        return list(
+            dict.fromkeys([e.version_id for e in excerpts] + [e.status_vid for e in excerpts if e.status_vid])
+        )
 
     def cap_for(self, job: str, cap_s: float) -> float:
         """D-172: a writer job's call cap grows by the writer's attempt timeout, so the task profile
@@ -770,8 +892,8 @@ class _Run:
         answer."""
 
         def build() -> tuple[str, list[int]]:
-            ex = [e for e in excerpts if e.version_id not in self.excluded]
-            return rs.prose_user(self.question, ex, redact=self.redact), [e.version_id for e in ex]
+            ex = self.admitted(excerpts)
+            return rs.prose_user(self.question, ex, redact=self.redact), self.gate_ids(ex)
 
         since = len(self.researcher.attempts(self.lineage))
         try:
@@ -783,6 +905,7 @@ class _Run:
             return rs.validate_prose(obj, shown, self.researcher.redactor.text)
         self.flags["writer_used"] = self.last_profile
         self.excerpts_shown = list(shown)
+        self.flags["superseded_shown"] = sum(1 for e in self.admitted(excerpts) if e.status)
         if self.researcher.expand:
             since = len(self.researcher.attempts(self.lineage))
             added = await self.expand_call(obj, shown)
@@ -841,8 +964,8 @@ class _Run:
         excerpts = list(shown.values())
 
         def build() -> tuple[str, list[int]]:
-            ex = [e for e in excerpts if e.version_id not in self.excluded]
-            return rs.expand_user(self.question, sentences, ex, self.redact), [e.version_id for e in ex]
+            ex = self.admitted(excerpts)
+            return rs.expand_user(self.question, sentences, ex, self.redact), self.gate_ids(ex)
 
         try:
             out = await self.call("expand", build, min(self.cap_for("expand", EXPAND_CAP_S), left - reserve))
@@ -970,6 +1093,7 @@ async def ask(
             view={v.version_id: v for v in view},
             entries=entries,
             summaries=summaries,
+            t_start=t_start,
         )
         if run.cite:  # D-156: the cite mode's own counts (meta.flags)
             run.flags.update({"dropped_sentences": 0, "uncited": 0})
@@ -984,6 +1108,8 @@ async def ask(
                 run.flags.update({"attr_fallback": False, "attr_llm_cited": 0})
             # D-172: whether a writer attempt timed out, and the profile that wrote the answer
             run.flags.update({"writer_timeout": False, "writer_used": None})
+            # D-184: superseded excerpts the writer was shown, superseders pulled in
+            run.flags.update({"superseded_shown": 0, "superseders_pulled": 0})
             if researcher.expand:  # D-170
                 run.flags.update(
                     {"expand_added": 0, "expand_dropped": 0, "expand_skipped": False, "expand_failed": False}

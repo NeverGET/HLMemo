@@ -605,9 +605,102 @@ class Excerpt:
     path: str  # source path (anchor included) or the title
     date: str  # valid_from, YYYY-MM-DD
     text: str  # redacted, clipped to EXCERPT_CHARS: exactly what the model is shown
+    #: D-184 (prose mode): where the chunk sits (``context_label``), and its supersession status
+    #: (``status_label``: set only when superseded; ``status_vid`` = the superseding version)
+    context: str = ""
+    status: str = ""
+    status_vid: int | None = None
 
-    def shown(self) -> dict[str, str]:
-        return {"id": self.handle, "title": self.title, "date": self.date, "text": self.text}
+    def shown(self, temporal: bool = False) -> dict[str, str]:
+        """What the model is shown; ``temporal`` (research/v3 prose, expand) adds the excerpt's
+        ``context`` and ``status`` when it has them (a current excerpt carries no status)."""
+        out = {"id": self.handle, "title": self.title, "date": self.date}
+        if temporal and self.context:
+            out["context"] = self.context
+        if temporal and self.status:
+            out["status"] = self.status
+        out["text"] = self.text
+        return out
+
+
+# --------------------------------------------------------------------------- D-184 temporal layer
+#: a markdown heading line, and a decision-log / table row start ("D-026 | 2026-09-22 | ...", with
+#: or without a leading pipe): the row key and its date
+_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t#]*$", re.M)
+_ROW = re.compile(
+    r"^\|?[ \t]*([A-Z][A-Za-z]{0,11}-\d{1,5}[a-z]?)[ \t]*\|[ \t]*(\d{4}-\d{2}-\d{2})[ \t]*\|", re.M
+)
+#: the heading levels a context label names, the characters of one heading, of a status quote
+CONTEXT_LEVELS = 2
+CONTEXT_HEADING_CHARS = 80
+STATUS_QUOTE_CHARS = 200
+#: part-scope supersession: the quote overlaps an excerpt when this many consecutive words of it
+#: (all of a shorter quote) occur in the excerpt's text
+QUOTE_OVERLAP_WORDS = 6
+
+
+def doc_name(path: str) -> str:
+    """The file name of an item path (``docs/decisions/DECISIONS.md#D-004`` -> ``DECISIONS.md``)."""
+    base = path.split("#", 1)[0].rstrip("/")
+    return base.rsplit("/", 1)[-1] or path
+
+
+def _heading_text(raw: str) -> str:
+    return _cut(
+        " ".join(raw.replace("**", "").replace("__", "").replace("`", "").split()), CONTEXT_HEADING_CHARS
+    )
+
+
+def context_label(path: str, body: str, start: int) -> str:
+    """D-184: where the text at ``start`` of an item ``body`` sits, computed at READ time: the row
+    (key and its date) of a decision-log/table document that contains ``start`` (also when the
+    chunk starts mid-row), else the nearest preceding markdown heading path (≤ ``CONTEXT_LEVELS``
+    levels), whichever starts later. ``"<file> › row D-026 (2026-09-22)"`` or ``"<file> › §4
+    Retrieval algorithm"``; ``""`` when neither precedes ``start``."""
+    start = max(0, min(start, len(body)))
+    eol = body.find("\n", start)
+    end = len(body) if eol < 0 else eol  # the line holding ``start`` is searched whole
+    row = None
+    for m in _ROW.finditer(body, 0, end):
+        if m.start() > start:
+            break
+        row = m
+    stack: list[tuple[int, str]] = []
+    last_heading = -1
+    for m in _HEADING.finditer(body, 0, end):
+        if m.start() > start:
+            break
+        level = len(m.group(1))
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        stack.append((level, _heading_text(m.group(2))))
+        last_heading = m.start()
+    name = doc_name(path)
+    if row is not None and row.start() >= last_heading:
+        return f"{name} › row {row.group(1)} ({row.group(2)})"
+    if stack:
+        return " › ".join([name, *(t for _lvl, t in stack[-CONTEXT_LEVELS:] if t)])
+    return ""
+
+
+def quote_overlaps(quote: str, text: str, n: int = QUOTE_OVERLAP_WORDS) -> bool:
+    """D-184: a part-scope link's quote overlaps an excerpt: ``n`` consecutive words of it (all of a
+    shorter quote) occur in the excerpt's text (normalised: a chunk boundary may cut the quote)."""
+    words = qnorm(quote).split()
+    if not words:
+        return False
+    hay = " " + " ".join(qnorm(text).split()) + " "
+    k = min(n, len(words))
+    return any(" " + " ".join(words[i : i + k]) + " " in hay for i in range(len(words) - k + 1))
+
+
+def status_label(handle: str, path: str, quote: str, part: bool) -> str:
+    """D-184: the status of a superseded excerpt, as the writer sees it: ``superseded by v67
+    (docs/decisions/PHASE0-SPEC.md): «MERGED … from …»`` (``superseded in part by`` for a
+    part-scope link; the quote is the link's, cut to ``STATUS_QUOTE_CHARS``)."""
+    head = f"superseded {'in part ' if part else ''}by {handle} ({path})"
+    q = _cut(" ".join(quote.split()), STATUS_QUOTE_CHARS)
+    return f"{head}: «{q}»" if q else head
 
 
 def clip(text: str, limit: int = EXCERPT_CHARS) -> str:
@@ -667,8 +760,9 @@ def select_user(question: str, excerpts: list[Excerpt], redact: Redact | None = 
 
 
 def prose_user(question: str, excerpts: list[Excerpt], redact: Redact | None = None) -> str:
-    """D-162 prose mode: the JOB ``prose`` (the question and the excerpts, as ``write_user``)."""
-    payload = {"question": question, "excerpts": [e.shown() for e in excerpts]}
+    """D-162 prose mode: the JOB ``prose`` (the question and the excerpts, as ``write_user``; D-184:
+    with their context and supersession status)."""
+    payload = {"question": question, "excerpts": [e.shown(temporal=True) for e in excerpts]}
     return "JOB: prose\n" + _input(payload, redact)
 
 
@@ -2080,7 +2174,7 @@ def expand_user(
     payload = {
         "question": question,
         "answer": [{"n": i, "text": s} for i, s in enumerate(sentences, start=1)],
-        "excerpts": [e.shown() for e in excerpts],
+        "excerpts": [e.shown(temporal=True) for e in excerpts],
     }
     return "JOB: expand\n" + _input(payload, redact)
 
@@ -2752,6 +2846,10 @@ __all__ = [
     "cite_check",
     "check_user",
     "clip",
+    "context_label",
+    "doc_name",
+    "quote_overlaps",
+    "status_label",
     "close_app_researcher",
     "best_line",
     "find_verbatim",

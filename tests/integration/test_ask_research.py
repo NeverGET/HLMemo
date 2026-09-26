@@ -443,6 +443,10 @@ async def test_ask_prose_mode_keeps_free_prose_and_drops_only_fabricated_values(
     system = llm.requests[1]["messages"][0]["content"]
     assert 'JOB "prose"' in system and 'JOB "write"' not in system and 'JOB "check"' not in system
     assert llm.requests[1]["messages"][1]["content"].startswith("JOB: prose\n")
+    # D-184 without links: no excerpt carries a status, nothing is pulled; chunks carry context
+    prose_excerpts = request_job(llm.requests[1])[1]["excerpts"]
+    assert all("status" not in e for e in prose_excerpts) and all(e.get("context") for e in prose_excerpts)
+    assert (flags["superseded_shown"], flags["superseders_pulled"]) == (0, 0)
     assert out["meta"]["excerpts_shown"] == [e["id"] for e in request_job(llm.requests[1])[1]["excerpts"]]
     assert_no_secret(sent_text(llm), world)
 
@@ -1347,6 +1351,172 @@ async def test_ask_item_fusion_drills_the_best_chunk_of_a_long_document_first(
     # then the other top items' own hits and the chunk-fused rest (the hit chunks ±1 of it collapse)
     assert handles == rsv.drill_order([], [handles[0], *items[1 : rsv.DOC_TOP]], fused, set())
     assert handles[1 : rsv.DOC_TOP] == items[1 : rsv.DOC_TOP] and set(others) <= set(handles)
+
+
+# --------------------------------------------------------------------------- D-184 temporal layer
+async def _supersedes(connect, src_vid: int, dst_vid: int, scope: str = "whole", quote: str = "") -> int:  # noqa: ANN001
+    """A live ``supersedes`` link (test data only: memory.ask READS links, it never writes them)."""
+    props = {"by": "explicit", "scope": scope, "quote": quote, "marker": "test"}
+    async with await connect() as conn:
+        cur = await conn.execute(
+            """
+            INSERT INTO links (project_id, project_ids, src_logical_id, dst_logical_id, rel, props,
+                               valid_from, recorded_at, source_event_id)
+            SELECT s.project_id, s.project_ids, s.logical_id, t.logical_id, 'supersedes', %s::jsonb,
+                   s.valid_from, s.recorded_at, s.source_event_id
+              FROM memory_versions s CROSS JOIN memory_versions t
+             WHERE s.version_id = %s AND t.version_id = %s
+            RETURNING link_id
+            """,
+            (json.dumps(props), src_vid, dst_vid),
+        )
+        (link_id,) = await cur.fetchone()
+        await conn.commit()
+    return int(link_id)
+
+
+async def _drop_links(connect, ids: list[int]) -> None:  # noqa: ANN001
+    async with await connect() as conn:
+        await conn.execute("DELETE FROM links WHERE link_id = ANY(%s)", (ids,))
+        await conn.commit()
+
+
+TRIGRAM = "The trigram fix for G-L3 is parked until the research loop needs it."
+
+
+async def _temporal_retrieve(connect, world, deps, db_dsn, hits: list[str]) -> tuple[list[rs.Excerpt], dict]:  # noqa: ANN001
+    """One prose-mode retrieval over scripted hits (every list = ``hits``)."""
+    async with await connect() as conn:
+        view = await mm.load_view(conn, world.ctx_reader, world.projects[MAIN])
+        await conn.commit()
+    r = make_researcher(db_dsn, ScriptedLLM(default={}), research_answer_mode="prose")
+    try:
+        async with await connect() as conn:
+            await conn.commit()
+            run = _HitsRun(
+                conn=conn,
+                ctx=world.ctx_reader,
+                researcher=r,
+                deps=deps,
+                settings=r.settings,
+                question="Is the trigram fix for G-L3 parked, and what is the Memory Map budget?",
+                slug=MAIN,
+                project_id=world.projects[MAIN],
+                end=0.0,
+                reconnect=None,
+                view={v.version_id: v for v in view},
+            )
+            run.hits = {"q": hits}
+            excerpts, _lists = await run.retrieve(["q"], [], [[{"clue": h} for h in hits]], set())
+            await conn.rollback()
+    finally:
+        await r.aclose()
+    return excerpts, run.flags
+
+
+async def test_ask_temporal_status_whole_and_part_links_and_the_superseder_pull_in(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """D-184: a WHOLE-scope link marks every excerpt of its target item; a PART-scope link only the
+    excerpt whose text its quote overlaps. A superseder not shown is pulled in (its best chunk for
+    the question), at most SUPERSEDER_EXTRA beyond the cap; each chunk excerpt carries its context."""
+    v = world.versions
+    status_vid, runbook, d002, d003, d004 = v["status"], v["runbook"], v["D-002"], v["D-003"], v["D-004"]
+    async with await connect() as conn:
+        spans = await rq_mod.chunk_spans(conn, status_vid)
+        await conn.commit()
+    trigram_chunks = {f"v{status_vid}.{sp.ordinal}" for sp in spans if "trigram fix" in sp.text}
+    first_status = f"v{status_vid}.0"
+    links = [
+        await _supersedes(connect, d004, d003, "whole", "D-004 replaces the budget rule"),
+        await _supersedes(connect, runbook, status_vid, "part", TRIGRAM),
+    ]
+    try:
+        hits = [f"v{d003}.0", first_status, *sorted(trigram_chunks), f"v{d002}.0"]
+        excerpts, flags = await _temporal_retrieve(connect, world, deps, db_dsn, hits)
+    finally:
+        await _drop_links(connect, links)
+    by = {e.handle: e for e in excerpts}
+    # whole: the D-003 excerpt is superseded by D-004, with the link's quote
+    assert by[f"v{d003}.0"].status == (
+        f"superseded by v{d004} (docs/decisions/DECISIONS.md#D-004): «D-004 replaces the budget rule»"
+    )
+    assert by[f"v{d003}.0"].status_vid == d004
+    # part: only the STATUS excerpt holding the quoted statement
+    part = [e for e in excerpts if e.version_id == status_vid and e.status]
+    assert part and all("trigram fix" in e.text for e in part)
+    assert part[0].status.startswith(
+        f"superseded in part by v{runbook} (deploy/RUNBOOK.md): «The trigram fix"
+    )
+    assert by[first_status].status == "" and by[f"v{d002}.0"].status == ""  # no link: current, no field
+    # neither superseder was shown: both pulled in, after the ranked excerpts, themselves current
+    pulled = excerpts[-2:]
+    assert {e.version_id for e in pulled} == {d004, runbook} and all(not e.status for e in pulled)
+    assert flags["superseders_pulled"] == 2
+    # the read-time context labels (a decision row; a heading path)
+    assert by[f"v{d003}.0"].context == "DECISIONS.md › row D-003 (2026-09-12)"
+    assert by[first_status].context == "STATUS.md › STATUS"
+    assert all(e.context.startswith("STATUS.md › STATUS") for e in excerpts if e.version_id == status_vid)
+
+
+async def test_ask_temporal_pull_in_replaces_current_excerpts_when_the_budget_binds(
+    connect, world, deps, db_dsn, monkeypatch
+) -> None:  # noqa: ANN001
+    v = world.versions
+    d001, d002, d003, d004 = v["D-001"], v["D-002"], v["D-003"], v["D-004"]
+    links = [await _supersedes(connect, d004, d001, "whole", "")]
+    try:
+        hits = [f"v{d001}.0", f"v{d002}.0", f"v{d003}.0"]
+        base, _flags = await _temporal_retrieve(connect, world, deps, db_dsn, hits)  # budget free
+        assert [e.version_id for e in base] == [d001, d002, d003, d004]
+        # a budget one character short of all four: the pulled one replaces the lowest-ranked
+        # CURRENT excerpt (D-003); the superseded one stays (the loop drops until the set fits)
+        monkeypatch.setattr(rsv, "EXCERPT_BUDGET_CHARS", sum(len(e.text) for e in base) - 1)
+        tight, flags = await _temporal_retrieve(connect, world, deps, db_dsn, hits)
+    finally:
+        await _drop_links(connect, links)
+    assert [e.version_id for e in tight] == [d001, d002, d004] and flags["superseders_pulled"] == 1
+    assert tight[0].status == f"superseded by v{d004} (docs/decisions/DECISIONS.md#D-004)"
+
+
+async def test_ask_prose_mode_writer_sees_status_and_context(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-184 end to end (the mock provider): the prose JOB's excerpts carry ``context`` and, for the
+    part-superseded D-001, ``status``; the superseder is already shown (nothing pulled); the claims
+    mode's excerpts are unchanged (no context, no status)."""
+    d001, d004 = world.versions["D-001"], world.versions["D-004"]
+    quote = "The retrieval p95 target is 1,6 s on the VPS."
+    links = [await _supersedes(connect, d004, d001, "part", quote)]
+    try:
+        llm = ScriptedLLM(default=FakeResearcher(facts=["1.2 s", "1,6 s on the VPS"]))
+        r = make_researcher(db_dsn, llm, research_answer_mode="prose")
+        try:
+            out = await ask(
+                connect, world, deps, r, "What is the current retrieval p95 target and what was it before?"
+            )
+        finally:
+            await r.aclose()
+        llm2 = ScriptedLLM(default=FakeResearcher(facts=["1.2 s"]))
+        r2 = make_researcher(db_dsn, llm2)  # the claims mode
+        try:
+            await ask(
+                connect, world, deps, r2, "What is the current retrieval p95 target and what was it before?"
+            )
+        finally:
+            await r2.aclose()
+    finally:
+        await _drop_links(connect, links)
+    shown = {e["id"]: e for e in request_job(llm.requests[1])[1]["excerpts"]}
+    old = next(e for h, e in shown.items() if handle_re(d001).fullmatch(h))
+    new = next(e for h, e in shown.items() if handle_re(d004).fullmatch(h))
+    assert old["status"] == f"superseded in part by v{d004} (docs/decisions/DECISIONS.md#D-004): «{quote}»"
+    assert old["context"] == "DECISIONS.md › row D-001 (2026-09-01)" and "status" not in new
+    assert new["context"] == "DECISIONS.md › row D-004 (2026-09-20)"
+    assert list(old) == ["id", "title", "date", "context", "status", "text"]
+    flags = out["meta"]["flags"]
+    assert flags["superseded_shown"] == 1 and flags["superseders_pulled"] == 0 and out["abstained"] is False
+    for body in llm2.requests[1:]:
+        for e in request_job(body)[1].get("excerpts", []):
+            assert "status" not in e and "context" not in e
 
 
 # --------------------------------------------------------------------------- over MCP (detach)

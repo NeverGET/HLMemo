@@ -356,6 +356,43 @@ async def supersession_among(
     return hidden, sorted(partial)
 
 
+async def supersessions_of(
+    conn: AsyncConnection,
+    logical_ids: list[int],
+    *,
+    pid: int,
+    scopes: list[str],
+    valid_at: datetime,
+    known_at: datetime,
+) -> list[tuple[int, int, bool, str]]:
+    """D-184 read side: ``(superseding, superseded, is part-scope, quote)`` of every live
+    ``supersedes`` link whose TARGET is one of ``logical_ids`` (its source may be any item: the
+    caller resolves and authorizes it). The same authz (a) and temporal filter as
+    ``supersession_among``; newest link first."""
+    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L
+
+    if not logical_ids:
+        return []
+    cur = await conn.execute(
+        f"""
+        SELECT l.src_logical_id, l.dst_logical_id, COALESCE(l.props->>'scope', 'whole') = 'part',
+               COALESCE(l.props->>'quote', '')
+          FROM links l
+         WHERE l.rel = 'supersedes' AND l.dst_logical_id = ANY(%(lids)s)
+           AND l.src_logical_id <> l.dst_logical_id AND {AUTHZ_L} AND {TEMPORAL_L}
+         ORDER BY l.valid_from DESC, l.link_id DESC
+        """,  # noqa: S608 - fixed fragments
+        {
+            "lids": sorted(set(logical_ids)),
+            "pid": pid,
+            "scopes": scopes,
+            "valid_at": valid_at,
+            "known_at": known_at,
+        },
+    )
+    return [(int(s), int(d), bool(p), str(q)) for s, d, p, q in await cur.fetchall()]
+
+
 async def superseded_among(
     conn: AsyncConnection,
     logical_ids: list[int],
@@ -399,5 +436,6 @@ __all__ = [
     "subject_vectors",
     "superseded_among",
     "supersession_among",
+    "supersessions_of",
     "vector_list",
 ]
