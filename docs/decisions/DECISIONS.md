@@ -999,3 +999,17 @@ Correct changes: gained D018 ("10–20 MB" now stated) and D061; lost D010, D034
 - (1) The dev api's default spend caps (1/1/60) tripped after about 8 runs a day on one DB. memory.ask then correctly returned E_UNAVAILABLE, and the harness scored those as wrong answers and still paid the judge. The first 61f6712 run is quarantined under `results-research-prototype/invalid/`. Dev runs now use `--caps 2,5,60` and abort before judging when more than 2 questions error.
 - (2) A judge runaway (reasoning uses the whole output cap, no JSON) crashed the scoring. It now gets one retry at twice the cap, then independent adjudication (`judge_adjudicate` in the summary): no crash, no silent pass (wf-research-proto cbbd1b9).
 **Next:** HLM_RESEARCH_EXPAND, a second call that adds up to 6 sentences stating further question-relevant specifics from the same excerpts, under the same hard-literal guard. It targets the MISSING facts that keep C2 at about .70, where NotebookLM writes answers about 3× longer.
+D-171 | 2026-09-26 | ACCEPTED | **The expand pass (wf-memory-ask fedced4) is not a clear win, so HLM_RESEARCH_EXPAND stays OFF. C2 has plateaued at about .70 with the current writer model; a strategic pause follows.**
+Same 33 dev questions; judge; item scope.
+| Metric | v3.1 61f6712 | + expand fedced4 |
+|---|---|---|
+| Correct | .64 | .72 (+D009, D017, D038, D050; −D001, D018) |
+| Faithful | .907 | .912 |
+| Abstain | .875 | .75 (expand added sentences to negative-question answers) |
+| Recall | .88 | .84 |
+| p95 | 12.5 s | 16.0 s |
+| $/q | .004 | .005 |
+Expand added only 17 sentences over 34 questions and dropped 2 of them by the literal guard; the median answer is 466 chars. The correct gain is inside the ±.09 noise, while abstain, recall and latency are worse.
+**A scorer robustness fix** (wf-research-proto b094458): a malformed judge verdict (`{"contained": true}` for a 2-fact question) is now left to adjudication instead of crashing the run.
+**State of C2:** across 5 end-to-end variants on the writer luna (prose modes), judged correctness sits in .64–.72; adjudicated in the D-169 run it is .72. The gate needs ≥ .83. Every other criterion is at or near its threshold on dev.
+**Remaining lever:** a stronger writer model for the prose job only (per-job profile). It trades against C6 (≤ $0.01/q) and the prod budget of $10/month, so it is presented to the owner with the numbers.
