@@ -6,7 +6,9 @@
   provider is only reported; a failure leaves the new stack running (no database rollback).
   R3 (D-111 #6): a missing llm.env fails the cutover; R3 mode (the api runs HLM_ENV_RELEASE=r3, or
   ``evaluate --release r3``) requires the rewrite ON; the R2 env on the R3 image is the D-108
-  interim and says so.
+  interim and says so. R4 (review 79 T5): this checkout is CODE_RELEASE r4; an R3 env on it is
+  checked against the R3 manifest (memory.ask and the map summaries OFF), an R4 env against the R4
+  manifest (both ON, their fallbacks pinned, the per-question limits bounded).
 * check_librarian.py observer-gate (remote_gates.sh --librarian) on crafted job/audit reports.
 """
 
@@ -52,12 +54,28 @@ R3_MANIFEST_ENV = {
     "HLM_LLM_BUDGET_MONTH_USD": "10",
     "HLM_LLM_BUDGET_DISABLED": "false",
 }
+#: D-136 / review 79 T5: what the R4 template adds (install_llm_env.sh)
+R4_MANIFEST_ENV = {
+    **R3_MANIFEST_ENV,
+    "HLM_RESEARCH_ENABLED": "true",
+    "HLM_MAP_SUMMARY_ENABLED": "true",
+    "HLM_FALLBACK_PROFILE__RESEARCH": "openrouter",
+    "HLM_FALLBACK_PROFILE__MAP_SUMMARY": "openrouter-glm53-flash",
+    "HLM_RESEARCH_MAX_USD": "0.01",
+    "HLM_RESEARCH_MAX_TOKENS": "100000",
+}
 #: ... and an R2 llm.env (no marker, no per-task fallbacks)
 R2_MANIFEST_ENV = {
     **dict.fromkeys(R3_MANIFEST_ENV),
     "HLM_PROFILE": "openrouter-gpt6-luna",
     "HLM_FALLBACK_PROFILE": "openrouter",
 }
+
+
+def _manifest_env(label):
+    if label == "r4":
+        return R4_MANIFEST_ENV
+    return R3_MANIFEST_ENV if label else R2_MANIFEST_ENV
 
 
 def report(service, *, enabled=True, role="observer", mode="live", hb_enabled=True, hb_role="observer", **kw):
@@ -71,11 +89,10 @@ def report(service, *, enabled=True, role="observer", mode="live", hb_enabled=Tr
         "profiles": profiles(kw.get("reachable", True), kw.get("key", True)),
         "env_release": kw.get("env_release", "r3"),  # D-111: the llm.env marker the container runs
         # D-116: the manifest keys the container runs with (R2 env when it carries no marker)
-        "manifest_env": {
-            **(R3_MANIFEST_ENV if kw.get("env_release", "r3") else R2_MANIFEST_ENV),
-            **kw.get("manifest", {}),
-        },
+        "manifest_env": {**_manifest_env(kw.get("env_release", "r3")), **kw.get("manifest", {})},
     }
+    if "research" in kw:  # review 79 T5: the effective research state (collect)
+        out["research"] = kw["research"]
     if service == "librarian":
         out["heartbeat"] = {
             "enabled": hb_enabled,
@@ -142,7 +159,7 @@ class R2DeployCheckTest(unittest.TestCase):
             False,
             idle_lib,
             idle_api,
-            "R3 release: llm.env is required (the r3 manifest, D-111/D-116; install_llm_env.sh)",
+            "R4 release: llm.env is required (the r4 manifest, D-111/D-116; install_llm_env.sh)",
         )
 
     def test_missing_llm_env_fails_even_when_everything_else_passes(self):
@@ -151,7 +168,7 @@ class R2DeployCheckTest(unittest.TestCase):
             False,
             report("librarian", env_release=None),
             report("api", env_release=None),
-            "RESULT librarian FAIL R3 release: llm.env is required",
+            "RESULT librarian FAIL R4 release: llm.env is required",
         )
 
     def test_llm_env_enabled_observer_passes(self):
@@ -333,8 +350,9 @@ class R2DeployCheckTest(unittest.TestCase):
         # end to end through the deploy runner: the manifest line and a failing cutover
         _, result, output, _ = self.run_r2(True, report("librarian"), report("api"))
         self.assertEqual(0, result.returncode, output)
-        self.assertIn("llm.env manifest: env_release=r3 (code r3, check mode r3)", output)
-        self.assertIn("HLM_QUERY_REWRITE=- HLM_RETRIEVAL_SOURCE_CAP=-", output)
+        self.assertIn("llm.env manifest: env_release=r3 (code r4, check mode r3)", output)
+        self.assertIn(" HLM_QUERY_REWRITE=- ", output)
+        self.assertIn(" HLM_RETRIEVAL_SOURCE_CAP=-", output)
         self.assert_fails_after_cutover(
             True,
             report("librarian"),
@@ -342,9 +360,10 @@ class R2DeployCheckTest(unittest.TestCase):
             "api runs HLM_QUERY_REWRITE=true",
         )
 
-    def test_the_r3_template_satisfies_the_r3_manifest(self):
-        """deploy/llm.env.example (what install_llm_env.sh writes) carries the marker, the D-094
-        keys and no query rewrite / per-source cap switched on."""
+    def test_the_template_satisfies_the_current_release_manifest(self):
+        """deploy/llm.env.example (what install_llm_env.sh writes) carries the marker (R4), the D-094
+        keys, no query rewrite / per-source cap switched on, and (review 79 T5) memory.ask and the
+        map summaries switched ON with their pinned fallbacks and bounded per-question limits."""
         spec = importlib.util.spec_from_file_location("check_librarian", CHECK)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -353,6 +372,7 @@ class R2DeployCheckTest(unittest.TestCase):
             key, sep, value = line.partition("=")
             if sep and not line.startswith("#"):
                 env[key.strip()] = value.strip()
+        self.assertEqual("r4", mod.CODE_RELEASE)
         manifest = mod.RELEASE_MANIFESTS[mod.CODE_RELEASE]
         self.assertEqual(mod.CODE_RELEASE, env.get(mod.ENV_RELEASE_KEY))
         for key, value in manifest["exact"].items():
@@ -363,6 +383,85 @@ class R2DeployCheckTest(unittest.TestCase):
         )
         for key in manifest["off"]:
             self.assertIn(env.get(key, "false").lower(), ("", "0", "false", "no", "off"), key)
+        self.assertEqual(("HLM_RESEARCH_ENABLED", "HLM_MAP_SUMMARY_ENABLED"), tuple(manifest["on"]))
+        for key in manifest["on"]:
+            self.assertEqual("true", env.get(key), key)
+        self.assertEqual([], mod._limit_problems(env, manifest["limits"]))
+        # the R3 manifest keeps memory.ask and the summaries OFF (an R3 env on this image)
+        self.assertTrue(set(manifest["on"]) <= set(mod.RELEASE_MANIFESTS["r3"]["off"]))
+
+    def test_r4_manifest_pins_research_map_summary_and_their_fallbacks(self):
+        """Review 79 T5: an R4 env is checked against the R4 manifest: the research switches ON, the
+        research and map-summary fallbacks exact, the per-question limits present and bounded; an R3
+        env with memory.ask switched on fails the R3 manifest; the effective state is reported."""
+        research = {"enabled": True, "map_summary": True, "max_usd": 0.01, "max_tokens": 100000}
+        lib = report("librarian", env_release="r4", research=research)
+        api = report("api", env_release="r4", research=research)
+        code, output = self.evaluate(lib, api)
+        self.assertEqual(0, code, output)
+        self.assertIn("llm.env manifest: env_release=r4 (code r4, check mode r4)", output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
+        self.assertIn("api research: memory.ask enabled=true map_summary=true max_usd=0.01", output)
+        code, output = self.evaluate(lib, api, "--release", "r4")
+        self.assertEqual(0, code, output)
+        cases = {
+            "research off": (
+                {"HLM_RESEARCH_ENABLED": "false"},
+                "runs HLM_RESEARCH_ENABLED=false (r4 manifest: true, review 79 T5",
+            ),
+            "map summary absent": (
+                {"HLM_MAP_SUMMARY_ENABLED": None},
+                "runs HLM_MAP_SUMMARY_ENABLED=- (r4 manifest: true",
+            ),
+            "research fallback other": (
+                {"HLM_FALLBACK_PROFILE__RESEARCH": "openrouter-glm53-flash"},
+                "HLM_FALLBACK_PROFILE__RESEARCH=openrouter-glm53-flash (expected openrouter)",
+            ),
+            "map summary fallback missing": (
+                {"HLM_FALLBACK_PROFILE__MAP_SUMMARY": None},
+                "HLM_FALLBACK_PROFILE__MAP_SUMMARY=- (expected openrouter-glm53-flash)",
+            ),
+            "question cap raised": (
+                {"HLM_RESEARCH_MAX_USD": "0.5"},
+                "per-question limits violate the r4 manifest: HLM_RESEARCH_MAX_USD=0.5"
+                " (positive, at most 0.01)",
+            ),
+            "token cap missing": (
+                {"HLM_RESEARCH_MAX_TOKENS": None},
+                "HLM_RESEARCH_MAX_TOKENS=- (required, at most 100000)",
+            ),
+        }
+        for name, (manifest, message) in cases.items():
+            with self.subTest(name):
+                code, output = self.evaluate(
+                    report("librarian", env_release="r4", manifest=manifest),
+                    report("api", env_release="r4", manifest=manifest),
+                )
+                self.assertEqual(1, code, output)
+                self.assertIn(message, output)
+        # an R3 env keeps memory.ask OFF: switched on, it fails the R3 manifest
+        on = {"HLM_RESEARCH_ENABLED": "true"}
+        code, output = self.evaluate(report("librarian", manifest=on), report("api", manifest=on))
+        self.assertEqual(1, code, output)
+        self.assertIn("api runs HLM_RESEARCH_ENABLED=true (r3 manifest: absent or false", output)
+        # ... and so does an unlabelled (interim) env
+        code, output = self.evaluate(
+            report("librarian", env_release=None, manifest={"HLM_MAP_SUMMARY_ENABLED": "1"}),
+            report("api", env_release=None, manifest={"HLM_MAP_SUMMARY_ENABLED": "1"}),
+        )
+        self.assertEqual(1, code, output)
+        self.assertIn("api runs HLM_MAP_SUMMARY_ENABLED=1 (r2-env interim manifest: absent or false", output)
+        # api and librarian must run the same research switches (the manifest keys include them)
+        code, output = self.evaluate(
+            report("librarian", env_release="r4", manifest={"HLM_RESEARCH_ENABLED": "yes"}),
+            report("api", env_release="r4", manifest={"HLM_RESEARCH_ENABLED": "false"}),
+        )
+        self.assertEqual(1, code, output)
+        self.assertIn(
+            "api and librarian run different llm.env values for HLM_RESEARCH_ENABLED"
+            " (api=false, librarian=yes)",
+            output,
+        )
 
     def test_no_llm_env_fails_whatever_runs(self):
         """D-111 #6: without llm.env an R3 cutover fails, idle or active."""
@@ -370,7 +469,7 @@ class R2DeployCheckTest(unittest.TestCase):
             (report("librarian", enabled=False, hb_enabled=False), report("api")),
             (report("librarian", enabled=False, hb_enabled=True), report("api", enabled=False)),
         ):
-            self.assert_fails_after_cutover(False, lib, api, "R3 release: llm.env is required")
+            self.assert_fails_after_cutover(False, lib, api, "R4 release: llm.env is required")
 
     def test_r3_env_marker_puts_the_check_in_r3_mode(self):
         """D-111 #6 / D-116: an api running HLM_ENV_RELEASE=r3 is checked in R3 mode: the full R3
@@ -393,8 +492,8 @@ class R2DeployCheckTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, output)
         self.assertIn("check mode r2-env interim", output)
         self.assertIn(
-            "RESULT librarian PASS llm.env=present release=r2-env (D-108 interim: install the R3 llm.env,"
-            " recreate librarian api, then evaluate --release r3)",
+            "RESULT librarian PASS llm.env=present release=r2-env (D-108 interim: install the R4 llm.env,"
+            " recreate librarian api, then evaluate --release r4)",
             output,
         )
         # the manifest's "off" keys hold in the interim too, and api and librarian run one env
@@ -486,7 +585,7 @@ class R2DeployCheckTest(unittest.TestCase):
 
     def test_only_an_unlabelled_env_is_the_interim(self):
         """D-116 #8: an unknown label (a later release, a typo) FAILS instead of passing as R2."""
-        for label in ("r4", "R3", "r3 "):
+        for label in ("r5", "R4", "r3 "):
             with self.subTest(label=label):
                 code, output = self.evaluate(
                     report("librarian", env_release=label), report("api", env_release=label)

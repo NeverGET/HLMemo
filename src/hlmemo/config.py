@@ -241,9 +241,10 @@ class Settings(BaseSettings):
 
     # --- research librarian (D-130/D-136): the read-only tool memory.ask ---
     # HLM_RESEARCH_ENABLED: advertise and serve memory.ask (it also needs the librarian LLM runtime:
-    # HLM_LIBRARIAN_ENABLED and HLM_LLM_MODE != off). Default on for the D-136 branch; the release
-    # decides (release manifest).
-    research_enabled: bool = True
+    # HLM_LIBRARIAN_ENABLED and HLM_LLM_MODE != off). Default OFF (review 79 T5): an env of an
+    # earlier release (R3) on this image never serves it and never spends; the R4 release manifest
+    # (deploy/scripts/check_librarian.py) pins it on in the R4 llm.env.
+    research_enabled: bool = False
     # The whole memory.ask request (DB phases + at most 5 LLM calls), seconds.
     research_timeout_s: float = Field(default=25.0, gt=0, le=120)
     # A runaway guard PER QUESTION (addendum 5): actual spend so far + the next call's worst case
@@ -256,7 +257,9 @@ class Settings(BaseSettings):
     # Memory Map L2 summaries (task map_summary, librarian process only): a cycle every
     # map_summary_every_s refreshes at most map_summary_per_cycle stale source summaries whose
     # newest change is older than map_summary_debounce_s (debounce during bursts and imports).
-    map_summary_enabled: bool = True
+    # Default OFF like memory.ask (review 79 T5); it also needs HLM_RESEARCH_ENABLED (the summaries
+    # serve only memory.ask), so an R3 env never starts it. The R4 manifest pins it on.
+    map_summary_enabled: bool = False
     map_summary_every_s: float = Field(default=60.0, gt=0)
     map_summary_debounce_s: float = Field(default=120.0, ge=0)
     map_summary_per_cycle: int = Field(default=8, ge=1, le=200)

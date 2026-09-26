@@ -674,6 +674,19 @@ renders the previous model with it and restores it atomically before the previou
 (a failed rollback step puts the newer env back first). Reinstalling the R2 env by hand before a
 rollback is no longer needed, but harmless.
 
+### R4 release (D-136 memory.ask, review 79 T5)
+
+`memory.ask` (api) and its Memory Map summaries (librarian) default **OFF** in the code: an R3
+`llm.env` on the R4 image never serves `memory.ask` and never spends on it (the R3 manifest also
+keeps `HLM_RESEARCH_ENABLED` and `HLM_MAP_SUMMARY_ENABLED` absent or false). The R4 manifest
+(`RELEASE_MANIFESTS["r4"]`) pins both switches ON, the fallbacks `HLM_FALLBACK_PROFILE__RESEARCH`
+and `HLM_FALLBACK_PROFILE__MAP_SUMMARY`, and the per-question limits `HLM_RESEARCH_MAX_USD` (at most
+0.01) and `HLM_RESEARCH_MAX_TOKENS` (at most 100000); they are part of the env fingerprint and of the
+collect report (the effective `research` state per service). The order is the R3 one: deploy the R4
+ref with the R3 env still installed (checked against the R3 manifest), then run the R4 checkout's
+`install_llm_env.sh` (it writes the template's marker `HLM_ENV_RELEASE=r4` and runs
+`evaluate --release r4`). Rolling back to R3 restores the R3 env with the image.
+
 **Convergence (D-116, review 75).** Every step is journalled in `release-state.json` first, so a
 kill anywhere converges on a re-run of the same command:
 - The snapshot is taken only when its provenance is proven: the non-secret fingerprint of the file

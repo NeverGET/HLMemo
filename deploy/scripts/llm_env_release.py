@@ -17,7 +17,8 @@ rollback step puts the newer env back (rollback_llm_env) before the current rele
 
 D-116 #1 (review 75): a snapshot is recorded as "the env the previous release runs with" only after
 its PROVENANCE is proven: the non-secret fingerprint of the file on disk (the release marker, the
-D-094 profile mapping and the switches the release manifest keeps off) equals what the api AND the
+D-094 profile mapping, the switches the release manifests keep off or pin on and the per-question
+limits) equals what the api AND the
 librarian containers were created with. Otherwise the disk env is not what runs (an install that did
 not recreate the services, a half-finished switch) and the runner STOPS before anything changes.
 The fingerprint never holds a key: only these names are read.
@@ -81,16 +82,27 @@ def restore(source: str, target: Path) -> str:
     return f"llm.env: restored {target} from {path.name}"
 
 
-#: the non-secret keys of the fingerprint: the release marker, the D-094 mapping, the switches
+#: the non-secret keys of the fingerprint: the release marker, the D-094 mapping (every per-task
+#: fallback too, R4's research and map-summary ones included), the switches and (review 79 T5) the
+#: research switches and per-question limits
 FINGERPRINT_KEYS = (
     "HLM_ENV_RELEASE",
     "HLM_PROFILE",
     "HLM_FALLBACK_PROFILE",
     "HLM_QUERY_REWRITE",
     "HLM_RETRIEVAL_SOURCE_CAP",
+    "HLM_RESEARCH_ENABLED",
+    "HLM_MAP_SUMMARY_ENABLED",
+    "HLM_RESEARCH_MAX_USD",
+    "HLM_RESEARCH_MAX_TOKENS",
 )
 TASK_FALLBACK_PREFIX = "HLM_FALLBACK_PROFILE__"
-SWITCHES = ("HLM_QUERY_REWRITE", "HLM_RETRIEVAL_SOURCE_CAP")
+SWITCHES = (
+    "HLM_QUERY_REWRITE",
+    "HLM_RETRIEVAL_SOURCE_CAP",
+    "HLM_RESEARCH_ENABLED",
+    "HLM_MAP_SUMMARY_ENABLED",
+)
 #: keys another env file (app.env) may also set: compared only when llm.env sets them
 SHARED = ("HLM_PROFILE", "HLM_FALLBACK_PROFILE")
 _FALSE = frozenset({"", "0", "false", "no", "off"})

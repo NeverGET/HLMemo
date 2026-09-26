@@ -400,6 +400,9 @@ def test_production_mapping_of_the_template(monkeypatch) -> None:  # noqa: ANN00
         "synthesis": "openrouter",
         "query_rewrite": "openrouter",
         "risk_judge": "openrouter-qwen38-27b-fast",
+        # R4 (review 79 T5): memory.ask's research calls and the Memory Map summaries, pinned
+        "research": "openrouter",
+        "map_summary": "openrouter-glm53-flash",
     }
     # the risk fallback is qualified (G-LIVE-C PASS), so it replaces D-071's retrieval-only fallback
     assert "risk_judge" not in pr.profile_disabled_tasks("openrouter-qwen38-27b-fast")

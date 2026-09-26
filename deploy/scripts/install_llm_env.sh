@@ -23,11 +23,12 @@
 # D-116 #3 (review 75): on a host with a deployed release (release-state.json next to the app
 # checkout, $HLM_REMOTE_DIR, default /opt/hlmemo/app) the install is ONE durable, resumable step
 # under the SAME deploy lock as deploy/rollback: journal (release-state.json env_switch) -> write
-# llm.env -> recreate librarian AND api together -> check_librarian.py evaluate --release r3 against
-# the file on disk -> clear the journal. A kill at any point leaves the journal: deploy and rollback
+# llm.env -> recreate librarian AND api together -> check_librarian.py evaluate --release <the
+# template's HLM_ENV_RELEASE, R4 here> against the file on disk -> clear the journal. A kill at any point leaves the journal: deploy and rollback
 # refuse until install_llm_env.sh is re-run, which finishes the step (the same file is "unchanged",
 # both services are recreated again and checked), so api and librarian never stay on different
-# env releases. A checkout that predates R3 is refused (D-108: deploy R3 first, then its env).
+# env releases. A checkout that predates R3, or whose check_librarian.py has no manifest for the
+# template's release, is refused (D-108: deploy the release first, then its env).
 # SSH: host alias hlm-deploy from <state>/ssh_config (written by first_deploy.sh), like hlm_ops.sh.
 set -Eeuo pipefail
 
@@ -52,6 +53,9 @@ while (($#)); do
 done
 [[ -n $state ]] || { usage >&2; die '--state DIR is required (the target host is never guessed)'; }
 [[ -n $fallback ]] || fallback=$(sed -n 's/^HLM_FALLBACK_PROFILE=//p' "$REPO_ROOT/deploy/llm.env.example" | tail -n 1)
+# D-111/D-116 (review 79 T5): the release marker comes from the template (R4 here), never a literal
+release=$(sed -n 's/^HLM_ENV_RELEASE=\(r[0-9][0-9]*\)$/\1/p' "$REPO_ROOT/deploy/llm.env.example" | tail -n 1)
+[[ -n $release ]] || die 'deploy/llm.env.example has no HLM_ENV_RELEASE=rN marker'
 ssh_config=${HLM_OPS_SSH_CONFIG:-$state/ssh_config}
 [[ -f $ssh_config ]] || die "no SSH config at $ssh_config (run first_deploy.sh first)"
 remote_env=${HLM_REMOTE_ENV:-/etc/hlmemo/prod.env}
@@ -178,7 +182,7 @@ PY
 read -r -d '' remote_sh <<'SH' || true
 set -Eeuo pipefail
 umask 077
-mode=$1 target=$2 app_dir=$3 remote_env=$4 remote_py=$5 operator=$6
+mode=$1 target=$2 app_dir=$3 remote_env=$4 remote_py=$5 operator=$6 release=$7
 parent=$(dirname "$app_dir")
 deployed=0
 [[ -f $parent/release-state.json && -f $app_dir/deploy/scripts/release_state.py ]] && deployed=1
@@ -190,6 +194,10 @@ apply=0
 if ((deployed)) && [[ $mode == install ]]; then
   grep -q RELEASE_MANIFESTS "$app_dir/deploy/scripts/check_librarian.py" || {
     echo 'install_llm_env (remote): the deployed release predates R3; deploy R3 first, then install its llm.env (D-108 Order B); nothing changed' >&2
+    exit 3
+  }
+  grep -q "\"$release\": {" "$app_dir/deploy/scripts/check_librarian.py" || {
+    echo "install_llm_env (remote): the deployed release has no $release manifest; deploy it first, then install its llm.env (D-108 Order B); nothing changed" >&2
     exit 3
   }
   apply=1
@@ -206,12 +214,12 @@ trap 'rm -rf -- "$reports"' EXIT
 bash deploy/scripts/stack.sh exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
   < deploy/scripts/check_librarian.py > "$reports/l.json" || true
 bash deploy/scripts/stack.sh exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$reports/a.json" || true
-python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file "$target" --release r3 \
+python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file "$target" --release "$release" \
   --librarian "$reports/l.json" --api "$reports/a.json" </dev/null
 python3 deploy/scripts/release_state.py end-env-switch "$parent" </dev/null
 echo 'install_llm_env (remote): switch complete (both services run this llm.env, the check passed)'
 SH
-printf -v remote_cmd 'exec bash -c %q install_llm_env %q %q %q %q %q %q' "$remote_sh" "$mode" "$target" "$remote_dir" "$remote_env" "$remote_py" "$operator"
+printf -v remote_cmd 'exec bash -c %q install_llm_env %q %q %q %q %q %q %q' "$remote_sh" "$mode" "$target" "$remote_dir" "$remote_env" "$remote_py" "$operator" "$release"
 rssh() { ssh -F "$ssh_config" -o BatchMode=yes hlm-deploy "$@"; }
 
 if [[ $mode == remove ]]; then
@@ -223,9 +231,9 @@ fi
 [[ -f $key_file && -r $key_file ]] || die "key file not readable: $key_file (pass --key-file FILE)"
 # Build the whole file first (the key stays in this shell's memory; printf is a builtin, so it never
 # appears in any process argv), then send it in one piece on ssh stdin.
-content=$(python3 - "$REPO_ROOT/deploy/llm.env.example" "$key_file" "$REPO_ROOT/profiles" "$profile" "$fallback" <<'PY'
+content=$(python3 - "$REPO_ROOT/deploy/llm.env.example" "$key_file" "$REPO_ROOT/profiles" "$profile" "$fallback" "$release" <<'PY'
 import os, re, sys, tomllib
-example, key_file, profiles, primary, fallback = sys.argv[1:6]
+example, key_file, profiles, primary, fallback, release = sys.argv[1:7]
 END = "# END llm.env (install_llm_env.sh)"
 def fail(msg):
     print(f"install_llm_env: {msg}", file=sys.stderr)
@@ -270,9 +278,10 @@ settings = {
     "HLM_LIBRARIAN_ROLE": "observer",
     "HLM_PROFILE": primary,
     "HLM_FALLBACK_PROFILE": fallback,
-    # D-111/D-116: the release marker (check_librarian.py evaluate checks this env against the R3
-    # manifest: no query rewrite, no per-source cap, the D-094 fallback mapping)
-    "HLM_ENV_RELEASE": "r3",
+    # D-111/D-116: the release marker, the template's (check_librarian.py evaluate checks this env
+    # against that release's manifest: R4 = no query rewrite, no per-source cap, the D-094 fallback
+    # mapping, memory.ask and the Memory Map summaries on with their fallbacks and limits)
+    "HLM_ENV_RELEASE": release,
     **{name: found[name] for name in names},
 }
 out = [
@@ -295,4 +304,4 @@ PY
 echo "install_llm_env: $target on hlm-deploy ($ssh_config): profile=$profile fallback=$fallback role=observer enabled=true"
 printf '%s\n' "$content" | rssh "$remote_cmd"
 unset content
-echo "Done. On a deployed R3 host the switch (both services recreated + the --release r3 check) ran under the deploy lock; re-run this command if it was interrupted (RUNBOOK \"R3 release\")."
+echo "Done. On a deployed host the switch (both services recreated + the --release $release check) ran under the deploy lock; re-run this command if it was interrupted (RUNBOOK \"R3 release\", \"R4 release\")."

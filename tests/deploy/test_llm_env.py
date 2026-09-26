@@ -106,8 +106,15 @@ class InstallLlmEnvTest(unittest.TestCase):
             "HLM_LLM_BUDGET_MONTH_USD=10",
             "HLM_LLM_BUDGET_DISABLED=false",
             "HLM_LLM_JOB_CALL_CAP=20",
-            # D-111/D-116: the release marker (the post-cutover check expects the R3 manifest)
-            "HLM_ENV_RELEASE=r3",
+            # D-111/D-116: the release marker (the post-cutover check expects the R4 manifest)
+            "HLM_ENV_RELEASE=r4",
+            # review 79 T5: the R4 manifest pins memory.ask and the map summaries ON
+            "HLM_RESEARCH_ENABLED=true",
+            "HLM_MAP_SUMMARY_ENABLED=true",
+            "HLM_FALLBACK_PROFILE__RESEARCH=openrouter",
+            "HLM_FALLBACK_PROFILE__MAP_SUMMARY=openrouter-glm53-flash",
+            "HLM_RESEARCH_MAX_USD=0.01",
+            "HLM_RESEARCH_MAX_TOKENS=100000",
         ):
             self.assertIn(line + "\n", content)
         # D-116: R3 ships without the query rewrite and the per-source cap

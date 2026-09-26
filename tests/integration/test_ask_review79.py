@@ -9,17 +9,22 @@ exact scenario and failing on 9bceb59:
   serialisation.
 * T4 — a schema-invalid first attempt plus a paid retry never exceed the per-question cap; a failed
   map summary on an idle database is retried after its back-off.
+* T5 — an R3 env on this image leaves memory.ask off and spends nothing.
 * T6 — a claim (or quote) without the source's "not" is never answered.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import uuid
+from collections.abc import AsyncIterator
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from hlmemo.auth.context import Role
@@ -34,6 +39,8 @@ from hlmemo.librarian.ledger import MemoryLedger
 from hlmemo.librarian.provider import Provider
 from hlmemo.librarian.tasks import map_summary as ms
 from hlmemo.librarian.tasks import research as rs
+from hlmemo.server.app import create_app
+from hlmemo.server.tools import advertised_tools
 from hlmemo.worker.main import drain
 from tests.integration._ask_fixtures import (
     CLIENT,
@@ -44,12 +51,14 @@ from tests.integration._ask_fixtures import (
     seed_world,
 )
 from tests.integration._librarian_fixtures import ScriptedLLM, chat, stub_chain, stub_profile
+from tests.integration._mcp_fixtures import ADMIN_TOKEN, call_tool_raw, mcp_rpc, trusted_device
 
 pytestmark = pytest.mark.integration
 
 ISO = "ask-iso"
 T_SECRET = "T-ONLY-SECRET-q8v"
 PASSWORD = "SuperSecret123456"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -375,6 +384,77 @@ async def test_review79_t4_failed_summary_is_retried_after_the_backoff_on_an_idl
     finally:
         await summ.provider.aclose()
         await _drop_summaries(connect)
+
+
+# --------------------------------------------------------------------------- T5 release defaults
+def _r3_env() -> dict[str, str]:
+    """The R3 llm.env as install_llm_env.sh wrote it: the template without the R4 lines."""
+    env: dict[str, str] = {}
+    for line in (ROOT / "deploy/llm.env.example").read_text().splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not line.startswith("#"):
+            env[key.strip()] = value.strip()
+    for key in list(env):
+        if key.startswith(("HLM_RESEARCH_", "HLM_MAP_SUMMARY_")) or key in (
+            "HLM_FALLBACK_PROFILE__RESEARCH",
+            "HLM_FALLBACK_PROFILE__MAP_SUMMARY",
+        ):
+            del env[key]
+    env.update(
+        HLM_ENV_RELEASE="r3", HLM_LIBRARIAN_ENABLED="true", OPENROUTER_API_KEY="dummy-not-a-key-000000"
+    )
+    return env
+
+
+@contextlib.asynccontextmanager
+async def r3_app(settings: Any) -> AsyncIterator[httpx.AsyncClient]:
+    app = create_app(settings, register_rate_limit=None)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+
+
+async def test_review79_t5_an_r3_env_on_this_image_leaves_memory_ask_off_and_spends_nothing(
+    connect, world, db_dsn, monkeypatch
+) -> None:  # noqa: ANN001
+    from hlmemo.librarian.worker import LibrarianWorker
+
+    env = _r3_env()
+    assert not any(k.startswith("HLM_RESEARCH") or k.startswith("HLM_MAP_SUMMARY") for k in env)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    for key in ("HLM_RESEARCH_ENABLED", "HLM_MAP_SUMMARY_ENABLED"):
+        monkeypatch.delenv(key, raising=False)
+    settings = get_settings(db_dsn=db_dsn, admin_token=ADMIN_TOKEN, registration_secret=None)
+    assert settings.librarian_enabled and settings.llm_mode == "live"
+    assert settings.research_enabled is False and settings.map_summary_enabled is False
+    assert "memory.ask" not in {t.name for t in advertised_tools(settings)}
+    llm = ScriptedLLM(default=_summary)
+    assert rs.Researcher(settings, chain=stub_chain(fallback=False), transport=llm.transport).enabled is False
+
+    async def conn_factory():  # noqa: ANN202
+        return await connect()
+
+    worker = LibrarianWorker(settings, provider=summary_provider(llm), connect=conn_factory)
+    try:
+        assert worker.map_summarizer is None and worker.maybe_map_summaries() is False
+    finally:
+        await worker.provider.aclose()
+    async with await connect() as conn:
+        before = (await (await conn.execute("SELECT count(*) FROM llm_calls")).fetchone())[0]
+        await conn.commit()
+    async with r3_app(settings) as client:
+        _did, token = await trusted_device(client, "ask-r3", grants=[{"project": MAIN, "role": "read"}])
+        listed = (await mcp_rpc(client, token, "tools/list")).json()["result"]["tools"]
+        assert "memory.ask" not in {t["name"] for t in listed}
+        res = await call_tool_raw(client, token, "memory.ask", {"question": "p95 target?", "project": MAIN})
+        assert res["isError"] and json.loads(res["content"][0]["text"])["details"]["reason"] == "disabled"
+    async with await connect() as conn:
+        after = (await (await conn.execute("SELECT count(*) FROM llm_calls")).fetchone())[0]
+        rows = (await (await conn.execute("SELECT count(*) FROM memory_map_summaries")).fetchone())[0]
+        await conn.commit()
+    assert after == before and rows == 0 and llm.calls == 0  # nothing spent, nothing summarised
 
 
 # --------------------------------------------------------------------------- T6 polarity

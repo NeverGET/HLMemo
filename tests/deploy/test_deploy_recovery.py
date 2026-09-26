@@ -100,7 +100,10 @@ def service_filter():
 MANIFEST_KEYS = ("HLM_PROFILE", "HLM_FALLBACK_PROFILE", "HLM_FALLBACK_PROFILE__SYNTHESIS",
                  "HLM_FALLBACK_PROFILE__QUERY_REWRITE", "HLM_FALLBACK_PROFILE__RISK_JUDGE",
                  "HLM_QUERY_REWRITE", "HLM_RETRIEVAL_SOURCE_CAP", "HLM_LLM_BUDGET_HOUR_USD",
-                 "HLM_LLM_BUDGET_DAY_USD", "HLM_LLM_BUDGET_MONTH_USD", "HLM_LLM_BUDGET_DISABLED")
+                 "HLM_LLM_BUDGET_DAY_USD", "HLM_LLM_BUDGET_MONTH_USD", "HLM_LLM_BUDGET_DISABLED",
+                 # R4 (review 79 T5): the research switches, their fallbacks and limits
+                 "HLM_RESEARCH_ENABLED", "HLM_MAP_SUMMARY_ENABLED", "HLM_FALLBACK_PROFILE__RESEARCH",
+                 "HLM_FALLBACK_PROFILE__MAP_SUMMARY", "HLM_RESEARCH_MAX_USD", "HLM_RESEARCH_MAX_TOKENS")
 def dotenv(text):
     out = {}
     for line in text.splitlines():

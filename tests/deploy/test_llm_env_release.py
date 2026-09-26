@@ -175,7 +175,7 @@ class D108RollbackTest(unittest.TestCase):
     def test_previous_release_without_llm_env_rolls_back_to_none(self):
         root, env, result, output = self.r3_over_the_r2_env(r2_env=None)
         self.assertNotEqual(0, result.returncode, output)  # D-111 #6: R3 needs llm.env ...
-        self.assertIn("R3 release: llm.env is required", output)
+        self.assertIn("R4 release: llm.env is required", output)
         self.assertEqual(NEXT, self.state(root)["current_ref"], "... but the cutover stands")
         self.assertEqual("absent", self.state(root)["previous_llm_env"])
         self.install_r3_env(root)
@@ -242,6 +242,44 @@ class LlmEnvHelperTest(unittest.TestCase):
             ler.restore(str(self.dir / "missing"), self.target)
         with self.assertRaises(SystemExit):
             ler.snapshot(self.target, "not-a-ref")
+
+    def test_fingerprint_covers_the_research_switches_fallbacks_and_limits(self):
+        """Review 79 T5: an llm.env with memory.ask / the map summaries switched the other way, or
+        other research fallbacks or per-question limits, has a DIFFERENT fingerprint than what runs
+        (opposite research values used to produce the same fingerprint)."""
+        disk_text = (
+            "HLM_ENV_RELEASE=r4\nHLM_RESEARCH_ENABLED=true\nHLM_MAP_SUMMARY_ENABLED=true\n"
+            "HLM_FALLBACK_PROFILE__RESEARCH=openrouter\nHLM_FALLBACK_PROFILE__MAP_SUMMARY=openrouter-glm53-flash\n"
+            "HLM_RESEARCH_MAX_USD=0.01\nHLM_RESEARCH_MAX_TOKENS=100000\nOPENROUTER_API_KEY=not-in-a-fingerprint\n"
+        )
+        disk = ler.fingerprint_of_dotenv(disk_text)
+        self.assertNotIn("OPENROUTER_API_KEY", disk)
+        for key in (
+            "HLM_RESEARCH_ENABLED",
+            "HLM_MAP_SUMMARY_ENABLED",
+            "HLM_FALLBACK_PROFILE__RESEARCH",
+            "HLM_FALLBACK_PROFILE__MAP_SUMMARY",
+            "HLM_RESEARCH_MAX_USD",
+            "HLM_RESEARCH_MAX_TOKENS",
+        ):
+            self.assertIn(key, disk)
+        same = ler.fingerprint_of_env_list([f"{k}={v}" for k, v in disk.items()])
+        self.assertEqual([], ler.mismatches(disk, same))
+        for key, other in (
+            ("HLM_RESEARCH_ENABLED", "false"),
+            ("HLM_MAP_SUMMARY_ENABLED", "0"),
+            ("HLM_FALLBACK_PROFILE__RESEARCH", "openrouter-glm53-flash"),
+            ("HLM_RESEARCH_MAX_USD", "0.5"),
+        ):
+            with self.subTest(key=key):
+                env = [f"{k}={other if k == key else v}" for k, v in disk.items()]
+                running = ler.fingerprint_of_env_list(env)
+                self.assertEqual(1, len(ler.mismatches(disk, running)), key)
+        # a switch compares by whether it is on: "yes" and "true" are the same state
+        running = ler.fingerprint_of_env_list(
+            [f"{k}={'yes' if k == 'HLM_RESEARCH_ENABLED' else v}" for k, v in disk.items()]
+        )
+        self.assertEqual([], ler.mismatches(disk, running))
 
 
 if __name__ == "__main__":
