@@ -15,9 +15,10 @@ completeness pass):
    question is searched in step 1, inside the request transaction: no DB work overlaps an LLM call.)
 3. **Retrieve** (DB, a fresh short transaction that re-resolves the caller's authority first): every
    query through the internal ``memory.query`` path (``read_service.query_parts``, the caller's
-   scope), reciprocal-rank fusion, ±1-chunk collapse, then an INTERNAL drill of ≤ 12 handles
-   (sections first): ``version_live`` + ``chunk_spans`` exactly like ``memory.drilldown`` but WITHOUT
-   its ``access`` event. A hit or section whose version is not in the VIEW (a device-scoped item of
+   scope), reciprocal-rank fusion (D-165: the top items fused per ITEM, their best in-document chunks
+   drilled first), ±1-chunk collapse, then an INTERNAL drill of ≤ 12 handles (sections first):
+   ``version_live`` + ``chunk_spans`` exactly like ``memory.drilldown`` but WITHOUT its ``access``
+   event. A hit or section whose version is not in the VIEW (a device-scoped item of
    the caller, an item co-owned by a project the caller cannot read or with ``policy.librarian=off``,
    an item written after step 1, an item the D-083 isolation keeps out of the asked project) is
    dropped before any prompt.
@@ -130,9 +131,8 @@ QUERY_BUDGET = 2000  # token budget of each internal memory.query (about 15-25 h
 MAX_DRILL = 12
 #: addendum 7: planned queries run in parallel, at most this many at once per question
 PARALLEL_QUERIES = 3
-#: addendum 6: the top documents whose best-matching chunk may fill FREE drill slots
+#: D-165: the top fused ITEMS whose best in-document chunk takes a drill slot (after the sections)
 DOC_TOP = 4
-DOC_BEST = 3
 REFINE_MAX_NEW = 8
 RRF_K = 60
 #: per-call caps (seconds) inside the whole request's HLM_RESEARCH_TIMEOUT_S
@@ -218,6 +218,32 @@ def rrf(lists: list[list[dict[str, Any]]], k: int = RRF_K) -> list[str]:
     return sorted(score, key=lambda c: (-score[c], order[c]))
 
 
+def rrf_items(lists: list[list[dict[str, Any]]], k: int = RRF_K) -> list[str]:
+    """D-165: reciprocal-rank fusion by ITEM (version): one vote per item per hit list (its best rank
+    there), so a long document whose chunks rank in different queries is not split into weak chunk
+    votes (D-163: ROADMAP #1 in 4 of 5 queries was fused #7 by chunk). Each item is returned as its
+    best chunk-fused handle (``rrf``); items in fused order, ties first-seen."""
+    score: dict[int, float] = {}
+    order: dict[int, int] = {}
+    for hits in lists:
+        voted: set[int] = set()
+        for r, h in enumerate(hits, start=1):
+            try:
+                vid = decode_clue(h.get("clue")).version_id
+            except InvalidClue:
+                continue
+            if vid in voted:
+                continue
+            voted.add(vid)
+            score[vid] = score.get(vid, 0.0) + 1.0 / (k + r)
+            order.setdefault(vid, len(order))
+    rep: dict[int, str] = {}
+    for c in rrf(lists):
+        with contextlib.suppress(InvalidClue):
+            rep.setdefault(decode_clue(c).version_id, c)
+    return [rep[v] for v in sorted(score, key=lambda v: (-score[v], order[v]))]
+
+
 def collapse(handles: list[str], limit: int) -> list[str]:
     """Keep handles in order, skipping a chunk handle already covered by the ±1 neighbourhood of a
     kept chunk handle of the same item (a drilled chunk comes with its neighbours) or by a kept
@@ -241,6 +267,13 @@ def collapse(handles: list[str], limit: int) -> list[str]:
         if len(kept) >= limit:
             break
     return kept
+
+
+def drill_order(sections: list[str], best: list[str], fused: list[str], skip: set[str]) -> list[str]:
+    """What one retrieval drills (≤ ``MAX_DRILL``, ±1-chunk collapse, never a handle in ``skip``): the
+    plan's sections first, then (D-165) the top items' best in-document chunks (``_doc_best``), TAKING
+    slots, then the chunk-fused hits in their order."""
+    return collapse([h for h in [*sections, *best, *fused] if h not in skip], MAX_DRILL)
 
 
 class _AuthorityChanged(Exception):
@@ -374,47 +407,44 @@ class _Run:
                 for q in queries:
                     lists.append(await self._search(c, fresh, q))
             fused = [h for h in rrf(lists) if self._handle_in_view(h)]
-            wanted = collapse([h for h in [*sections, *fused] if h not in skip], MAX_DRILL)
-            if len(wanted) < MAX_DRILL:
-                # addendum 6 (corrected): a top document's best-matching chunk only fills drill slots
-                # left FREE by the ranked chunks; it never displaces one (measured: displacing hurts)
-                best = await self._doc_best(c, fused, [self.question, *queries])
-                wanted = collapse([*wanted, *(h for h in best if h not in skip)], MAX_DRILL)
-            excerpts = await self._drill(c, wanted)
+            # D-165 (D-163 what-if: gold-in-excerpts 20 -> 21 of 25, no losses): the top DOC_TOP
+            # ITEMS (fused per item) drill their best in-document chunk right after the sections,
+            # TAKING slots; the remaining slots keep the chunk-fused order
+            items = [h for h in rrf_items(lists) if self._handle_in_view(h)]
+            best = await self._doc_best(c, items, [self.question, *queries])
+            excerpts = await self._drill(c, drill_order(sections, best, fused, skip))
         return excerpts, lists
 
     async def _search(self, c: AsyncConnection, fresh: AuthContext, query: str) -> list[dict[str, Any]]:
         return await _search(c, fresh, self.slug, query, self.deps)
 
-    async def _doc_best(self, c: AsyncConnection, fused: list[str], texts: list[str]) -> list[str]:
-        """The best-matching chunk (most of the question's and queries' content words and literals)
-        of each of the ``DOC_TOP`` top-ranked documents, as chunk handles (addendum 6 #3)."""
+    async def _doc_best(self, c: AsyncConnection, ranked: list[str], texts: list[str]) -> list[str]:
+        """For each of the ``DOC_TOP`` top-ranked items of ``ranked`` (handles, D-165: one per item
+        in item-fused order), its best-matching chunk (most of the question's and queries' content
+        words, + 2 per literal of the question; ties: the earliest) as a chunk handle (addendum 6
+        #3). An item of one chunk, or none that matches, keeps its own ranked handle."""
         words = set().union(*(rs.content_words(t) for t in texts))
         lits = [x for t in texts[:1] for x in rs.literals(t)]
-        docs: list[int] = []
-        for h in fused:
-            vid = decode_clue(h).version_id
-            if vid not in docs:
-                docs.append(vid)
+        docs: dict[int, str] = {}
+        for h in ranked:
+            docs.setdefault(decode_clue(h).version_id, h)
             if len(docs) >= DOC_TOP:
                 break
         out: list[str] = []
-        for vid in docs:
+        for vid, hit in docs.items():
             item = self.view.get(vid)
-            if item is None or item.n_chunks <= 1:
-                continue  # a one-chunk document is drilled whole by its hit
-            spans = await rq.chunk_spans(c, vid)
-            scored = []
-            for sp in spans:
-                cw = rs.content_words(sp.text)
-                hay = rs.lit_hay(sp.text)
-                score = len(words & cw) + 2 * sum(1 for x in lits if rs.literal_supported(x, hay))
-                scored.append((score, -sp.ordinal, sp.ordinal))
-            if scored:
-                score, _neg, ordinal = max(scored)
-                if score > 0:
-                    out.append(f"v{vid}.{ordinal}")
-        return out[:DOC_BEST]
+            best = hit
+            if item is not None and item.n_chunks > 1:
+                scored = []
+                for sp in await rq.chunk_spans(c, vid):
+                    cw = rs.content_words(sp.text)
+                    hay = rs.lit_hay(sp.text)
+                    score = len(words & cw) + 2 * sum(1 for x in lits if rs.literal_supported(x, hay))
+                    scored.append((score, -sp.ordinal, sp.ordinal))
+                if scored and max(scored)[0] > 0:
+                    best = f"v{vid}.{max(scored)[2]}"
+            out.append(best)
+        return out
 
     def _handle_in_view(self, handle: str) -> bool:
         try:
@@ -1107,6 +1137,8 @@ __all__ = [
     "ask",
     "collapse",
     "default_project",
+    "drill_order",
     "parse_request",
     "rrf",
+    "rrf_items",
 ]

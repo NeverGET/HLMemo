@@ -1050,6 +1050,68 @@ async def test_ask_doc_level_drill_reads_the_best_chunk_of_a_top_document(
     assert len(best) == 1 and best[0] in {f"v{status}.{t}" for t in targets}
 
 
+class _HitsRun(rsv._Run):
+    """A ``_Run`` whose internal ``memory.query`` hits are scripted per query (the DB does the rest)."""
+
+    hits: dict[str, list[str]]
+
+    async def _search(self, c, fresh, query):  # noqa: ANN001, ANN201
+        return [{"clue": h} for h in self.hits[query]]
+
+
+async def test_ask_item_fusion_drills_the_best_chunk_of_a_long_document_first(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """D-165: the per-query hit lists are fused per ITEM (one vote per item per query). A long
+    document whose chunks each rank #1 in a different list (each chunk one or two votes: every chunk
+    fuses below the items that are #2..#n in every list) is the top item, and its best in-document
+    chunk (none of its hit chunks) takes the FIRST drill slot, no longer only a free one after every
+    ranked hit; the rest keeps the chunk-fused order (``drill_order``, ≤ 12 excerpts)."""
+    status = world.versions["status"]
+    async with await connect() as conn:
+        spans = await rq_mod.chunk_spans(conn, status)
+        view = await mm.load_view(conn, world.ctx_reader, world.projects[MAIN])
+        await conn.commit()
+    targets = {f"v{status}.{sp.ordinal}" for sp in spans if "trigram fix" in sp.text}
+    hit_chunks = [f"v{status}.{sp.ordinal}" for sp in spans if f"v{status}.{sp.ordinal}" not in targets]
+    others = [f"v{v.version_id}.0" for v in view if v.version_id != status]
+    assert targets and len(hit_chunks) >= 3 and len(others) >= 4
+    queries = [f"status query {i}" for i in range(len(hit_chunks))]
+    r = make_researcher(db_dsn, ScriptedLLM(default={}))
+    async with await connect() as conn:
+        await conn.commit()
+        run = _HitsRun(
+            conn=conn,
+            ctx=world.ctx_reader,
+            researcher=r,
+            deps=deps,
+            settings=r.settings,
+            question="Is the trigram fix for G-L3 parked?",
+            slug=MAIN,
+            project_id=world.projects[MAIN],
+            end=0.0,
+            reconnect=None,
+            view={v.version_id: v for v in view},
+        )
+        # every list: one chunk of the document at #1 (a different one per query), then every other item
+        run.hits = {q: [h, *others] for q, h in zip(queries, hit_chunks, strict=True)}
+        first = [[{"clue": h} for h in [hit_chunks[0], *others]]]  # the question's own search
+        lists = [*first, *([{"clue": x} for x in run.hits[q]] for q in queries)]
+        items, fused = rsv.rrf_items(lists), rsv.rrf(lists)
+        assert items[0] == hit_chunks[0] and set(items[1:]) == set(others)  # ONE item, the top one
+        assert all(fused.index(h) > fused.index(o) for h in hit_chunks for o in others)  # split by chunk
+        excerpts, got = await run.retrieve(queries, [], first, set())
+        await conn.rollback()
+    await r.aclose()
+    handles = [e.handle for e in excerpts]
+    assert len(got) == 1 + len(queries) and len(handles) == len(set(handles)) <= rsv.MAX_DRILL
+    # the document's best in-document chunk (the trigram fix) is drilled FIRST
+    assert handles[0] in targets and "trigram fix" in excerpts[0].text
+    # then the other top items' own hits and the chunk-fused rest (the hit chunks ±1 of it collapse)
+    assert handles == rsv.drill_order([], [handles[0], *items[1 : rsv.DOC_TOP]], fused, set())
+    assert handles[1 : rsv.DOC_TOP] == items[1 : rsv.DOC_TOP] and set(others) <= set(handles)
+
+
 # --------------------------------------------------------------------------- over MCP (detach)
 @contextlib.asynccontextmanager
 async def ask_app(db_dsn: str, llm: ScriptedLLM, **kw: Any) -> AsyncIterator[httpx.AsyncClient]:

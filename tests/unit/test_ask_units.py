@@ -1019,6 +1019,39 @@ def test_rrf_and_collapse() -> None:
     ]
 
 
+def test_d165_rrf_items_gives_one_vote_per_item_per_query() -> None:
+    """D-165: a long document whose chunks each rank in a different query is ONE item with every
+    query's vote; chunk fusion splits those votes (each of its chunks gets one)."""
+    lists = [
+        [{"clue": "v7.1"}, {"clue": "v3.0"}, {"clue": "v5.2"}],
+        [{"clue": "v7.5"}, {"clue": "v3.0"}, {"clue": "v5.2"}],
+        [{"clue": "v7.9"}, {"clue": "v3.0"}, {"clue": "v5.2"}, {"clue": "bad"}],
+    ]
+    assert rsv.rrf(lists)[:2] == ["v3.0", "v5.2"]  # by chunk: v7's chunks have one vote each
+    assert rsv.rrf(lists).index("v7.1") == 2
+    # by item: v7 is first (3 votes at rank 1), represented by its best chunk-fused handle
+    assert rsv.rrf_items(lists) == ["v7.1", "v3.0", "v5.2"]
+    # one vote per item per list: a second chunk of the same item in one list adds nothing
+    twice = [[{"clue": "v7.1"}, {"clue": "v7.3"}, {"clue": "v3.0"}], [{"clue": "v3.0"}, {"clue": "v7.1"}]]
+    assert rsv.rrf_items(twice) == ["v7.1", "v3.0"]  # tie (1/61 + 1/62 each): first seen
+    assert rsv.rrf_items([]) == [] and rsv.DOC_TOP == 4
+
+
+def test_d165_drill_order_best_chunks_take_slots_and_the_cap_holds() -> None:
+    fused = [f"v{i}.0" for i in range(10, 30)]  # 20 ranked items: more than the cap
+    best = ["v7.12", "v10.0", "v11.3"]  # the top items' best in-document chunks
+    got = rsv.drill_order(["v2", "v5.3"], best, fused, {"v11.3", "v12.0"})
+    assert len(got) == rsv.MAX_DRILL == 12
+    # sections first, then the best chunks (TAKING slots; skipped ones never), then the fused order
+    assert got[:4] == ["v2", "v5.3", "v7.12", "v10.0"] and got[4:] == [
+        f"v{i}.0" for i in (11, *range(13, 20))
+    ]
+    # the old free-slot rule would have drilled none of the best chunks: 12 ranked hits fill the cap
+    assert "v7.12" not in rsv.collapse(["v2", "v5.3", *fused], rsv.MAX_DRILL)
+    # a best chunk next to a section is covered by it (±1 collapse)
+    assert rsv.drill_order(["v7.11"], ["v7.12"], [], set()) == ["v7.11"]
+
+
 def test_parse_request_validation() -> None:
     req = rsv.parse_request({"question": "  what   is x ", "project": "hlmemo"})
     assert (req.question, req.project, req.token_budget) == ("what is x", "hlmemo", rsv.DEFAULT_BUDGET)
