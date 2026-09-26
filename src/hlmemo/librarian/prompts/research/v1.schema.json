@@ -1,28 +1,58 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "research/v1 (one schema for the JOBs plan, answer, check and refine; the JOB's own shape is checked by librarian.tasks.research)",
+  "title": "research/v1 (one schema for the JOBs plan, answer, check, verify and refine; the JOB's own shape is checked by librarian.tasks.research)",
   "type": "object",
   "properties": {
     "queries": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 400}},
     "sections": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 32}},
+    "sub_asks": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "properties": {"ask": {"type": "string", "maxLength": 400}, "covered": {"type": "boolean"}}
+      }
+    },
     "missing": {"type": "array", "maxItems": 24, "items": {"type": "string", "maxLength": 600}},
     "status": {"enum": ["answered", "insufficient_evidence"]},
     "answer": {"type": "string", "maxLength": 6000},
     "claims": {
       "type": "array",
-      "maxItems": 14,
+      "maxItems": 16,
       "items": {
         "type": "object",
         "properties": {
           "text": {"type": "string", "maxLength": 1500},
-          "quote": {"type": "string", "maxLength": 1500},
-          "cite": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 32}}
+          "support": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {"type": "string", "maxLength": 32},
+                "quote": {"type": "string", "maxLength": 1500}
+              },
+              "required": ["id", "quote"]
+            }
+          }
         },
-        "required": ["text", "quote", "cite"]
+        "required": ["text", "support"]
       }
     },
-    "primary": {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 32}},
     "related": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 32}},
-    "confidence": {"enum": ["high", "medium", "low"]}
+    "confidence": {"enum": ["high", "medium", "low"]},
+    "verdicts": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "i": {"type": "integer", "minimum": 0},
+          "entailed": {"enum": ["full", "partial", "none"]},
+          "text": {"type": "string", "maxLength": 1500}
+        },
+        "required": ["i", "entailed"]
+      }
+    }
   }
 }

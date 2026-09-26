@@ -264,6 +264,8 @@ class FakeResearcher:
     abstain: bool = False
     extra_primary: list[str] = field(default_factory=list)  # handles the model tries to cite anyway
     check_adds: list[str] = field(default_factory=list)  # facts only the completeness pass adds
+    verdicts: dict[int, tuple[str, str]] = field(default_factory=dict)  # verify: i -> (entailed, text)
+    verify_answer: str | None = None
     jobs: list[str] = field(default_factory=list)
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -271,6 +273,18 @@ class FakeResearcher:
         self.jobs.append(job)
         if job in ("plan", "refine"):
             return {"queries": self.queries, "sections": self.sections}
+        if job == "verify":
+            claims = inp.get("claims") or []
+            out = []
+            for c in claims:
+                ent, text = self.verdicts.get(c["i"], ("full", ""))
+                out.append({"i": c["i"], "entailed": ent, "text": text})
+            answer = self.verify_answer
+            if answer is None:
+                answer = " ".join(
+                    c["text"] for c in claims if self.verdicts.get(c["i"], ("full", ""))[0] == "full"
+                )
+            return {"verdicts": out, "answer": answer}
         excerpts = inp.get("excerpts") or []
         facts = self.facts + (self.check_adds if job == "check" else [])
         claims = []
@@ -278,14 +292,13 @@ class FakeResearcher:
             for ex in excerpts:
                 s = sentence_with(ex["text"], needle)
                 if s:
-                    claims.append({"text": s, "quote": s, "cite": [ex["id"]]})
+                    claims.append({"text": s, "support": [{"id": ex["id"], "quote": s}, *self._extra()]})
                     break
         if self.abstain or not claims:
             return {
                 "status": "insufficient_evidence",
                 "answer": "",
                 "claims": [],
-                "primary": [],
                 "related": [e["id"] for e in excerpts[:2]],
                 "confidence": "low",
             }
@@ -293,14 +306,23 @@ class FakeResearcher:
             "status": "answered",
             "answer": " ".join(c["text"] for c in claims),
             "claims": claims,
-            "primary": [claims[0]["cite"][0], *self.extra_primary],
-            "related": [e["id"] for e in excerpts if e["id"] != claims[0]["cite"][0]][:3]
+            "related": [e["id"] for e in excerpts if e["id"] != claims[0]["support"][0]["id"]][:3]
             + self.extra_primary,
             "confidence": "high",
         }
         if job == "check":
-            out = {"missing": list(self.check_adds), **out}
+            out = {
+                "sub_asks": [{"ask": "the value", "covered": True}],
+                "missing": list(self.check_adds),
+                **out,
+            }
         return out
+
+    def _extra(self) -> list[dict[str, str]]:
+        """Support the model tries to add from handles it was never shown (must be discarded)."""
+        return [
+            {"id": h, "quote": "a quote from an excerpt that was never shown"} for h in self.extra_primary
+        ]
 
 
 __all__ = [

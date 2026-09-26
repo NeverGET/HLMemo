@@ -22,8 +22,9 @@ from hlmemo.server.tools.schemas import DEFS
 NAME = "memory.ask"
 DESCRIPTION = (
     "Ask the research librarian a question about a project's memory: it searches several ways, reads "
-    "the evidence and answers {answer, confidence, abstained, primary:[{handle,path,quote}], "
-    "related:[{handle,path}]}; open handles with memory.drilldown. Read-only, ~10-20 s."
+    "the evidence and answers {answer, confidence, abstained, claims[{text,support[{handle,quote}]}], "
+    "primary[{handle,path,quote}], related[{handle,path}]}; quotes are verbatim. Open handles with "
+    "memory.drilldown. Read-only, ~10-20 s."
 )
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",

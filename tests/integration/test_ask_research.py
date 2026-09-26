@@ -154,7 +154,7 @@ async def test_ask_answers_with_verified_quotes_and_completeness_pass(connect, w
     finally:
         await r.aclose()
     assert out["abstained"] is False and out["answer"]
-    assert out["meta"]["steps"] == ["plan", "answer", "check"] and out["meta"]["calls"] == 3
+    assert out["meta"]["steps"] == ["plan", "answer", "check", "verify"] and out["meta"]["calls"] == 4
     assert 1 <= len(out["primary"]) <= 3 and len(out["related"]) <= 5
     d004 = world.versions["D-004"]
     assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
@@ -164,12 +164,17 @@ async def test_ask_answers_with_verified_quotes_and_completeness_pass(connect, w
     quotes = [p["quote"] for p in out["primary"]]
     assert "1,6 s" in out["answer"] or any("1,6 s" in q for q in quotes)
     assert out["meta"]["queries"][0] == "What is the current retrieval p95 target and what was it before?"
-    assert out["meta"]["cost_usd"] > 0 and out["meta"]["attempts"] == 3
+    assert out["meta"]["cost_usd"] > 0 and out["meta"]["attempts"] == 4
+    # the claims: each with verbatim support, the answer built from them
+    assert out["claims"] and all(1 <= len(c["support"]) <= 3 for c in out["claims"])
+    assert {p["handle"] for p in out["primary"]} <= {s["handle"] for c in out["claims"] for s in c["support"]}
     assert out["budget"]["used"] <= out["budget"]["limit"] == rsv.DEFAULT_BUDGET
     assert METER.count(out) == out["budget"]["used"]
     # every request is JOB-tagged, the map rides only on plan
     jobs = [request_job(b)[0] for b in llm.requests]
-    assert jobs == ["plan", "answer", "check"]
+    assert jobs == ["plan", "answer", "check", "verify"]
+    verify = llm.requests[3]["messages"][1]["content"]
+    assert "JOB: verify" in verify and '"excerpts"' not in verify  # the self-check sees only quotes
     assert "MEMORY MAP of project ask-main" in llm.requests[0]["messages"][1]["content"]
     assert "MEMORY MAP" not in llm.requests[1]["messages"][1]["content"]
 
@@ -286,11 +291,9 @@ async def test_ask_unverifiable_answer_is_an_abstention(connect, world, deps, db
             "claims": [
                 {
                     "text": "The p95 target is 0.4 s.",
-                    "quote": "the p95 target is 0.4 s on the VPS",
-                    "cite": [ex["id"]],
+                    "support": [{"id": ex["id"], "quote": "the p95 target is 0.4 s on the VPS"}],
                 }
             ],
-            "primary": [ex["id"]],
             "related": [],
             "confidence": "high",
         }
@@ -505,6 +508,22 @@ async def test_ask_over_mcp_outlives_the_request_db_deadline(world, db_dsn) -> N
     assert out["abstained"] is False and out["meta"]["latency_ms"] > 1500
 
 
+async def test_ask_without_the_hold_hits_the_request_deadline(world, db_dsn, monkeypatch) -> None:  # noqa: ANN001
+    """Negative control of the test above: with the hold disabled, the same slow loop is cut by the
+    request deadline (so the extension is what makes a long memory.ask possible)."""
+    from hlmemo.server import middleware
+
+    monkeypatch.setattr(middleware, "DETACHED_HOLD_MAX_S", 0.0)
+    fake = FakeResearcher(facts=["1.2 s"])
+    llm = ScriptedLLM(default=lambda body: ("stall", 0.8, fake(body)))
+    async with ask_app(db_dsn, llm, request_db_timeout_s=1.5) as client:
+        _did, token = await trusted_device(client, "ask-nohold", grants=[{"project": MAIN, "role": "read"}])
+        r = await mcp_rpc(
+            client, token, "tools/call", {"name": "memory.ask", "arguments": {"question": "p95 target?"}}
+        )
+        assert r.status_code == 503 and r.json()["code"] == "E_UNAVAILABLE"
+
+
 async def test_ask_not_listed_when_disabled(world, db_dsn) -> None:  # noqa: ANN001
     async with ask_app(db_dsn, ScriptedLLM(default={}), research_enabled=False) as client:
         _did, token = await trusted_device(client, "ask-off-dev", grants=[{"project": MAIN, "role": "read"}])
@@ -621,6 +640,27 @@ async def test_map_summary_refresh_after_change_only(connect, world, deps, db_ds
         async with await connect() as conn:
             await conn.execute("DELETE FROM memory_map_summaries")
             await conn.commit()
+
+
+async def test_ask_self_check_narrows_or_drops_partly_supported_claims(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """The self-check (gate v1 finding b): a claim its quotes support only in part is narrowed to
+    what the quotes state, one they do not state is dropped, and the answer is rewritten to the rest."""
+    fake = FakeResearcher(
+        facts=["1.2 s", "SQLite", "6k tokens"],
+        verdicts={1: ("none", ""), 2: ("partial", "The Memory Map budget is about 6k tokens.")},
+        verify_answer="The p95 target is 1.2 s. The map budget is about 6k tokens.",
+    )
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm)
+    try:
+        out = await ask(connect, world, deps, r, "What are the p95 target, the store and the map budget?")
+    finally:
+        await r.aclose()
+    texts = [c["text"] for c in out["claims"]]
+    assert not any("SQLite" in t for t in texts)  # judged not entailed: dropped
+    assert "The Memory Map budget is about 6k tokens." in texts  # narrowed to its quote
+    assert out["answer"] == "The p95 target is 1.2 s. The map budget is about 6k tokens."
+    assert out["confidence"] != "high"  # the self-check changed something
 
 
 async def test_ask_concurrent_questions_share_nothing(connect, world, deps, db_dsn) -> None:  # noqa: ANN001

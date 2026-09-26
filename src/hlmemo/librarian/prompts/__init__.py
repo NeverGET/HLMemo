@@ -38,7 +38,7 @@ MAX_TOKENS: dict[str, int] = {
     "relate_verify": 700,
     # D-136 memory.ask (api process): one task for the JOBs plan / answer / check / refine (the
     # per-task fallback key is `research`); an answer with up to 10 quoted claims + reasoning
-    "research": 3000,
+    "research": 4000,
     # D-136 Memory Map L2 summaries (librarian process): 1-3 sentences + reasoning
     "map_summary": 800,
 }

@@ -1,13 +1,15 @@
 """The research librarian's LLM side (``memory.ask``; D-130, D-136): prompts, deterministic answer
 validation and the provider wrapper. ``core/research_service`` runs the loop and the DB phases.
 
-One provider TASK, ``research``, for the four JOBs of the loop (one system prompt, one schema, a
+One provider TASK, ``research``, for the five JOBs of the loop (one system prompt, one schema, a
 job-specific shape check): ``plan`` (map + question → queries + map sections), ``answer`` (excerpts →
-answer + quoted claims + primary/related), ``check`` (the COMPLETENESS pass: question + draft + the
-same excerpts → the full revised answer, with the draft's missing facts listed first) and ``refine``
-(one more search round, only when the answer abstained or is unsure). The per-task fallback is
-therefore ``HLM_FALLBACK_PROFILE__RESEARCH`` (D-094); a profile listing ``research`` in
-``disabled_tasks`` is not used (D-071).
+answer + claims, each with 1-3 verbatim supporting quotes), ``check`` (the COMPLETENESS pass: the
+question's sub-asks against the draft and the same excerpts → the full revised answer; a missing fact
+is added only as a new quoted claim), ``verify`` (the cheap self-check: each claim against ONLY its
+quotes → full / partial (narrowed) / none, and the answer rewritten to the entailed claims) and
+``refine`` (one more search round, only when the answer abstained or is unsure; it takes the
+self-check's call slot). The per-task fallback is therefore ``HLM_FALLBACK_PROFILE__RESEARCH``
+(D-094); a profile listing ``research`` in ``disabled_tasks`` is not used (D-071).
 
 Guards (the W2e/W2d ones): privacy default-deny before EVERY attempt (``precheck``: the strict
 ``librarian.privacy`` gate over exactly the version ids whose text is in the prompt), redaction of
@@ -16,15 +18,15 @@ ledger), the ``latency`` attempt policy (one bounded primary attempt, then the q
 per-profile breakers, a per-request lineage whose DB-enforced ceiling (``MAX_ATTEMPTS``) bounds the
 provider requests of one question, and at most ``MAX_IN_FLIGHT`` questions per process.
 
-Validation (``validate_answer``) is deterministic. Excerpt ids are the handles the caller can drill
-(``vN.M``/``vN``). A claim's ``quote`` must occur in a cited excerpt after ``qnorm`` (NFKC, casefold,
-typographic quotes, markdown markers, whitespace, and a DECIMAL comma between digits read as a point:
-TR "1,6" = "1.6"; a thousands-style "1,600" is left alone); a quote found only in another SHOWN
-excerpt is re-attributed to it; the quote returned is the original substring of the excerpt. Every
-number/identifier/path literal of a claim must occur in its cited excerpts. quote + literals ok →
-kept; literals ok but no verbatim quote → downgraded (its handles are only ``related``); literals
-not ok → dropped. A sentence of the free-text answer whose literals are not in the returned sources
-(primary ∪ related) is dropped. No kept claim (or no answer sentence) left → abstention.
+Validation (``validate_answer``, ``apply_verify``) is deterministic. Excerpt ids are the handles the
+caller can drill (``vN.M``/``vN``). Each quote must occur in the excerpt it names after ``qnorm``
+(NFKC, casefold, typographic quotes, markdown markers, whitespace, and a DECIMAL comma between digits
+read as a point: TR "1,6" = "1.6"; a thousands-style "1,600" is left alone); a quote found only in
+another SHOWN excerpt is re-attributed to it; the quote returned is the original substring of the
+excerpt. A claim is kept only when its quotes TOGETHER contain every number/identifier/path literal of
+the claim; a claim without a verified quote is downgraded (its handles only ``related``) or dropped.
+The free-text answer keeps only the sentences whose literals are in the kept claims' quotes.
+primary = the handles supporting the most kept claims (≤ 3). No kept claim left → abstention.
 """
 
 from __future__ import annotations
@@ -57,8 +59,9 @@ from hlmemo.librarian.tasks.synthesis import claims as literal_claims
 log = logging.getLogger("hlmemo.librarian.research")
 
 TASK = "research"
-JOBS = ("plan", "answer", "check", "refine")
-#: logical LLM calls of one question (plan, answer, [refine, answer], check)
+JOBS = ("plan", "answer", "check", "verify", "refine")
+#: logical LLM calls of one question: plan, answer, check, verify — or, when the answer abstained or
+#: is unsure, plan, answer, refine, answer, check (the refinement takes the self-check's slot)
 MAX_CALLS = 5
 #: provider requests of one question (schema retries and fallbacks included), DB-enforced per lineage
 MAX_ATTEMPTS = 9
@@ -69,7 +72,9 @@ BREAKER_MAX_OPEN_S = 900.0
 #: per-request HTTP timeout ceiling (each attempt is also budgeted to the call's deadline)
 HTTP_TIMEOUT_S = 20.0
 EXCERPT_CHARS = 3200
-MAX_CLAIMS = 10
+MAX_CLAIMS = 12
+#: verbatim quotes per claim (together they must state the whole claim)
+MAX_SUPPORT = 3
 QUOTE_MIN_CHARS = 12
 QUOTE_MAX_CHARS = 600
 ANSWER_MAX_CHARS = 2400
@@ -216,14 +221,28 @@ def answer_user(question: str, excerpts: list[Excerpt]) -> str:
 
 
 def check_user(question: str, draft: dict[str, Any], excerpts: list[Excerpt]) -> str:
-    """The COMPLETENESS pass: the question, the draft (answer text + its claims) and EVERY excerpt
-    the draft was written from, so each retrieved candidate fact can be checked against the draft."""
+    """The COMPLETENESS pass: the question, the draft (answer text + its claims with their quotes)
+    and EVERY excerpt the draft was written from, so each sub-ask and each retrieved candidate fact
+    can be checked against the draft."""
     payload = {
         "question": question,
         "draft": {"answer": draft.get("answer", ""), "claims": draft.get("claims", [])},
         "excerpts": [e.shown() for e in excerpts],
     }
     return "JOB: check\n" + _input(payload)
+
+
+def verify_user(question: str, answer: str, claims: list[Claim]) -> str:
+    """The self-check: the answer and each claim with ONLY its verified quotes (cheap: no
+    documents), so entailment is judged on exactly what the caller will be shown."""
+    payload = {
+        "question": question,
+        "answer": answer,
+        "claims": [
+            {"i": i, "text": c.text, "quotes": [q for _h, q in c.support]} for i, c in enumerate(claims)
+        ],
+    }
+    return "JOB: verify\n" + _input(payload)
 
 
 def refine_user(question: str, tried: list[str], read: list[Excerpt], map_text: str) -> str:
@@ -253,13 +272,17 @@ def job_validator(job: str) -> Callable[[dict[str, Any]], str | None]:
             return "answered without claims"
         return None
 
-    return plan if job in ("plan", "refine") else answer
+    def verify(obj: dict[str, Any]) -> str | None:
+        if not isinstance(obj.get("verdicts"), list) or not isinstance(obj.get("answer"), str):
+            return "verdicts/answer missing"
+        return None
+
+    return {"plan": plan, "refine": plan, "verify": verify}.get(job, answer)
 
 
 def parse_plan(obj: dict[str, Any] | None, question: str) -> tuple[list[str], list[str]]:
     """``(queries, sections)``: at most ``MAX_QUERIES`` distinct non-empty queries other than the
-    question, and at most ``MAX_SECTIONS`` well-formed handles (the caller checks them against the
-    map)."""
+    question, and well-formed handles (the caller checks them against the map)."""
     if not obj:
         return [], []
     seen = {" ".join(question.split()).casefold()}
@@ -277,13 +300,15 @@ def parse_plan(obj: dict[str, Any] | None, question: str) -> tuple[list[str], li
 @dataclass(slots=True)
 class Claim:
     text: str
-    quote: str  # the verbatim span of the quoting excerpt ('' when none verified)
-    cite: list[str]  # handles (shown), the quoting excerpt first
+    support: list[tuple[str, str]]  # (handle, verbatim span of that excerpt), 1..MAX_SUPPORT
     state: str  # kept | downgraded | dropped
-    source: str | None = None  # the handle whose text contains ``quote``
+    cited: list[str] = field(default_factory=list)  # every shown handle the model named for it
 
     def draft(self) -> dict[str, Any]:
-        return {"text": self.text, "quote": self.quote, "cite": self.cite}
+        return {"text": self.text, "support": [{"id": h, "quote": q} for h, q in self.support]}
+
+    def out(self) -> dict[str, Any]:
+        return {"text": self.text, "support": [{"handle": h, "quote": q} for h, q in self.support]}
 
 
 @dataclass(slots=True)
@@ -298,6 +323,7 @@ class Validated:
     guard: bool = False  # the model answered, but nothing survived validation
     dropped_sentences: int = 0
     missing: list[str] = field(default_factory=list)  # check: the facts the draft lacked
+    sub_asks: list[dict[str, Any]] = field(default_factory=list)  # check: the question's parts
 
     @property
     def answered(self) -> bool:
@@ -308,14 +334,15 @@ class Validated:
         return [c for c in self.claims if c.state == "kept"]
 
     def quote_of(self, handle: str) -> str | None:
-        for c in self.claims:
-            if c.state == "kept" and c.source == handle:
-                return c.quote
+        for c in self.kept:
+            for h, q in c.support:
+                if h == handle:
+                    return q
         return None
 
     def draft(self) -> dict[str, Any]:
-        """The draft handed to the completeness pass: the answer and the claims that survived."""
-        return {"answer": self.answer, "claims": [c.draft() for c in self.claims if c.state != "dropped"]}
+        """The draft handed to the completeness pass: the answer and its verified claims."""
+        return {"answer": self.answer, "claims": [c.draft() for c in self.kept]}
 
 
 _SENTENCE = re.compile(r"(?<=[.!?…])\s+(?=\S)")
@@ -325,93 +352,90 @@ def _lower(conf: str) -> str:
     return {"high": "medium", "medium": "low"}.get(conf, "low")
 
 
-def _hay(excerpts: list[Excerpt]) -> str:
-    return _lit_norm("\n".join(f"{e.handle}\n{e.title}\n{e.path}\n{e.text}" for e in excerpts))
+def _hay(parts: list[str]) -> str:
+    return _lit_norm("\n".join(parts))
 
 
-def validate_answer(
-    obj: dict[str, Any] | None, shown: dict[str, Excerpt], redact: Callable[[str], str] = lambda s: s
+def _supports(raw: Any, cited: list[str], shown: dict[str, Excerpt]) -> list[tuple[str, str]]:
+    """The verified support of one claim: each quote located verbatim (``qnorm``) in the excerpt it
+    names, else re-attributed to another SHOWN excerpt holding it; deduplicated, ≤ MAX_SUPPORT."""
+    out: list[tuple[str, str]] = []
+    for s in (raw if isinstance(raw, list) else [])[: MAX_SUPPORT * 2]:
+        if not isinstance(s, dict):
+            continue
+        quote = str(s.get("quote") or "")
+        h = str(s.get("id") or "").strip()
+        span, where = None, None
+        if h in shown:
+            span, where = find_verbatim(quote, shown[h].text), h
+        if span is None:
+            for other in [*cited, *shown]:
+                if other in shown and other != h:
+                    span = find_verbatim(quote, shown[other].text)
+                    if span is not None:
+                        where = other
+                        break
+        if span is None or where is None:
+            continue
+        span = " ".join(span.split())
+        if len(span) > QUOTE_MAX_CHARS:
+            span = span[: QUOTE_MAX_CHARS - 1] + "…"
+        if all(qnorm(span) != qnorm(q) for _h, q in out):
+            out.append((where, span))
+        if len(out) >= MAX_SUPPORT:
+            break
+    return out
+
+
+def rank_sources(claims: list[Claim]) -> list[str]:
+    """Handles by the number of kept claims they support (ties: first appearance)."""
+    count: dict[str, int] = {}
+    order: dict[str, int] = {}
+    for c in claims:
+        if c.state != "kept":
+            continue
+        for h in dict.fromkeys(h for h, _q in c.support):
+            count[h] = count.get(h, 0) + 1
+            order.setdefault(h, len(order))
+    return sorted(count, key=lambda h: (-count[h], order[h]))
+
+
+def assemble(
+    status: str | None,
+    answer: str,
+    claims: list[Claim],
+    related_hint: list[str],
+    conf: str,
+    shown: dict[str, Excerpt],
+    redact: Callable[[str], str],
+    **extra: Any,
 ) -> Validated:
-    """The deterministic check of an ``answer``/``check`` output against the excerpts it was shown
-    (module docstring). Never cites a handle that was not shown."""
-    obj = obj or {}
-    status = obj.get("status") if obj.get("status") in (ANSWERED, INSUFFICIENT) else None
-    conf = obj.get("confidence") if obj.get("confidence") in _CONF else "low"
-    missing = [" ".join(str(m).split())[:200] for m in (obj.get("missing") or []) if str(m).strip()][:12]
-    out_claims: list[Claim] = []
-    raw_claims = obj.get("claims") if isinstance(obj.get("claims"), list) else []
-    for c in raw_claims[:MAX_CLAIMS]:
-        if not isinstance(c, dict):
-            continue
-        text = " ".join(str(c.get("text") or "").split())
-        quote = str(c.get("quote") or "")
-        cites = list(dict.fromkeys(str(x).strip() for x in (c.get("cite") or []) if str(x).strip() in shown))
-        if not text or not cites:
-            out_claims.append(Claim(text, "", cites, "dropped"))
-            continue
-        source, span = None, None
-        for h in cites:
-            span = find_verbatim(quote, shown[h].text)
-            if span is not None:
-                source = h
-                break
-        if span is None:  # re-attribute to another SHOWN excerpt that holds the quote verbatim
-            for h, ex in shown.items():
-                if h in cites:
-                    continue
-                span = find_verbatim(quote, ex.text)
-                if span is not None:
-                    source = h
-                    cites = [h, *cites]
-                    break
-        elif source is not None:
-            cites = [source, *(h for h in cites if h != source)]
-        hay = _hay([shown[h] for h in cites])
-        if not literals_ok(text, hay):
-            out_claims.append(Claim(text, "", cites, "dropped"))
-        elif span is None:
-            out_claims.append(Claim(text, "", cites, "downgraded"))
-        else:
-            span = " ".join(span.split())
-            if len(span) > QUOTE_MAX_CHARS:
-                span = span[: QUOTE_MAX_CHARS - 1] + "…"
-            out_claims.append(Claim(text, redact(span), cites, "kept", source))
-    kept = [c for c in out_claims if c.state == "kept"]
-    answer = " ".join(str(obj.get("answer") or "").split())
-    model_answered = status == ANSWERED and bool(answer)
-    if not model_answered or not kept:
-        closest = [h for h in (obj.get("related") or []) if isinstance(h, str) and h in shown][:3]
+    """The deterministic answer from validated claims: primary = the handles that support the most
+    kept claims (≤ 3); related = the other supporting / named handles and the model's suggestions
+    (≤ 5); a sentence of the free-text answer whose literals are not in the KEPT claims' quotes is
+    dropped (the answer states only what the claims state); nothing kept → an abstention."""
+    kept = [c for c in claims if c.state == "kept"]
+    answer = " ".join(answer.split())
+    if status != ANSWERED or not answer or not kept:
+        closest = [h for h in related_hint if h in shown][:3]
         return Validated(
-            INSUFFICIENT,
-            status,
-            "",
-            out_claims,
-            [],
-            list(dict.fromkeys(closest)),
-            "low",
-            guard=model_answered,
-            missing=missing,
-        )
-    if any(c.state != "kept" for c in out_claims):
+            INSUFFICIENT, status, "", claims, [], list(dict.fromkeys(closest)), "low",
+            guard=status == ANSWERED and bool(answer), **extra,
+        )  # fmt: skip
+    if any(c.state != "kept" for c in claims):
         conf = _lower(conf)
-    quoted = {c.source for c in kept}
-    primary: list[str] = []
+    ranked = rank_sources(claims)
+    primary = ranked[:MAX_PRIMARY]
     related: list[str] = []
-    for h in obj.get("primary") or []:
-        if isinstance(h, str) and h in shown and h not in primary:
-            (primary if h in quoted and len(primary) < MAX_PRIMARY else related).append(h)
-    if not primary:
-        primary = [c.source for c in kept if c.source][:MAX_PRIMARY]
-        primary = list(dict.fromkeys(primary))
     for h in [
-        *(obj.get("related") or []),
-        *(h for c in out_claims if c.state != "dropped" for h in c.cite),
+        *ranked[MAX_PRIMARY:],
+        *(h for c in claims if c.state != "dropped" for h in c.cited),
+        *related_hint,
     ]:
-        if isinstance(h, str) and h in shown and h not in primary and h not in related:
+        if h in shown and h not in primary and h not in related:
             related.append(h)
     related = related[:MAX_RELATED]
-    # the free-text answer: a sentence whose literals are not in the RETURNED sources is dropped
-    hay = _hay([shown[h] for h in [*primary, *related]])
+    hay = _hay([t for c in kept for t in (c.text, *(q for _h, q in c.support))])
     sentences = _SENTENCE.split(answer)
     kept_sentences = [s for s in sentences if literals_ok(s, hay)]
     dropped = len(sentences) - len(kept_sentences)
@@ -421,17 +445,75 @@ def validate_answer(
             INSUFFICIENT,
             status,
             "",
-            out_claims,
+            claims,
             [],
             related[:3],
             "low",
             guard=True,
             dropped_sentences=dropped,
+            **extra,
         )
     if dropped:
         conf = _lower(conf)
     return Validated(
-        ANSWERED, status, text, out_claims, primary, related, conf, dropped_sentences=dropped, missing=missing
+        ANSWERED, status, text, claims, primary, related, conf, dropped_sentences=dropped, **extra
+    )
+
+
+def validate_answer(
+    obj: dict[str, Any] | None, shown: dict[str, Excerpt], redact: Callable[[str], str] = lambda s: s
+) -> Validated:
+    """The deterministic check of an ``answer``/``check`` output against the excerpts it was shown
+    (module docstring). A claim is KEPT when at least one of its quotes is verbatim in a shown
+    excerpt and every literal (number, identifier, path) of the claim is in its quotes TOGETHER;
+    DOWNGRADED (its handles only ``related``) when no quote verifies but its literals are in the
+    excerpts it names; DROPPED otherwise. Never cites a handle that was not shown."""
+    obj = obj or {}
+    status = obj.get("status") if obj.get("status") in (ANSWERED, INSUFFICIENT) else None
+    conf = obj.get("confidence") if obj.get("confidence") in _CONF else "low"
+    missing = [" ".join(str(m).split())[:200] for m in (obj.get("missing") or []) if str(m).strip()][:12]
+    sub_asks = [
+        {"ask": " ".join(str(a.get("ask") or "").split())[:200], "covered": bool(a.get("covered"))}
+        for a in (obj.get("sub_asks") or [])
+        if isinstance(a, dict) and str(a.get("ask") or "").strip()
+    ][:16]
+    claims: list[Claim] = []
+    raw_claims = obj.get("claims") if isinstance(obj.get("claims"), list) else []
+    for c in raw_claims[:MAX_CLAIMS]:
+        if not isinstance(c, dict):
+            continue
+        text = " ".join(str(c.get("text") or "").split())
+        raw_support = c.get("support") if isinstance(c.get("support"), list) else []
+        cited = list(
+            dict.fromkeys(
+                str(s.get("id") or "").strip()
+                for s in raw_support
+                if isinstance(s, dict) and str(s.get("id") or "").strip() in shown
+            )
+        )
+        support = _supports(raw_support, cited, shown)
+        for h, _q in support:
+            if h not in cited:
+                cited.append(h)
+        if not text:
+            claims.append(Claim(text, [], "dropped", cited))
+        elif support and literals_ok(text, _hay([q for _h, q in support])):
+            claims.append(Claim(text, support, "kept", cited))
+        elif cited and literals_ok(text, _hay([shown[h].text for h in cited])):
+            claims.append(Claim(text, [], "downgraded", cited))  # true to its sources, not to a quote
+        else:
+            claims.append(Claim(text, [], "dropped", cited))
+    related_hint = [h for h in (obj.get("related") or []) if isinstance(h, str)]
+    return assemble(
+        status,
+        str(obj.get("answer") or ""),
+        claims,
+        related_hint,
+        conf,
+        shown,
+        redact,
+        missing=missing,
+        sub_asks=sub_asks,
     )
 
 
@@ -440,15 +522,80 @@ def merge_check(draft: Validated, checked: Validated) -> Validated:
     revision lost are carried over (their quotes are verified), so the pass can only add evidence."""
     if not checked.answered:
         return draft
-    have = {qnorm(c.quote) for c in checked.kept}
-    extra = [c for c in draft.kept if qnorm(c.quote) not in have]
-    if extra:
-        checked.claims = [*checked.claims, *extra]
-        for c in extra:
-            if c.source and c.source not in checked.primary and c.source not in checked.related:
-                if len(checked.related) < MAX_RELATED:
-                    checked.related.append(c.source)
-    return checked
+    have = {frozenset(qnorm(q) for _h, q in c.support) for c in checked.kept}
+    extra = [c for c in draft.kept if frozenset(qnorm(q) for _h, q in c.support) not in have]
+    if not extra:
+        return checked
+    claims = [*checked.claims, *extra]
+    merged = assemble(
+        ANSWERED,
+        checked.answer,
+        claims,
+        checked.related,
+        checked.confidence,
+        {h: e for h, e in _shown_of(checked, draft).items()},
+        lambda s: s,
+        missing=checked.missing,
+        sub_asks=checked.sub_asks,
+    )
+    return merged if merged.answered else checked
+
+
+def _shown_of(*vs: Validated) -> dict[str, Excerpt]:
+    """Placeholder excerpts for the handles the validated answers already verified (``assemble``
+    only needs membership for the ranking; the texts were checked before)."""
+    out: dict[str, Excerpt] = {}
+    for v in vs:
+        for c in v.claims:
+            for h in [*c.cited, *(h for h, _q in c.support)]:
+                out.setdefault(h, Excerpt(h, 0, "", "", "", ""))
+        for h in [*v.primary, *v.related]:
+            out.setdefault(h, Excerpt(h, 0, "", "", "", ""))
+    return out
+
+
+def apply_verify(
+    v: Validated, obj: dict[str, Any] | None, redact: Callable[[str], str] = lambda s: s
+) -> Validated:
+    """The self-check: a claim judged ``none`` is dropped; ``partial`` is narrowed to the model's
+    rewrite when that rewrite's literals are all in the claim's quotes, else dropped; ``full`` (or no
+    verdict) is kept. The answer becomes the verify rewrite (then grounded on the remaining claims
+    like any answer); with no usable output the answer is returned unchanged."""
+    if not v.answered or not obj or not isinstance(obj.get("verdicts"), list):
+        return v
+    kept = v.kept
+    verdicts = {
+        int(x["i"]): x
+        for x in obj["verdicts"]
+        if isinstance(x, dict) and isinstance(x.get("i"), int) and 0 <= x["i"] < len(kept)
+    }
+    claims: list[Claim] = []
+    changed = False
+    for i, c in enumerate(kept):
+        vd = verdicts.get(i)
+        verdict = (vd or {}).get("entailed", "full")
+        if verdict == "full":
+            claims.append(c)
+            continue
+        changed = True
+        narrowed = " ".join(str((vd or {}).get("text") or "").split())
+        if verdict == "partial" and narrowed and literals_ok(narrowed, _hay([q for _h, q in c.support])):
+            claims.append(Claim(narrowed, c.support, "kept", c.cited))
+        else:
+            claims.append(Claim(c.text, [], "dropped", c.cited))
+    answer = str(obj.get("answer") or "").strip() or v.answer
+    out = assemble(
+        ANSWERED,
+        answer,
+        claims,
+        v.related,
+        v.confidence if not changed else _lower(v.confidence),
+        _shown_of(v),
+        redact,
+        missing=v.missing,
+        sub_asks=v.sub_asks,
+    )
+    return out
 
 
 # --------------------------------------------------------------------------- the provider wrapper
@@ -684,6 +831,8 @@ __all__ = [
     "Validated",
     "answer_user",
     "app_researcher",
+    "apply_verify",
+    "assemble",
     "check_user",
     "clip",
     "close_app_researcher",
@@ -696,6 +845,8 @@ __all__ = [
     "plan_user",
     "qnorm",
     "refine_user",
+    "rank_sources",
     "research_chain",
     "validate_answer",
+    "verify_user",
 ]

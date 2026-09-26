@@ -23,10 +23,13 @@ completeness pass):
 4. **Answer** (LLM, JOB ``answer``) → deterministic validation (``librarian.tasks.research``).
 5. **Refine** — only when the answer abstained or its confidence is low: JOB ``refine`` (map +
    what was tried and read) → one more retrieval (new handles only) → JOB ``answer`` again.
-6. **Completeness** (LLM, JOB ``check``): the draft + the same excerpts → the full revised answer
+6. **Completeness** (LLM, JOB ``check``): the question's sub-asks against the draft and the same
+   excerpts → the full revised answer, a missing fact added only as a new claim with its own quotes
    (the D-136 fix for the dominant W-B failure: dropped secondary details); validated the same way
    and merged so it can only add verified evidence.
-7. **Re-check** (a fresh short transaction): the device is still trusted, unexpired and on the
+7. **Self-check** (LLM, JOB ``verify``, the refinement's call slot, cheap: no documents): each claim
+   against ONLY its quotes → kept / narrowed / dropped, and the answer rewritten to what remains.
+8. **Re-check** (a fresh short transaction): the device is still trusted, unexpired and on the
    bearer's token generation (else ``E_AUTH``) and still reads the project (else
    ``E_FORBIDDEN_PROJECT``); a returned handle that is no longer citable (current, active, visible,
    read grant + librarian policy on every project) is removed; when ANY version whose text reached
@@ -91,7 +94,7 @@ from hlmemo.librarian.errors import (
 from hlmemo.librarian.tasks import research as rs
 
 TOOL = "memory.ask"
-DEFAULT_BUDGET = 2000
+DEFAULT_BUDGET = 3000
 QUESTION_MAX = 2000
 QUERY_BUDGET = 2000  # token budget of each internal memory.query (about 15-25 hits)
 MAX_DRILL = 12
@@ -102,9 +105,11 @@ PLAN_CAP_S = 10.0
 ANSWER_CAP_S = 18.0
 CHECK_CAP_S = 16.0
 REFINE_CAP_S = 9.0
+VERIFY_CAP_S = 8.0
 #: an optional step starts only with this much time left (the re-check keeps RECHECK_RESERVE_S)
 MIN_REFINE_S = 16.0
 MIN_CHECK_S = 7.0
+MIN_VERIFY_S = 3.0
 MIN_CALL_S = 1.5
 RECHECK_RESERVE_S = 1.0
 DB_PHASE_TIMEOUT_MS = 8000
@@ -430,6 +435,27 @@ class _Run:
         queries, sections = rs.parse_plan(obj, self.question)
         return queries, sections
 
+    async def verify(self, v: rs.Validated, excerpts: list[rs.Excerpt]) -> rs.Validated:
+        """The self-check (JOB ``verify``): the answer and each kept claim with ONLY its quotes; a
+        failed call leaves the answer as it is."""
+        by_handle = {e.handle: e for e in excerpts}
+
+        def build() -> tuple[str, list[int]]:
+            ids = [by_handle[h].version_id for c in v.kept for h, _q in c.support if h in by_handle]
+            return rs.verify_user(self.question, v.answer, v.kept), ids
+
+        try:
+            obj = await self.call("verify", build, VERIFY_CAP_S)
+        except rs.ResearchUnavailable:
+            return v
+        if any(
+            e.version_id in self.excluded
+            for e in excerpts
+            if e.handle in {h for c in v.kept for h, _ in c.support}
+        ):
+            return v
+        return rs.apply_verify(v, obj, self.researcher.redactor.text)
+
     async def answer(
         self, excerpts: list[rs.Excerpt], job: str = "answer", draft: rs.Validated | None = None
     ) -> rs.Validated:
@@ -617,13 +643,16 @@ async def _loop(run: _Run, t_start: Any) -> dict[str, Any]:
             checked = None
         if checked is not None:
             v = rs.merge_check(v, checked)
-    # 7. re-check and assemble
+    # 7. the self-check (the refinement's slot when no refinement ran), time permitting
+    if v.answered and run.calls < rs.MAX_CALLS and run.remaining() >= MIN_VERIFY_S:
+        v = await run.verify(v, excerpts)
+    # 8. re-check and assemble
     return await _finish(run, v, excerpts, t_start)
 
 
 async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_start: Any) -> dict[str, Any]:
     shown = {e.handle: e for e in excerpts}
-    handles = [*v.primary, *v.related]
+    handles = [*v.primary, *v.related, *(h for c in v.kept for h, _q in c.support)]
     vids = sorted(run.sent | {shown[h].version_id for h in handles if h in shown})
     async with run.db() as c:
         fresh = await run.fresh_ctx(c)  # E_AUTH / E_FORBIDDEN_PROJECT
@@ -643,16 +672,33 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
     citable = {r.version_id for r in rows if authz(r) and r.current and r.status == "active"}
     abstain_reason = None
     if lost:
-        # derived text (answer, queries) may carry what the caller can no longer read: withhold it
-        v = rs.Validated(rs.INSUFFICIENT, v.model_status, "", v.claims, [], [], "low")
+        # derived text (answer, claims, queries) may carry what the caller can no longer read
+        v = rs.Validated(rs.INSUFFICIENT, v.model_status, "", [], [], [], "low")
         run.queries = [run.question]
         abstain_reason = "authority_changed"
-    ok = [h for h in handles if h in shown and shown[h].version_id in citable]
-    primary = [h for h in v.primary if h in ok]
-    related = [h for h in v.related if h in ok and h not in primary]
-    answered = v.answered and bool(primary)
-    if v.answered and not primary:
-        abstain_reason = "sources_changed"
+    ok = {h: e for h, e in shown.items() if e.version_id in citable}
+    if v.answered:
+        # a quote whose version is no longer citable is removed; a claim its remaining quotes no
+        # longer fully support is dropped; the answer is grounded again on what is left
+        claims = []
+        for cl in v.kept:
+            sup = [(h, q) for h, q in cl.support if h in ok]
+            if sup and rs.literals_ok(cl.text, rs._hay([q for _h, q in sup])):
+                claims.append(rs.Claim(cl.text, sup, "kept", [h for h in cl.cited if h in ok]))
+        before = len(v.kept)
+        v = rs.assemble(
+            rs.ANSWERED,
+            v.answer,
+            claims,
+            [h for h in v.related if h in ok],
+            v.confidence,
+            ok,
+            run.researcher.redactor.text,
+        )
+        if not v.answered and before:
+            abstain_reason = "sources_changed"
+    related = [h for h in v.related if h in ok]
+    answered = v.answered and bool(v.primary)
     if not answered and abstain_reason is None:
         abstain_reason = "guard" if v.guard else "no_evidence"
 
@@ -665,7 +711,8 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
         "answer": v.answer if answered else "",
         "abstained": not answered,
         "confidence": v.confidence if answered else "low",
-        "primary": [{"handle": h, "path": path(h), "quote": v.quote_of(h) or ""} for h in primary]
+        "claims": [cl.out() for cl in v.kept] if answered else [],
+        "primary": [{"handle": h, "path": path(h), "quote": v.quote_of(h) or ""} for h in v.primary]
         if answered
         else [],
         "related": [{"handle": h, "path": path(h)} for h in (related if answered else related[:3])],
@@ -683,14 +730,18 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
 
 
 def _pack(meter: Meter, out: dict[str, Any], budget: int) -> dict[str, Any]:
-    """Fit ``token_budget``: the query list becomes a count, then related and primary sources are
-    dropped from the tail; the answer is never cut (``E_BUDGET_TOO_SMALL`` with ``min`` instead)."""
+    """Fit ``token_budget``: the query list becomes a count, then related sources, claims and
+    primary sources are dropped from the tail (at least one claim and one primary stay); the answer
+    is never cut (``E_BUDGET_TOO_SMALL`` with ``min`` instead)."""
     used = meter.settle(out, budget)
     if used > budget and isinstance(out["meta"].get("queries"), list):
         out["meta"]["queries"] = len(out["meta"]["queries"])
         used = meter.settle(out, budget)
     while used > budget and out["related"]:
         out["related"].pop()
+        used = meter.settle(out, budget)
+    while used > budget and len(out["claims"]) > 1:
+        out["claims"].pop()
         used = meter.settle(out, budget)
     while used > budget and len(out["primary"]) > 1:
         out["primary"].pop()
