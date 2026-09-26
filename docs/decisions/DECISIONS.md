@@ -1231,3 +1231,20 @@ D-185 | 2026-09-26 | ACCEPTED | **The temporal layer is built (wf-memory-ask da4
 glm-5's "answered negatives" are premise corrections grounded in memory (no Redis name, only an LRU cache; Docker Compose, not Kubernetes; no Grafana, the latency gate is in remote_gates.sh). The strict abstain judge counts those as answers, so they go to D-168 adjudication.
 glm-5's raw scores swing between runs (817aff9: .84 / .853 / .875 against this run's .68 / .626 / .375) and its answers are very long. Only 1–2 questions per run show a superseded excerpt: the 4 links touch few questions.
 **Next:** blind codex adjudication of BOTH runs (correctness plus faithfulness, one mixed packet each); the writer is then decided on adjudicated numbers.
+D-186 | 2026-09-26 | ACCEPTED | **Writer DECIDED on adjudicated numbers: gpt-6-luna with the temporal layer. glm-5's extra correctness costs wrong facts. luna + temporal passes 6/7 consumer-gate criteria on dev, and C2 is one question short of the reference-relative bar.**
+**Blind codex adjudication of both temporal runs** (consults 87/88; faithfulness extrapolated per stratum per D-165):
+| Metric | glm-5 + temporal | **luna + temporal** | Gate |
+|---|---|---|---|
+| C2 correct | 21/25 = .84 (4 judge "wrongs" were runaways or FNs) | 20/25 = .80 (2 FNs overturned) | ≥ .80 and ≥ .83 |
+| C3 faithful | ≈ .80 | **≈ .978** | ≥ .95 |
+| Contradiction statements | 9 (superseded signatures, a "refactor done" that is only in BACKLOG, a SIGKILL cause, a stale STATUS line) | **0** | – |
+| C4 abstain | 7/8 (1 fabrication, B-D073) | **8/8** | ≥ .90 |
+| p95 | 22.8 s | **12.5 s** | ≤ 20 s |
+| $/q | .016 | **.003** | owner cap |
+| C5 recall | – | .86 | ≥ .85 |
+Faithfulness detail:
+- glm-5: 3/4 det-fail, 2/9 entail-false and 32/47 sampled runaway statements are faithful; 3/31 accept sample false.
+- luna: 1/2 det-fail, 4/5 entail-false, 0/18 accept sample false.
+**Scorer fix (wf-research-proto 6f9ab6d):** entail is judged in batches of 6 statements. A long answer's single payload made the judge run away (10/33 questions on the glm-5 run), so that run's first raw numbers (.626 / .375) were artifacts. Re-scored: .862 faithful, .84 correct, 0 runaways.
+**Reading:** the temporal layer plus the concise writer gives the faithfulness the consumer needs. The verbose writer surfaces more superseded or overreaching content than the links cover.
+**Last lever before the final gate (evidence-based, same price):** luna at reasoning effort MEDIUM scored 18/25 against 15/25 at low on the identical writer-sweep contexts (D-174). One end-to-end run with effort medium plus adjudication follows; then the configuration is frozen for the final gate.
