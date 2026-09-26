@@ -245,8 +245,8 @@ class Settings(BaseSettings):
     # earlier release (R3) on this image never serves it and never spends; the R4 release manifest
     # (deploy/scripts/check_librarian.py) pins it on in the R4 llm.env.
     research_enabled: bool = False
-    # The whole memory.ask request (DB phases + at most 4 LLM calls, 6 with research_select, 5 with
-    # research_attribution=llm), seconds.
+    # The whole memory.ask request (DB phases + at most 4 LLM calls, 6 with research_select, one more
+    # each with research_expand and research_attribution=llm), seconds.
     research_timeout_s: float = Field(default=25.0, gt=0, le=120)
     # A runaway guard PER QUESTION (addendum 5): actual spend so far + the next call's worst case
     # (its max_tokens) must stay within these, else the remaining steps are skipped and the answer
@@ -271,6 +271,12 @@ class Settings(BaseSettings):
     # research/v3) names the excerpts per sentence; a failed call, or a sentence it gives none, falls
     # back to "sources". Ignored in the claims and cite modes.
     research_attribution: Literal["sources", "wide", "llm"] = "sources"
+    # D-170: the prose mode's completeness pass: after an answered prose, ONE call (JOB expand,
+    # research/v3) adds up to 6 new sentences stating facts the excerpts give that the answer lacks;
+    # they are appended and pass the same checks (a hard literal no excerpt states drops one), then
+    # the attribution runs over every sentence. Skipped without ~6 s left; a failure keeps the
+    # answer. Ignored in the claims and cite modes.
+    research_expand: bool = False
     # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
     # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
     # (the others stay drillable in `related`); an empty or failed select writes over them all.

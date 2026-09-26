@@ -1370,13 +1370,17 @@ class _ScriptedRun(rsv._Run):
         time_s: float = 60.0,
         mode: str = "cite",
         attribution: str = "sources",
+        expand: bool = False,
     ) -> None:
         import asyncio
 
         from hlmemo.config import get_settings
 
         settings = get_settings(
-            research_answer_mode=mode, research_select=select, research_attribution=attribution
+            research_answer_mode=mode,
+            research_select=select,
+            research_attribution=attribution,
+            research_expand=expand,
         )
         super().__init__(
             conn=None,
@@ -1998,3 +2002,163 @@ async def test_d165_llm_attribution_falls_back_to_sources(attribute: object) -> 
         attribution="llm",
     )
     assert not (await none.answer(list(EXS))).answered and none.steps == ["prose"]
+
+
+# --------------------------------------------------------------------------- D-170 expand
+EXPAND_ANSWER = "The retrieval p95 target is now 1.2 s."
+EXPAND_ADD = [
+    "It was 1,6 s on the VPS (D-001).",  # stated by v10.0/v11.0: kept
+    "On staging the target is 0.3 s.",  # a value no excerpt states: dropped
+    "The retrieval p95 target is now 1.2 s.",  # repeats the answer: ignored by parse_expand
+]
+
+
+def test_d170_added_sentences_are_appended_and_literal_guarded() -> None:
+    added = rs.parse_expand({"add": EXPAND_ADD}, [EXPAND_ANSWER])
+    assert added == EXPAND_ADD[:2]
+    v = rs.validate_prose(_prose(EXPAND_ANSWER, ["v10.0"]), SHOWN, added=added)
+    assert v.answered and v.answer == EXPAND_ANSWER + " It was 1,6 s on the VPS (D-001)."
+    assert [(c.text, c.state, c.added) for c in v.claims] == [
+        (EXPAND_ANSWER, "kept", False),
+        ("It was 1,6 s on the VPS (D-001).", "kept", True),
+        ("On staging the target is 0.3 s.", "dropped", True),
+    ]
+    assert (v.expand_added, v.expand_dropped, v.drop_reasons["literal"]) == (1, 1, 1)
+    assert v.kept[1].support and {h for h, _q in v.kept[1].support} <= {"v10.0", "v11.0"}  # attributed
+    # the added sentences follow a list answer on a new line
+    listed = rs.validate_prose(
+        _prose("- The p95 target is now 1.2 s.\n- It was 1,6 s.", ["v10.0"]),
+        SHOWN,
+        added=["The owner decided it after R3."],
+    )
+    assert listed.answer == "- The p95 target is now 1.2 s.\n- It was 1,6 s.\nThe owner decided it after R3."
+    # [] (or nothing) leaves the answer exactly as it was
+    plain = rs.validate_prose(_prose(EXPAND_ANSWER, ["v10.0"]), SHOWN)
+    for none in ([], None):
+        same = rs.validate_prose(_prose(EXPAND_ANSWER, ["v10.0"]), SHOWN, added=none)
+        assert (same.answer, same.primary, [c.support for c in same.kept]) == (
+            plain.answer,
+            plain.primary,
+            [c.support for c in plain.kept],
+        )
+        assert (same.expand_added, same.expand_dropped) == (0, 0)
+    # an abstention takes no added sentence
+    abstain = rs.validate_prose({"status": "insufficient_evidence", "answer": ""}, SHOWN, added=added)
+    assert not abstain.answered and abstain.expand_added == 0
+    # prose_kept numbers the answer's kept sentences, then the added ones that survive
+    assert rs.prose_kept(_prose(EXPAND_ANSWER, ["v10.0"]), SHOWN, added) == [EXPAND_ANSWER, added[0]]
+
+
+def test_d170_parse_expand_and_the_job() -> None:
+    assert rs.parse_expand(None, []) == [] and rs.parse_expand({"add": "x"}, []) == []
+    many = {"add": [f"Fact {i}." for i in range(10)] + [7, " ", "Fact 1."]}
+    assert rs.parse_expand(many, ["Fact 0."]) == [f"Fact {i}." for i in range(1, 7)]  # ≤ EXPAND_MAX
+    assert rs.parse_expand({"add": ["  Two\n spaced  words. "]}, []) == ["Two spaced words."]
+    msg = rs.expand_user("Q?", ["One.", "Two."], [SHOWN["v10.0"]])
+    payload = json.loads(msg.split("INPUT: ", 1)[1])
+    assert msg.startswith("JOB: expand\n") and payload["question"] == "Q?"
+    assert payload["answer"] == [{"n": 1, "text": "One."}, {"n": 2, "text": "Two."}]
+    assert payload["excerpts"] == [SHOWN["v10.0"].shown()]  # exactly as the prose job saw it
+    from hlmemo.config import get_settings
+
+    v3 = load_task("research", rs.PROSE_PROMPT_VERSION)
+    assert (
+        'JOB "expand"' in v3.system and 'Return {"add": []} when the answer is already complete.' in v3.system
+    )
+    assert all('JOB "expand"' not in load_task("research", v).system for v in (1, 2))
+    assert v3.schema_errors({"add": ["A.", "B."]}) is None and v3.schema_errors({"add": "A."})
+    check = rs.job_validator("expand")
+    assert check({"add": []}) is None and check({"cites": []}) == "add missing"
+    assert "expand" in rs.JOBS and rs.JOB_MAX_TOKENS["expand"] == 1500 and rs.EXPAND_MAX == 6
+    assert get_settings().research_expand is False
+    caps = {}
+    for expand in (False, True):
+        for attribution in ("sources", "llm"):
+            r = rs.Researcher(
+                get_settings(
+                    research_answer_mode="prose", research_expand=expand, research_attribution=attribution
+                )
+            )
+            caps[(expand, attribution)] = (r.expand, r.max_calls)
+    assert caps == {
+        (False, "sources"): (False, 4),
+        (False, "llm"): (False, 5),
+        (True, "sources"): (True, 5),
+        (True, "llm"): (True, 6),
+    }
+    assert max(c for _e, c in caps.values()) == rs.MAX_CALLS  # not raised
+    assert rs.Researcher(get_settings(research_answer_mode="cite", research_expand=True)).expand is False
+
+
+async def test_d170_expand_run_appends_and_counts() -> None:
+    run = _ScriptedRun(
+        {"prose": _prose(EXPAND_ANSWER, ["v10.0"]), "expand": {"add": EXPAND_ADD}},
+        select=False,
+        mode="prose",
+        expand=True,
+    )
+    v = await run.answer(list(EXS))
+    assert run.steps == ["prose", "expand"] and run.shown_to["expand"] == run.shown_to["prose"]
+    assert v.answer == EXPAND_ANSWER + " It was 1,6 s on the VPS (D-001)."
+    assert (run.flags["expand_added"], run.flags["expand_dropped"]) == (1, 1)
+    assert run.flags["expand_skipped"] is False and run.flags["expand_failed"] is False
+    assert run.flags["dropped_literal"] == 1 and v.confidence == "medium"  # the same checks
+    # with the llm attribution: the attribute call numbers the answer's AND the added kept sentences
+    both = _ScriptedRun(
+        {
+            "prose": _prose(EXPAND_ANSWER, ["v10.0"]),
+            "expand": {"add": EXPAND_ADD},
+            "attribute": {"cites": [{"s": 1, "ids": ["v10.0"]}, {"s": 2, "ids": ["v11.0"]}]},
+        },
+        select=False,
+        mode="prose",
+        expand=True,
+        attribution="llm",
+    )
+    bv = await both.answer(list(EXS))
+    assert both.steps == ["prose", "expand", "attribute"]
+    assert [[h for h, _q in c.support] for c in bv.kept] == [["v10.0"], ["v11.0"]]
+    assert set(both.llm_cites) == {EXPAND_ANSWER, "It was 1,6 s on the VPS (D-001)."}
+
+
+@pytest.mark.parametrize(
+    "expand",
+    [{"add": []}, rs.ResearchUnavailable("timeout"), None, {"add": "bad"}],
+    ids=["complete", "failed", "not_made", "malformed"],
+)
+async def test_d170_expand_empty_or_failed_keeps_the_answer(expand: object) -> None:
+    run = _ScriptedRun(
+        {"prose": _prose(EXPAND_ANSWER, ["v10.0"]), "expand": expand}, select=False, mode="prose", expand=True
+    )
+    v = await run.answer(list(EXS))
+    plain = rs.validate_prose(_prose(EXPAND_ANSWER, ["v10.0"]), {e.handle: e for e in EXS})
+    assert run.steps == ["prose", "expand"] and v.answer == plain.answer == EXPAND_ANSWER
+    assert [c.support for c in v.kept] == [c.support for c in plain.kept] and v.confidence == "high"
+    assert (run.flags["expand_added"], run.flags["expand_dropped"]) == (0, 0)
+    assert run.flags["expand_failed"] is isinstance(expand, rs.ResearchUnavailable)
+    assert run.flags["expand_skipped"] is (expand is None)  # None: the call was not made
+
+
+async def test_d170_expand_is_skipped_without_time_or_answer() -> None:
+    late = _ScriptedRun(
+        {"prose": _prose(EXPAND_ANSWER, ["v10.0"]), "expand": {"add": EXPAND_ADD}},
+        select=False,
+        mode="prose",
+        expand=True,
+        time_s=rsv.RECHECK_RESERVE_S + rsv.EXPAND_MIN_S - 1.0,
+    )
+    v = await late.answer(list(EXS))
+    assert late.steps == ["prose"] and v.answer == EXPAND_ANSWER and late.flags["expand_skipped"] is True
+    abstain = _ScriptedRun(
+        {
+            "prose": {"status": "insufficient_evidence", "answer": "", "related": []},
+            "expand": {"add": EXPAND_ADD},
+        },
+        select=False,
+        mode="prose",
+        expand=True,
+    )
+    assert not (await abstain.answer(list(EXS))).answered and abstain.steps == ["prose"]
+    off = _ScriptedRun({"prose": _prose(EXPAND_ANSWER, ["v10.0"])}, select=False, mode="prose")
+    await off.answer(list(EXS))
+    assert off.steps == ["prose"] and "expand_added" not in off.flags

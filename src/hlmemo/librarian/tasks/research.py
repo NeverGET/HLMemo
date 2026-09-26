@@ -91,7 +91,7 @@ from hlmemo.librarian.tasks.synthesis import claims as literal_claims
 log = logging.getLogger("hlmemo.librarian.research")
 
 TASK = "research"
-JOBS = ("plan", "answer", "check", "refine", "write", "select", "prose", "attribute")
+JOBS = ("plan", "answer", "check", "refine", "write", "select", "prose", "attribute", "expand")
 #: D-156: ``claims`` (the default: quoted claims + the completeness pass, research/v1) or ``cite``
 #: (V14 "write, then cite": sentences citing excerpt handles, verified deterministically, research/v2);
 #: D-162: ``prose`` (V16: free prose, only fabricated values dropped, research/v3)
@@ -102,6 +102,8 @@ ANSWER_MODES = ("claims", "cite", "prose")
 ATTRIBUTIONS = ("sources", "wide", "llm")
 #: D-165 ``llm``: the excerpt ids one sentence may be attributed to (the prompt says "1 to 3")
 ATTRIBUTE_MAX = 3
+#: D-170 expand (``HLM_RESEARCH_EXPAND``): the new sentences one expand call may add ("up to 6")
+EXPAND_MAX = 6
 #: the opt-in prompt versions of the cite and prose modes (``prompts.OPT_IN_VERSIONS``: never the
 #: default)
 CITE_PROMPT_VERSION = 2
@@ -112,7 +114,10 @@ PROSE_PROMPT_VERSION = 3
 #: write (cite mode + ``HLM_RESEARCH_SELECT``) adds one select before each write: plan, select,
 #: write — or plan, select, write, refine, select, write (``MAX_CALLS``). D-165 ``llm`` attribution
 #: (prose mode) adds one attribute after an answered prose: plan, prose, attribute — or plan, prose,
-#: refine, prose, attribute (``MAX_CALLS_ATTRIBUTE``)
+#: refine, prose, attribute (``MAX_CALLS_ATTRIBUTE``). D-170 expand (prose mode) adds one expand after
+#: an answered prose (before the attribute): the prose mode's cap is ``MAX_CALLS_NO_SELECT`` + 1 per
+#: extra JOB on (expand, llm attribution), at most ``MAX_CALLS`` (plan, prose, refine, prose, expand,
+#: attribute)
 MAX_CALLS = 6
 MAX_CALLS_NO_SELECT = 4
 MAX_CALLS_ATTRIBUTE = 5
@@ -130,6 +135,7 @@ JOB_MAX_TOKENS = {
     "select": 800,
     "prose": 3000,
     "attribute": 1500,
+    "expand": 1500,
 }
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
@@ -747,10 +753,17 @@ def job_validator(job: str) -> Callable[[dict[str, Any]], str | None]:
             return "cites missing"
         return None
 
+    def expand(obj: dict[str, Any]) -> str | None:
+        if not isinstance(obj.get("add"), list):
+            return "add missing"
+        return None
+
     if job == "prose":
         return prose
     if job == "attribute":
         return attribute
+    if job == "expand":
+        return expand
     return write if job == "write" else answer
 
 
@@ -794,8 +807,10 @@ class Claim:
     support: list[tuple[str, str]]  # (handle, verbatim span of that excerpt), 1..MAX_SUPPORT
     state: str  # kept | downgraded | dropped
     cited: list[str] = field(default_factory=list)  # every shown handle the model named for it
-    #: D-162 prose mode: whether a line break followed it in the answer (kept when re-joined)
+    #: D-162 prose mode: whether a line break followed it in the answer (kept when re-joined);
+    #: D-170: whether it was added by the expand pass
     line_end: bool = False
+    added: bool = False
 
     def draft(self) -> dict[str, Any]:
         return {"text": self.text, "support": [{"id": h, "quote": q} for h, q in self.support]}
@@ -834,6 +849,10 @@ class Validated:
     # D-162 prose mode: the model's valid ``sources`` (an attribution tie-break, D-165; the re-check
     # attributes the sentences again over the excerpts still citable)
     sources: list[str] = field(default_factory=list)
+    # D-170 expand: the added sentences kept, and those dropped (a hard literal no excerpt states, or
+    # past the answer's length cap)
+    expand_added: int = 0
+    expand_dropped: int = 0
 
     @property
     def answered(self) -> bool:
@@ -1852,13 +1871,14 @@ def attribute(
 
 
 def _prose_keep(
-    sentences: list[tuple[str, bool]], shown: dict[str, Excerpt]
+    sentences: list[tuple[str, bool]], shown: dict[str, Excerpt], added_from: int | None = None
 ) -> tuple[list[Claim], dict[str, int], list[str]]:
     """D-162: the literal check of prose sentences: ``(claims, drop counts by reason, the kept
     sentences as written)``. A sentence is DROPPED only when one of its hard literals is in no shown
     excerpt (texts, titles and dates together: what the model was shown), or (``unsupported``) when
     nothing was shown; every other one is KEPT (its support is ``attribute``'s). Sentences past
-    ``ANSWER_MAX_CHARS`` of kept text are not checked."""
+    ``ANSWER_MAX_CHARS`` of kept text are not checked. D-170: the sentences from index
+    ``added_from`` on are the expand pass's (``Claim.added``)."""
     hay = "\n".join(_hay([e.title, e.date, e.text]) for e in shown.values())
     claims: list[Claim] = []
     reasons = {"literal": 0, "unsupported": 0}
@@ -1870,9 +1890,10 @@ def _prose_keep(
         if last is not None and brk:
             last.line_end = True
 
-    for raw, brk in sentences:
+    for i, (raw, brk) in enumerate(sentences):
         text, _inline = split_inline_cites(raw, shown)
         body = _body(text)
+        added = added_from is not None and i >= added_from
         if not any(ch.isalnum() for ch in body):
             continue
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
@@ -1884,13 +1905,27 @@ def _prose_keep(
             why = "unsupported"
         if why is not None:
             reasons[why] += 1
-            claims.append(Claim(text, [], "dropped", line_end=brk))
+            claims.append(Claim(text, [], "dropped", line_end=brk, added=added))
             carry(brk)
             continue
         size += len(text) + (1 if size else 0)
-        claims.append(Claim(text, [], "kept", line_end=brk))
+        claims.append(Claim(text, [], "kept", line_end=brk, added=added))
         raws.append(raw)
     return claims, reasons, raws
+
+
+def _prose_sentences(answer: str, added: list[str] | None) -> tuple[list[tuple[str, bool]], int]:
+    """``(the sentences of a prose answer and then of its added sentences, the index of the first
+    added one)`` (D-170): the added sentences follow the answer, after a line break when the answer
+    is laid out in lines (a list), else after a space."""
+    sentences = split_sentences(answer)
+    start = len(sentences)
+    if added:
+        if sentences and "\n" in answer.strip():
+            sentences[-1] = (sentences[-1][0], True)
+        for a in added:
+            sentences += split_sentences(a)
+    return sentences, start
 
 
 def prose_check(
@@ -1901,13 +1936,15 @@ def prose_check(
     *,
     embed: Embed | LineSim | None = None,
     llm_cites: dict[str, list[str]] | None = None,
+    added_from: int | None = None,
 ) -> tuple[list[Claim], dict[str, int]]:
     """D-162: the deterministic check of prose sentences (``split_sentences``) against the excerpts
     the answer was written from: ``(claims, drop counts by reason)``. A sentence is dropped only for
-    a hard literal no shown excerpt states (``_prose_keep``); every other one is kept and attributed
-    by ``attribute`` with ``strategy`` (D-165; ``llm_cites``: the JOB attribute's ids per kept sentence
-    TEXT). There is no polarity check (D-165: its flags were false positives)."""
-    claims, reasons, raws = _prose_keep(sentences, shown)
+    a hard literal no shown excerpt states (``_prose_keep``; ``added_from``: D-170's added ones);
+    every other one is kept and attributed by ``attribute`` with ``strategy`` (D-165; ``llm_cites``:
+    the JOB attribute's ids per kept sentence TEXT). There is no polarity check (D-165: its flags were
+    false positives)."""
+    claims, reasons, raws = _prose_keep(sentences, shown, added_from)
     kept = [c for c in claims if c.state == "kept"]
     cites = [llm_cites.get(c.text, []) for c in kept] if llm_cites is not None else None
     supports = attribute(raws, shown, strategy, model_sources=sources, llm_cites=cites, embed=embed)
@@ -1981,11 +2018,15 @@ def _prose_fields(
     return status, conf, sources[:PROSE_MAX_SOURCES], related_hint, answer
 
 
-def prose_kept(obj: dict[str, Any] | None, shown: dict[str, Excerpt]) -> list[str]:
-    """D-165: the sentences of a ``prose`` output that survive the literal check, as they are kept in
-    the answer (the numbered sentences of the JOB attribute; their order is ``validate_prose``'s)."""
+def prose_kept(
+    obj: dict[str, Any] | None, shown: dict[str, Excerpt], added: list[str] | None = None
+) -> list[str]:
+    """D-165: the sentences of a ``prose`` output (and D-170 its ``added`` sentences) that survive the
+    literal check, as they are kept in the answer (the numbered sentences of the JOBs expand and
+    attribute; their order is ``validate_prose``'s)."""
     _s, _c, _src, _rel, answer = _prose_fields(obj, shown)
-    claims, _reasons, _raws = _prose_keep(split_sentences(answer), shown)
+    sentences, start = _prose_sentences(answer, added)
+    claims, _reasons, _raws = _prose_keep(sentences, shown, start)
     return [c.text for c in claims if c.state == "kept"]
 
 
@@ -1997,15 +2038,19 @@ def validate_prose(
     *,
     embed: Embed | LineSim | None = None,
     llm_cites: dict[str, list[str]] | None = None,
+    added: list[str] | None = None,
 ) -> Validated:
     """D-162: the deterministic check of a ``prose`` output against the excerpts it was shown
     (``prose_check``): sentences with a fabricated hard literal are dropped (``drop_reasons``), the
-    rest is the answer, attributed by ``strategy`` (D-165 ``attribute``). Never cites a handle that
-    was not shown."""
+    rest is the answer, attributed by ``strategy`` (D-165 ``attribute``). D-170: the expand pass's
+    ``added`` sentences follow the answer's and pass the same checks (``expand_added`` kept,
+    ``expand_dropped`` not). Never cites a handle that was not shown."""
     status, conf, sources, related_hint, answer = _prose_fields(obj, shown)
+    sentences, start = _prose_sentences(answer, added if status == ANSWERED else None)
     claims, reasons = prose_check(
-        split_sentences(answer), sources, shown, strategy, embed=embed, llm_cites=llm_cites
+        sentences, sources, shown, strategy, embed=embed, llm_cites=llm_cites, added_from=start
     )
+    kept_added = sum(1 for c in claims if c.added and c.state == "kept")
     return assemble_prose(
         status,
         claims,
@@ -2017,7 +2062,40 @@ def validate_prose(
         dropped_claims=sum(1 for c in claims if c.state != "kept"),
         main_dropped=bool(claims) and claims[0].state != "kept",
         drop_reasons=reasons,
+        expand_added=kept_added,
+        expand_dropped=len(sentences) - start - kept_added,
     )
+
+
+def expand_user(
+    question: str, sentences: list[str], excerpts: list[Excerpt], redact: Redact | None = None
+) -> str:
+    """D-170: the JOB ``expand`` (the question, the current answer's kept sentences numbered from 1,
+    and the excerpts exactly as the prose job saw them)."""
+    payload = {
+        "question": question,
+        "answer": [{"n": i, "text": s} for i, s in enumerate(sentences, start=1)],
+        "excerpts": [e.shown() for e in excerpts],
+    }
+    return "JOB: expand\n" + _input(payload, redact)
+
+
+def parse_expand(obj: dict[str, Any] | None, answer: list[str]) -> list[str]:
+    """D-170: the new sentences of an expand output (``add``): strings with a letter or digit,
+    whitespace collapsed, none repeating a sentence of ``answer`` or an earlier one, ≤ ``EXPAND_MAX``;
+    ``[]`` for none or a malformed output."""
+    raw = obj.get("add") if isinstance(obj, dict) else None
+    seen = {qnorm(x) for x in answer}
+    out: list[str] = []
+    for x in raw if isinstance(raw, list) else []:
+        text = " ".join(x.split()) if isinstance(x, str) else ""
+        if not any(ch.isalnum() for ch in text) or qnorm(text) in seen:
+            continue
+        seen.add(qnorm(text))
+        out.append(text)
+        if len(out) >= EXPAND_MAX:
+            break
+    return out
 
 
 def attribute_user(
@@ -2263,8 +2341,10 @@ class Researcher:
         # D-165: the prose mode's attribution strategy (the others have their own checks)
         attribution = getattr(settings, "research_attribution", "sources")
         self.attribution: str = attribution if attribution in ATTRIBUTIONS else "sources"
-        if self.answer_mode == "prose" and self.attribution == "llm":
-            self.max_calls = MAX_CALLS_ATTRIBUTE
+        # D-170: the prose mode's expand (completeness) pass
+        self.expand: bool = self.answer_mode == "prose" and bool(getattr(settings, "research_expand", False))
+        if self.answer_mode == "prose":
+            self.max_calls = MAX_CALLS_NO_SELECT + int(self.expand) + int(self.attribution == "llm")
         # D-156/D-162: the cite and prose modes' prompts are opt-in versions; the claims mode keeps the
         # default (v1, or a pin) unless that prompt has no JOB "answer" (another mode's prompt pinned
         # by mistake)
@@ -2471,6 +2551,7 @@ __all__ = [
     "ANSWER_MODES",
     "ATTRIBUTE_MAX",
     "ATTRIBUTIONS",
+    "EXPAND_MAX",
     "CITE_PROMPT_VERSION",
     "DROP_REASONS",
     "INSUFFICIENT",
@@ -2492,6 +2573,7 @@ __all__ = [
     "app_researcher",
     "attribute",
     "attribute_user",
+    "expand_user",
     "assemble",
     "assemble_cited",
     "assemble_prose",
@@ -2510,6 +2592,7 @@ __all__ = [
     "literals_ok",
     "merge_check",
     "parse_attribute",
+    "parse_expand",
     "parse_plan",
     "parse_select",
     "plan_user",

@@ -63,11 +63,15 @@ similarity of the server's own embedder, the one the hybrid search embeds querie
 embedding of the kept sentences and the excerpt lines per answer, ``research.LineSim``, within
 ``research.ATTR_EMBED_S``); ``llm`` (ONE more call after an answered prose, JOB ``attribute``: the ids
 that state each numbered kept sentence; a failed call, or a sentence given none, falls back to
-``sources``). There is no polarity flag.
+``sources``). There is no polarity flag. D-170 ``HLM_RESEARCH_EXPAND``: after an answered prose, ONE
+JOB ``expand`` (the kept sentences numbered, the same excerpts) adds up to 6 new sentences; they are
+appended and pass the same literal check, then the attribution runs over all sentences. It is
+skipped with less than ``EXPAND_MIN_S`` left (``expand_skipped``); a failure keeps the answer.
 
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write), ``research.MAX_CALLS_ATTRIBUTE`` (5) with
-the D-165 llm attribution (plan, prose, refine, prose, attribute); provider requests (schema retries,
+the D-165 llm attribution (plan, prose, refine, prose, attribute), one more with the D-170 expand
+(plan, prose, refine, prose, expand, attribute); provider requests (schema retries,
 fallback) are capped per question by the lineage ceiling (``research.MAX_ATTEMPTS``). Before every
 call the strict privacy gate runs over exactly the version ids whose text is in the prompt: denied
 items are removed and the prompt rebuilt; an item that was already SENT and is now denied for a
@@ -145,6 +149,11 @@ CHECK_CAP_S = 16.0
 REFINE_CAP_S = 9.0
 #: D-165: the JOB attribute's cap (llm attribution)
 ATTRIBUTE_CAP_S = 10.0
+#: D-170: the JOB expand's cap; it starts only with EXPAND_MIN_S left (for it and the attribution),
+#: leaving EXPAND_ATTRIBUTE_RESERVE_S to an llm attribute call
+EXPAND_CAP_S = 8.0
+EXPAND_MIN_S = 6.0
+EXPAND_ATTRIBUTE_RESERVE_S = 3.0
 #: D-159: the select call's cap, and the time it must leave for the write (else no select)
 SELECT_CAP_S = 8.0
 SELECT_WRITE_RESERVE_S = 8.0
@@ -744,9 +753,10 @@ class _Run:
         if obj is None:
             return rs.validate_prose(obj, shown, self.researcher.redactor.text)
         self.excerpts_shown = list(shown)
+        added = await self.expand_call(obj, shown) if self.researcher.expand else None
         strategy, self.sim, self.llm_cites = self.researcher.attribution, None, None
         if strategy == "llm":
-            self.llm_cites = await self.attribute_call(obj, shown)
+            self.llm_cites = await self.attribute_call(obj, shown, added)
             self.flags["attr_fallback"] = self.llm_cites is None
             if self.llm_cites is None:
                 strategy = "sources"
@@ -761,7 +771,11 @@ class _Run:
             strategy,
             embed=self.sim,
             llm_cites=self.llm_cites,
+            added=added,
         )
+        if self.researcher.expand:
+            self.flags["expand_added"] = v.expand_added
+            self.flags["expand_dropped"] = v.expand_dropped
         self.flags["dropped_claims"] = v.dropped_claims
         self.flags["main_dropped"] = v.main_dropped
         self.flags["dropped_literal"] = v.drop_reasons.get("literal", 0)
@@ -774,14 +788,46 @@ class _Run:
             self.flags["attr_llm_cited"] = sum(1 for ids in self.llm_cites.values() if ids)
         return v
 
-    async def attribute_call(
-        self, obj: dict[str, Any], shown: dict[str, rs.Excerpt]
-    ) -> dict[str, list[str]] | None:
-        """D-165 ``llm``: the JOB ``attribute`` over the kept sentences of the prose output and the
-        excerpts the prose job saw (through the same gate, budget and attempt guards as every call)
-        → the excerpt ids per kept sentence text; None (the caller falls back to ``sources``) when
-        nothing was kept, or the call failed, timed out or was not made (call cap, question budget)."""
+    async def expand_call(self, obj: dict[str, Any], shown: dict[str, rs.Excerpt]) -> list[str] | None:
+        """D-170: the JOB ``expand`` over the kept sentences of the prose output (numbered) and the
+        excerpts the prose job saw, through the same gate, budget and attempt guards → the new
+        sentences to append (``rs.parse_expand``; ``[]``: complete). None keeps the answer as is:
+        nothing kept, less than ``EXPAND_MIN_S`` left or the call cap reached (``expand_skipped``),
+        or a failed call (``expand_failed``)."""
+        self.flags["expand_skipped"] = self.flags["expand_failed"] = False
         sentences = rs.prose_kept(obj, shown)
+        if not sentences:
+            return None
+        left = self.remaining()
+        if left < EXPAND_MIN_S:
+            self.flags["expand_skipped"] = True
+            return None
+        reserve = EXPAND_ATTRIBUTE_RESERVE_S if self.researcher.attribution == "llm" else 0.0
+        excerpts = list(shown.values())
+
+        def build() -> tuple[str, list[int]]:
+            ex = [e for e in excerpts if e.version_id not in self.excluded]
+            return rs.expand_user(self.question, sentences, ex, self.redact), [e.version_id for e in ex]
+
+        try:
+            out = await self.call("expand", build, min(EXPAND_CAP_S, left - reserve))
+        except rs.ResearchUnavailable:
+            self.flags["expand_failed"] = True
+            return None
+        if out is None:
+            self.flags["expand_skipped"] = True
+            return None
+        return rs.parse_expand(out, sentences)
+
+    async def attribute_call(
+        self, obj: dict[str, Any], shown: dict[str, rs.Excerpt], added: list[str] | None = None
+    ) -> dict[str, list[str]] | None:
+        """D-165 ``llm``: the JOB ``attribute`` over the kept sentences of the prose output (D-170: and
+        its added ones) and the excerpts the prose job saw (through the same gate, budget and attempt
+        guards as every call) → the excerpt ids per kept sentence text; None (the caller falls back
+        to ``sources``) when nothing was kept, or the call failed, timed out or was not made (call
+        cap, question budget)."""
+        sentences = rs.prose_kept(obj, shown, added)
         if not sentences:
             return None
         excerpts = list(shown.values())
@@ -901,6 +947,10 @@ async def ask(
                 run.flags.update({"attr_embed": "off", "attr_embedded": 0, "attr_embed_ms": 0})
             if researcher.attribution == "llm":
                 run.flags.update({"attr_fallback": False, "attr_llm_cited": 0})
+            if researcher.expand:  # D-170
+                run.flags.update(
+                    {"expand_added": 0, "expand_dropped": 0, "expand_skipped": False, "expand_failed": False}
+                )
         readable = (
             {p for v in view for p in v.project_ids} | {project.project_id}
             if ctx.is_admin

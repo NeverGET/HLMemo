@@ -548,6 +548,47 @@ async def test_ask_prose_mode_llm_attribution_falls_back_to_sources(connect, wor
     assert handle_re(d004).fullmatch(out["primary"][0]["handle"])
 
 
+async def test_ask_prose_mode_expand_appends_checked_sentences(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """D-170 HLM_RESEARCH_EXPAND: after the answered prose, ONE JOB expand (the kept sentences
+    numbered, the same excerpts); its sentences are appended and pass the same literal check (a value
+    no excerpt states is dropped), then attributed like the others."""
+    fake = FakeResearcher(
+        facts=["1.2 s"],
+        expand_add=[
+            "It was 1,6 s on the VPS before D-004.",
+            "The owner decided it after the R3 release.",
+            "On staging the target is 0.3 s.",
+        ],
+    )
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", research_expand=True)
+    try:
+        out = await ask(
+            connect, world, deps, r, "What is the retrieval p95 target, what was it before and who decided?"
+        )
+    finally:
+        await r.aclose()
+    assert out["abstained"] is False and out["meta"]["steps"] == ["plan", "prose", "expand"]
+    assert out["meta"]["calls"] == 3 and out["meta"]["attempts"] == 3
+    flags = out["meta"]["flags"]
+    assert (flags["expand_added"], flags["expand_dropped"]) == (2, 1)
+    assert (
+        flags["expand_skipped"] is False and flags["expand_failed"] is False and flags["dropped_literal"] == 1
+    )
+    assert out["answer"].endswith(
+        "It was 1,6 s on the VPS before D-004. The owner decided it after the R3 release."
+    )
+    assert "0.3 s" not in out["answer"] and len(out["claims"]) == 3
+    assert all(c["support"] and all(s["quote"] for s in c["support"]) for c in out["claims"])
+    job, inp = request_job(llm.requests[2])
+    assert job == "expand" and llm.requests[2]["max_tokens"] == rs.JOB_MAX_TOKENS["expand"] == 1500
+    assert [x["n"] for x in inp["answer"]] == [1] and inp["answer"][0]["text"] == out["claims"][0]["text"]
+    assert [e["id"] for e in inp["excerpts"]] == out["meta"]["excerpts_shown"]
+    assert inp["excerpts"] == request_job(llm.requests[1])[1]["excerpts"]  # what the prose saw
+    assert 'JOB "expand"' in llm.requests[2]["messages"][0]["content"]
+    assert_no_secret(sent_text(llm), world)
+
+
 async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
     fake = FakeResearcher(facts=[], abstain=True)
     llm = ScriptedLLM(default=fake)

@@ -276,6 +276,8 @@ class FakeResearcher:
     #: D-165 JOB attribute: the ids per sentence number; None = the excerpts whose text holds the
     #: sentence (without its final period)
     attribute_ids: dict[int, list[str]] | None = None
+    #: D-170 JOB expand: the sentences it adds
+    expand_add: list[str] = field(default_factory=list)
     jobs: list[str] = field(default_factory=list)
 
     def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -292,6 +294,8 @@ class FakeResearcher:
             return self._prose(excerpts)
         if job == "attribute":
             return self._attribute(inp.get("sentences") or [], excerpts)
+        if job == "expand":
+            return {"add": list(self.expand_add)}
         facts = self.facts + (self.check_adds if job == "check" else [])
         claims = []
         for needle in facts:
