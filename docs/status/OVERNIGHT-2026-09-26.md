@@ -35,6 +35,10 @@ It improved a lot under a strict judge, but the D-130 Production-Ready gate is *
 - The judge is accurate: correct .577 is exact. The true faithful is about .91, against the judge's .874.
 - The next lever is SLOT-FILLING: decompose the question into the exact slots it asks for, extract each verbatim with its quote, then compose.
 
+## Slot-filling probe (D-151)
+- V11 slot-filling: p95 17.4 s (the first variant under 20 s) and $.0029/q, but correct fell to .385. Answers are too narrow: one slot is made for two-fact questions.
+- The next combination to try is slots per fact plus a completeness pass.
+
 ## Open
 - **Review 79 round 1 (FIX-NEEDED):** T1 scope isolation with exclude, T2 redaction before JSON, T4 per-attempt budget, T5 default OFF plus an R4 manifest, T6 negation-safe quote match. The fixes are in progress; round 2 is verification only.
 - **Levers for the gate:**
@@ -44,4 +48,4 @@ It improved a lot under a strict judge, but the D-130 Production-Ready gate is *
   - (d) retrieval recall.
 
 ## Spend
-About $4.8 of the $6 dev cap overnight. Prod spend is separate and within its 1/2/10 caps.
+About $5.4 of the $6 dev cap overnight. Prod spend is separate and within its 1/2/10 caps.
