@@ -540,3 +540,16 @@ D-141 | 2026-09-26 | ACCEPTED (orchestrator; recorded BEFORE any final-gate run)
 V7 matches V6-pro's correctness at luna cost and inside the latency limit.
 The pinned scorer still rejected 8 TRUE V7 claims for the very artefacts diagnosed in D-140: suffix 4, reformatted value 2, dash 1, markup 1. A faithfulness metric must measure entailment, not formatting, so the scorer's deterministic quote/value check now uses exactly the product's normalisation. The judge prompt, the judge model, the frozen key facts and all thresholds are unchanged. The decision is backed by the D-140 audit (29 of 33 drops were artefacts on true claims) and is fixed before the PR set or sealed B is touched.
 Remaining gap: 10 of 26 answerable questions still miss a key fact (8 of them the MAIN fact), with 2 retrieval misses and 0 contradictions. A $0 diagnosis now classifies whether the main fact was present in the evidence the answerer saw.
+D-142 | 2026-09-26 | ACCEPTED (orchestrator) | **The main-fact misses come from COMPRESSION, not retrieval.** With the D-141 scorer (the product's normalisation), V7 on the 34-question subset scores: correct .538, faithful .729 (quote check 1.00), recall .872, abstain .875, p95 15.4 s, $.0035/q. V6-pro: .538 / .717 / .891.
+Diagnosis of V7's 10 missing-key-fact questions:
+| Class | Count |
+|---|---|
+| (a) The fact was in the evidence the answerer saw but was not stated | 9 |
+| (b) Truncated | 0 |
+| (c) The gold chunk was never drilled | 1 |
+| (d) Not retrieved | 0 |
+In 8 of the 9 (a) cases, the answer states the gist but drops the specific the key fact names: an identifier part, backend names, a log path, a plan name, a full URL, a second value, or a rationale. No question was misread. The answerer summarises too aggressively for an LLM reader.
+Fix, V8 (prototype) and memory.ask:
+- a specificity instruction (exact ids, names, paths, URLs and all values; brevity is not a goal);
+- atomic claims with full-sentence or full-row quotes that include the subject;
+- a completeness pass that upgrades general wording to the most specific form in the evidence.
