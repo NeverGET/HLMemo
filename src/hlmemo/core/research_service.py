@@ -1298,6 +1298,7 @@ class _Run:
             llm_cites=self.llm_cites,
             added=added,
             explain=explain,
+            question=self.question,  # D-190 (b): the question's own literals are not fabrications
         )
         if self.trace is not None:  # D-189: the validation and attribution verdicts
             self.trace.update(
@@ -1343,7 +1344,7 @@ class _Run:
         nothing kept, less than ``EXPAND_MIN_S`` left or the call cap reached (``expand_skipped``),
         or a failed call (``expand_failed``)."""
         self.flags["expand_skipped"] = self.flags["expand_failed"] = False
-        sentences = rs.prose_kept(obj, shown)
+        sentences = rs.prose_kept(obj, shown, question=self.question)
         if not sentences:
             return None
         left = self.remaining()
@@ -1378,7 +1379,7 @@ class _Run:
         guards as every call) → the excerpt ids per kept sentence text; None (the caller falls back
         to ``sources``) when nothing was kept, or the call failed, timed out or was not made (call
         cap, question budget)."""
-        sentences = rs.prose_kept(obj, shown, added)
+        sentences = rs.prose_kept(obj, shown, added, question=self.question)
         if not sentences:
             return None
         excerpts = list(shown.values())
@@ -1780,6 +1781,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             embed=run.sim,
             llm_cites=run.llm_cites,
             explain=recheck,
+            question=run.question,
         )
         if run.trace is not None:
             run.trace.update("validation", recheck=recheck, recheck_excerpts=sorted(ok))

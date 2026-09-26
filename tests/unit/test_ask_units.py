@@ -3007,10 +3007,11 @@ def test_d187_a_fenced_block_with_placeholders_survives_whole() -> None:
     assert [c.state for c in v.claims] == ["kept", "kept", "kept"]
     assert v.drop_reasons["block_lines"] == 0 and v.drop_reasons["literal"] == 0
     assert v.kept[1].text.startswith("```bash\nhlm device list\n") and v.kept[1].support  # attributed
-    # placeholders are never guarded, anywhere: <…>, $VAR, ${…}, {…}, …, ALL-CAPS words
-    assert rs.hard_literals("Run `hlm device revoke <device> --token $HLM_TOKEN ${X} {project} … HOST`.") == [
-        "hlm device revoke --token"
-    ]
+    # placeholders are never guarded, anywhere: <…>, $VAR, ${…}, {…}, … are WILDCARD tokens (D-190),
+    # an ALL-CAPS word is left out
+    (lit,) = rs.hard_literals("Run `hlm device revoke <device> --token $HLM_TOKEN ${X} {project} … HOST`.")
+    assert lit == f"hlm device revoke {rs.PH} --token {rs.PH} {rs.PH} {rs.PH} {rs.PH}"
+    assert rs._wildcard_ok(lit, rs._lit_norm("Revoke with hlm device revoke --token then log in."))
 
 
 def test_d187_one_fabricated_flag_drops_only_its_line() -> None:
@@ -3158,3 +3159,103 @@ async def test_d189_a_failing_observer_never_changes_a_provider_call() -> None:
         await provider.aclose()
     assert res.output["status"] == "answered" and len(seen) == 1
     assert seen[0]["user"] == "JOB: prose\nINPUT: {}" and seen[0]["outcome"] == "ok" and seen[0]["content"]
+
+
+# --------------------------------------------------------------------------- D-190 validator fixes
+OPS_SHOWN = {
+    "v90.0": _ex(
+        "v90.0",
+        "## Deploy\nEach update names `item` as the clue form `v<version>[.<ordinal>]`.\n"
+        'Check the running ref: `ssh -F "$STATE/ssh_config" hlm-deploy cat /opt/hlmemo/current-ref`\n'
+        'git diff "$(ssh -F "$STATE/ssh_config" hlm-deploy cat /opt/hlmemo/current-ref </dev/null)" '
+        '"$REF" -- deploy/compose.prod.yaml\n'
+        "Rotate a device: `$OPS device rotate <device-ref>`, then log in again.\n"
+        "State lives in `STATE=deploy/.local/<server-ip>`. The G-SURF budget is 2968 of 3000 tokens; "
+        "R3 -> R2 rollback PASS. The price is 3.50 USD, 0.50 to 0.60 per hour. "
+        "Downloads come from https://cas-server.xethub.hf.co/xet-bridge-us/abc and the health check is "
+        "https://mcp.hlmemo.com/ready over IPv4 with curl -4.",
+    )
+}
+
+
+def _kept(answer: str, question: str = "") -> list[str]:
+    v = rs.validate_prose(_prose(answer, ["v90.0"]), OPS_SHOWN, question=question)
+    return [c.text for c in v.kept]
+
+
+def test_d190_placeholders_are_wildcards_not_fragments() -> None:
+    # (a) `v<vid>[.<chunk>]` is checked as v…[.…] (fad3354 stripped it into the fragment "v [.")
+    s = "`item` is the clue form `v<vid>[.<chunk>]`."
+    assert rs.hard_literals(rs._body(s)) == ["item", f"v{rs.PH}[.{rs.PH}"] and _kept(s) == [s]
+    # an ALL-CAPS name no excerpt states is a placeholder inside inline code
+    s2 = "Replace `REF` and `DEVICE_NAME` with the device reference and name."
+    assert _kept(s2) == [s2]
+    assert rs.hard_literals("Use `SERVER_IP`.", hay=rs._lit_norm("no such name")) == []
+
+
+def test_d190_question_literals_and_notation_are_supported() -> None:
+    # (b) a literal the QUESTION states is the caller's own word, not a fabrication
+    s = "The excerpts give no token cost for `memory.ask`."
+    assert _kept(s) == [] and _kept(s, question="How much does memory.ask cost?") == [s]
+    # (c) notation: thousands and x/y = "x of y", → = ->, a $ range, trailing zeros, a URL prefix
+    for s in (
+        "The recorded G-SURF measurement is 2,968/3,000 tokens.",
+        "The script rollback R3→R2 passed.",
+        "It costs $0.50–$0.60 per hour.",
+        "The price is 3.5 USD.",
+        "Downloads failed from `https://cas-server.xethub.hf.co/`.",
+    ):
+        assert _kept(s) == [s], s
+    assert _kept("It costs $0.40–$0.60 per hour.") == []  # an end nobody states: still a fabrication
+    assert _kept("The price is 3.6 USD.") == []
+
+
+def test_d190_command_lines_equal_or_close_to_a_stated_command_survive() -> None:
+    # (d) variables and $(…) as wildcards: a line EQUAL to a stated one after normalising them
+    block = (
+        "Check it:\n```bash\n"
+        'git diff "$(ssh -F "$STATE/ssh_config" hlm-deploy cat /opt/hlmemo/current-ref </dev/null)" "$REF" '
+        "-- deploy/compose.prod.yaml\n"
+        'ssh -F "$STATE/ssh_config" hlm-deploy cat /opt/hlmemo/current-ref\n'
+        "```"
+    )
+    v = rs.validate_prose(_prose(block, ["v90.0"]), OPS_SHOWN)
+    assert v.answer == block and v.drop_reasons["block_lines"] == 0
+    # a line close to (>= 0.8) a stated command, its placeholders filled differently
+    close = "Then:\n```\n$OPS device rotate <laptop-ref>\n```"
+    assert rs.validate_prose(_prose(close, ["v90.0"]), OPS_SHOWN).answer == close
+
+
+def test_d190_genuine_catches_still_drop() -> None:
+    # the composed `curl -6 https://mcp.hlmemo.com/ready`: the URL is stated (and in the question),
+    # `-6` is not: the sentence drops
+    curl = "Test IPv6 with `curl -6 https://mcp.hlmemo.com/ready` first."
+    assert _kept(curl, question="Can I add an AAAA record for mcp.hlmemo.com?") == []
+    # a filled-in value in a template line (a placeholder IP stands in for the real host): no
+    # wildcard left, the value is stated nowhere: dropped
+    ip_line = "Set it:\n```\nSTATE=deploy/.local/203.0.113.7\nhlm doctor\n```"
+    v = rs.validate_prose(_prose(ip_line, ["v90.0"]), OPS_SHOWN)
+    assert "203.0.113.7" not in v.answer and v.drop_reasons["block_lines"] >= 1
+    # wildcards never excuse tokens no excerpt states (the device login pipe is invented)
+    invented = (
+        "Run:\n```\n$OPS device rotate REF | uv run hlm device login --name DEVICE_NAME --token-stdin\n```"
+    )
+    v2 = rs.validate_prose(_prose(invented, ["v90.0"]), OPS_SHOWN)
+    assert not v2.answered and v2.drop_reasons["block_lines"] == 1 and v2.drop_reasons["dangling"] == 1
+    # a command COMPOSED from stated parts: its literals pass as wildcards, but it is not close
+    # (>= 0.8) to any command an excerpt states: the similarity floor drops it
+    composed = 'Run:\n```\n$OPS device rotate <x> | ssh -F "$STATE/ssh_config" hlm-deploy\n```'
+    units: list[dict] = []
+    v3 = rs.validate_prose(_prose(composed, ["v90.0"]), OPS_SHOWN, explain=units)
+    (line,) = next(u for u in units if u["unit"] == "block")["lines"]
+    assert line["how"] == "similar" and line["similarity"] < rs.CMD_SIMILARITY_MIN and not line["kept"]
+    assert not v3.answered
+    # (the floor is a ratio: a stated command with a short prefix, 0.85, still passes it)
+    near = (
+        "Run:\n```\n$OPS device rotate <x> | "
+        'ssh -F "$STATE/ssh_config" hlm-deploy cat /opt/hlmemo/current-ref\n```'
+    )
+    assert rs.validate_prose(_prose(near, ["v90.0"]), OPS_SHOWN).answered
+    # a changed flag on an otherwise stated command is not rescued by similarity
+    flag = "Check:\n```\ncurl -6 https://mcp.hlmemo.com/ready\n```"
+    assert not rs.validate_prose(_prose(flag, ["v90.0"]), OPS_SHOWN).answered

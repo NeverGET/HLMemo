@@ -1686,15 +1686,42 @@ def _small_int(core: str) -> bool:
     return core.isdigit() and int(core) <= SMALL_INT_MAX
 
 
-def hard_literals(text: str, handles: Iterable[str] = ()) -> list[str]:
+#: D-190: a placeholder's stand-in inside a literal: one token, matched as a wildcard
+#: (``_wildcard_ok``), so ``v<vid>[.<chunk>]`` is checked as ``v…[.…]``, never as fragments
+PH = "qqph"
+#: D-190: an ALL-CAPS name (``REF``, ``SERVER_IP``, ``DEVICE_NAME``) inside inline code: a
+#: placeholder when no shown excerpt states it
+_CAPS_NAME = re.compile(r"(?<![\w$])[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*(?![\w])")
+_PH_EDGE = PH + " .-/:=\"'`()[]{}<>|"
+
+
+def _placeholders_in(text: str, hay: str | None) -> str:
+    """D-190 (a): placeholders -> ``PH``: ``<…>``, ``${…}``, ``$VAR``, ``{…}``, ``…``/``...``, and
+    (with ``hay``) an ALL-CAPS name inside inline code that no shown excerpt states."""
+    text = _PLACEHOLDER.sub(PH, text)
+    if hay is None:
+        return text
+
+    def caps(m: re.Match[str]) -> str:
+        w = m.group(0)
+        return w if len(w) < 2 or _token_in(_lit_norm(w), hay) else PH
+
+    return _CODE_SPAN.sub(lambda m: "`" + _CAPS_NAME.sub(caps, m.group(1)) + "`", text)
+
+
+def hard_literals(
+    text: str, handles: Iterable[str] = (), hay: str | None = None, *, wildcard: bool = True
+) -> list[str]:
     """D-162: the literals of a sentence whose absence from every shown excerpt proves a fabricated
     value: the ``literals`` that hold a digit or come from a backtick code span (edge punctuation
     stripped: ```foo()``` is ``foo``). A quoted prose phrase and a § reference are not hard (D-161:
     wording, not values; a digit token inside a quote is a literal of its own), and neither is one of
-    ``handles`` (an excerpt id the model was shown: a reference, not a value). D-187: placeholders
-    (``_PLACEHOLDER``, ALL-CAPS single words) are never hard (a code span keeps its other tokens),
-    nor is a bare integer ≤ ``SMALL_INT_MAX``."""
-    text = _PLACEHOLDER.sub(" ", text)
+    ``handles`` (an excerpt id the model was shown: a reference, not a value). D-187: ALL-CAPS single
+    words are never hard, nor is a bare integer ≤ ``SMALL_INT_MAX``. D-190 (a): a placeholder is a
+    WILDCARD token ``PH`` inside its literal (``_placeholders_in``; with ``hay``, also an unstated
+    ALL-CAPS name in inline code), and a literal that is only placeholders and punctuation is none.
+    ``wildcard=False``: the D-187 form (placeholders removed), for a block line's first check."""
+    text = _placeholders_in(text, hay) if wildcard else _PLACEHOLDER.sub(" ", text)
     codes = {_lit_norm(m.group(1).strip(_TOKEN_EDGE)) for m in _CODE_SPAN.finditer(text)}
     skip = set(handles)
     out: list[str] = []
@@ -1714,7 +1741,173 @@ def hard_literals(text: str, handles: Iterable[str] = ()) -> list[str]:
             continue
         if isinstance(core, _CodeSpan) or code or any(ch.isdigit() for ch in core):
             out.append(core)
+    return [x for x in out if _lit_norm(x).strip(_PH_EDGE)]
+
+
+def _wildcard_ok(literal: str, hay: str) -> bool:
+    """D-190 (a): a literal holding the placeholder token ``PH`` is supported when the hay states it
+    with any short run of non-space characters in each placeholder's place (a code span: each of its
+    tokens, the placeholder-only ones skipped)."""
+    c = _lit_norm(literal)
+    if isinstance(literal, _CodeSpan):
+        toks = [t.strip(_TOKEN_EDGE) for t in literal.split()]
+        toks = [t for t in toks if (len(t) >= 2 or t.isdigit()) and _lit_norm(t).strip(PH + ".-/:=\"'")]
+        return all(_wildcard_ok(t, hay) if PH in _lit_norm(t) else literal_supported(t, hay) for t in toks)
+    parts = c.split(PH)
+    if not any(re.search(r"\w", x) for x in parts):
+        return True
+    return re.search(r"\S{1,60}?".join(re.escape(x) for x in parts), hay) is not None
+
+
+_NOTATION_THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+
+
+def _notation_variants(c: str) -> list[str | re.Pattern[str]]:
+    """D-190 (c): other spellings of a normalised literal: ``74/200`` = 74 of 200 (or both numbers
+    stated close together), ``3,000-token`` = 3000 tokens, ``→`` = ``->`` = "to", a range ``x-y``
+    (an optional ``$`` on each end: both ends stated close together), ``$N`` = N USD, ``$N/unit`` = N
+    per unit. Never a bare number on its own."""
+    out: list[str | re.Pattern[str]] = []
+    c = _NOTATION_THOUSANDS.sub("", c)
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)", c)
+    if m:
+        a, b = m.groups()
+        out += [f"{a} of {b}", f"{a} out of {b}", f"{a} / {b}"]
+        out.append(
+            re.compile(rf"(?<![\d.]){re.escape(a)}(?![\d])[^\n]{{0,30}}?(?<![\d.]){re.escape(b)}(?!\d)")
+        )
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)-([^\W\d_]{2,})", c)
+    if m:
+        n, unit = m.groups()
+        out.append(re.compile(rf"(?<![\d.]){re.escape(n)}(?!\d)\s*-?\s*{re.escape(unit[:4])}"))
+    if "→" in c or "->" in c or "=>" in c:
+        core = [x for x in re.split(r"\s*(?:→|->|=>)\s*", c) if x]
+        out += [" → ".join(core), " -> ".join(core), "->".join(core), "→".join(core), " to ".join(core)]
+    m = re.fullmatch(r"\$?(\d[\d.,]*)\s*-\s*\$?(\d[\d.,]*)(/[^\W\d_]+)?", c)
+    if m:
+        a, b = (re.escape(x) for x in m.groups()[:2])
+        out.append(re.compile(rf"(?<![\d.]){a}(?!\d)[^\d\n]{{1,12}}(?<![\d.]){b}(?!\d)"))
+    m = re.fullmatch(r"\$(\d[\d.,]*)", c)
+    if m:
+        n = m.group(1)
+        out += [f"{n} usd", f"usd {n}", f"{n}$"]
+    m = re.fullmatch(r"\$?(\d[\d.,]*)/([^\W\d_]+)", c)
+    if m:
+        n, unit = m.groups()
+        out += [
+            f"${n} per {unit}",
+            f"{n} per {unit}",
+            f"{n} usd/{unit}",
+            f"{n} usd per {unit}",
+            f"${n} / {unit}",
+        ]
     return out
+
+
+def _notation_ok(c: str, hay: str) -> bool:
+    """D-190 (c): a normalised literal ``c`` is stated in another notation (``_notation_variants``),
+    as the same number with other trailing zeros (``3.50`` = ``3.5``), or as a URL/path that is a
+    prefix of one the excerpts state (up to a ``/``, ``?`` or ``#``)."""
+    hay_n = _NOTATION_THOUSANDS.sub("", hay)
+    for v in _notation_variants(c):
+        if isinstance(v, re.Pattern):
+            if v.search(hay_n):
+                return True
+        elif _token_in(v, hay_n) or v in hay_n:
+            return True
+    if re.fullmatch(r"\d+\.\d+", c):  # the same number, other trailing zeros
+        want = Decimal(c)
+        if any(Decimal(n) == want for n in _NUMBER.findall(hay_n)):
+            return True
+    if ("://" in c or "/" in c) and len(c.rstrip("/")) >= 6:  # a URL/path prefix of a stated one
+        return re.search(r"(?<![\w/])" + re.escape(c.rstrip("/")) + r"(?=[/?#])", hay) is not None
+    return False
+
+
+def _prose_supported(literal: str, hay: str, derived: frozenset[Decimal], qhay: str) -> str | None:
+    """How a hard literal of a prose answer is supported, or None: ``stated`` (an excerpt states it),
+    ``derived`` (D-187: a sum/difference of stated numbers), D-190: ``wildcard`` (a placeholder's
+    literal, ``_wildcard_ok``), ``notation`` (``_notation_ok``), ``question`` (the question states it:
+    the caller's own words, not a fabrication)."""
+    c = _lit_norm(literal)
+    if PH in c:
+        return "wildcard" if _wildcard_ok(literal, hay) else None
+    if literal_supported(literal, hay):
+        return "stated"
+    if _is_derived(literal, derived):
+        return "derived"
+    if _notation_ok(c, hay):
+        return "notation"
+    if qhay and literal_supported(literal, qhay):
+        return "question"
+    return None
+
+
+#: D-190 (d): shell variables and placeholders of a command line: ``$(…)``, ``${…}``, ``$VAR``,
+#: ``<…>`` and an unstated ALL-CAPS name become one slot before two lines are compared
+_CMD_VARS = re.compile(r"\$\{[^}\n]{0,60}\}|\$[A-Za-z_][A-Za-z0-9_]*|<[^<>\n]{1,60}>")
+CMD_SLOT = "§v"
+#: D-190 (d): a command line that relies on variables/placeholders is supported only when it is at
+#: least this similar to a command an excerpt states (so a composed command is still caught)
+CMD_SIMILARITY_MIN = 0.8
+
+
+def _cmd_subst(s: str) -> str:
+    """Every balanced ``$( … )`` command substitution replaced by the slot."""
+    out, i = [], 0
+    while i < len(s):
+        if s.startswith("$(", i):
+            depth, j = 0, i + 1
+            while j < len(s):
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            out.append(CMD_SLOT)
+            i = j + 1
+            continue
+        out.append(s[i])
+        i += 1
+    return "".join(out)
+
+
+def _norm_cmd(line: str, hay: str | None = None) -> str:
+    """D-190 (d): a command line with its variables and placeholders normalised to one slot, its
+    leading prompt and trailing shell comment removed, ``_lit_norm``."""
+    s = re.sub(r"^\s*(?:\$|>)\s+", "", line.strip())
+    s = _SHELL_COMMENT.sub("", s)
+    s = _CMD_VARS.sub(CMD_SLOT, _cmd_subst(s))
+    if hay is not None:
+        s = _CAPS_NAME.sub(lambda m: m.group(0) if _token_in(_lit_norm(m.group(0)), hay) else CMD_SLOT, s)
+    return _lit_norm(s)
+
+
+def _excerpt_commands(shown: dict[str, Excerpt], hay: str) -> list[str]:
+    """D-190 (d): the commands the shown excerpts state, normalised (``_norm_cmd``): each text line
+    and each inline code span of at least 8 characters."""
+    out: list[str] = []
+    for e in shown.values():
+        for raw in [*(e.text or "").split("\n"), *(m.group(1) for m in _CODE_SPAN.finditer(e.text or ""))]:
+            n = _norm_cmd(raw.strip("`"), hay)
+            if len(n) >= 8:
+                out.append(n)
+    return list(dict.fromkeys(out))
+
+
+def _cmd_similarity(n: str, commands: list[str]) -> float:
+    """The best ``difflib`` ratio of a normalised command line to a stated command (sharing a word)."""
+    import difflib
+
+    toks = set(re.findall(r"\w{3,}", n))
+    best = 0.0
+    for ex in commands:
+        if toks and not (toks & set(re.findall(r"\w{3,}", ex))):
+            continue
+        best = max(best, difflib.SequenceMatcher(None, n, ex).ratio())
+    return round(best, 3)
 
 
 # --------------------------------------------------------------------------- D-165 attribution
@@ -2052,6 +2245,7 @@ def _prose_keep(
     shown: dict[str, Excerpt],
     added_from: int | None = None,
     explain: list[dict[str, Any]] | None = None,
+    question: str = "",
 ) -> tuple[list[Claim], dict[str, int], list[str]]:
     """D-162: the literal check of prose sentences: ``(claims, drop counts by reason, the kept
     sentences as written)``. A sentence is DROPPED only when one of its hard literals is in no shown
@@ -2059,12 +2253,15 @@ def _prose_keep(
     nothing was shown; every other one is KEPT (its support is ``attribute``'s). Sentences past
     ``ANSWER_MAX_CHARS`` of kept text are not checked. D-170: the sentences from index
     ``added_from`` on are the expand pass's (``Claim.added``). D-189: with ``explain`` (the trace),
-    one entry per checked unit is appended: its literals, where each was found, its verdict."""
+    one entry per checked unit is appended: its literals, where each was found, its verdict. D-190:
+    a literal is also supported as a placeholder wildcard, in another notation, or when the
+    ``question`` states it (``_prose_supported``); block lines follow ``_check_block``."""
     hay = "\n".join(_hay([e.title, e.date, e.text]) for e in shown.values())
     derived = _derived_numbers(hay)
+    qhay = _lit_norm(question) if question else ""
 
-    def ok(x: str) -> bool:  # stated, or (D-187) the sum/difference of two stated numbers
-        return literal_supported(x, hay) or _is_derived(x, derived)
+    def ok(x: str) -> bool:  # stated, derived (D-187), a wildcard, another notation, the question's (D-190)
+        return _prose_supported(x, hay, derived, qhay) is not None
 
     claims: list[Claim] = []
     raw_of: list[str] = []
@@ -2106,7 +2303,7 @@ def _prose_keep(
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
             break
         why = None
-        lits = hard_literals(body, shown)
+        lits = hard_literals(body, shown, hay=hay)
         if not all(ok(x) for x in lits):
             why = "literal"
         elif not shown:
@@ -2117,7 +2314,7 @@ def _prose_keep(
                     "unit": "sentence",
                     "text": text,
                     "added": added,
-                    "literals": [_explain_literal(x, hay, derived, shown) for x in lits],
+                    "literals": [_explain_literal(x, hay, derived, shown, qhay) for x in lits],
                     "verdict": "dropped" if why else "kept",
                     "reason": why,
                 }
@@ -2188,17 +2385,23 @@ def _is_derived(literal: str, derived: frozenset[Decimal]) -> bool:
 
 
 def _explain_literal(
-    x: str, hay: str, derived: frozenset[Decimal], shown: dict[str, Excerpt]
+    x: str, hay: str, derived: frozenset[Decimal], shown: dict[str, Excerpt], qhay: str = ""
 ) -> dict[str, Any]:
-    """D-189 (trace): one hard literal: stated (and in which shown excerpts), or derived."""
-    stated = literal_supported(x, hay)
+    """D-189 (trace): one hard literal: how it is supported (``_prose_supported``) and, when stated,
+    in which shown excerpts."""
+    how = _prose_supported(x, hay, derived, qhay)
     found = (
         [h for h, e in shown.items() if literal_supported(x, _hay([e.title, e.date, e.text]))]
-        if stated
+        if how == "stated"
         else []
     )
-    derived_ok = not stated and _is_derived(x, derived)
-    return {"literal": str(x), "supported": stated or derived_ok, "found_in": found, "derived": derived_ok}
+    return {
+        "literal": str(x),
+        "supported": how is not None,
+        "how": how,
+        "found_in": found,
+        "derived": how == "derived",
+    }
 
 
 def _check_block(
@@ -2208,9 +2411,15 @@ def _check_block(
     explain: list[dict[str, Any]] | None = None,
 ) -> tuple[str | None, int]:
     """D-187: ``(the block with only its supported lines, lines dropped)``, or ``(None, ...)`` when no
-    command line survives. A command line is checked as a code span (every token not a placeholder,
-    a trailing shell comment left out); a comment line (# or //) only for its hard literals; an empty
-    line stays. An unclosed block gets its closing fence."""
+    command line survives. A comment line (# or //) is checked for its hard literals; an empty line
+    stays. An unclosed block gets its closing fence. D-190 (d), a command line (checked as a code
+    span, its trailing shell comment left out) is supported when
+    - it is equal to a command an excerpt states once its variables and placeholders are one slot
+      (``_norm_cmd``, ``_excerpt_commands``), or
+    - its literals pass with the placeholders removed (the D-187 check), or
+    - they pass only with the placeholders and variables as WILDCARDS, and the line is at least
+      ``CMD_SIMILARITY_MIN`` similar to a stated command (a composed command stays caught).
+    A literal that fails even with the wildcards drops it (a changed flag, an invented value)."""
     lines = block.split("\n")
     fence = _FENCE_LINE.match(lines[0])
     assert fence is not None
@@ -2220,6 +2429,8 @@ def _check_block(
         tail, inner = inner[-1], inner[:-1]
     kept: list[str] = []
     dropped = commands = 0
+    hay = "\n".join(_hay([e.title, e.date, e.text]) for e in shown.values())
+    stated: list[str] | None = None  # the excerpts' commands, normalised (built when first needed)
     for line in inner:
         bare = line.strip()
         if not bare:
@@ -2227,10 +2438,37 @@ def _check_block(
             continue
         comment = bare.startswith(("#", "//"))
         code = "" if comment else _SHELL_COMMENT.sub("", bare).replace("`", "").strip()
-        lits = hard_literals(bare, shown) if comment else (hard_literals(f"`{code}`", shown) if code else [])
-        verdict = all(ok(x) for x in lits)
+        if comment or not code:
+            lits = hard_literals(bare, shown, hay=hay) if comment else []
+            verdict, how, sim = all(ok(x) for x in lits), None, None
+        else:
+            n = _norm_cmd(code, hay)
+            if stated is None:
+                stated = _excerpt_commands(shown, hay)
+            how, sim = None, None
+            lits = hard_literals(f"`{code}`", shown, hay=hay, wildcard=False)
+            if len(n) >= 8 and n in stated:
+                verdict, how = True, "equal"
+            elif all(ok(x) for x in lits):
+                verdict, how = True, "plain"
+            else:  # D-190 (d): only as wildcards, and only close to a stated command
+                lits = hard_literals(f"`{code}`", shown, hay=hay)
+                wild = CMD_SLOT in n or any(PH in _lit_norm(x) for x in lits)
+                if wild and all(ok(x) for x in lits):
+                    sim = _cmd_similarity(n, stated)
+                    verdict, how = sim >= CMD_SIMILARITY_MIN, "similar"
+                else:
+                    verdict = False
         if explain is not None:
-            explain.append({"line": line, "literals": [str(x) for x in lits], "kept": verdict})
+            explain.append(
+                {
+                    "line": line,
+                    "literals": [str(x) for x in lits],
+                    "kept": verdict,
+                    "how": how,
+                    "similarity": sim,
+                }
+            )
         if verdict:
             kept.append(line)
             commands += not comment
@@ -2265,6 +2503,7 @@ def prose_check(
     llm_cites: dict[str, list[str]] | None = None,
     added_from: int | None = None,
     explain: list[dict[str, Any]] | None = None,
+    question: str = "",
 ) -> tuple[list[Claim], dict[str, int]]:
     """D-162: the deterministic check of prose sentences (``split_sentences``) against the excerpts
     the answer was written from: ``(claims, drop counts by reason)``. A sentence is dropped only for
@@ -2272,7 +2511,7 @@ def prose_check(
     every other one is kept and attributed by ``attribute`` with ``strategy`` (D-165; ``llm_cites``:
     the JOB attribute's ids per kept sentence TEXT). There is no polarity check (D-165: its flags were
     false positives)."""
-    claims, reasons, raws = _prose_keep(sentences, shown, added_from, explain)
+    claims, reasons, raws = _prose_keep(sentences, shown, added_from, explain, question)
     kept = [c for c in claims if c.state == "kept"]
     cites = [llm_cites.get(c.text, []) for c in kept] if llm_cites is not None else None
     supports = attribute(raws, shown, strategy, model_sources=sources, llm_cites=cites, embed=embed)
@@ -2347,14 +2586,14 @@ def _prose_fields(
 
 
 def prose_kept(
-    obj: dict[str, Any] | None, shown: dict[str, Excerpt], added: list[str] | None = None
+    obj: dict[str, Any] | None, shown: dict[str, Excerpt], added: list[str] | None = None, question: str = ""
 ) -> list[str]:
     """D-165: the sentences of a ``prose`` output (and D-170 its ``added`` sentences) that survive the
     literal check, as they are kept in the answer (the numbered sentences of the JOBs expand and
     attribute; their order is ``validate_prose``'s)."""
     _s, _c, _src, _rel, answer = _prose_fields(obj, shown)
     sentences, start = _prose_sentences(answer, added)
-    claims, _reasons, _raws = _prose_keep(sentences, shown, start)
+    claims, _reasons, _raws = _prose_keep(sentences, shown, start, question=question)
     return [c.text for c in claims if c.state == "kept"]
 
 
@@ -2368,6 +2607,7 @@ def validate_prose(
     llm_cites: dict[str, list[str]] | None = None,
     added: list[str] | None = None,
     explain: list[dict[str, Any]] | None = None,
+    question: str = "",
 ) -> Validated:
     """D-162: the deterministic check of a ``prose`` output against the excerpts it was shown
     (``prose_check``): sentences with a fabricated hard literal are dropped (``drop_reasons``), the
@@ -2385,6 +2625,7 @@ def validate_prose(
         llm_cites=llm_cites,
         added_from=start,
         explain=explain,
+        question=question,
     )
     kept_added = sum(1 for c in claims if c.added and c.state == "kept")
     return assemble_prose(
