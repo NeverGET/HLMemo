@@ -734,3 +734,28 @@ Findings:
 4. Failing sentences are dropped. A sentence with no valid citation may be checked against all shown excerpts.
 **Measurement:** a sentence's faithfulness is judged against the full text of the cited source unit, which the caller can drill into (D-130: "every source is a handle the caller can drill"). Before, it was judged against a displayed quote. This is recorded as a gate-measurement choice and flagged to the owner with the gate-definition question.
 Spend for the oracle and prototype series: about $0.5.
+D-157 | 2026-09-26 | ACCEPTED | **V14 "write, then cite" (wf-memory-ask 4c5b457, HLM_RESEARCH_ANSWER_MODE=cite) is memory.ask's best profile so far: 3 of the 6 gate criteria pass. The gate is NOT reached, so there is no release. A strategic pause (D-125) follows: the dev budget is nearly spent.**
+Same 33 dev questions (25 answerable), strict judge; V14's faithfulness is judged against the cited source text (D-156 scope):
+| Criterion | V14 first (53f5469) | **V14 D-157 (4c5b457)** | claims 7f900ba | Gate |
+|---|---|---|---|---|
+| Correct | .40 | **.60** | .48 | .80 |
+| Faithful | .778 | **.911** | .89 (quote scope) | .95 |
+| Abstain | 1.00 | .875 (7/8) | .875 | .90 |
+| Source recall | .68 | **.90 ✓** | .88 | .85 |
+| p95 | 11.0 s | **12.7 s ✓** | 21 s | 20 s |
+| $/q | .004 | **.003 ✓** | .004 | .01 |
+| False abstain | .28 | .04 | .04 | – |
+**The D-157 fixes over 53f5469:**
+- (1) `cite_check` ran polarity against EVERY excerpt line sharing words with the sentence. A "not" about other words dropped true sentences in 8 questions, 6 of them guard abstains. Now polarity is checked against each top cited source's best line only.
+- (2) The write prompt asks for short sentences, one fact each.
+**Remaining gap to ORACLE-sel (.76, same model and prompt style, over the ≤ 5 sources memory.ask itself cited):**
+- 5 questions V14 misses and ORACLE-sel answers: no validation drops; the answers are less complete over 12 excerpts (about 38k chars) than over the focused ≤ 5 (about 9k).
+- 5 more questions both miss: the judge ceiling or retrieval.
+**Next lever: select, then write.** A small call picks the ≤ 5 excerpts that answer the question, then the answer is written over those only: +1 call, p95 about 16 s.
+**Not yet done:**
+- V14 is not the default (claims mode stays the default; the R4 manifest will pin the mode).
+- The claims-mode baseline has not been re-scored under the source scope.
+Owner decisions pending:
+- the gate definition (answer text vs answer + cited sources; faithful judged against the displayed quote or the cited source);
+- a budget top-up (shared balance about $10.0, ≥ $9 kept for prod).
+Today's dev spend is about $1.4.
