@@ -59,6 +59,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -98,6 +99,9 @@ DEFAULT_BUDGET = 3000
 QUESTION_MAX = 2000
 QUERY_BUDGET = 2000  # token budget of each internal memory.query (about 15-25 hits)
 MAX_DRILL = 12
+#: addendum 6: the top documents whose best-matching chunk may fill FREE drill slots
+DOC_TOP = 4
+DOC_BEST = 3
 REFINE_MAX_NEW = 8
 RRF_K = 60
 #: per-call caps (seconds) inside the whole request's HLM_RESEARCH_TIMEOUT_S
@@ -244,6 +248,8 @@ class _Run:
             "dropped_claims": 0,
             "main_dropped": False,
             "verify_dropped": 0,
+            "budget_stop": False,
+            "rewrites_asked": 0,
         }
     )
 
@@ -300,11 +306,46 @@ class _Run:
                 lists.append(await self._search(c, fresh, q))
             fused = [h for h in rrf(lists) if self._handle_in_view(h)]
             wanted = collapse([h for h in [*sections, *fused] if h not in skip], MAX_DRILL)
+            if len(wanted) < MAX_DRILL:
+                # addendum 6 (corrected): a top document's best-matching chunk only fills drill slots
+                # left FREE by the ranked chunks; it never displaces one (measured: displacing hurts)
+                best = await self._doc_best(c, fused, [self.question, *queries])
+                wanted = collapse([*wanted, *(h for h in best if h not in skip)], MAX_DRILL)
             excerpts = await self._drill(c, wanted)
         return excerpts, lists
 
     async def _search(self, c: AsyncConnection, fresh: AuthContext, query: str) -> list[dict[str, Any]]:
         return await _search(c, fresh, self.slug, query, self.deps)
+
+    async def _doc_best(self, c: AsyncConnection, fused: list[str], texts: list[str]) -> list[str]:
+        """The best-matching chunk (most of the question's and queries' content words and literals)
+        of each of the ``DOC_TOP`` top-ranked documents, as chunk handles (addendum 6 #3)."""
+        words = set().union(*(rs.content_words(t) for t in texts))
+        lits = [x for t in texts[:1] for x in rs.literals(t)]
+        docs: list[int] = []
+        for h in fused:
+            vid = decode_clue(h).version_id
+            if vid not in docs:
+                docs.append(vid)
+            if len(docs) >= DOC_TOP:
+                break
+        out: list[str] = []
+        for vid in docs:
+            item = self.view.get(vid)
+            if item is None or item.n_chunks <= 1:
+                continue  # a one-chunk document is drilled whole by its hit
+            spans = await rq.chunk_spans(c, vid)
+            scored = []
+            for sp in spans:
+                cw = rs.content_words(sp.text)
+                hay = rs.lit_hay(sp.text)
+                score = len(words & cw) + 2 * sum(1 for x in lits if rs.literal_supported(x, hay))
+                scored.append((score, -sp.ordinal, sp.ordinal))
+            if scored:
+                score, _neg, ordinal = max(scored)
+                if score > 0:
+                    out.append(f"v{vid}.{ordinal}")
+        return out[:DOC_BEST]
 
     def _handle_in_view(self, handle: str) -> bool:
         try:
@@ -373,6 +414,8 @@ class _Run:
         call could not be made in time or at all (``rs.ResearchUnavailable`` carries the reason)."""
         if self.calls >= rs.MAX_CALLS:
             return None
+        if self.flags["budget_stop"]:  # a per-question budget stop is final: nothing more is sent
+            raise rs.ResearchUnavailable("question_budget")
         loop = asyncio.get_running_loop()
         for _ in range(3):
             left = self.remaining()
@@ -394,6 +437,14 @@ class _Run:
             if denied:
                 self.excluded |= denied
                 continue
+            # addendum 5: the per-question budget (actual spend so far + this call's worst case)
+            usd, tokens = self.researcher.spent(self.lineage)
+            worst_usd, worst_tokens = self.researcher.worst_case(job, user)
+            if usd + worst_usd > Decimal(str(self.settings.research_max_usd)) or tokens + worst_tokens > int(
+                self.settings.research_max_tokens
+            ):
+                self.flags["budget_stop"] = True
+                raise rs.ResearchUnavailable("question_budget")
             deadline = loop.time() + min(cap_s, left)
             try:
                 async with asyncio.timeout_at(deadline + 0.5):
@@ -471,21 +522,28 @@ class _Run:
         if not self.prune(v, excerpts).answered:
             return self.prune(v, excerpts)  # nothing admitted is left to verify
 
+        fixes: dict[int, list[str]] = {}
+
         def build() -> tuple[str, list[int]]:
             cur = self.prune(v, excerpts)
             sent[:] = [cur]
+            fixes.clear()
+            fixes.update(rs.claim_fixes(cur, self.question))  # addendum 6: targeted rewrites
             ids = [by_handle[h].version_id for c in cur.kept for h, _q in c.support]
-            return rs.verify_user(self.question, cur.answer, cur.kept), ids
+            return rs.verify_user(self.question, cur.answer, cur.kept, fixes), ids
 
+        shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
         try:
             obj = await self.call("verify", build, VERIFY_CAP_S)
         except rs.ResearchUnavailable:
-            return self.prune(v, excerpts)
-        base = sent[0] if sent else v
+            obj = None
+        base = sent[0] if sent else self.prune(v, excerpts)
         if not base.answered:
             return base
-        shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
-        out = rs.apply_verify(base, obj, self.researcher.redactor.text, shown)
+        if obj is None:  # no self-check: unsupported attributions are dropped deterministically
+            return rs.enforce_attribution(base, shown, self.researcher.redactor.text)
+        self.flags["rewrites_asked"] = len(fixes)
+        out = rs.apply_verify(base, obj, self.researcher.redactor.text, shown, fixes)
         self.flags["verify_dropped"] = len(base.kept) - len(out.kept)
         return out
 
@@ -643,8 +701,13 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
     run.queries = [q, *queries]
     # 3. retrieve
     excerpts, lists = await run.retrieve(queries, sections, first, set())
-    # 4. answer
-    v = await run.answer(excerpts)
+    # 4. answer (a per-question budget stop here leaves nothing to return but the flag)
+    try:
+        v = await run.answer(excerpts)
+    except rs.ResearchUnavailable as exc:
+        if exc.reason != "question_budget":
+            raise
+        v = rs.validate_answer(None, {})
     # 5. refine (abstained or unsure), time permitting
     if (not v.answered or v.confidence == "low") and run.remaining() >= MIN_REFINE_S and run.calls <= 2:
         read = list(excerpts)
@@ -687,9 +750,13 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
             v = rs.merge_check(
                 v, checked, {e.handle: e for e in excerpts if e.version_id not in run.excluded}
             )
-    # 7. the self-check (the refinement's slot when no refinement ran), time permitting
+    # 7. the self-check (the refinement's slot when no refinement ran), time permitting; without
+    # it, a claim naming a subject its sources do not state is dropped deterministically
     if v.answered and run.calls < rs.MAX_CALLS and run.remaining() >= MIN_VERIFY_S:
         v = await run.verify(v, excerpts)
+    elif v.answered:
+        shown = {e.handle: e for e in excerpts if e.version_id not in run.excluded}
+        v = rs.enforce_attribution(v, shown, run.researcher.redactor.text)
     # 8. re-check and assemble
     return await _finish(run, v, excerpts, t_start)
 
@@ -757,7 +824,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
     related = [h for h in v.related if h in ok]
     answered = v.answered and bool(v.primary)
     if not answered and abstain_reason is None:
-        abstain_reason = "guard" if v.guard else "no_evidence"
+        abstain_reason = "budget" if run.flags["budget_stop"] else ("guard" if v.guard else "no_evidence")
 
     def path(h: str) -> str:
         item = run.view.get(shown[h].version_id)

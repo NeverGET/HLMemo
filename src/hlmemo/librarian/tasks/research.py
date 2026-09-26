@@ -39,7 +39,7 @@ import logging
 import re
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,9 @@ MAX_CALLS = 5
 #: provider requests of one question (schema retries and fallbacks included), DB-enforced per lineage
 MAX_ATTEMPTS = 9
 MAX_IN_FLIGHT = 4
+#: addendum 5: an explicit max_tokens on EVERY call, per JOB (reasoning tokens included); a
+#: runaway output is cut there, and the per-question budget reserves exactly this worst case
+JOB_MAX_TOKENS = {"plan": 800, "refine": 800, "answer": 3000, "check": 3000, "verify": 1500}
 BREAKER_THRESHOLD = 3
 BREAKER_OPEN_S = 30.0
 BREAKER_MAX_OPEN_S = 900.0
@@ -342,17 +345,20 @@ def check_user(question: str, draft: dict[str, Any], excerpts: list[Excerpt]) ->
     return "JOB: check\n" + _input(payload)
 
 
-def verify_user(question: str, answer: str, claims: list[Claim]) -> str:
+def verify_user(
+    question: str, answer: str, claims: list[Claim], fixes: dict[int, list[str]] | None = None
+) -> str:
     """The self-check: the answer and each claim with ONLY its verified quotes (cheap: no
-    documents), so entailment is judged on exactly what the caller will be shown."""
-    payload = {
-        "question": question,
-        "answer": answer,
-        "claims": [
-            {"i": i, "text": c.text, "quotes": [q for _h, q in c.support]} for i, c in enumerate(claims)
-        ],
-    }
-    return "JOB: verify\n" + _input(payload)
+    documents), so entailment is judged on exactly what the caller will be shown; a claim with
+    ``fix`` notes (addendum 6: copy-through, attribution) asks for one targeted rewrite."""
+    fixes = fixes or {}
+    rows = []
+    for i, c in enumerate(claims):
+        row: dict[str, Any] = {"i": i, "text": c.text, "quotes": [q for _h, q in c.support]}
+        if fixes.get(i):
+            row["fix"] = fixes[i]
+        rows.append(row)
+    return "JOB: verify\n" + _input({"question": question, "answer": answer, "claims": rows})
 
 
 def refine_user(question: str, tried: list[str], read: list[Excerpt], map_text: str) -> str:
@@ -583,6 +589,15 @@ _STOP = frozenset(
 REQUOTE_MIN_OVERLAP = 0.6
 
 
+def content_words(text: str) -> set[str]:
+    """Content words of ``text`` (normalised, ≥ 3 characters, no EN/TR stop word)."""
+    return _content(text)
+
+
+def lit_hay(text: str) -> str:
+    return _lit_norm(text)
+
+
 def _content(text: str) -> set[str]:
     return {w for w, _s, _e in _words(unicodedata.normalize("NFC", text)) if len(w) >= 3 and w not in _STOP}
 
@@ -805,14 +820,130 @@ def _shown_of(*vs: Validated) -> dict[str, Excerpt]:
     return out
 
 
+# --------------------------------------------------------------------------- addendum 6
+_ID_LIKE = re.compile(
+    r"^(?=[^\s]*\d)(?=[^\s]*[A-Z])[A-Za-z0-9][A-Za-z0-9._-]+$|^[A-Z]{1,3}-[A-Z0-9][A-Za-z0-9-]*$"
+)
+_PROPER = re.compile(r"^[A-ZÇĞİÖŞÜ][a-zçğıöşü]{2,}$")
+_ACRONYM = re.compile(r"^[A-Z]{2,6}$")
+_EDGE_CHARS = "()[]{}<>,;:!?\"`“”‘’«»…*.'"
+_COMMON_CAPS = frozenset(
+    "The This That These Those It Its A An In On At For And But Or If When Where While Then Also Only "
+    "Both Each Every All No Not Yes After Before Since Until With Without From Into Over Under Bu Şu Bir "
+    "Ve Ama Her Hem Daha Sonra Önce Ancak Çünkü Için İçin Yani".split()
+)
+
+
+def named_subjects(text: str) -> list[str]:
+    """The named subjects of a claim (addendum 6 #2): identifiers of documents, sections, decisions,
+    gates and workstreams (a token with a capital and a digit, or ``X-…``), file names, acronyms and
+    proper names (capitalised words that do not start a sentence)."""
+    out: list[str] = []
+    words = text.split()
+    for i, raw in enumerate(words):
+        tok = raw.strip(_EDGE_CHARS)
+        m = _APOS_SUFFIX.match(tok)
+        tok = m.group(1) if m else tok
+        if len(tok) < 2:
+            continue
+        start = i == 0 or words[i - 1].endswith((".", "!", "?", ":", ";"))
+        if (
+            _FILE_EXT_RE.search(tok.casefold())
+            or _ID_LIKE.match(tok)
+            or _ACRONYM.match(tok)
+            or (_PROPER.match(tok) and not start and tok not in _COMMON_CAPS)
+        ):
+            if tok not in out:
+                out.append(tok)
+    return out
+
+
+_FILE_EXT_RE = re.compile(r"\.(md|py|toml|json|jsonl|ya?ml|sh|log|txt|sql|js|ts|conf|env|lock|cfg|ini|html)$")
+
+
+def unattributed(c: Claim) -> list[str]:
+    """The claim's named subjects that its quotes do not state (provenance lives in the handle)."""
+    hay = _hay([q for _h, q in c.support])
+    return [n for n in named_subjects(c.text) if not literal_supported(n, hay)]
+
+
+def _near(quote: str, lit: str, words: set[str], radius: int) -> bool:
+    at = quote.casefold().find(lit.casefold())
+    if at < 0:
+        return False
+    window = quote[max(0, at - radius) : at + len(lit) + radius]
+    return bool(_content(window) & words)
+
+
+def uncopied(c: Claim, question: str, main: bool) -> list[str]:
+    """Addendum 6 #1 (copy-through): identifiers and values of the claim's quotes that bear on the
+    question (their context shares a word with it, or the question names them) but that the claim
+    does not state. The main claim is held to a wider context."""
+    qwords = _content(question)
+    qhay = _lit_norm(question)
+    chay = _lit_norm(c.text)
+    out: list[str] = []
+    for _h, q in c.support:
+        for lit in literals(q):
+            if literal_supported(lit, chay) or lit in out:
+                continue
+            if literal_supported(lit, qhay) or _near(q, lit, qwords, 160 if main else 60):
+                out.append(lit)
+    return out[:6]
+
+
+def claim_fixes(v: Validated, question: str) -> dict[int, list[str]]:
+    """Per kept claim (by index), the targeted rewrites the self-check is asked for."""
+    fixes: dict[int, list[str]] = {}
+    for i, c in enumerate(v.kept):
+        notes = []
+        miss = uncopied(c, question, main=i == 0)
+        if miss:
+            notes.append("copy into the claim, exactly as the quotes write them: " + ", ".join(miss))
+        names = unattributed(c)
+        if names:
+            notes.append(
+                "the quotes do not name: " + ", ".join(names) + " — remove them (state the fact only)"
+            )
+        if notes:
+            fixes[i] = notes
+    return fixes
+
+
+def enforce_attribution(
+    v: Validated, shown: dict[str, Excerpt], redact: Callable[[str], str] = lambda s: s
+) -> Validated:
+    """Without a self-check (no call left, no time): a claim naming a subject that neither its
+    quotes nor its cited excerpts state is dropped; the answer is grounded again."""
+    if not v.answered:
+        return v
+    claims = []
+    changed = False
+    for c in v.kept:
+        names = unattributed(c)
+        hay = support_hay(c.support, shown)
+        if names and not all(literal_supported(n, hay) for n in names):
+            claims.append(Claim(c.text, [], "dropped", c.cited))
+            changed = True
+        else:
+            claims.append(c)
+    if not changed:
+        return v
+    return assemble(ANSWERED, v.answer, claims, v.related, _lower(v.confidence), shown, redact,
+                    missing=v.missing, sub_asks=v.sub_asks)  # fmt: skip
+
+
 def apply_verify(
     v: Validated,
     obj: dict[str, Any] | None,
     redact: Callable[[str], str] = lambda s: s,
     shown: dict[str, Excerpt] | None = None,
+    fixes: dict[int, list[str]] | None = None,
 ) -> Validated:
-    """The self-check: a claim judged ``none`` is dropped; ``partial`` is narrowed to the model's
-    rewrite when that rewrite's literals are all in the claim's quotes, else dropped; ``full`` (or no
+    """The self-check: a claim judged ``none`` is dropped; a rewrite (asked for by a ``fix`` note or
+    a ``partial`` verdict) replaces the claim when its values are in the cited sources and every
+    subject it names is in its quotes; a ``partial`` claim without a valid rewrite is dropped, and so
+    is a claim naming a subject that neither its quotes nor its cited excerpts state; ``full`` (or no
     verdict) is kept. The answer becomes the verify rewrite (then grounded on the remaining claims
     like any answer); with no usable output the answer is returned unchanged."""
     if not v.answered or not obj or not isinstance(obj.get("verdicts"), list):
@@ -825,18 +956,30 @@ def apply_verify(
     }
     claims: list[Claim] = []
     changed = False
+    fixes = fixes or {}
     for i, c in enumerate(kept):
-        vd = verdicts.get(i)
-        verdict = (vd or {}).get("entailed", "full")
-        if verdict == "full":
-            claims.append(c)
-            continue
-        changed = True
-        narrowed = " ".join(str((vd or {}).get("text") or "").split())
-        if verdict == "partial" and narrowed and literals_ok(narrowed, support_hay(c.support, shown or {})):
-            claims.append(Claim(narrowed, c.support, "kept", c.cited))
-        else:
+        vd = verdicts.get(i) or {}
+        verdict = vd.get("entailed", "full")
+        rewrite = " ".join(str(vd.get("text") or "").split())
+        hay = support_hay(c.support, shown or {})
+        if verdict == "none":
+            changed = True
             claims.append(Claim(c.text, [], "dropped", c.cited))
+            continue
+        if rewrite and rewrite != c.text:
+            cand = Claim(rewrite, c.support, "kept", c.cited)
+            if literals_ok(rewrite, hay) and not unattributed(cand):
+                changed = changed or verdict != "full"
+                claims.append(cand)
+                continue
+        if verdict == "partial":
+            changed = True
+            claims.append(Claim(c.text, [], "dropped", c.cited))
+        elif unattributed(c) and not all(literal_supported(n, hay) for n in unattributed(c)):
+            changed = True  # a subject neither the quotes nor the cited excerpt state: dropped
+            claims.append(Claim(c.text, [], "dropped", c.cited))
+        else:
+            claims.append(c)
     answer = str(obj.get("answer") or "").strip() or v.answer
     out = assemble(
         ANSWERED,
@@ -871,10 +1014,11 @@ class _TeeLedger:
 
     async def record(self, row: LedgerRow) -> None:
         if row.lineage is not None:
-            acc = self.tally.setdefault(row.lineage, [0, Decimal(0)])
+            acc = self.tally.setdefault(row.lineage, [0, Decimal(0), 0])
             if row.outcome in NETWORK_OUTCOMES:
                 acc[0] += 1
             acc[1] += Decimal(row.cost_usd or 0)
+            acc[2] += int(row.input_tokens or 0) + int(row.output_tokens or 0)
         await self.inner.record(row)
 
     async def job_calls(self, job_id: int) -> int:
@@ -887,8 +1031,13 @@ class _TeeLedger:
         return await self.inner.claim(lineage, cap)
 
     def take(self, lineage: str) -> tuple[int, Decimal]:
-        acc = self.tally.pop(lineage, [0, Decimal(0)])
+        acc = self.tally.pop(lineage, [0, Decimal(0), 0])
         return int(acc[0]), Decimal(acc[1])
+
+    def peek(self, lineage: str) -> tuple[Decimal, int]:
+        """``(USD, tokens)`` spent under ``lineage`` so far (the per-question budget, addendum 5)."""
+        acc = self.tally.get(lineage, [0, Decimal(0), 0])
+        return Decimal(acc[1]), int(acc[2])
 
 
 def research_chain(settings: Any) -> list[LlmProfile]:
@@ -1006,6 +1155,33 @@ class Researcher:
             return ledger.take(lineage)
         return 0, Decimal(0)
 
+    def job_spec(self, job: str) -> TaskSpec:
+        """The ``research`` spec with the JOB's own ``max_tokens`` (the task name, and so the
+        per-task fallback and the ledger, stay ``research``)."""
+        return replace(self.spec, max_tokens=JOB_MAX_TOKENS.get(job, self.spec.max_tokens))
+
+    def worst_case(self, job: str, user: str) -> tuple[Decimal, int]:
+        """``(USD, tokens)`` the next call may cost at most on the expected path: its padded input
+        and its max_tokens, priced by the PRIMARY (a fallback's actual cost is tallied before the
+        next check)."""
+        spec = self.job_spec(job)
+        tokens_in = (
+            self.provider.estimate_input_tokens(
+                [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
+            )
+            if self.provider is not None
+            else 0
+        )
+        head = self.chain[0] if self.chain else None
+        usd = head.worst_usd(tokens_in, spec.max_tokens) if head is not None and head.priced else Decimal(0)
+        return usd, -(-tokens_in * 11 // 10) + spec.max_tokens
+
+    def spent(self, lineage: str) -> tuple[Decimal, int]:
+        ledger = self.provider.ledger if self.provider is not None else None
+        if isinstance(ledger, _TeeLedger):
+            return ledger.peek(lineage)
+        return Decimal(0), 0
+
     async def gate(self, capabilities: dict[str, Any], version_ids: list[int]) -> privacy.Verdict:
         """The strict privacy gate over ``version_ids`` in a fresh short transaction (no bodies)."""
         verdict, _ = await privacy.gate(self.connect, capabilities, sorted(set(version_ids)), bodies=False)
@@ -1052,7 +1228,7 @@ class Researcher:
                     raise PrivacyDenied("E_PRIVACY_DENIED")
 
         return await self.provider.complete(
-            self.spec,
+            self.job_spec(job),
             user,
             validate=job_validator(job),
             precheck=precheck,
@@ -1122,6 +1298,13 @@ __all__ = [
     "refine_user",
     "rank_sources",
     "requote",
+    "claim_fixes",
+    "content_words",
+    "lit_hay",
+    "enforce_attribution",
+    "named_subjects",
+    "uncopied",
+    "unattributed",
     "support_hay",
     "research_chain",
     "validate_answer",

@@ -245,7 +245,12 @@ class Settings(BaseSettings):
     # decides (release manifest).
     research_enabled: bool = True
     # The whole memory.ask request (DB phases + at most 5 LLM calls), seconds.
-    research_timeout_s: float = Field(default=30.0, gt=0, le=120)
+    research_timeout_s: float = Field(default=25.0, gt=0, le=120)
+    # A runaway guard PER QUESTION (addendum 5): actual spend so far + the next call's worst case
+    # (its max_tokens) must stay within these, else the remaining steps are skipped and the answer
+    # so far is returned (meta.flags.budget_stop). The hour/day/month spend guard applies on top.
+    research_max_usd: float = Field(default=0.01, gt=0)
+    research_max_tokens: int = Field(default=100_000, gt=0)
     # The Memory Map's budget in the planning prompt (o200k tokens, D-136: about 6k).
     research_map_tokens: int = Field(default=6000, ge=500, le=20000)
     # Memory Map L2 summaries (task map_summary, librarian process only): a cycle every

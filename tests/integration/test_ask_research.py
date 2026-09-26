@@ -26,6 +26,7 @@ from hlmemo.core import research_service as rsv
 from hlmemo.core.budget import Meter
 from hlmemo.core.errors import ToolError
 from hlmemo.core.read_service import default_read_deps
+from hlmemo.db import read_queries as rq_mod
 from hlmemo.librarian.budget import MemoryBudget
 from hlmemo.librarian.ledger import MemoryLedger
 from hlmemo.librarian.provider import Provider
@@ -90,6 +91,8 @@ def ask_settings(db_dsn: str, **kw: Any):  # noqa: ANN201
         "llm_budget_disabled": True,
         "research_enabled": True,
         "map_summary_enabled": False,
+        # stub profiles are priced at $1/$2 per 1M tokens: the per-question guard gets its own test
+        "research_max_usd": 1.0,
     }
     return get_settings(**{**base, **kw})
 
@@ -642,6 +645,143 @@ async def test_ask_no_transaction_is_open_during_any_provider_call(
         await r.aclose()
     assert not out["abstained"] and [j for j, _ in seen] == ["plan", "answer", "check", "verify"]
     assert all(rows == [] for _j, rows in seen), seen
+
+
+# --------------------------------------------------------------------------- addendum 5 (safety)
+def cheap_researcher(db_dsn: str, llm: Any, **settings_kw: Any) -> rs.Researcher:
+    """A researcher on a stub profile priced like a real one ($0.1 / 1M in and out)."""
+    from tests.integration._librarian_fixtures import stub_profile
+
+    return rs.Researcher(
+        ask_settings(db_dsn, **settings_kw),
+        chain=[stub_profile("cheap", price_in="0.1", price_out="0.1")],
+        transport=llm.transport if hasattr(llm, "transport") else llm,
+    )
+
+
+async def test_ask_every_call_carries_its_job_max_tokens(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    llm = ScriptedLLM(default=FakeResearcher(facts=["1.2 s"], check_adds=["1,6 s"]))
+    r = make_researcher(db_dsn, llm)
+    try:
+        await ask(connect, world, deps, r, "What is the retrieval p95 target and what was it?")
+    finally:
+        await r.aclose()
+    seen = {(request_job(b)[0], b["max_tokens"]) for b in llm.requests}
+    assert seen == {(job, rs.JOB_MAX_TOKENS[job]) for job in ("plan", "answer", "check", "verify")}
+
+
+async def test_ask_per_question_budget_stops_with_a_partial_answer(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """An answer call that costs almost the whole per-question budget: the completeness pass and
+    the self-check are skipped (their worst case no longer fits), the draft answer is returned and
+    meta.flags.budget_stop says why."""
+    from tests.integration._librarian_fixtures import chat
+
+    fake = FakeResearcher(facts=["1.2 s"], check_adds=["1,6 s"])
+
+    def route(body: dict[str, Any]) -> Any:
+        out = fake(body)
+        return chat(out, cost=0.0095) if request_job(body)[0] == "answer" else out
+
+    llm = ScriptedLLM(default=route)
+    r = cheap_researcher(db_dsn, llm, research_max_usd=0.01)
+    try:
+        out = await ask(connect, world, deps, r, "What is the retrieval p95 target?")
+    finally:
+        await r.aclose()
+    assert out["meta"]["steps"] == ["plan", "answer"] and out["meta"]["flags"]["budget_stop"] is True
+    assert out["abstained"] is False and out["answer"] and out["primary"]  # the partial answer
+    assert out["meta"]["cost_usd"] <= 0.01
+
+
+async def test_ask_runaway_output_is_capped_and_stops_the_question(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """A provider that bills a runaway answer (65,536 output tokens): nothing more is sent after
+    it and the question ends with what it has; a plan so large that the answer's worst case no
+    longer fits ends in an abstention flagged budget_stop."""
+    from tests.integration._librarian_fixtures import chat
+
+    fake = FakeResearcher(facts=["1.2 s"])
+
+    def runaway(body: dict[str, Any]) -> Any:
+        out = fake(body)
+        if request_job(body)[0] == "answer":
+            return chat(out, prompt_tokens=4000, completion_tokens=65536)  # priced from the profile
+        return out
+
+    llm = ScriptedLLM(default=runaway)
+    r = cheap_researcher(db_dsn, llm, research_max_usd=0.005, research_max_tokens=60_000)
+    try:
+        out = await ask(connect, world, deps, r, "What is the retrieval p95 target?")
+    finally:
+        await r.aclose()
+    assert [request_job(b)[0] for b in llm.requests] == ["plan", "answer"]
+    assert all(b["max_tokens"] == rs.JOB_MAX_TOKENS[request_job(b)[0]] for b in llm.requests)
+    assert out["meta"]["flags"]["budget_stop"] is True and not out["abstained"]
+
+    def huge_plan(body: dict[str, Any]) -> Any:
+        return chat(fake(body), prompt_tokens=90_000, completion_tokens=800)
+
+    llm2 = ScriptedLLM(default=huge_plan)
+    r2 = cheap_researcher(db_dsn, llm2, research_max_tokens=60_000)
+    try:
+        out2 = await ask(connect, world, deps, r2, "What is the retrieval p95 target?")
+    finally:
+        await r2.aclose()
+    assert [request_job(b)[0] for b in llm2.requests] == ["plan"]
+    assert out2["abstained"] and out2["meta"]["abstain_reason"] == "budget"
+
+
+async def test_ask_never_answering_provider_hits_the_question_deadline(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """A provider that never answers (a stream that never ends): every attempt is cut at its share
+    of the per-question deadline; the whole question ends within HLM_RESEARCH_TIMEOUT_S."""
+    import time as _time
+
+    from tests.integration._librarian_fixtures import timeout_honouring
+
+    seen: list[tuple[str, float]] = []
+    transport = timeout_honouring(lambda host, body: "stall", seen)
+    r = cheap_researcher(db_dsn, transport, research_timeout_s=4.0)
+    t0 = _time.perf_counter()
+    try:
+        with pytest.raises(ToolError) as exc:
+            await ask(connect, world, deps, r, "What is the retrieval p95 target?")
+    finally:
+        await r.aclose()
+    elapsed = _time.perf_counter() - t0
+    assert exc.value.code == "E_UNAVAILABLE" and exc.value.details["reason"] == "timeout"
+    assert elapsed < 4.0 + 1.5 and seen  # bounded by the deadline, the requests were attempted
+
+
+async def test_ask_doc_level_drill_reads_the_best_chunk_of_a_top_document(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """Addendum 6 #3: for a top-ranked multi-chunk document, the chunk that best matches the
+    question is drilled too, even when the search hit another chunk of it."""
+    status = world.versions["status"]
+    async with await connect() as conn:
+        spans = await rq_mod.chunk_spans(conn, status)
+        await conn.commit()
+    targets = {sp.ordinal for sp in spans if "trigram fix" in sp.text}  # chunks overlap
+    other = next(sp.ordinal for sp in spans if all(abs(sp.ordinal - t) > 1 for t in targets))
+    r = make_researcher(db_dsn, ScriptedLLM(default={}))
+    run = rsv._Run(
+        conn=None,  # type: ignore[arg-type]
+        ctx=world.ctx_reader,
+        researcher=r,
+        deps=deps,
+        settings=r.settings,
+        question="Is the trigram fix for G-L3 parked?",
+        slug=MAIN,
+        project_id=world.projects[MAIN],
+        end=0.0,
+        reconnect=None,
+    )
+    async with await connect() as conn:
+        view = await mm.load_view(conn, world.ctx_reader, world.projects[MAIN])
+        run.view = {v.version_id: v for v in view}
+        best = await run._doc_best(conn, [f"v{status}.{other}"], [run.question])
+        await conn.commit()
+    await r.aclose()
+    assert len(best) == 1 and best[0] in {f"v{status}.{t}" for t in targets}
 
 
 # --------------------------------------------------------------------------- over MCP (detach)
