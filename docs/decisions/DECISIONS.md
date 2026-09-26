@@ -1150,3 +1150,28 @@ Ledger: glm-5 29 ok (avg 7.5 s), 5 writer-timeout cuts, 0 format failures. The 3
 4. Tools or structured outputs: not offered by the Z.AI/Novita endpoints, and they would re-introduce provider dependence.
 The principle stays the same as D-156: the model writes free text, the server adds the structure and the checks.
 **Next:** D-165/D-168 adjudication and the C1 rater on this run; then freeze the final protocol (writer config, caps, prompts, rubric, sets) and run the final gate on the PR set and sealed B.
+D-181 | 2026-09-26 | ACCEPTED | **Full dev picture of the glm-5 writer configuration (817aff9) under the frozen protocol. The stronger writer buys correctness but adds wrong facts, and the remaining failures are a MEMORY-LAYER problem (current vs superseded), not a model problem.**
+| Criterion | luna config a0d91d0 (D-169) | **glm-5 config 817aff9** | Gate |
+|---|---|---|---|
+| C1 utility (blind fresh-Claude rater) | 1.97 vs NLM 1.85 | 1.88 vs NLM 1.91 | ≥ 1.6, ≥ NLM − .05 |
+| C2 correct (adjudicated) | .72 | **.80** (D050 was a judge false accept) | ≥ .80 and ≥ .83 |
+| C3 faithful (adjudicated) | .867 (C: 1 in 27 sampled) | .859 (**C: 7 in 72 sampled**, P: 8) | ≥ .95 |
+| C4 abstain (adjudicated) | 8/8 | **7/8** (B-D073 fabricated an "in-process" cache) | ≥ .90 |
+| C5 recall | .94 | .96 | ≥ .85 |
+| C6 p95 / $ | 11.5 s / .004 | 21.1 s / .016 | ≤ 20 s / owner cap |
+C1 compares against different raters (two fresh instances) and is not comparable across the two columns.
+**The glm-5 contradictions** are mostly SUPERSEDED designs presented as current:
+- the D-055 preview change;
+- D-026 replacing the decorator design;
+- the SIGKILL/power-loss exclusion;
+- which tools updated.
+The overreach adds unstated inferences.
+Longer, more detailed answers (≈ 1,300 chars against ≈ 450) surface more stale facts. For a consumer, a wrong fact is worse than a missing one, so glm-5 is NOT a clear improvement despite C2 .72 → .80.
+**Root cause:** the dev and final corpora are imported documents in which "what is current" exists only as text ("D-055 supersedes…"). HLMemo's temporal layer is not in the answer path:
+- bi-temporal validity;
+- write-time supersession (D-118, wf-write-updates, unmerged);
+- librarian contradiction/supersession marking (wf-librarian-v3, unmerged).
+Nothing tells the writer which excerpt is superseded. Every writer model must guess, and a verbose one guesses more.
+**Proposal to the owner (a strategic fork):**
+- (a) The next lever is the memory layer. Surface current/superseded status per excerpt (bi-temporal validity plus supersession links from D-118 and the librarian) and show it to the writer, then re-measure with both writers. This is the "Human-Like" core: knowing what is current.
+- (b) Or release with the conservative luna writer, which has fewer wrong facts, and accept the C2/C3 residuals explicitly.
