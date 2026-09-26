@@ -1304,3 +1304,23 @@ Sealed B for NotebookLM is 36/50 done; the daily quota stopped it, and it resume
 - correct .34, contradiction .26, abstain .90, faithful .84, recall .82, p95 13 s;
 - multihop 2/12, procedure 3/12, recent 7/14, temporal 5/12.
 It mirrors the PR hold-out (.30 / .22), so pr-dev is the iteration set from now on. A root-cause analysis of its failures is running.
+D-190 | 2026-09-26 | ACCEPTED | **pr-dev root cause (33 failures of fd83f95): a literal-guard bug destroys procedure answers; retrieval misses cross-referenced decisions; about 9 failures are judge or gold artefacts. The fixes start.**
+The per-question table is in `<scratch>/prdev-rca/classification.tsv`.
+| Cause | Count | Mechanism / cases |
+|---|---|---|
+| JUDGE | 9 | facts true in the sources but absent from the gold read as contradictions (PD-020, 022, 026, 048); the gold snapshot is older than the memory (PD-003). Without these, correct ≈ .52 |
+| RETRIEVAL | 7 | 2 are chunk-level: the right item was shown but the wrong chunk (PD-007), or the 3,200-char clip cut the section (PD-038) |
+| COMPRESSION | 7 | – |
+| PROCEDURE | 6 | – |
+| STALE | 3 | – |
+| MULTIHOP | 1 | – |
+**Mechanisms:**
+- **PROCEDURE is a product bug.** The prose hard-literal guard treats a whole fenced code block as ONE literal, so a single placeholder or filled-in token drops the block and leaves a dangling "…run:". None of the 60 answers kept a fenced block.
+- **Contradictions are mostly the writer answering from an older or nearby source because the current one was never retrieved** (7), plus judge artefacts (4) and literal-drop truncations (2).
+- **At fact level**, the must_mention facts were in the shown excerpts in 23/33 failures. The failing questions' gold was only partly shown: .55 against .75 for passing questions.
+- **The temporal layer was inert:** the current memory has only the one "MERGED" declaration and no decision-to-decision links (superseded_shown 0 on all 60).
+**Fixes (wf-memory-ask), in order:**
+- (1) The code-block literal guard: line-level checks, placeholders exempt, small and derived numbers exempt, no dangling lead-ins.
+- (2) Cross-reference retrieval: pull in D-ids and paths mentioned in the shown excerpts but not shown; best chunk across long items; clip windows centred on the matched section.
+- (3) Then writer coverage, and the decision-to-decision supersession sources.
+Dev comparisons are PAIRED on pr-dev (same questions), and every correct/incorrect flip is spot-checked, because judge noise is as large as a single lever and codex adjudication is unavailable until 09-30.
