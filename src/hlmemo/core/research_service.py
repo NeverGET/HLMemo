@@ -11,8 +11,8 @@ completeness pass):
    render the Memory Map (``core/memory_map``); then ``detach`` commits and returns the request
    connection (D-062: no transaction is ever open during an LLM call) and extends the request
    deadline to ``HLM_RESEARCH_TIMEOUT_S`` (nothing is held any more).
-2. **Plan** (LLM, JOB ``plan``): map + question → 2–4 queries + ≤ 6 map sections. The ORIGINAL
-   question is searched concurrently.
+2. **Plan** (LLM, JOB ``plan``): map + question → 2–4 queries + ≤ 6 map sections. (The ORIGINAL
+   question is searched in step 1, inside the request transaction: no DB work overlaps an LLM call.)
 3. **Retrieve** (DB, a fresh short transaction that re-resolves the caller's authority first): every
    query through the internal ``memory.query`` path (``read_service.query_parts``, the caller's
    scope), reciprocal-rank fusion, ±1-chunk collapse, then an INTERNAL drill of ≤ 12 handles
@@ -78,7 +78,6 @@ from hlmemo.db import auth_queries
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as kq
 from hlmemo.db import synthesis_queries as sq
-from hlmemo.librarian import privacy
 from hlmemo.librarian.errors import (
     AuthorityLost,
     BudgetDeferred,
@@ -291,19 +290,8 @@ class _Run:
             excerpts = await self._drill(c, wanted)
         return excerpts, lists
 
-    async def search_only(self, queries: list[str]) -> list[list[dict[str, Any]]]:
-        async with self.db() as c:
-            fresh = await self.fresh_ctx(c)
-            return [await self._search(c, fresh, q) for q in queries]
-
     async def _search(self, c: AsyncConnection, fresh: AuthContext, query: str) -> list[dict[str, Any]]:
-        packed, _librarian = await read_service.query_parts(
-            c,
-            fresh,
-            {"project": self.slug, "query": query[:QUESTION_MAX], "token_budget": QUERY_BUDGET},
-            deps=self.deps,
-        )
-        return list(packed.get("hits") or [])
+        return await _search(c, fresh, self.slug, query, self.deps)
 
     def _handle_in_view(self, handle: str) -> bool:
         try:
@@ -378,13 +366,18 @@ class _Run:
             if left < MIN_CALL_S:
                 raise rs.ResearchUnavailable("timeout")
             user, ids = build()
-            verdict = await self.researcher.gate(self.caps, sorted(set(ids) | self.sent))
+            verdict = await self.researcher.gate(self.caps, ids)
             if not verdict.device_ok:
                 raise HlmError("E_AUTH", "device revoked or rebound during the request")
-            lost = {v for v, why in verdict.denied.items() if v in self.sent and why != privacy.NOT_CURRENT}
-            if lost:
-                raise _AuthorityChanged
-            denied = {v for v in verdict.denied if v in set(ids)}
+            if self.sent:
+                # text already sent may ride along in derived form (queries, a draft, an answer): its
+                # sources must still pass the privacy rules; a superseded one is judged on them too
+                prior = await self.researcher.gate_carried(self.caps, sorted(self.sent))
+                if not prior.device_ok:
+                    raise HlmError("E_AUTH", "device revoked or rebound during the request")
+                if prior.denied:
+                    raise _AuthorityChanged
+            denied = set(verdict.denied) & set(ids)
             if denied:
                 self.excluded |= denied
                 continue
@@ -396,11 +389,12 @@ class _Run:
                         user,
                         capabilities=self.caps,
                         gate_ids=ids,
+                        carried_ids=sorted(self.sent),
                         deadline=deadline,
                         lineage=self.lineage,
                     )
             except PrivacyDenied:
-                continue  # changed between our gate and the attempt's: gate and rebuild again
+                continue  # changed between our gate and the attempt's: gate (and rebuild) again
             except AuthorityLost as exc:
                 raise HlmError("E_AUTH", "device revoked or rebound during the request") from exc
             except (TimeoutError, DeadlineExceeded) as exc:
@@ -435,43 +429,74 @@ class _Run:
         queries, sections = rs.parse_plan(obj, self.question)
         return queries, sections
 
+    def prune(self, v: rs.Validated, excerpts: list[rs.Excerpt]) -> rs.Validated:
+        """``v`` restricted to the claims whose every supporting excerpt is still admitted (an
+        excerpt excluded mid-request must not ride into a later prompt inside a draft or a quote)."""
+        vid = {e.handle: e.version_id for e in excerpts}
+        ok = {h for h, x in vid.items() if x not in self.excluded}
+        if not v.answered or all(h in ok for c in v.kept for h, _q in c.support):
+            return v
+        claims = [c for c in v.kept if all(h in ok for h, _q in c.support)]
+        shown = {e.handle: e for e in excerpts if e.handle in ok}
+        return rs.assemble(
+            rs.ANSWERED,
+            v.answer,
+            claims,
+            [h for h in v.related if h in ok],
+            v.confidence,
+            shown,
+            self.researcher.redactor.text,
+            missing=v.missing,
+            sub_asks=v.sub_asks,
+        )
+
     async def verify(self, v: rs.Validated, excerpts: list[rs.Excerpt]) -> rs.Validated:
         """The self-check (JOB ``verify``): the answer and each kept claim with ONLY its quotes; a
-        failed call leaves the answer as it is."""
+        failed call leaves the answer as it is. The verdicts apply to exactly the claims sent."""
         by_handle = {e.handle: e for e in excerpts}
+        sent: list[rs.Validated] = []
+        if not self.prune(v, excerpts).answered:
+            return self.prune(v, excerpts)  # nothing admitted is left to verify
 
         def build() -> tuple[str, list[int]]:
-            ids = [by_handle[h].version_id for c in v.kept for h, _q in c.support if h in by_handle]
-            return rs.verify_user(self.question, v.answer, v.kept), ids
+            cur = self.prune(v, excerpts)
+            sent[:] = [cur]
+            ids = [by_handle[h].version_id for c in cur.kept for h, _q in c.support]
+            return rs.verify_user(self.question, cur.answer, cur.kept), ids
 
         try:
             obj = await self.call("verify", build, VERIFY_CAP_S)
         except rs.ResearchUnavailable:
-            return v
-        if any(
-            e.version_id in self.excluded
-            for e in excerpts
-            if e.handle in {h for c in v.kept for h, _ in c.support}
-        ):
-            return v
-        return rs.apply_verify(v, obj, self.researcher.redactor.text)
+            return self.prune(v, excerpts)
+        base = sent[0] if sent else v
+        if not base.answered:
+            return base
+        return rs.apply_verify(base, obj, self.researcher.redactor.text)
 
     async def answer(
         self, excerpts: list[rs.Excerpt], job: str = "answer", draft: rs.Validated | None = None
     ) -> rs.Validated:
         def build() -> tuple[str, list[int]]:
             ex = [e for e in excerpts if e.version_id not in self.excluded]
-            user = (
-                rs.answer_user(self.question, ex)
-                if draft is None
-                else rs.check_user(self.question, draft.draft(), ex)
-            )
-            return user, [e.version_id for e in ex]
+            if draft is None:
+                return rs.answer_user(self.question, ex), [e.version_id for e in ex]
+            cur = self.prune(draft, excerpts)  # the draft's quotes come only from admitted excerpts
+            return rs.check_user(self.question, cur.draft(), ex), [e.version_id for e in ex]
 
         cap = ANSWER_CAP_S if draft is None else CHECK_CAP_S
         obj = await self.call(job, build, cap)
         shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
         return rs.validate_answer(obj, shown, self.researcher.redactor.text)
+
+
+async def _search(
+    c: AsyncConnection, ctx: AuthContext, slug: str, query: str, deps: ReadDeps
+) -> list[dict[str, Any]]:
+    """One internal ``memory.query`` (the caller's scope; it writes nothing): its hits."""
+    packed, _librarian = await read_service.query_parts(
+        c, ctx, {"project": slug, "query": query[:QUESTION_MAX], "token_budget": QUERY_BUDGET}, deps=deps
+    )
+    return list(packed.get("hits") or [])
 
 
 async def _phase_timeouts(c: AsyncConnection) -> None:
@@ -523,6 +548,9 @@ async def ask(
             entries = await mm.load_entries(conn, view)
             summaries = await mm.load_summaries(conn, project.project_id, {v.version_id for v in view})
             t_start = await rq.clock_now(conn)
+            # the ORIGINAL question's search, here: no DB work may overlap a provider call (D-062,
+            # review 80 #2), and this transaction is released before the first one
+            first = [await _search(conn, ctx, project.slug, req.question, deps)]
         run = _Run(
             conn=conn,
             ctx=ctx,
@@ -562,7 +590,7 @@ async def ask(
             # (the device FOR SHARE) across every LLM call: refused, like the W2e synthesis
             raise ToolError("E_UNAVAILABLE", "memory.ask needs an idle connection", reason="no_detach")
         try:
-            result = await _loop(run, t_start)
+            result = await _loop(run, t_start, first)
         except _AuthorityChanged:
             raise ToolError(
                 "E_UNAVAILABLE",
@@ -583,19 +611,11 @@ async def ask(
     return _pack(deps.meter, result, req.token_budget)
 
 
-async def _loop(run: _Run, t_start: Any) -> dict[str, Any]:
+async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> dict[str, Any]:
     q = run.question
     m = run.render_map()
-    # 2. plan, with the original question searched meanwhile
-    search = asyncio.ensure_future(run.search_only([q]))
-    try:
-        queries, sections = await run.plan(m)
-    except BaseException:
-        search.cancel()
-        with contextlib.suppress(BaseException):
-            await search
-        raise
-    first = await search
+    # 2. plan (the original question was searched in the map phase)
+    queries, sections = await run.plan(m)
     m = run.render_map() if run.excluded else m
     sections = [s for s in sections if m.drillable(s) and run._handle_in_view(s)][: rs.MAX_SECTIONS]
     run.queries = [q, *queries]

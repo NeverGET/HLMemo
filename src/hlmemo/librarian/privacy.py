@@ -155,13 +155,24 @@ async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list
 
 
 async def gate(
-    conn_factory: Any, capabilities: dict[str, Any], version_ids: list[int], *, bodies: bool = True
+    conn_factory: Any,
+    capabilities: dict[str, Any],
+    version_ids: list[int],
+    *,
+    bodies: bool = True,
+    ignore_currency: bool = False,
 ) -> tuple[Verdict, dict[int, Item]]:
     """Fresh short transaction: reload the items and evaluate the gate under the D-062 locks;
     it commits before returning, so the caller sends the request with no transaction open.
-    ``bodies=False``: the returned items carry an empty body (the verdict is the same)."""
+    ``bodies=False``: the returned items carry an empty body (the verdict is the same).
+    ``ignore_currency`` (D-136, text ALREADY sent): the verdict ignores whether an item is still
+    current/active, so a superseded item is judged on the privacy rules alone (NOT_CURRENT must not
+    mask a device-scope, policy or grant change)."""
     async with await conn_factory() as conn:
         items = await load_items(conn, version_ids, bodies=bodies)
+        if ignore_currency:
+            for it in items.values():
+                it.current, it.status = True, "active"
         missing = [v for v in version_ids if v not in items]
         verdict = await check(conn, capabilities, list(items.values()))
         for v in missing:

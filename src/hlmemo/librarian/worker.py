@@ -395,7 +395,8 @@ class LibrarianWorker:
         self._last_map = 0.0
         self._map_task: asyncio.Task[int] | None = None
         self.map_summarizer: Any = None
-        if getattr(settings, "map_summary_enabled", False):
+        # only while memory.ask can use them (HLM_RESEARCH_ENABLED): otherwise they are pure spend
+        if getattr(settings, "map_summary_enabled", False) and getattr(settings, "research_enabled", False):
             from hlmemo.librarian.tasks.map_summary import MapSummarizer
 
             self.map_summarizer = MapSummarizer(settings, provider=provider, connect=self.connect)

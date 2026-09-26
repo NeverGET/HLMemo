@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import re
+import uuid
 from collections.abc import AsyncIterator
 from decimal import Decimal
 from typing import Any
@@ -470,6 +471,166 @@ async def test_ask_grant_lost_after_send_withholds_everything(connect, world, de
         await r.aclose()
 
 
+async def test_ask_superseded_mid_request_never_rides_into_later_prompts(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """Own review: an excerpt superseded between the answer and the completeness pass is excluded
+    from every later prompt — also from the draft's claims and quotes — and never cited."""
+    from hlmemo.core.write_service import default_deps, write
+    from hlmemo.worker.main import drain
+
+    body = "D-777 | 2026-09-25 | ACCEPTED | The cache TTL is 45 s for the map cache of each project."
+    item = {
+        "kind": "fact",
+        "title": "D-777 · ACCEPTED: map cache TTL · docs/decisions/DECISIONS.md",
+        "body": body,
+        "source": {"system": "markdown", "path": "docs/decisions/DECISIONS.md#D-777", "sha256": "7" * 64},
+    }
+    async with await connect() as conn:
+        ack = await write(
+            conn,
+            world.ctx_loader,
+            {"project": MAIN, "request_id": str(uuid.uuid4()), "client": "pytest-ask/0", "items": [item]},
+            deps=default_deps(),
+        )
+        await conn.commit()
+    vid, lid = ack.versions[0].version_id, ack.versions[0].logical_id
+    await drain(connect, deps.embedder)
+    revised: list[bool] = []
+
+    async def supersede_after_answer(body_: dict[str, Any]) -> None:
+        if not revised and request_job(body_)[0] == "answer":
+            revised.append(True)
+            async with await connect() as conn:
+                await write(
+                    conn,
+                    world.ctx_loader,
+                    {
+                        "project": MAIN,
+                        "request_id": str(uuid.uuid4()),
+                        "client": "pytest-ask/0",
+                        "items": [
+                            {
+                                **item,
+                                "logical_id": lid,
+                                "expected_version_id": vid,
+                                "body": body.replace("45 s", "90 s"),
+                            }
+                        ],
+                    },
+                    deps=default_deps(),
+                )
+                await conn.commit()
+
+    llm = ScriptedLLM(
+        default=FakeResearcher(facts=["45 s"], queries=["map cache TTL", "D-777"]),
+        on_request=supersede_after_answer,
+    )
+    r = make_researcher(db_dsn, llm)
+    try:
+        out = await ask(connect, world, deps, r, "What is the map cache TTL (D-777)?")
+    finally:
+        await r.aclose()
+    jobs = [request_job(b)[0] for b in llm.requests]
+    assert jobs[:2] == ["plan", "answer"] and revised
+    answer_at = jobs.index("answer")
+    for b in llm.requests[answer_at + 1 :]:
+        assert "45 s for the map cache" not in json.dumps(b, ensure_ascii=False)
+    cited = [h["handle"] for h in (*out["primary"], *out["related"])]
+    cited += [s["handle"] for c in out["claims"] for s in c["support"]]
+    assert not any(handle_re(vid).fullmatch(h) for h in cited)
+    assert "45 s" not in out["answer"]
+
+
+async def test_ask_superseded_then_policy_off_is_not_masked(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """Review 80 #1 (HIGH): a sent source that is superseded AND whose co-owner project turns
+    policy.librarian off must count as an authority loss (not merely "not current"): nothing more
+    is sent and the question fails."""
+    from hlmemo.core.write_service import default_deps, write
+    from hlmemo.worker.main import drain
+    from tests.integration._ask_fixtures import OTHER
+
+    body = "D-778 | 2026-09-25 | ACCEPTED | The shared quota is 17 slots for both projects."
+    item = {
+        "kind": "fact",
+        "title": "D-778 · ACCEPTED: shared quota",
+        "body": body,
+        "project_ids": [MAIN, OTHER],
+    }
+    async with await connect() as conn:
+        ack = await write(
+            conn,
+            world.ctx_loader,
+            {"project": MAIN, "request_id": str(uuid.uuid4()), "client": "pytest-ask/0", "items": [item]},
+            deps=default_deps(),
+        )
+        await conn.commit()
+    vid, lid = ack.versions[0].version_id, ack.versions[0].logical_id
+    await drain(connect, deps.embedder)
+    done: list[bool] = []
+    policy_off = json.dumps({"librarian": "off"})
+
+    async def supersede_and_close(body_: dict[str, Any]) -> None:
+        if not done and request_job(body_)[0] == "answer":
+            done.append(True)
+            revision = {**item, "logical_id": lid, "expected_version_id": vid, "body": body + " Revised."}
+            async with await connect() as conn:
+                await write(
+                    conn,
+                    world.ctx_loader,
+                    {
+                        "project": MAIN,
+                        "request_id": str(uuid.uuid4()),
+                        "client": "pytest-ask/0",
+                        "items": [revision],
+                    },
+                    deps=default_deps(),
+                )
+                await conn.execute(
+                    "UPDATE projects SET policy = policy || %s::jsonb WHERE slug = %s", (policy_off, OTHER)
+                )
+                await conn.commit()
+
+    fake = FakeResearcher(facts=["17 slots"], queries=["shared quota slots"])
+    llm = ScriptedLLM(default=fake, on_request=supersede_and_close)
+    r = make_researcher(db_dsn, llm)
+    try:
+        with pytest.raises(ToolError) as exc:
+            await ask(connect, world, deps, r, "What is the shared quota (D-778)?")
+        assert exc.value.details["reason"] == "authority_changed"
+        assert [request_job(b)[0] for b in llm.requests] == ["plan", "answer"]  # nothing after
+    finally:
+        async with await connect() as conn:
+            await conn.execute("UPDATE projects SET policy = policy - 'librarian' WHERE slug = %s", (OTHER,))
+            await conn.commit()
+        await r.aclose()
+
+
+async def test_ask_no_transaction_is_open_during_any_provider_call(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
+    """Review 80 #2 (HIGH) / D-062: while ANY provider request is in flight, no connection of this
+    database is inside a transaction (no lock, no device FOR SHARE held across an LLM call)."""
+    seen: list[tuple[str, list[Any]]] = []
+
+    async def probe(body_: dict[str, Any]) -> None:
+        async with await connect() as conn:
+            cur = await conn.execute(
+                "SELECT state, left(query, 60) FROM pg_stat_activity WHERE datname = current_database()"
+                " AND pid <> pg_backend_pid() AND state LIKE %s",
+                ("idle in transaction%",),
+            )
+            seen.append((request_job(body_)[0], await cur.fetchall()))
+            await conn.rollback()
+
+    llm = ScriptedLLM(default=FakeResearcher(facts=["1.2 s"], check_adds=["1,6 s"]), on_request=probe)
+    r = make_researcher(db_dsn, llm)
+    try:
+        out = await ask(connect, world, deps, r, "What is the retrieval p95 target and what was it?")
+    finally:
+        await r.aclose()
+    assert not out["abstained"] and [j for j, _ in seen] == ["plan", "answer", "check", "verify"]
+    assert all(rows == [] for _j, rows in seen), seen
+
+
 # --------------------------------------------------------------------------- over MCP (detach)
 @contextlib.asynccontextmanager
 async def ask_app(db_dsn: str, llm: ScriptedLLM, **kw: Any) -> AsyncIterator[httpx.AsyncClient]:
@@ -661,6 +822,38 @@ async def test_ask_self_check_narrows_or_drops_partly_supported_claims(connect, 
     assert "The Memory Map budget is about 6k tokens." in texts  # narrowed to its quote
     assert out["answer"] == "The p95 target is 1.2 s. The map budget is about 6k tokens."
     assert out["confidence"] != "high"  # the self-check changed something
+
+
+async def test_librarian_worker_runs_map_summaries_in_the_background(connect, world, db_dsn) -> None:  # noqa: ANN001
+    from hlmemo.librarian.worker import LibrarianWorker
+
+    llm = ScriptedLLM(default={"summary": "A source of the synthetic project."})
+
+    async def conn_factory():  # noqa: ANN202
+        return await connect()
+
+    settings = ask_settings(
+        db_dsn, map_summary_enabled=True, map_summary_debounce_s=0.0, map_summary_every_s=3600.0
+    )
+    worker = LibrarianWorker(settings, provider=summary_provider(llm), connect=conn_factory)
+    try:
+        assert worker.maybe_map_summaries() is True
+        assert worker.maybe_map_summaries() is False  # one cycle at a time, then every_s
+        written = await worker._map_task
+        assert written >= 3 and llm.calls == written
+    finally:
+        await worker.stop_map_summaries()
+        await worker.provider.aclose()
+        async with await connect() as conn:
+            await conn.execute("DELETE FROM memory_map_summaries")
+            await conn.commit()
+    off = LibrarianWorker(
+        ask_settings(db_dsn, map_summary_enabled=True, research_enabled=False),
+        provider=summary_provider(llm),
+        connect=conn_factory,
+    )
+    assert off.map_summarizer is None and off.maybe_map_summaries() is False  # no memory.ask, no spend
+    await off.provider.aclose()
 
 
 async def test_ask_concurrent_questions_share_nothing(connect, world, deps, db_dsn) -> None:  # noqa: ANN001

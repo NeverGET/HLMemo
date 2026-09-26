@@ -771,6 +771,14 @@ class Researcher:
         verdict, _ = await privacy.gate(self.connect, capabilities, sorted(set(version_ids)), bodies=False)
         return verdict
 
+    async def gate_carried(self, capabilities: dict[str, Any], version_ids: list[int]) -> privacy.Verdict:
+        """The privacy rules alone (currency ignored) over text ALREADY sent (review 80 #1): a
+        superseded item is still judged on device scope, policy and grants."""
+        verdict, _ = await privacy.gate(
+            self.connect, capabilities, sorted(set(version_ids)), bodies=False, ignore_currency=True
+        )
+        return verdict
+
     async def complete(
         self,
         job: str,
@@ -780,18 +788,28 @@ class Researcher:
         gate_ids: list[int],
         deadline: float,
         lineage: str,
+        carried_ids: list[int] | None = None,
     ) -> LlmResult:
-        """One logical call. The strict privacy gate over ``gate_ids`` runs before EVERY attempt
-        (retries and the fallback included) and aborts before any byte is sent."""
+        """One logical call. Before EVERY attempt (retries and the fallback included), and before any
+        byte is sent: the strict privacy gate over ``gate_ids`` (the text of this prompt) and the
+        privacy rules over ``carried_ids`` (the sources of text sent earlier that this prompt may carry
+        in derived form: plan queries, a draft, an answer)."""
         assert self.provider is not None
         ids = sorted(set(gate_ids))
+        carried = sorted(set(carried_ids or []) - set(ids))
 
         async def precheck() -> None:
-            verdict, _ = await privacy.gate(self.connect, capabilities, ids, bodies=False)
+            verdict = await self.gate(capabilities, ids)
             if not verdict.device_ok:
                 raise AuthorityLost("E_AUTHORITY_LOST")
             if verdict.denied:
                 raise PrivacyDenied("E_PRIVACY_DENIED")
+            if carried:
+                prior = await self.gate_carried(capabilities, carried)
+                if not prior.device_ok:
+                    raise AuthorityLost("E_AUTHORITY_LOST")
+                if prior.denied:
+                    raise PrivacyDenied("E_PRIVACY_DENIED")
 
         return await self.provider.complete(
             self.spec,
