@@ -1115,3 +1115,19 @@ The writer profile forced `response_format` + `require_parameters`, which EXCLUD
 - **If it holds:** the writer is glm-5 via Z.AI/Novita at about $0.017/q full (about $10–25/month at 20–50 questions a day).
 - **If not:** the stable fallback is gpt-5.6-luna (18/25, 8/8 abstain, p95 5.6 s, about $0.006/q), with the C2 residual presented to the owner.
 Dropped without spend: Haiku 4.5 (the earlier bench evidence is against it) and gpt-5.6-terra/sol (no evidence of better writing; about 3× the cost).
+D-179 | 2026-09-26 | ACCEPTED | **The D-178 hypothesis holds, and the writer is DECIDED: glm-5 served by first-party Z.AI (Novita backup), reasoning off, a text output protocol, and a 12 s timeout that falls back to gpt-6-luna.**
+**Decisive probe** (the same 34 end-to-end contexts, no response_format, provider order [Z.AI, Novita] with no fallbacks):
+- every call served by Z.AI, 0 overloads or 4xx/5xx;
+- reasoning-off accepted (0 reasoning tokens);
+- per question: median 7.4 s, p95 17.0 s, max 49 s (one cap-hit plus a retry);
+- $0.464 for 34 questions ($.0137/q writer at $1.0/$3.2).
+**Correctness (strict judge):**
+| Writer | Correct | Abstain | Contradictions | Note |
+|---|---|---|---|---|
+| glm-5 via Z.AI | **22/25** | 6/8 | 2 | third independent 22/25-level result, after glm5 22/25 and lowr2 21/25 |
+| gpt-5.6-luna | 18/25 | 8/8 | 0 | |
+| gpt-6-luna (current default) | 15/25 | – | – | |
+**The one defect:** without provider-enforced JSON, 7/34 first tries were invalid JSON (long prose breaks the escaping), and retries feed the tail.
+**Fix:** a labelled text protocol for the prose (and expand) job whenever the writer profile declares `json_mode = false`. It is a profile capability flag, never a model name (D-017), and the server parses it deterministically.
+**Cost:** about $0.017/q full (writer about $0.014 plus plan/attribute on luna), about $10–25/month at 20–50 questions a day. That is within the owner's relaxed budget (D-173).
+**C6 cost limit proposed to the owner:** ≤ $0.03/q (the per-question cap must cover the writer's worst-case reservation plus the fallback), together with the R4 manifest change from $0.01.
