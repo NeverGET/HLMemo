@@ -498,3 +498,14 @@ Both miss about a third of the key facts, and V5 contradicts gold on .167 of que
 - (2) if still short: a stronger model (luna-pro) for the answer/completeness steps only, planning stays on luna. Expected ~$0.007/q, inside the $0.01 gate;
 - (3) retrieval for the remaining misses.
 The final gate runs only once the dev numbers clear the thresholds with margin. Total spend tonight so far is about $2.3 of $6.
+D-139 | 2026-09-26 | ACCEPTED (orchestrator) | **Dev lever test: the claims contract improves faithfulness but not correctness; misses are MAIN facts that the quote check drops.** Fixed 34-question B-dev subset (subset-v6.json, recorded before any V6 answer was scored).
+| Variant | Correct | Faithful (judge / quote check) | Recall | Abstain | p95 | $/q |
+|---|---|---|---|---|---|---|
+| V5 | .462 | .630 / .959 | .853 | – | 12.1 s | .0021 |
+| V6 (claims + completeness) | .423 | .709 / 1.00 | .814 | – | 14.7 s | .0038 |
+| V6-pro (luna-pro for answer/completeness) | .538 | .717 | .891 | .875 (1 false answer) | **24.8 s, FAIL** | .0066 |
+Misses are mostly the MAIN key fact (V6 12/15, V6-pro 10/12), not secondary details. About half had a claim REMOVED by the verbatim-quote check. Spend $0.70.
+**Next, both offline at $0:**
+- (A) classify why the quotes failed (whitespace/markdown/table vs a true paraphrase) and how many would survive a normalised match;
+- (B) a judge audit: 30 answers independently adjudicated against the frozen key facts, to measure the judge's false negatives/positives before trusting it for the final gate.
+memory.ask gets: normalised quote matching (the raw quote kept for display), a re-quote attempt instead of a silent drop, and the main answer as the first claim.
