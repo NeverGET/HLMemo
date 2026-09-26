@@ -919,3 +919,13 @@ Attribution errors (E) are NOT absorbed by the scope: they are product defects, 
 4. faithful = (adjudicated faithful rejections + accepts × (1 − sampled false-accept rate)) / statements ≥ .95.
 5. The contradiction rate (C, plus the judge's answer-level contradictions) stays ≤ .04.
 The polarity flags in prose mode were 6/6 false positives and are removed (WS-A).
+D-166 | 2026-09-26 | ACCEPTED (owner) | **Product principle: HLMemo never performs external research. `memory.ask` answers only from memory.**
+The owner, after the NotebookLM comparison: NotebookLM's "research" feature is one HLMemo must NOT have. The LLM working on the project (or the owner) does the research, refines it, and then writes the result into memory. That is the right and optimal flow.
+Consequences:
+- `memory.ask` stays read-only over the caller's memory, as D-130 already specifies.
+- No web or source-discovery tool is added.
+- New knowledge enters only through `memory.write` / import by the working agent.
+The owner also notes the advantages HLMemo has over a NotebookLM-style tool beyond the measured comparison, all of which are in the design:
+- cross-project reads when needed (D-083 policy);
+- a project-independent experience layer (L4, Phase 4);
+- no source limit.
