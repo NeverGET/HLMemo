@@ -1052,6 +1052,24 @@ def test_d165_drill_order_best_chunks_take_slots_and_the_cap_holds() -> None:
     assert rsv.drill_order(["v7.11"], ["v7.12"], [], set()) == ["v7.11"]
 
 
+def test_d193_k4_best_chunks_before_the_sections() -> None:
+    """D-193 (5) K4 (the prose mode's order): the top items' best chunks first, the planner's
+    sections after them, then the fused order; the cap, the skip and the ±1 collapse unchanged."""
+    fused = [f"v{i}.0" for i in range(10, 30)]
+    best = ["v7.12", "v10.0", "v11.3"]
+    sections = ["v2", "v5.3"]
+    assert rsv.candidate_order(sections, best, fused) == [*sections, *best, *fused]
+    assert rsv.candidate_order(sections, best, fused, best_first=True) == [*best, *sections, *fused]
+    got = rsv.drill_order(sections, best, fused, {"v11.3", "v12.0"}, best_first=True)
+    assert len(got) == rsv.MAX_DRILL
+    assert got[:4] == ["v7.12", "v10.0", "v2", "v5.3"]
+    assert got[4:] == [f"v{i}.0" for i in (11, *range(13, 20))]
+    # the default (claims/cite modes) keeps the sections first
+    assert rsv.drill_order(sections, best, fused, set())[:2] == sections
+    # a section next to a best chunk is now covered by the best chunk (±1 collapse, first one wins)
+    assert rsv.drill_order(["v7.11"], ["v7.12"], [], set(), best_first=True) == ["v7.12"]
+
+
 def test_parse_request_validation() -> None:
     req = rsv.parse_request({"question": "  what   is x ", "project": "hlmemo"})
     assert (req.question, req.project, req.token_budget) == ("what is x", "hlmemo", rsv.DEFAULT_BUDGET)

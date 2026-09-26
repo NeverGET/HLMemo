@@ -85,7 +85,9 @@ D-188 (prose mode): the D-ids and repo paths the shown excerpts mention, whose r
 shown, pull their row chunk / best chunk in (≤ ``XREF_EXTRA``, the same budget rule; ``xref_pulled``);
 a long top item (> ``LONG_ITEM_CHUNKS`` chunks) shows its best chunk for the question instead of its
 other hit chunks; an excerpt longer than ``research.EXCERPT_CHARS`` is clipped around its
-best-matching part (``research.clip`` with the question's words).
+best-matching part (``research.clip`` with the question's words). D-193 (5) "K4" (prose mode): a
+retrieval drills the ``DOC_TOP`` top items' best chunks FIRST and the planner's sections after them
+(``candidate_order``; the other modes keep the sections first).
 
 At most ``research.MAX_CALLS_NO_SELECT`` (4) logical LLM calls, ``research.MAX_CALLS`` (6) with the
 D-159 select (plan, select, write, refine, select, write), ``research.MAX_CALLS_ATTRIBUTE`` (5) with
@@ -360,11 +362,24 @@ def rrf_explain(lists: list[list[dict[str, Any]]], k: int = RRF_K) -> dict[str, 
     }
 
 
-def drill_order(sections: list[str], best: list[str], fused: list[str], skip: set[str]) -> list[str]:
+def candidate_order(
+    sections: list[str], best: list[str], fused: list[str], *, best_first: bool = False
+) -> list[str]:
+    """The ordered drill candidates of one retrieval: the plan's sections, then (D-165) the top items'
+    best in-document chunks (``_doc_best``), then the chunk-fused hits. D-193 (5) "K4" (``best_first``,
+    the prose mode): the ``DOC_TOP`` best chunks FIRST, the sections after them (the ranking ceiling
+    test on the real memory: gold@1 15 -> 29 of 50, all facts in the top 4 28 -> 34)."""
+    return [*best, *sections, *fused] if best_first else [*sections, *best, *fused]
+
+
+def drill_order(
+    sections: list[str], best: list[str], fused: list[str], skip: set[str], *, best_first: bool = False
+) -> list[str]:
     """What one retrieval drills (≤ ``MAX_DRILL``, ±1-chunk collapse, never a handle in ``skip``): the
-    plan's sections first, then (D-165) the top items' best in-document chunks (``_doc_best``), TAKING
-    slots, then the chunk-fused hits in their order."""
-    return collapse([h for h in [*sections, *best, *fused] if h not in skip], MAX_DRILL)
+    ``candidate_order`` (the plan's sections first, then the best chunks TAKING slots, then the fused
+    order; D-193 K4 with ``best_first``: the best chunks, then the sections, then the fused order)."""
+    cands = candidate_order(sections, best, fused, best_first=best_first)
+    return collapse([h for h in cands if h not in skip], MAX_DRILL)
 
 
 class _AuthorityChanged(Exception):
@@ -548,11 +563,12 @@ class _Run:
                         if h not in fused
                     ]
                 focus = set().union(*(rs.content_words(t) for t in [self.question, *queries]))
-            wanted = drill_order(sections, best, fused, skip)
+            # D-193 (5) K4 (prose mode): the top items' best chunks before the planner's sections
+            wanted = drill_order(sections, best, fused, skip, best_first=self.prose)
             if tp is not None:
                 tp["doc_best"] = [{"item_hit": hit, "best": b} for hit, b in zip(items, best, strict=False)]
                 tp["drill_order"] = wanted
-                candidates = [*sections, *best, *fused]
+                candidates = candidate_order(sections, best, fused, best_first=self.prose)
                 tp["dropped"] += [
                     {"handle": h, "stage": "drill_order", "reason": "already_read"}
                     for h in candidates
@@ -1894,6 +1910,7 @@ __all__ = [
     "TOOL",
     "AskRequest",
     "ask",
+    "candidate_order",
     "collapse",
     "default_project",
     "drill_order",
