@@ -474,6 +474,26 @@ def test_validate_answer_appends_uncovered_kept_claims() -> None:
     )
 
 
+def test_cite_polarity_is_checked_against_the_best_line_only() -> None:
+    """D-157: a "not" about other words elsewhere in the cited excerpt does not drop a true sentence;
+    a sentence that drops the "not" of its own best line still fails."""
+    ex = rs.Excerpt(
+        "v30.1",
+        30,
+        "Deploy",
+        "deploy/RUNBOOK.md",
+        "2026-09-26",
+        "The deploy runner uses a VPS snapshot before every release.\n"
+        "The runner does not use a snapshot for the local rehearsal VM.\n"
+        "The release gate is not enabled by default.",
+    )
+    shown = {"v30.1": ex}
+    ok, _sup = rs.cite_check("The deploy runner uses a VPS snapshot before every release.", ["v30.1"], shown)
+    assert ok is None
+    bad, _sup = rs.cite_check("The release gate is enabled by default.", ["v30.1"], shown)
+    assert bad == "polarity"
+
+
 def test_failed_quote_is_requoted_from_its_line_before_dropping() -> None:
     """Addendum 2: a claim whose quotes are all wrong is re-quoted from the cited item's line that
     holds its literals and most of its words; dropped only when no line qualifies; flags recorded."""

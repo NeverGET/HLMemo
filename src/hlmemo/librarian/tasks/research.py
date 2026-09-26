@@ -1178,8 +1178,9 @@ def cite_check(
 
     - literal: every literal of the sentence (``literals``/``literal_supported``) is in the cited
       excerpts' texts (and titles) together;
-    - polarity: ``polarity_ok`` against the lines/sentences of the cited excerpts that share a
-      literal or ≥ 2 content words (prefix-tolerant) with the sentence; skipped when none shares;
+    - polarity: ``polarity_ok`` against the best-matching line/sentence (most shared literals, then
+      content words; ≥ 1 literal or ≥ 2 words) of each of the top ``MAX_SUPPORT`` cited excerpts
+      (D-157); skipped when no line shares;
     - support: per cited handle (the best-matching ones first, ≤ MAX_SUPPORT) its line with the most
       shared literals, then content words (else its first non-empty line), as the displayed quote.
       A sentence citing nothing is attributed to the excerpts that share the most with it (until
@@ -1195,22 +1196,23 @@ def cite_check(
         return "literal", []
     words = _content(text)
     best: dict[str, tuple[tuple[int, int], str]] = {}
-    lines: list[str] = []
     for h in pool:
         for unit, cw, uhay in _units(shown[h], cache):
             score = (sum(1 for x in lits if literal_supported(x, uhay)), _hits(words, cw))
-            if score[0] >= 1 or score[1] >= 2:
-                lines.append(unit)
-                if h not in best or score > best[h][0]:
-                    best[h] = (score, unit)
-    if lines and not polarity_ok(text, lines):
-        return "polarity", []
+            if (score[0] >= 1 or score[1] >= 2) and (h not in best or score > best[h][0]):
+                best[h] = (score, unit)
     order = {h: i for i, h in enumerate(pool)}
 
     def rank(h: str) -> tuple[int, int, int]:
         return (-best[h][0][0], -best[h][0][1], order[h]) if h in best else (1, 0, order[h])
 
     ranked = sorted(pool, key=rank)
+    # D-157: polarity against each top source's BEST line only (what the caller is shown), as a
+    # claim is checked against its own quotes; every sharing line was too noisy (8/25 questions
+    # lost sentences to a "not" about other words elsewhere in the excerpt).
+    lines = [best[h][1] for h in ranked[:MAX_SUPPORT] if h in best]
+    if lines and not polarity_ok(text, lines):
+        return "polarity", []
     if cited:
         chosen = ranked[:MAX_SUPPORT]
     else:
