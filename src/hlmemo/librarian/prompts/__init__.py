@@ -36,6 +36,11 @@ MAX_TOKENS: dict[str, int] = {
     "place": 700,
     "relate": 1400,
     "relate_verify": 700,
+    # D-136 memory.ask (api process): one task for the JOBs plan / answer / check / refine (the
+    # per-task fallback key is `research`); an answer with up to 10 quoted claims + reasoning
+    "research": 3000,
+    # D-136 Memory Map L2 summaries (librarian process): 1-3 sentences + reasoning
+    "map_summary": 800,
 }
 #: per-version ``max_tokens`` where a version's answer is longer (relate/v2 adds scope, refiner and
 #: the replaced statements; relate_verify/v2 adds replaces_all and adds_detail)

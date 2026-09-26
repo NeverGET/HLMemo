@@ -239,6 +239,23 @@ class Settings(BaseSettings):
     llm_redact_email: bool = False
     llm_redact_phone: bool = False
 
+    # --- research librarian (D-130/D-136): the read-only tool memory.ask ---
+    # HLM_RESEARCH_ENABLED: advertise and serve memory.ask (it also needs the librarian LLM runtime:
+    # HLM_LIBRARIAN_ENABLED and HLM_LLM_MODE != off). Default on for the D-136 branch; the release
+    # decides (release manifest).
+    research_enabled: bool = True
+    # The whole memory.ask request (DB phases + at most 5 LLM calls), seconds.
+    research_timeout_s: float = Field(default=30.0, gt=0, le=120)
+    # The Memory Map's budget in the planning prompt (o200k tokens, D-136: about 6k).
+    research_map_tokens: int = Field(default=6000, ge=500, le=20000)
+    # Memory Map L2 summaries (task map_summary, librarian process only): a cycle every
+    # map_summary_every_s refreshes at most map_summary_per_cycle stale source summaries whose
+    # newest change is older than map_summary_debounce_s (debounce during bursts and imports).
+    map_summary_enabled: bool = True
+    map_summary_every_s: float = Field(default=60.0, gt=0)
+    map_summary_debounce_s: float = Field(default=120.0, ge=0)
+    map_summary_per_cycle: int = Field(default=8, ge=1, le=200)
+
     # --- server / auth (§2) ---
     admin_token: SecretStr | None = None
     registration_secret: SecretStr | None = None

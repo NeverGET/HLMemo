@@ -74,12 +74,17 @@ SELECT version_id, logical_id, project_id, project_ids, device_scope, kind, stat
        valid_from, superseded_at = 'infinity' AND valid_to = 'infinity', pinned
   FROM memory_versions WHERE version_id = ANY(%s)
 """
+#: the same columns without the body (D-136: the Memory Map gate covers every item of a project's
+#: map; the verdict never reads the body)
+_ITEM_SQL_NO_BODY = _ITEM_SQL.replace("title, body,", "title, ''::text,")
 
 
-async def load_items(conn: AsyncConnection, version_ids: list[int]) -> dict[int, Item]:
+async def load_items(
+    conn: AsyncConnection, version_ids: list[int], *, bodies: bool = True
+) -> dict[int, Item]:
     if not version_ids:
         return {}
-    cur = await conn.execute(_ITEM_SQL, (list(version_ids),))
+    cur = await conn.execute(_ITEM_SQL if bodies else _ITEM_SQL_NO_BODY, (list(version_ids),))
     out = {}
     for r in await cur.fetchall():
         out[int(r[0])] = Item(int(r[0]), int(r[1]), int(r[2]), [int(x) for x in r[3]], *r[4:])
@@ -150,12 +155,13 @@ async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list
 
 
 async def gate(
-    conn_factory: Any, capabilities: dict[str, Any], version_ids: list[int]
+    conn_factory: Any, capabilities: dict[str, Any], version_ids: list[int], *, bodies: bool = True
 ) -> tuple[Verdict, dict[int, Item]]:
     """Fresh short transaction: reload the items and evaluate the gate under the D-062 locks;
-    it commits before returning, so the caller sends the request with no transaction open."""
+    it commits before returning, so the caller sends the request with no transaction open.
+    ``bodies=False``: the returned items carry an empty body (the verdict is the same)."""
     async with await conn_factory() as conn:
-        items = await load_items(conn, version_ids)
+        items = await load_items(conn, version_ids, bodies=bodies)
         missing = [v for v in version_ids if v not in items]
         verdict = await check(conn, capabilities, list(items.values()))
         for v in missing:

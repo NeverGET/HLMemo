@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research/v1 (one schema for the JOBs plan, answer, check and refine; the JOB's own shape is checked by librarian.tasks.research)",
+  "type": "object",
+  "properties": {
+    "queries": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 400}},
+    "sections": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 32}},
+    "missing": {"type": "array", "maxItems": 24, "items": {"type": "string", "maxLength": 600}},
+    "status": {"enum": ["answered", "insufficient_evidence"]},
+    "answer": {"type": "string", "maxLength": 6000},
+    "claims": {
+      "type": "array",
+      "maxItems": 14,
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "maxLength": 1500},
+          "quote": {"type": "string", "maxLength": 1500},
+          "cite": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 32}}
+        },
+        "required": ["text", "quote", "cite"]
+      }
+    },
+    "primary": {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 32}},
+    "related": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 32}},
+    "confidence": {"enum": ["high", "medium", "low"]}
+  }
+}

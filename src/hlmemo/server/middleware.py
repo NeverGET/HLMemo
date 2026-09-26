@@ -74,6 +74,8 @@ NO_BEARER_OK = (HEALTH, READY)
 # W0a route filter (D-061): paths closed when admin_http=disabled, regardless of method.
 ADMIN_HTTP_PATHS = frozenset({"/devices/approve", "/devices/grant", "/devices/list"})
 NOT_FOUND = HlmError("E_NOT_FOUND", "not found")
+#: D-136: the longest a handler may extend its request after detaching (``detach(hold_s=...)``)
+DETACHED_HOLD_MAX_S = 60.0
 
 
 def normalized_path(path: str) -> str:
@@ -400,6 +402,7 @@ class AuthMiddleware:
         )
         ctx = None
         dispatched = False
+        deadline_cm: asyncio.Timeout | None = None  # the request deadline, once entered (detach)
 
         async def release(*, discard: bool = False) -> None:
             nonlocal conn
@@ -436,12 +439,17 @@ class AuthMiddleware:
 
         detached = False
 
-        async def detach() -> bool:
+        async def detach(hold_s: float | None = None) -> bool:
             """W2d (D-062): commit the request transaction and return its connection to the pool
             before a long DB-free phase of a handler (the memory.risk_check judge). The device's
             FOR SHARE lock ends with it; the handler must re-check authority in a fresh short
             transaction before answering and must not touch the request connection again. The
-            response stays buffered and is sent after the app returns. False: nothing detached."""
+            response stays buffered and is sent after the app returns. False: nothing detached.
+
+            ``hold_s`` (D-136, memory.ask): once the connection is released, the request's deadline
+            (``request_db_timeout_s``, which bounds DB work the request holds) is moved to ``hold_s``
+            from now, at most ``DETACHED_HOLD_MAX_S``: nothing is held any more, and the handler
+            enforces its own absolute deadline. Without it the deadline is unchanged."""
             nonlocal detached
             if detached or conn is None or streaming or commit_error is not None:
                 return False
@@ -455,6 +463,12 @@ class AuthMiddleware:
                     log.debug("last_seen_at refresh failed", exc_info=True)
                     await _rollback_quietly(conn)
             await release()
+            if hold_s is not None and deadline_cm is not None:
+                hold = min(max(float(hold_s), 0.0), DETACHED_HOLD_MAX_S)
+                now = asyncio.get_running_loop().time()
+                current = deadline_cm.when()
+                if current is not None and now + hold > current:
+                    deadline_cm.reschedule(now + hold)
             return True
 
         async def finish() -> None:
@@ -500,6 +514,7 @@ class AuthMiddleware:
             db_timeout += settings.pool_timeout_s + 2 * settings.db_lock_timeout_ms / 1000
         try:
             async with asyncio.timeout(db_timeout) as deadline:
+                deadline_cm = deadline
                 conn = await lease.__aenter__()
                 if route[1] == "/mcp" and hasattr(conn, "execute"):
                     remaining_ms = max(1, int((deadline.when() - asyncio.get_running_loop().time()) * 1000))
