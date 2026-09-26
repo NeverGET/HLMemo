@@ -248,7 +248,7 @@ def test_prompt_puts_the_main_fact_first() -> None:
     system = load_task("research").system
     assert "The FIRST claim is the direct answer to the question's MAIN ask" in system
     assert "sub_asks[0] is the question's MAIN ask" in system
-    assert "quote the table row" in system
+    assert "(or the table row)" in system
 
 
 def test_literal_support_uses_the_same_numeral_rule() -> None:
@@ -523,6 +523,13 @@ def test_a3_value_reformatting() -> None:
 def test_a3_prompt_asks_for_self_contained_quotes() -> None:
     system = load_task("research").system
     assert "self-contained" in system and "row's key" in system
+
+
+def test_a4_prompt_asks_for_specifics_and_full_sentence_quotes() -> None:
+    system = load_task("research").system
+    assert "Never generalise a specific" in system and "Brevity is not a goal" in system
+    assert "ONE fact per claim" in system and "the FULL sentence (or the table row)" in system
+    assert "upgrade every general wording of the draft to the most specific form" in system
 
 
 def test_validate_answer_guard_and_abstention() -> None:

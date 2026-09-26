@@ -120,7 +120,10 @@ async def test_tools_list_has_five_tools_no_output_schema(db_dsn) -> None:
         r = await mcp_rpc(client, token, "tools/list")
         assert r.status_code == 200, r.text
         tools = r.json()["result"]["tools"]
-        assert {t["name"] for t in tools} == ADVERTISED == set(TOOL_NAMES)
+        # D-136: memory.ask is registered but advertised only with HLM_RESEARCH_ENABLED AND the
+        # librarian LLM runtime (off in this fixture); test_ask_research covers it listed
+        assert {t["name"] for t in tools} == ADVERTISED == set(TOOL_NAMES) - {"memory.ask"}
+        assert TOOL_BY_NAME["memory.ask"].listed is not None
         for t in tools:
             assert "outputSchema" not in t, t["name"]
             assert t["inputSchema"] == TOOL_BY_NAME[t["name"]].input_schema
