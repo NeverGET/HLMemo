@@ -302,6 +302,9 @@ class _Run:
     lineage: str = field(default_factory=lambda: str(uuid.uuid4()))
     #: D-165: the last prose answer's sentence/line similarity (the re-check reads its cache)
     sim: rs.LineSim | None = None
+    #: D-165 (meta.excerpts_shown): the excerpt handles the LAST answer step (answer/check, write,
+    #: prose) was shown, in prompt order
+    excerpts_shown: list[str] = field(default_factory=list)
     calls: int = 0
     steps: list[str] = field(default_factory=list)
     queries: list[str] = field(default_factory=list)
@@ -650,6 +653,7 @@ class _Run:
         shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
         v = rs.validate_answer(obj, shown, self.researcher.redactor.text)
         if obj is not None:
+            self.excerpts_shown = list(shown)
             self.flags["requoted"] += v.requoted
             self.flags["completed"] += v.completed
             self.flags["dropped_claims"] = v.dropped_claims
@@ -698,6 +702,8 @@ class _Run:
         obj = await self.call("write", build, ANSWER_CAP_S)
         shown = {e.handle: e for e in chosen if e.version_id not in self.excluded}
         v = rs.validate_cited(obj, shown, self.researcher.redactor.text)
+        if obj is not None:
+            self.excerpts_shown = list(shown)
         if picked:
             # D-159: verified (now and at the re-check) against the selected excerpts only; the
             # retrieved ones the select left out stay drillable after the write's own related
@@ -729,6 +735,7 @@ class _Run:
         shown = {e.handle: e for e in excerpts if e.version_id not in self.excluded}
         if obj is None:
             return rs.validate_prose(obj, shown, self.researcher.redactor.text)
+        self.excerpts_shown = list(shown)
         self.sim = self.line_sim()
         v = await asyncio.to_thread(rs.validate_prose, obj, shown, self.researcher.redactor.text, self.sim)
         self.flags["dropped_claims"] = v.dropped_claims
@@ -992,6 +999,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
 
     by_vid = {r.version_id: r for r in rows}
     lost = [x for x in run.sent if x not in by_vid or not authz(by_vid[x])]
+    readable = {r.version_id for r in rows if authz(r)}
     citable = {r.version_id for r in rows if authz(r) and r.current and r.status == "active"}
     abstain_reason = None
     if lost:
@@ -1099,6 +1107,11 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             "map_tokens": run.map_tokens,
             "flags": run.flags,
             "answer_mode": run.researcher.answer_mode,
+            # D-165: the excerpts the answer step saw (handles only; one the caller can no longer
+            # read is left out)
+            "excerpts_shown": [
+                h for h in run.excerpts_shown if h in shown and shown[h].version_id in readable
+            ],
         },
     }
     if not answered:
@@ -1107,13 +1120,14 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
 
 
 def _pack(meter: Meter, out: dict[str, Any], budget: int) -> dict[str, Any]:
-    """Fit ``token_budget``: the query list becomes a count, then related sources, claims and
-    primary sources are dropped from the tail (at least one claim and one primary stay); the answer
-    is never cut (``E_BUDGET_TOO_SMALL`` with ``min`` instead)."""
+    """Fit ``token_budget``: the query list, then the excerpts_shown list become counts, then related
+    sources, claims and primary sources are dropped from the tail (at least one claim and one primary
+    stay); the answer is never cut (``E_BUDGET_TOO_SMALL`` with ``min`` instead)."""
     used = meter.settle(out, budget)
-    if used > budget and isinstance(out["meta"].get("queries"), list):
-        out["meta"]["queries"] = len(out["meta"]["queries"])
-        used = meter.settle(out, budget)
+    for key in ("queries", "excerpts_shown"):
+        if used > budget and isinstance(out["meta"].get(key), list):
+            out["meta"][key] = len(out["meta"][key])
+            used = meter.settle(out, budget)
     while used > budget and out["related"]:
         out["related"].pop()
         used = meter.settle(out, budget)

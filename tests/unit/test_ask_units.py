@@ -1078,14 +1078,16 @@ def test_pack_fits_the_token_budget_exactly() -> None:
         ],
         "primary": [{"handle": f"v{i}.0", "path": f"docs/{i}.md", "quote": "q " * 30} for i in range(3)],
         "related": [{"handle": f"v{i}.1", "path": f"docs/r{i}.md"} for i in range(5)],
-        "meta": {"queries": ["a question"] * 5, "calls": 3},
+        "meta": {"queries": ["a question"] * 5, "calls": 3, "excerpts_shown": [f"v{i}.3" for i in range(12)]},
     }
     full = rsv._pack(METER, json.loads(json.dumps(out)), 4000)
     assert full["meta"]["queries"] == ["a question"] * 5 and len(full["related"]) == 5
-    budget = full["budget"]["used"] - 60
+    assert full["meta"]["excerpts_shown"] == out["meta"]["excerpts_shown"]
+    budget = full["budget"]["used"] - 120
     packed = rsv._pack(METER, json.loads(json.dumps(out)), budget)
     assert packed["budget"]["used"] == METER.count(packed) <= budget
     assert isinstance(packed["meta"]["queries"], int) and len(packed["related"]) < 5
+    assert packed["meta"]["excerpts_shown"] == 12  # D-165: a count before any source is dropped
     assert packed["answer"] == out["answer"] and len(packed["primary"]) >= 1  # the answer is never cut
     with pytest.raises(ToolError) as exc:
         rsv._pack(METER, {**json.loads(json.dumps(out)), "answer": "The answer is long. " * 80}, 256)
@@ -1410,6 +1412,7 @@ async def test_d159_write_sees_and_cites_only_the_selected_excerpts() -> None:
     assert run.steps == ["select", "write"]
     assert run.shown_to["select"] == ["v10.0", "v11.0", "v12.3", "v13.0"]  # everything retrieved
     assert run.shown_to["write"] == ["v11.0", "v10.0"]  # only the selected, in the select's order
+    assert run.excerpts_shown == ["v11.0", "v10.0"]  # D-165: what the answer step (write) saw
     assert v.answered and v.written_over == ["v11.0", "v10.0"]
     # the sentence citing an excerpt the write never saw is checked against the selected ones only
     assert [c.text for c in v.kept] == ["The retrieval p95 target is now 1.2 s.", "It was 1,6 s on the VPS."]
@@ -1670,6 +1673,7 @@ async def test_d162_prose_run_answers_and_sets_its_flags() -> None:
     run = _ScriptedRun({"prose": _prose(answer, ["v10.0"])}, select=False, mode="prose")
     v = await run.answer(list(EXS))
     assert run.steps == ["prose"] and run.shown_to["prose"] == [e.handle for e in EXS]
+    assert run.excerpts_shown == run.shown_to["prose"]  # D-165 meta.excerpts_shown
     assert v.answered and v.answer == "The retrieval p95 target is now 1.2 s." and v.primary[0] == "v10.0"
     assert run.flags["dropped_literal"] == 1 and "polarity_flagged" not in run.flags
     # no embedder in this run (deps=None): literal + word attribution

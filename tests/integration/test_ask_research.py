@@ -177,6 +177,9 @@ async def test_ask_answers_with_verified_quotes_and_completeness_pass(connect, w
     # every request is JOB-tagged, the map rides only on plan
     jobs = [request_job(b)[0] for b in llm.requests]
     assert jobs == ["plan", "answer", "check"]  # at most 4 sequential steps (addendum 7)
+    # D-165 meta.excerpts_shown: the excerpt ids of the last answer step (check), in prompt order
+    shown_ids = [e["id"] for e in request_job(llm.requests[2])[1]["excerpts"]]
+    assert out["meta"]["excerpts_shown"] == shown_ids and len(shown_ids) <= rsv.MAX_DRILL
     assert "MEMORY MAP of project ask-main" in llm.requests[0]["messages"][1]["content"]
     assert "MEMORY MAP" not in llm.requests[1]["messages"][1]["content"]
 
@@ -442,6 +445,7 @@ async def test_ask_prose_mode_keeps_free_prose_and_drops_only_fabricated_values(
     system = llm.requests[1]["messages"][0]["content"]
     assert 'JOB "prose"' in system and 'JOB "write"' not in system and 'JOB "check"' not in system
     assert llm.requests[1]["messages"][1]["content"].startswith("JOB: prose\n")
+    assert out["meta"]["excerpts_shown"] == [e["id"] for e in request_job(llm.requests[1])[1]["excerpts"]]
     assert_no_secret(sent_text(llm), world)
 
 
