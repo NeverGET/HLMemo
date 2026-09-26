@@ -1131,3 +1131,22 @@ D-179 | 2026-09-26 | ACCEPTED | **The D-178 hypothesis holds, and the writer is 
 **Fix:** a labelled text protocol for the prose (and expand) job whenever the writer profile declares `json_mode = false`. It is a profile capability flag, never a model name (D-017), and the server parses it deterministically.
 **Cost:** about $0.017/q full (writer about $0.014 plus plan/attribute on luna), about $10–25/month at 20–50 questions a day. That is within the owner's relaxed budget (D-173).
 **C6 cost limit proposed to the owner:** ≤ $0.03/q (the per-question cap must cover the writer's worst-case reservation plus the fallback), together with the R4 manifest change from $0.01.
+D-180 | 2026-09-26 | ACCEPTED | **The final writer configuration passes C2 on dev before adjudication (correct .84). The output format for non-JSON writers is a labelled text template parsed by the server.**
+End-to-end on wf-memory-ask 817aff9: prose + llm attribution + writer openrouter-glm5 (Z.AI/Novita, reasoning off, json_mode = false → `prose_text`), writer timeout 12 s → gpt-6-luna; dev per-question cap $0.03.
+| Metric | Value |
+|---|---|
+| Correct (judge) | **.84**: glm-5 wrote 21 answerable questions, **20/21** correct; the luna fallback wrote 4, 1/4 correct |
+| Abstain | .875 (B-D077 is a false-premise question → adjudication) |
+| Contradiction | .04 |
+| Faithful (item, judge) | .853, over 225 statements (the answers are longer, ≈ 1,300 chars) → adjudication |
+| Recall | .96 |
+| p95 | 21.1 s |
+| $/q | .016 |
+Ledger: glm-5 29 ok (avg 7.5 s), 5 writer-timeout cuts, 0 format failures. The 3 budget stops were negative questions on the refine path (a second prose call's worst case did not fit under $0.03): a correct outcome, but an answerable refine-path question would be hit too. **The per-question cap for the final run is $0.05.**
+**Output-format decision (owner asked):**
+1. Prompt-forced JSON without response_format: 7/34 invalid first tries, because long prose breaks the escaping; retries feed the tail.
+2. **A labelled text template (STATUS / CONFIDENCE / SOURCES / RELATED / ANSWER), parsed deterministically by the server: CHOSEN.** There is nothing to escape, a missing header is detected and retried, and it is provider-agnostic because it depends on no provider feature. 0 format failures in 29 answers.
+3. Raw text passed to the consumer: rejected. The server needs status (C4), sources (attribution, verification, drillable handles) and a stable response contract.
+4. Tools or structured outputs: not offered by the Z.AI/Novita endpoints, and they would re-introduce provider dependence.
+The principle stays the same as D-156: the model writes free text, the server adds the structure and the checks.
+**Next:** D-165/D-168 adjudication and the C1 rater on this run; then freeze the final protocol (writer config, caps, prompts, rubric, sets) and run the final gate on the PR set and sealed B.
