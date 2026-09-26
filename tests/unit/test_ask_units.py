@@ -432,6 +432,48 @@ def test_polarity_still_rejects_dropped_and_inserted_negations(claim: str, quote
     assert not rs.polarity_ok(claim, [quote]), claim
 
 
+def test_a_kept_claim_the_summary_dropped_is_appended() -> None:
+    """D-154: the summary may compress; every kept claim still reaches the caller, once."""
+    ans = "The card is written by the client LLM and capped at 512 tokens."
+    claims = [
+        "The client LLM authors the card through `memory.write(kind=project_card)`.",
+        "The card is capped at 512 pinned-tokenizer tokens.",
+        "The first client populates the card during onboarding",
+    ]
+    out = rs.complete_with_claims(ans, claims)
+    assert out.startswith(ans)
+    assert "`memory.write(kind=project_card)`" in out  # a literal the summary lacked
+    assert "during onboarding." in out
+    assert out.count("512") == 1  # the covered claim is not repeated
+    assert rs.complete_with_claims(ans, claims, max_chars=len(ans) + 5) == ans  # never over the cap
+    assert rs.covers("Postgres 17 with pgvector is the only store.", "The store is Postgres 17.")
+    assert not rs.covers("Postgres is the store.", "The store is Postgres 17.")  # literal 17 missing
+
+
+def test_validate_answer_appends_uncovered_kept_claims() -> None:
+    v = rs.validate_answer(
+        {
+            "status": "answered",
+            "answer": "The retrieval p95 target is now 1.2 s.",
+            "claims": [
+                _claim(
+                    "The retrieval p95 target is now 1.2 s.",
+                    ("v10.0", "The retrieval p95 target is now 1.2 s"),
+                ),
+                _claim(
+                    "The target was 1.6 s on the VPS.",
+                    ("v11.0", "The retrieval p95 target is 1.6 s on the VPS"),
+                ),
+            ],
+            "confidence": "high",
+        },
+        SHOWN,
+    )
+    assert (
+        v.answered and "1.6 s" in v.answer and v.answer.startswith("The retrieval p95 target is now 1.2 s.")
+    )
+
+
 def test_failed_quote_is_requoted_from_its_line_before_dropping() -> None:
     """Addendum 2: a claim whose quotes are all wrong is re-quoted from the cited item's line that
     holds its literals and most of its words; dropped only when no line qualifies; flags recorded."""

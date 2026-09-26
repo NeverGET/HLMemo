@@ -865,6 +865,8 @@ def assemble(
     kept_sentences = [s for s in sentences if literals_ok(s, hay) and polarity_ok(s, kept_quotes)]
     dropped = len(sentences) - len(kept_sentences)
     text = redact(" ".join(kept_sentences))[:ANSWER_MAX_CHARS]
+    if text.strip():  # D-154: a kept claim the summary dropped is appended (never to an empty answer)
+        text = redact(complete_with_claims(text, [c.text for c in kept]))[:ANSWER_MAX_CHARS]
     if not text.strip():
         return Validated(
             INSUFFICIENT,
@@ -883,6 +885,39 @@ def assemble(
     return Validated(
         ANSWERED, status, text, claims, primary, related, conf, dropped_sentences=dropped, **extra
     )
+
+
+#: an answer covers a claim when it states all of the claim's literals and this share of its words
+COVER_MIN_SHARE = 0.6
+
+
+def covers(answer: str, claim: str) -> bool:
+    """D-154: ``answer`` already states ``claim``: every literal (number, identifier, path) of the
+    claim is in the answer, and at least ``COVER_MIN_SHARE`` of its content words are (a word also
+    matches its inflections: one is a prefix of the other)."""
+    if not literals_ok(claim, answer):
+        return False
+    words, have = _content(claim), _content(answer)
+    if not words:
+        return True
+    hits = sum(1 for w in words if w in have or any(x.startswith(w) or w.startswith(x) for x in have))
+    return hits / len(words) >= COVER_MIN_SHARE
+
+
+def complete_with_claims(answer: str, claims: list[str], max_chars: int = ANSWER_MAX_CHARS) -> str:
+    """D-154 (compression): the answer text is the model's summary; a KEPT claim it does not state is
+    appended, in claim order, so every verified fact reaches the caller. The miss taxonomy on the dev
+    set: 6 of 13 misses had the key fact in a kept claim that the summary dropped."""
+    out = answer.strip()
+    for c in claims:
+        c = c.strip()
+        if not c or covers(out, c):
+            continue
+        add = c if c[-1] in ".!?" else c + "."
+        if len(out) + 1 + len(add) > max_chars:
+            break
+        out = f"{out} {add}" if out else add
+    return out
 
 
 def support_ok(text: str, support: list[tuple[str, str]]) -> bool:
