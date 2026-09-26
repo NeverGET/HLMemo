@@ -852,3 +852,22 @@ A cheap verifier disagrees with the judge in both directions.
 **Two measurements are next, both offline:**
 - (a) a model sweep with the plain prompt over the ORACLE-sel sources: gemini-3.8-flash, claude-haiku-4.5 and kimi-k2.6. DeepSeek is excluded because it is the judge's family.
 - (b) NotebookLM's own faithfulness against its citations, to learn whether ≥ .95 under this judge is realistic for a strong system before any calibration argument.
+D-162 | 2026-09-26 | ACCEPTED | **The model sweep and NotebookLM's faithfulness fix the architecture: memory.ask moves to a "prose" answer mode (V16). The remaining lever is retrieval.**
+**Model sweep** (plain prompt, same ORACLE-sel sources, 25 answerable):
+- luna 19/25 (.76);
+- gemini-3.8-flash 17/25 (.68; $.0039/q, one answer cut by its reasoning);
+- claude-haiku-4.5 and kimi-k2.6 stopped by the cap after one probe each (kimi spent 1,975 reasoning tokens on 62 chars).
+The model is not the lever.
+**NotebookLM against its own citations:** 164 references mapped verbatim onto HLMemo items, 204 statements, strict judge in quote scope.
+- faithful **.613** overall;
+- **.71 on answerable questions** (≈ .76 excluding 2 judge runaways, B-D034 and B-D066);
+- det .897;
+- it fabricates on 7/8 negatives.
+It reaches .88 correct by writing long answers that go beyond what its sources state. For a consumer that acts on the answer, that is the costliest failure. Free prose on luna over memory.ask's own sources is **.922** faithful at .76 correct.
+**Where the gap to NotebookLM's correctness sits:** 7 questions NotebookLM gets and luna-over-ORACLE-sel misses. Most of them (D001, D002, D050, D053) have the key fact in a source memory.ask did not cite. That is retrieval.
+**V16 "prose" mode (HLM_RESEARCH_ANSWER_MODE=prose, prompt research/v3):**
+1. The write job gets the plain "complete and specific" prompt plus the abstain and current-vs-earlier rules. It returns {status, answer, sources (≤ 6), related, confidence}, with no per-sentence citation duty.
+2. The server splits the answer into sentences and drops a sentence ONLY if one of its HARD literals appears in no shown excerpt: a digit, or a backticked identifier, with the extraction fixes of D-161. This is the fabricated-value guard.
+3. Each sentence is attributed deterministically to its best source line, for display and measurement. A polarity mismatch against that line FLAGS the claim (`flags: ["polarity"]`) instead of dropping it.
+4. There is no check/repair call, and refine-on-abstain stays as today.
+**Faithfulness ≥ .95 (C3) stays.** The calibration audit that consult 81 requires (an independent blind review of judge rejections in source scope) will decide the realistic reading. The threshold is not changed here.
