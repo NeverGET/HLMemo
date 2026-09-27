@@ -665,7 +665,7 @@ STATUS_QUOTE_CHARS = 200
 #: (all of a shorter quote) occur in the excerpt's text
 QUOTE_OVERLAP_WORDS = 6
 #: D-184 fix (a): the status lines one excerpt shows at most (one per superseding item, newest first)
-STATUS_MAX_LINES = 3
+STATUS_MAX_LINES = 4  # the curated backfill: four superseders' spans can share one chunk (v456.0)
 
 
 def doc_name(path: str) -> str:

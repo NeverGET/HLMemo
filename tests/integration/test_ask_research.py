@@ -2087,7 +2087,7 @@ async def test_ask_temporal_every_part_link_renders_its_line_newest_first(
     connect, world, deps, db_dsn
 ) -> None:  # noqa: ANN001
     """D-184 fix (a): each part-scope link whose quote is in THE excerpt renders its own status line,
-    newest superseder first, at most 3 lines; the pull-in takes the newest superseders not shown
+    newest superseder first, at most STATUS_MAX_LINES (4); the pull-in takes the newest superseders not shown
     (SUPERSEDER_EXTRA). Fix (b): a quote ending next to punctuation ("... as the only store" before
     "store.") matches. A whole-scope link keeps its single status."""
     v = world.versions
@@ -2104,6 +2104,9 @@ async def test_ask_temporal_every_part_link_renders_its_line_newest_first(
     ]
     try:
         three, flags = await _temporal_retrieve(connect, world, deps, db_dsn, [f"v{d001}.0"])
+        # five superseders quoting the excerpt: the newest four render (the status link now quotes it)
+        await _drop_links(connect, [links.pop()])
+        links.append(await _supersedes(connect, status, d001, "part", "with pgvector as the only store"))
         links.append(await _supersedes(connect, runbook, d001, "part", "Use Postgres 17 with pgvector"))
         capped, _flags = await _temporal_retrieve(connect, world, deps, db_dsn, [f"v{d001}.0"])
     finally:
@@ -2117,7 +2120,8 @@ async def test_ask_temporal_every_part_link_renders_its_line_newest_first(
     pulled = [x.version_id for x in three if x.version_id != d001]
     assert pulled[:2] == [d004, d003] and d002 not in pulled and flags["superseders_pulled"] == 2
     (c,) = [x for x in capped if x.version_id == d001]
-    assert c.status_vids == (runbook, d004, d003) and len(c.status.split("\n")) == rs.STATUS_MAX_LINES
+    assert rs.STATUS_MAX_LINES == 4 and c.status_vids == (runbook, status, d004, d003)
+    assert len(c.status.split("\n")) == rs.STATUS_MAX_LINES  # D-002 (the oldest of five) left out
     # a whole-scope link keeps its single status (it wins over the part-scope lines)
     links = [
         await _supersedes(
