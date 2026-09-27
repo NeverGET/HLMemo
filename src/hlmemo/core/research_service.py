@@ -77,9 +77,12 @@ grows by that timeout so the fallback keeps its own; the question deadline still
 D-184 (prose mode, the temporal layer; links are only READ): each excerpt the answer step is shown
 carries a ``status`` when a live ``supersedes`` link (valid at the question's time) targets its item
 (whole scope) or quotes its text (part scope, ``research.quote_overlaps``): ``superseded by vN
-(path): «quote»`` (``research.status_label``); a current excerpt carries none. A superseded excerpt
-whose superseder is not shown pulls the superseder's best in-document chunk in (≤
-``SUPERSEDER_EXTRA`` beyond the cap, replacing the lowest-ranked current excerpts when the excerpt
+(path): «quote»`` (``research.status_label``); a current excerpt carries none. D-184 fix (a): every
+part-scope link whose quote is in the excerpt's text renders its own line (deduped by the superseding
+item, newest first, ≤ ``research.STATUS_MAX_LINES``; a whole-scope link keeps its single status); fix
+(b): the quote's words match whole with punctuation stripped at their edges (``research.quote_tokens``).
+A superseded excerpt whose superseders are not shown pulls the newest ones' best in-document chunks in
+(≤ ``SUPERSEDER_EXTRA`` beyond the cap, replacing the lowest-ranked current excerpts when the excerpt
 budget binds). A chunk excerpt carries a read-time ``context`` label (``research.context_label``).
 D-188 (prose mode): the D-ids and repo paths the shown excerpts mention, whose row or item is not
 shown, pull their row chunk / best chunk in (≤ ``XREF_EXTRA``, the same budget rule; ``xref_pulled``);
@@ -124,6 +127,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -181,6 +185,8 @@ EXCERPT_BUDGET_CHARS = MAX_DRILL * rs.EXCERPT_CHARS
 XREF_EXTRA = 3
 XREF_CANDIDATES = 8
 LONG_ITEM_CHUNKS = 3
+#: D-184 fix (a): the sort key of a superseder without a valid_from (oldest)
+_EPOCH = datetime.min.replace(tzinfo=UTC)
 _DID = re.compile(r"(?<![\w-])D-\d{3}(?!\d)")
 _REPO_PATH = re.compile(r"(?<![\w/.-])((?:docs/[\w./-]*?\.md)|(?:deploy/[\w./-]*\w))(?![\w/])")
 REFINE_MAX_NEW = 8
@@ -620,6 +626,7 @@ class _Run:
                     "version_id": e.version_id,
                     "status": e.status,
                     "status_vid": e.status_vid,
+                    "status_vids": list(e.superseders()),
                 }
                 for e in excerpts
             ]
@@ -709,8 +716,11 @@ class _Run:
     async def _statuses(self, c: AsyncConnection, fresh: AuthContext, excerpts: list[rs.Excerpt]) -> None:
         """D-184: set ``status``/``status_vid`` of each excerpt from the live ``supersedes`` links
         (valid at the question's time, authz (a), ``lq.supersessions_of``) that target its item: a
-        whole-scope link, else a part-scope link whose quote overlaps its text. The superseder must
-        be a current item of the caller's view (it is named to the writer); the newest link wins."""
+        whole-scope link (the newest one wins), else the part-scope links whose quote overlaps ITS
+        text (D-184 fix (a): one line each, deduped by the superseding item, newest superseder first,
+        at most ``rs.STATUS_MAX_LINES``; ``status_vids`` names each line's superseder, ``status_vid``
+        the first). The superseder must be a current item of the caller's view (it is named to the
+        writer)."""
         if not excerpts:
             return
         vids = sorted({e.version_id for e in excerpts})
@@ -740,14 +750,24 @@ class _Run:
         for e in excerpts:
             lid = lid_of.get(e.version_id)
             mine = [x for x in links if x[1] == lid and x[0] in current and current[x[0]] != e.version_id]
-            hit = next((x for x in mine if not x[2]), None) or next(
-                (x for x in mine if x[2] and rs.quote_overlaps(x[3], e.text)), None
-            )
-            if hit is None:
+            whole = next((x for x in mine if not x[2]), None)
+            if whole is not None:  # a whole-scope link: its single status, as before
+                hits = [whole]
+            else:  # every part-scope link whose quote is in THIS excerpt, one per superseding item
+                seen: dict[int, tuple[int, int, bool, str]] = {}
+                for x in mine:
+                    if x[2] and current[x[0]] not in seen and rs.quote_overlaps(x[3], e.text):
+                        seen[current[x[0]]] = x
+                newest = sorted(seen, key=lambda v: (self.view[v].valid_from or _EPOCH, v), reverse=True)
+                hits = [seen[v] for v in newest[: rs.STATUS_MAX_LINES]]
+            if not hits:
                 continue
-            src_vid = current[hit[0]]
-            e.status = redact(rs.status_label(f"v{src_vid}", self.view[src_vid].path, hit[3], hit[2]))
-            e.status_vid = src_vid
+            vids = tuple(current[x[0]] for x in hits)
+            e.status = "\n".join(
+                redact(rs.status_label(f"v{v}", self.view[v].path, x[3], x[2]))
+                for v, x in zip(vids, hits, strict=True)
+            )
+            e.status_vid, e.status_vids = vids[0], vids
 
     async def _temporal(
         self,
@@ -771,9 +791,8 @@ class _Run:
             with contextlib.suppress(InvalidClue):
                 shown.add(decode_clue(h).version_id)
         pulled: list[rs.Excerpt] = []
-        want = list(
-            dict.fromkeys(e.status_vid for e in excerpts if e.status_vid and e.status_vid not in shown)
-        )
+        # D-184 fix (a): each excerpt's superseders, newest first; the first SUPERSEDER_EXTRA not shown
+        want = list(dict.fromkeys(v for e in excerpts for v in e.superseders() if v not in shown))
         if want:
             best = await self._doc_best(c, [f"v{vid}.0" for vid in want[:SUPERSEDER_EXTRA]], texts)
             pulled = await self._drill(c, [h for h in best if h not in skip], focus, tp)
@@ -1175,8 +1194,16 @@ class _Run:
         for e in excerpts:
             if e.version_id in self.excluded:
                 continue
-            if e.status_vid is not None and e.status_vid in self.excluded:
-                e = replace(e, status="", status_vid=None)
+            named = e.superseders()
+            if any(v in self.excluded for v in named):  # D-184 fix (a): only the lines naming them
+                lines = e.status.split("\n") if len(named) > 1 else [e.status]
+                keep = [(v, ln) for v, ln in zip(named, lines, strict=False) if v not in self.excluded]
+                e = replace(
+                    e,
+                    status="\n".join(ln for _v, ln in keep),
+                    status_vid=keep[0][0] if keep else None,
+                    status_vids=tuple(v for v, _ln in keep),
+                )
             out.append(e)
         return out
 
@@ -1185,7 +1212,7 @@ class _Run:
         """The version ids whose text a prompt of ``excerpts`` carries: theirs and (D-184) the
         superseders their statuses name (a title, a path and a link quote)."""
         return list(
-            dict.fromkeys([e.version_id for e in excerpts] + [e.status_vid for e in excerpts if e.status_vid])
+            dict.fromkeys([e.version_id for e in excerpts] + [v for e in excerpts for v in e.superseders()])
         )
 
     def cap_for(self, job: str, cap_s: float) -> float:

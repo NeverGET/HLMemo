@@ -624,10 +624,19 @@ class Excerpt:
     date: str  # valid_from, YYYY-MM-DD
     text: str  # redacted, clipped to EXCERPT_CHARS: exactly what the model is shown
     #: D-184 (prose mode): where the chunk sits (``context_label``), and its supersession status
-    #: (``status_label``: set only when superseded; ``status_vid`` = the superseding version)
+    #: (``status_label``: set only when superseded; ``status_vid`` = the superseding version).
+    #: D-184 fix (a): several part-scope links may each render a line (newest superseder first, at most
+    #: ``STATUS_MAX_LINES``); ``status_vids`` = the superseding version of each line, in line order
     context: str = ""
     status: str = ""
     status_vid: int | None = None
+    status_vids: tuple[int, ...] = ()
+
+    def superseders(self) -> tuple[int, ...]:
+        """The superseding versions this excerpt's status names (one per status line)."""
+        if self.status_vids:
+            return self.status_vids
+        return (self.status_vid,) if self.status_vid is not None else ()
 
     def shown(self, temporal: bool = False) -> dict[str, str]:
         """What the model is shown; ``temporal`` (research/v3 prose, expand) adds the excerpt's
@@ -655,6 +664,8 @@ STATUS_QUOTE_CHARS = 200
 #: part-scope supersession: the quote overlaps an excerpt when this many consecutive words of it
 #: (all of a shorter quote) occur in the excerpt's text
 QUOTE_OVERLAP_WORDS = 6
+#: D-184 fix (a): the status lines one excerpt shows at most (one per superseding item, newest first)
+STATUS_MAX_LINES = 3
 
 
 def doc_name(path: str) -> str:
@@ -701,13 +712,36 @@ def context_label(path: str, body: str, start: int) -> str:
     return ""
 
 
+def _edge_punct(c: str) -> bool:
+    return unicodedata.category(c).startswith("P") or c in "`´'\""
+
+
+def quote_tokens(text: str) -> list[str]:
+    """The whole words of ``text`` for ``quote_overlaps``: ``qnorm``, split at whitespace, and (D-184 fix
+    (b)) punctuation, quotes and backticks stripped at each word's EDGES ("migration;" and
+    "(proposed" are "migration" and "proposed"; "trigram-if-identifiers" and "hlmadmintoken=" keep their
+    inner characters); a word of punctuation only is no word."""
+    out: list[str] = []
+    for w in qnorm(text).split():
+        i, j = 0, len(w)
+        while i < j and _edge_punct(w[i]):
+            i += 1
+        while j > i and _edge_punct(w[j - 1]):
+            j -= 1
+        if i < j:
+            out.append(w[i:j])
+    return out
+
+
 def quote_overlaps(quote: str, text: str, n: int = QUOTE_OVERLAP_WORDS) -> bool:
     """D-184: a part-scope link's quote overlaps an excerpt: ``n`` consecutive words of it (all of a
-    shorter quote) occur in the excerpt's text (normalised: a chunk boundary may cut the quote)."""
-    words = qnorm(quote).split()
+    shorter quote) occur in the excerpt's text (normalised: a chunk boundary may cut the quote). D-184 fix
+    (b): words compare whole after ``quote_tokens`` on BOTH sides, so a span that starts or ends next
+    to punctuation ("... before the final migration;") still matches."""
+    words = quote_tokens(quote)
     if not words:
         return False
-    hay = " " + " ".join(qnorm(text).split()) + " "
+    hay = " " + " ".join(quote_tokens(text)) + " "
     k = min(n, len(words))
     return any(" " + " ".join(words[i : i + k]) + " " in hay for i in range(len(words) - k + 1))
 
@@ -3422,6 +3456,7 @@ __all__ = [
     "RERANK_TEXT_CHARS",
     "RERANK_TIMEOUT_S",
     "SELECT_MAX",
+    "STATUS_MAX_LINES",
     "TASK",
     "TEXT_JOBS",
     "WRITER_JOBS",
@@ -3446,6 +3481,7 @@ __all__ = [
     "context_label",
     "doc_name",
     "quote_overlaps",
+    "quote_tokens",
     "status_label",
     "close_app_researcher",
     "best_line",

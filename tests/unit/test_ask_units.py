@@ -3446,3 +3446,67 @@ def test_d193_prose_prompt_v32_is_an_opt_in_minor_revision() -> None:
         assert r.spec.prompt_version == want
     claims = rs.Researcher(get_settings(research_prose_prompt="v3.2"), chain=[])
     assert claims.spec.prompt_version == "v1"  # the other modes ignore it
+
+
+# --------------------------------------------------------------------------- D-184 fix (a)/(b)
+def test_d184_fix_b_quote_overlap_ignores_punctuation_at_word_edges() -> None:
+    """A span that starts or ends next to punctuation matches (the 8 curated spans that did not),
+    on BOTH sides, with whole-word semantics kept."""
+    cases = [  # (older span, the excerpt text around it): the real shapes of the curated links
+        (
+            "bi-temporal recorded_at = original mtime where known",
+            "timestamps (bi-temporal recorded_at = original mtime where known), idempotent",
+        ),
+        (
+            "three lists (lexical, trigram-if-identifiers, vector)",
+            "rrf, k=60, three lists (lexical, trigram-if-identifiers, vector), all weighted",
+        ),
+        (
+            "still says export HLM_ADMIN_TOKEN=...; make up",
+            "quickstart still says export HLM_ADMIN_TOKEN=...; make up; with the",
+        ),
+        (
+            "Graphiti entegrasyonu (L1, bi-temporal)",
+            "Faz 1: Graphiti entegrasyonu (L1, bi-temporal), RAPTOR özet",
+        ),
+        (
+            "delete hlmemo-e2e before the final migration",
+            "with R2; delete hlmemo-e2e before the final migration; rotate",
+        ),
+        (
+            "delete hlmemo-e2e before the final migration",
+            "is happy; delete hlmemo-e2e before the final migration. 09:xx",
+        ),
+        ("(proposed Hetzner CX43)", "switching (proposed Hetzner CX43); everything else"),
+        ("`hlm links explicit`", 'run "hlm links explicit", then check'),
+    ]
+    for span, text in cases:
+        assert rs.quote_overlaps(span, text), span
+    assert rs.quote_tokens("(proposed Hetzner CX43);") == ["proposed", "hetzner", "cx43"]
+    assert rs.quote_tokens("— trigram-if-identifiers, `x.y` …") == ["trigram-if-identifiers", "x.y"]
+    # whole words still: a prefix, a different inner punctuation or another word never matches
+    text = "delete hlmemo-e2e before the final migration; rotate the key"
+    assert not rs.quote_overlaps("before the final migrat", text)
+    assert not rs.quote_overlaps("final migrations", text)
+    assert not rs.quote_overlaps("delete hlmemo e2e before", text)
+    assert not rs.quote_overlaps("…;", text) and not rs.quote_overlaps("", text)
+
+
+def test_d184_fix_a_status_lines_admitted_and_gated_per_superseder() -> None:
+    """An excerpt's status lines name one superseder each: the privacy gate covers all of them, and an
+    excluded superseder removes only its own line."""
+    from types import SimpleNamespace
+
+    lines = ["superseded in part by v9 (a.md): «x»", "superseded in part by v7 (b.md): «y»"]
+    e = rs.Excerpt(
+        "v3.0", 3, "t", "p", "2026-09-01", "text", status="\n".join(lines), status_vid=9, status_vids=(9, 7)
+    )
+    legacy = rs.Excerpt(
+        "v4.0", 4, "t", "p", "2026-09-01", "text", status="superseded by v8 (c.md)", status_vid=8
+    )
+    assert e.superseders() == (9, 7) and legacy.superseders() == (8,)
+    assert rsv._Run.gate_ids([e, legacy]) == [3, 4, 9, 7, 8]
+    (kept, old) = rsv._Run.admitted(SimpleNamespace(excluded={9, 8}), [e, legacy])
+    assert kept.status == lines[1] and kept.status_vid == 7 and kept.status_vids == (7,)
+    assert old.status == "" and old.status_vid is None and old.superseders() == ()
+    assert rsv._Run.admitted(SimpleNamespace(excluded=set()), [e]) == [e]

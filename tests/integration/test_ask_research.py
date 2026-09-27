@@ -2080,3 +2080,56 @@ async def test_ask_rerank_is_traced_under_its_section(connect, world, deps, db_d
     assert phase["rerank"] == {"kept": rec["kept"], "fallback": None}
     assert phase["drill_order"][:2] == rec["kept"]
     assert [c["job"] for c in t["calls"]] == out["meta"]["steps"] == ["plan", "rerank", "prose"]
+
+
+# --------------------------------------------------------------------------- D-184 fix (a)/(b)
+async def test_ask_temporal_every_part_link_renders_its_line_newest_first(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """D-184 fix (a): each part-scope link whose quote is in THE excerpt renders its own status line,
+    newest superseder first, at most 3 lines; the pull-in takes the newest superseders not shown
+    (SUPERSEDER_EXTRA). Fix (b): a quote ending next to punctuation ("... as the only store" before
+    "store.") matches. A whole-scope link keeps its single status."""
+    v = world.versions
+    d001, d002, d003, d004, status, runbook = (
+        v[k] for k in ("D-001", "D-002", "D-003", "D-004", "status", "runbook")
+    )
+    links = [
+        await _supersedes(connect, d002, d001, "part", "as the only store"),  # (b): "store." in the text
+        await _supersedes(
+            connect, d003, d001, "part", "SQLite was rejected because it has no concurrent writers."
+        ),
+        await _supersedes(connect, d004, d001, "part", "The retrieval p95 target is 1,6 s on the VPS."),
+        await _supersedes(connect, status, d001, "part", "a statement D-001 does not contain at all"),
+    ]
+    try:
+        three, flags = await _temporal_retrieve(connect, world, deps, db_dsn, [f"v{d001}.0"])
+        links.append(await _supersedes(connect, runbook, d001, "part", "Use Postgres 17 with pgvector"))
+        capped, _flags = await _temporal_retrieve(connect, world, deps, db_dsn, [f"v{d001}.0"])
+    finally:
+        await _drop_links(connect, links)
+    (e,) = [x for x in three if x.version_id == d001]
+    assert e.status_vids == (d004, d003, d002) and e.status_vid == d004  # newest first; no line for `status`
+    lines = e.status.split("\n")
+    assert [ln.split(" (")[0] for ln in lines] == [f"superseded in part by v{s}" for s in (d004, d003, d002)]
+    assert lines[2].endswith("«as the only store»")
+    # the newest two superseders not shown are pulled in (within SUPERSEDER_EXTRA), not the third
+    pulled = [x.version_id for x in three if x.version_id != d001]
+    assert pulled[:2] == [d004, d003] and d002 not in pulled and flags["superseders_pulled"] == 2
+    (c,) = [x for x in capped if x.version_id == d001]
+    assert c.status_vids == (runbook, d004, d003) and len(c.status.split("\n")) == rs.STATUS_MAX_LINES
+    # a whole-scope link keeps its single status (it wins over the part-scope lines)
+    links = [
+        await _supersedes(
+            connect, d003, d001, "part", "SQLite was rejected because it has no concurrent writers."
+        ),
+        await _supersedes(connect, d004, d001, "whole", "D-004 replaces D-001"),
+    ]
+    try:
+        whole, _flags = await _temporal_retrieve(connect, world, deps, db_dsn, [f"v{d001}.0"])
+    finally:
+        await _drop_links(connect, links)
+    (w,) = [x for x in whole if x.version_id == d001]
+    assert w.status_vids == (d004,) and w.status == (
+        f"superseded by v{d004} (docs/decisions/DECISIONS.md#D-004): «D-004 replaces D-001»"
+    )
