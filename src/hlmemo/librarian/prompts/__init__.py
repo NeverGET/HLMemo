@@ -8,7 +8,10 @@ response must satisfy). ``load_task(name)`` picks the highest version unless one
 needs no code change; the G-LIVE-B runner's ``--prompts v1`` uses it). An OPT-IN version
 (``OPT_IN_VERSIONS``) is never the default: it is loaded only when asked for by number (research/v2,
 the D-156 cite-mode prompt, is selected by ``HLM_RESEARCH_ANSWER_MODE=cite``; research/v3, the D-162
-prose-mode prompt, by ``HLM_RESEARCH_ANSWER_MODE=prose``). Model quirks are never
+prose-mode prompt, by ``HLM_RESEARCH_ANSWER_MODE=prose``). A MINOR revision ``<task>/v<N>.<m>.md`` (with
+its ``v<N>.<m>.schema.json``) is never listed by ``versions`` and is loaded only by its version string
+(``load_task("research", "3.2")``, D-193 (6): the prose writer rules selected by
+``HLM_RESEARCH_PROSE_PROMPT=v3.2``). Model quirks are never
 written here: a profile's ``prompt_overrides[<task>].system_append`` is appended at request time
 (D-017).
 """
@@ -51,7 +54,7 @@ MAX_TOKENS: dict[str, int] = {
 }
 #: per-version ``max_tokens`` where a version's answer is longer (relate/v2 adds scope, refiner and
 #: the replaced statements; relate_verify/v2 adds replaces_all and adds_detail)
-MAX_TOKENS_VERSION: dict[tuple[str, int], int] = {("relate", 2): 2000, ("relate_verify", 2): 900}
+MAX_TOKENS_VERSION: dict[tuple[str, int | str], int] = {("relate", 2): 2000, ("relate_verify", 2): 900}
 #: versions loaded only by number (a pin or ``load_task(name, version)``), never as the default;
 #: research/v2 is the D-156 "write, then cite" prompt of ``HLM_RESEARCH_ANSWER_MODE=cite`` and
 #: research/v3 the D-162 "prose" prompt of ``HLM_RESEARCH_ANSWER_MODE=prose``, so the default (claims)
@@ -111,7 +114,7 @@ def versions(name: str) -> list[int]:
     return sorted(int(m.group(1)) for p in d.iterdir() if (m := _VERSION.match(p.name)))
 
 
-def load_task(name: str, version: int | None = None) -> TaskSpec:
+def load_task(name: str, version: int | str | None = None) -> TaskSpec:
     if name not in MAX_TOKENS:
         raise KeyError(f"unknown librarian task {name!r}")
     available = versions(name)
@@ -123,7 +126,7 @@ def load_task(name: str, version: int | None = None) -> TaskSpec:
 
 
 @lru_cache(maxsize=64)
-def _load(name: str, v: int) -> TaskSpec:
+def _load(name: str, v: int | str) -> TaskSpec:
     d = PROMPT_DIR / name
     system = (d / f"v{v}.md").read_text(encoding="utf-8")
     schema = json.loads((d / f"v{v}.schema.json").read_text(encoding="utf-8"))

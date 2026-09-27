@@ -268,6 +268,12 @@ class Settings(BaseSettings):
     # to its best source lines (HLM_RESEARCH_ATTRIBUTION; D-165: no polarity flag); no completeness
     # call (prompt research/v3).
     research_answer_mode: Literal["claims", "cite", "prose"] = "claims"
+    # D-193 (6): the prose mode's prompt revision. "v3.1" (default): research/v3 as revised by D-169.
+    # "v3.2": research/v3.2, the same prompt plus targeted writer rules (answer every part of the
+    # question, check its premise against the newest excerpt, read tables and lists in full, current
+    # value first when excerpts disagree, complete ordered steps for how-to questions, "not stated"
+    # only when no excerpt mentions it, as short as completeness allows). Ignored in the other modes.
+    research_prose_prompt: Literal["v3.1", "v3.2"] = "v3.1"
     # D-165: how the prose mode attributes each kept sentence to excerpts (shown as its support and
     # used to rank primary/related). "sources" (default, V16): the model's sources (else every shown
     # excerpt), literal + word scoring. "wide": every shown excerpt, literals > words > the

@@ -3419,3 +3419,30 @@ async def test_d193_rerank_job_runs_as_its_own_task(writer_profiles) -> None:  #
     assert body["messages"][0]["content"] == load_task("rerank").system and body["max_tokens"] == 1200
     (row,) = r.provider.ledger.inner.rows
     assert row.task == "rerank" and row.prompt_version == "v1" and row.outcome == "ok"
+
+
+# --------------------------------------------------------------------------- D-193 (6) research/v3.2
+def test_d193_prose_prompt_v32_is_an_opt_in_minor_revision() -> None:
+    """research/v3.2 = research/v3 (the D-169 revision "v3.1") plus ONLY the writer rules block of the
+    JOB prose (prose_text shares it); loaded only by name, never a default; HLM_RESEARCH_PROSE_PROMPT
+    selects it in the prose mode (default v3.1)."""
+    from hlmemo.config import get_settings
+    from hlmemo.librarian.prompts import versions
+
+    v3, v32 = load_task("research", 3), load_task("research", "3.2")
+    assert v32.prompt_version == "v3.2" and v32.max_tokens == v3.max_tokens
+    assert "3.2" not in [str(x) for x in versions("research")]
+    assert load_task("research").prompt_version == "v1"
+    added = [ln for ln in v32.system.splitlines() if ln not in v3.system.splitlines()]
+    assert len(added) == 8 and added[0].strip() == "Also follow these rules:"
+    assert [ln.strip()[:2] for ln in added[1:]] == [f"{i}." for i in range(1, 8)]
+    assert [ln for ln in v3.system.splitlines() if ln not in v32.system.splitlines()] == []
+    assert v32.system.index("Also follow these rules:") < v32.system.index('JOB "prose_text"')
+    assert v32.schema["properties"] == v3.schema["properties"]
+    assert get_settings().research_prose_prompt == "v3.1"
+    for revision, want in (("v3.1", "v3"), ("v3.2", "v3.2")):
+        s = get_settings(research_answer_mode="prose", research_prose_prompt=revision)
+        r = rs.Researcher(s, chain=[])
+        assert r.spec.prompt_version == want
+    claims = rs.Researcher(get_settings(research_prose_prompt="v3.2"), chain=[])
+    assert claims.spec.prompt_version == "v1"  # the other modes ignore it

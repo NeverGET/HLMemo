@@ -128,6 +128,9 @@ RERANK_TIMEOUT_S = 6.0
 #: default)
 CITE_PROMPT_VERSION = 2
 PROSE_PROMPT_VERSION = 3
+#: D-193 (6) ``HLM_RESEARCH_PROSE_PROMPT``: the prose prompt revisions (v3.1 = research/v3 as revised by
+#: D-169, the default; v3.2 = research/v3.2, a minor revision loaded only by name)
+PROSE_PROMPTS: dict[str, int | str] = {"v3.1": PROSE_PROMPT_VERSION, "v3.2": "3.2"}
 #: sequential LLM steps of one question (addendum 7): plan, answer, completeness+repair — or, when
 #: the answer abstained, plan, answer, refine, answer (``MAX_CALLS_NO_SELECT``; the prose mode: plan,
 #: prose — or plan, prose, refine, prose). D-159 select-then-
@@ -3162,7 +3165,8 @@ class Researcher:
         if self.answer_mode == "cite":
             self.spec: TaskSpec = load_task(TASK, CITE_PROMPT_VERSION)
         elif self.answer_mode == "prose":
-            self.spec = load_task(TASK, PROSE_PROMPT_VERSION)
+            revision = str(getattr(settings, "research_prose_prompt", "v3.1"))
+            self.spec = load_task(TASK, PROSE_PROMPTS.get(revision, PROSE_PROMPT_VERSION))
         else:
             self.spec = load_task(TASK)
             if 'JOB "answer"' not in self.spec.system:
@@ -3410,6 +3414,7 @@ __all__ = [
     "MAX_CALLS",
     "MAX_CALLS_NO_SELECT",
     "MAX_CALLS_ATTRIBUTE",
+    "PROSE_PROMPTS",
     "PROSE_PROMPT_VERSION",
     "RERANK_CANDIDATES",
     "RERANK_KEEP",
