@@ -1437,3 +1437,42 @@ Consequences:
 - v1 remains the automatic judge. Every measurement reports the judge number AND an adjudicated number, where independent readers (Claude now, codex after 09-30) read every judged-incorrect answer.
 - gate_v2 stays marked "CALIBRATION NOT PASSED".
 - Scorer bug to fix: a judge budget stop is caught as a runaway and scored all-false instead of unscored.
+D-195 | 2026-09-27 | ACCEPTED | **Fix phase of D-193 done and measured: every mechanism works live, and the true (adjudicated) correct rate rises .58 → .63, with contradiction ~.07 → ~.06. The .80 gate is NOT reached. The automatic judge was the largest distortion: it under-scores correctness by ~.15–.2 and over-flags contradiction about 4×.**
+Shipped on wf-memory-ask (not pushed):
+
+| Commit | Change | Measured |
+|---|---|---|
+| a7816fe | Validator placeholders, question literals, notation | R2 replay: dropped units about halved |
+| d60f134 | Memory Map newest-10 | gold in map 92 → 125/211 |
+| 8949fac | K4 order | gold@1 15 → 29 offline |
+| 16dec5e | Opt-in LLM rerank, prompt rerank/v1 | gold@1 → 40, gold@4 47 = in-pool ceiling |
+| 58e5f57 / 8d36f74 | Temporal read side: multi-status lines, cap 4 (orchestrator's call, not the owner's), punctuation-safe spans | – |
+| f80a5cb | Prompt v3.2, opt-in | no gain in blind grading, so NOT adopted |
+
+Data:
+- 121 curated, chain-aware supersession links: three independent readers read all 123 proposals, 122 correct, 0 false. They are applied on the test DB hlm_research_final only (event 2209). Render check 121/121.
+- The automatic pairwise backfill (wf-supersede-backfill) is REJECTED. Precision .69 with 5 high-harm false links; confidence does not separate them. The owner chose curated backfill plus write-time supersession (D-118).
+- The step-4 test showed links fix "older wins" (7/16 → 1/16) when the newer item is shown.
+
+Final re-measure: 8d36f74, rerank on, hlm_research_final, gold v2, 3 runs. Totals are over the 50 answerable questions, contradiction included. The "unchanged" column is the paired count on the 46 answerable questions whose gold did not change.
+
+| | Judge correct | Judge contradiction | Adjudicated correct | Adjudicated contradiction | Correct on 46 unchanged |
+|---|---|---|---|---|---|
+| Baseline (A, A2, c7e066f) | .43 | .28 | .58 (A, A2) | .08 | 27.5 |
+| Final (F1–F3) | .44 | .26 | **.63** | **.06** | **29.7** |
+
+- Other final numbers: p95 14.7–15.6 s; $.0034–.0042/q; abstain .90–1.00.
+- Adjudication: blind Claude readers on every judged-incorrect answer plus a sample of the judged-correct ones. Inter-reader calibration overlap 20/20.
+- Live check: gold@1 14 → 35–39 of 46; status lines on 188–197 excerpts; newer item co-shown 77 → ~155.
+- **Side effect:** 33–37 gold excerpts per run carry a "superseded in part" line (mixed excerpts), and the whole judge loss sits in those 21 questions.
+- Multihop is unchanged (5/11).
+
+Measurement lesson: for dev decisions, use the adjudicated number (blind readers) instead of judge v1, or pair them.
+
+Remaining levers, for the owner:
+- (1) Mark the superseded sentence inline instead of an excerpt-level line.
+- (2) Writer strength and completeness (the oracle ceiling is .78 with luna).
+- (3) Multihop composition.
+- (4) A new hold-out before any final.
+
+Spend on this phase: about $6.35 of $15.
