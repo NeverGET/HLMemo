@@ -1476,3 +1476,19 @@ Remaining levers, for the owner:
 - (4) A new hold-out before any final.
 
 Spend on this phase: about $6.35 of $15.
+D-196 | 2026-09-27 | ACCEPTED | **Project PAUSED by the owner after about a week of memory.ask development ("şimdilik projeyi durduralım … daha sonra kaldığımız yerden devam edeceğiz").**
+
+State at pause:
+- **Candidate:** wf-memory-ask 8d36f74, with curated supersession links on the test DB only.
+- **Measured (adjudicated):** correct .63, contradiction ~.06, abstain .90–1.00, p95 ~15 s, about $0.004/q.
+- **Gate:** the D-158 gate is NOT passed (correct ≥ .80). The writer ceiling with perfect evidence is .78.
+- **Git:** nothing is pushed; main is 54 commits ahead of origin, and the feature branches have no upstream.
+- **Budget:** $6.35 of the added $15 spent.
+- **Resume guide:** a private file, docs/private/realdata-hlmemo/RESUME-2026-09-27.md. The analysis archive (traces, tools, readings, links) is in docs/private/realdata-hlmemo/archive-2026-09-27/.
+
+Next levers, in order:
+1. Inline superseded-sentence marking (the side effect in D-195).
+2. One writer-strength probe on the oracle inputs.
+3. Multihop composition.
+4. A new hold-out, then the final gate (judge v1 + blind-reader adjudication).
+5. R4: the D-118 port, a reviewed curated backfill on prod, the manifest (summaries OFF, rerank ON), rehearsal.
