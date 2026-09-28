@@ -40,3 +40,12 @@ HLMemo stays paused; the local DB container may be started read-only-ish when it
 - Smoke (40 train items/task): Jev AUC fact .963 vs luna .887; supersession .881 vs .614; relevance .864 vs .709; Jev ~0.4 s vs ~2.8 s.
 - Phase 4 round 1 running: 3 parallel agents (fact_presence $0.30, supersession $0.20, relevance $0.20 caps), own design modules,
   train/dev only → 10-ITER-<task>.md.
+- Round 1 DONE (2026-09-28):
+  - fact_presence: best fi2-esc; FINAL TEST (single read): Jev alone bin acc .940 (en .941 / tr .939, AUC .981) vs judge v1 .788 (TR .632)
+    vs luna .873; cascade .925 (luna weaker than Jev on the escalated band). → WIN: Jev as the fact-presence judge.
+  - relevance: Jev ≈ J1 (train 21/27, dev 7/8 gold@1/@4) vs LLM rerank (24/29, 9/10); latency 0.5 s vs 2.9 s; no design closed the gap.
+  - supersession: dev AUC .98 confounded (curated spans vs queue bodies); fair auto sample AUC .46–.58 (chance); pairwise cannot see chains.
+  - Spend round 1 ≈ $0.36 + test read $0.015.
+- Proposed round 2: (1) supersession as a CHAIN Choice ("which is current?") with code-sorted subject chains (labels: curated chains.md),
+  de-confounded data; (2) Jev as the fact-presence judge in the measurement pipeline (partial/uncertain → reader); (3) next LLM pains:
+  support (validator) and abstain decisions.
