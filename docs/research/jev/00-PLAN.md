@@ -25,3 +25,8 @@ The owner wants my own view after the research AND how it changes after the test
   provenance; no silent edits later). Each belief: statement · my confidence (%) · what test result would change it (falsifier).
 - 07-MY-VIEW-AFTER-TESTS.md — the same beliefs side by side with the results: confirmed / refuted / shifted, the new
   confidence, and why. Surprises called out explicitly.
+
+## Test run (owner approved T1–T8, 2026-09-28)
+- General T1–T7: raw + scripts in docs/private/jev-tests/general/ (gitignored); aggregates → 05-TEST-RESULTS-general.md. Cap $0.80.
+- T8 (HLMemo rerank, own memory data): raw in docs/private/jev-tests/t8/; aggregates only → 05-TEST-RESULTS-T8.md. Cap $0.25.
+- Then: 06-INTEGRATION.md (discussion) and 07-MY-VIEW-AFTER-TESTS.md (belief-by-belief vs 03b).
