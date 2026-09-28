@@ -132,3 +132,56 @@ It is v0's Choice with an explicit escape option: `not_addressed` (the answer sa
 1. Read test once, with `fi2-esc` plus per-language thresholds. Both are fixed now from dev, and the honest train-chosen set is the fallback. This is the owner's call.
 2. **Untested next hypothesis.** The residual error is over-crediting multi-part facts in which one component is missing. Split the fact into its components in code and ask one Noul per component, so that "every component stated" is computed in code (S4 applied to the fact's structure).
 3. Add a disagreement check on the confident English band (G7). The LLM cannot fix Jev's confident errors.
+
+## Final test read (2026-09-28, run once, pre-registered)
+**Protocol.**
+- The configuration was frozen before any test call, in `rack/runs/fact_presence/_fact_iter/prereg-test.json` (sha256 `4cd35f7052ab…`), and recorded in the ITERATIONS notes at 18:30Z:
+  - Jev: `fi2-esc@1.0`.
+  - Calibration: Platt of P(present) per language family, fitted on train.
+  - Primary thresholds: per language, chosen on **train**.
+  - Secondary thresholds: per language, chosen on dev.
+  - Uncertain band: `llm-v0`.
+- The frozen evaluator was dry-run on dev and reproduced the dev numbers above exactly.
+- Test was then read once: one `--final` run each for `fi2-esc` and `llm-v0`, then one evaluation. `TEST-ACCESS.log` shows 3 entries.
+- Nothing was changed after test.
+- Cost: $0.0153 by per-call sum ($0.0038 Jev + $0.0115 LLM), 268 calls, 0 failures.
+
+**Test set.** 134 items over 11 questions: 95 present, 15 partial, 24 absent. By language family: en 68, tr 66. Test contains no tr-ascii items. Judge v1 verdicts are known for 80 items.
+
+| Test (n = 134) | Auto share (en / tr) | Auto precision | Binary acc (en / tr) | 3-class acc / macro-F1 | $/decision | p50 / p95 ms |
+|---|---|---|---|---|---|---|
+| Jev alone (`fi2-esc`) | 100% | – | **.940** (.941 / .939) | .881 / .748 | 2.8e-5 | 379 / 464 |
+| **Cascade, primary** (train thresholds) | 81.3% (75.0% / 87.9%) | **.972** (present 80/81, not present 26/28) | .925 (.897 / .955) | .888 / .803 | 4.7e-5 | 394 / 3570 |
+| Cascade, secondary (dev thresholds) | 79.1% (73.5% / 84.8%) | .991 (74/74, 31/32) | .948 (.926 / .970) | .896 / .815 | 4.8e-5 | 393 / 3810 |
+| LLM only (`llm-v0`) | 0% | – | .873 (.882 / .864) | .813 / .735 | 8.6e-5 | 2514 / 3900 |
+
+- **Jev alone, detail.**
+  - AUC .981 (en .976 / tr .987).
+  - ECE of P(present): raw .089, calibrated .075 (en .075 / tr .091).
+  - Top-label ECE: .070.
+  - Binary acc: .940 at the calibrated .5 and .925 at the raw argmax.
+  - 3-class F1: en .764 / tr .727.
+- **Auto band.** Jev decides 81% of test items alone at .972 precision (106/109), so the 95% target held on test in both languages: en 50/51, tr 56/58.
+- **The cascade did not beat Jev alone on test.** The LLM was the weaker system on test. It read 15 of the 95 present facts as partial, the same under-scoring as judge v1. On the 25 escalated items, the LLM was right on 18 and Jev on 20.
+- **Cascade vs LLM-only.** The primary cascade beats LLM-only by +.052 in binary accuracy, 95% CI [−.009, +.122] (bootstrap by question, 11 questions). The cascade's own binary accuracy has CI [.880, .974].
+- **Judge v1 on the same 80 items** (binary accuracy):
+
+  | System | Binary acc | 3-class F1 |
+  |---|---|---|
+  | Judge v1 | .788 (en .929 / tr **.632**); present recall 31/47, false accepts 1/33 | – |
+  | Jev alone | .938 | .784 |
+  | Cascade, primary | .925 | .844 |
+  | Cascade, secondary | .963 | .853 |
+  | LLM only | .838 | .728 |
+
+  Turkish is again where judge v1 under-scores.
+- **Dev vs test.**
+  - Jev: AUC .963 → .981, binary .930 → .940, 3-class F1 .835 → .748. Partial remains the weak class: on test, 6 partial facts read as present and 3 as absent, out of 15.
+  - The LLM dropped from .965 to .873 binary. With a single read on 11 questions, the LLM's dev advantage did not transfer.
+
+**Verdict.** For "is this fact fully present", `fi2-esc` with train-fitted per-language calibration is at least as good as the LLM baseline on held-out questions, at a third of the cost and about 7× faster:
+- Binary accuracy is .940 vs .873, and 3-class F1 is .748 vs .735.
+- Its confident band met the 95% precision target on test in both languages (.972 overall).
+- Escalating the uncertain ~19% to `llm-v0` did not improve accuracy on test (.925 vs .940).
+
+The escalation target therefore needs a stronger or differently framed LLM prompt before a cascade pays off (G7). The 3-class `partial` boundary is the remaining weakness for both systems.
