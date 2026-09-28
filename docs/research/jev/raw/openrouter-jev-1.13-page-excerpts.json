@@ -1,0 +1,120 @@
+{
+ "_source": "https://openrouter.ai/typesafe/jev-1.13 (HTML, dehydrated React-Query state)",
+ "_fetched": "2026-09-28 ~15:20-16:00Z (model page dehydratedAt 1790611225 = 2026-09-28T15:20:25Z)",
+ "excerpts": {
+  "endpoint_stats": {
+   "endpoint_id": "2db56e7f-853c-44db-9dff-3eaacfa59122",
+   "latency_metric": "latency",
+   "p50_latency": 242.5,
+   "p75_latency": 314,
+   "p90_latency": 1191,
+   "p95_latency": 2203.45,
+   "p99_latency": 13422.490000000023,
+   "p50_throughput": null,
+   "p75_throughput": null,
+   "p90_throughput": null,
+   "p95_throughput": null,
+   "p99_throughput": null,
+   "latency_request_count": 2945627,
+   "throughput_request_count": 0,
+   "request_count": 2945627,
+   "window_minutes": 30
+  },
+  "uptime_daily": [
+   {
+    "date": "2026-09-28 00:00:00",
+    "uptime": 98.32109129066107,
+    "judgedMinutes": 953
+   },
+   {
+    "date": "2026-09-27 00:00:00",
+    "uptime": 100,
+    "judgedMinutes": 1440
+   },
+   {
+    "date": "2026-09-26 00:00:00",
+    "uptime": 100,
+    "judgedMinutes": 1435
+   }
+  ],
+  "provider_dataPolicy": {
+   "training": false,
+   "trainingOpenRouter": false,
+   "retainsPrompts": false,
+   "canPublish": false,
+   "termsOfServiceURL": "https://typesafe.ai/legal/terms",
+   "privacyPolicyURL": "https://typesafe.ai/legal/privacy-policy",
+   "requiresUserIDs": false
+  },
+  "provider_baseUrl": "https://api.typesafe.ai/v1",
+  "provider_model_id": "jev-1.13.0",
+  "endpoint_flags": {
+   "limit_rpm": 2000,
+   "limit_rpd": null,
+   "supports_tool_parameters": false,
+   "supports_reasoning": false,
+   "has_chat_completions": true,
+   "is_hipaa_eligible": false,
+   "adapter_name": "TypeSafeDecisionsAdapter",
+   "endpoint_created_at": "2026-09-17T23:46:59.824Z",
+   "in_openrouter_ZDR_endpoint_list": true
+  },
+  "top_apps": [
+   {
+    "rank": 1,
+    "title": "blask datos labelling",
+    "origin_url": "https://maxtesla.com/",
+    "total_tokens": 39171424420,
+    "total_requests": 26195539
+   },
+   {
+    "rank": 2,
+    "title": "mirasim",
+    "origin_url": "https://mirasim.ai/",
+    "total_tokens": 15984723116,
+    "total_requests": 3936907
+   },
+   {
+    "rank": 3,
+    "title": "onet-crosswalk pilot-01",
+    "origin_url": "https://github.com/patent-process-mining",
+    "total_tokens": 14905868931,
+    "total_requests": 4301660
+   },
+   {
+    "rank": 4,
+    "title": "AI Assistant",
+    "origin_url": "https://www.magnific.com/",
+    "total_tokens": 14142281297,
+    "total_requests": 3736619
+   },
+   {
+    "rank": 5,
+    "title": "Portkey AI",
+    "origin_url": "https://portkey.ai/",
+    "total_tokens": 13602714829,
+    "total_requests": 3811754
+   }
+  ],
+  "top_apps_window_note": "window not stated in the appStats payload",
+  "benchmarkScores": {
+   "scores": [],
+   "lookback_days": 32
+  },
+  "artificialAnalysis": [],
+  "designArena": {
+   "records": []
+  },
+  "softwareHelp_links": [
+   "https://openrouter.ai/docs/guides/community/jev-tutorial",
+   "https://openrouter.ai/docs/guides/community/jev",
+   "https://openrouter.ai/docs/guides/community/typesafe-sdk",
+   "https://openrouter.ai/docs/cookbook/building-agents/gate-tool-calls-with-jev",
+   "https://openrouter.ai/docs/cookbook/coding-agents/auto-approve-permission-prompts-with-jev",
+   "https://openrouter.ai/docs/cookbook/evaluate-and-optimize/classify-reddit-comments-with-jev",
+   "https://openrouter.ai/docs/cookbook/evaluate-and-optimize/jev-classification",
+   "https://openrouter.ai/docs/cookbook/evaluate-and-optimize/jev-verified-cascade",
+   "https://openrouter.ai/labs/jev"
+  ]
+ }
+}

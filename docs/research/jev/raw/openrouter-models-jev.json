@@ -1,0 +1,328 @@
+{
+ "_source": "GET https://openrouter.ai/api/v1/models?output_modalities=all (filtered: id/name/description contains jev|typesafe, plus other output_modalities=decisions models)",
+ "_fetched": "2026-09-28T16:00Z (approx; /api/v1/models fetched ~15:55Z, model pages dehydratedAt 1790611225 = 2026-09-28T15:20:25Z)",
+ "_note": "typesafe/jev-1.13 and ~typesafe/jev-latest are NOT in the default GET /api/v1/models list (text-output filter); only typesafe/jev-router is.",
+ "models": [
+  {
+   "id": "upstage/solar-decide",
+   "canonical_slug": "upstage/solar-decide-20260928",
+   "hugging_face_id": null,
+   "name": "Upstage: Solar Decide",
+   "created": 1790592657,
+   "description": "Solar Decide is Upstage's structured decision model, served as a System One endpoint on Solar Mini 4. Send a state along with typed questions, and it returns a choice, a...",
+   "context_length": 524288,
+   "architecture": {
+    "modality": "text->decisions",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "decisions"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.00000005",
+    "completion": "0",
+    "input_cache_read": "0.00000005"
+   },
+   "top_provider": {
+    "context_length": 524288,
+    "max_completion_tokens": 471859,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/upstage/solar-decide-20260928/endpoints"
+   },
+   "_created_iso": "2026-09-28T10:50:57+00:00"
+  },
+  {
+   "id": "respan/span-01",
+   "canonical_slug": "respan/span-01-20260925",
+   "hugging_face_id": null,
+   "name": "Respan: Span-01",
+   "created": 1790387550,
+   "description": "Span-01 is a behavior scoring model from Respan. It reads a conversation span and returns, for each plain-language behavior you define, the probability that the behavior is present. It is...",
+   "context_length": 0,
+   "architecture": {
+    "modality": "text->decisions",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "decisions"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.00000002",
+    "completion": "0"
+   },
+   "top_provider": {
+    "context_length": 0,
+    "max_completion_tokens": 0,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/respan/span-01-20260925/endpoints"
+   },
+   "_created_iso": "2026-09-26T01:52:30+00:00"
+  },
+  {
+   "id": "respan/span-01-lite",
+   "canonical_slug": "respan/span-01-lite-20260925",
+   "hugging_face_id": null,
+   "name": "Respan: Span-01 Lite",
+   "created": 1790387542,
+   "description": "Span-01 Lite is the free, lighter tier of Span-01, a behavior scoring model from Respan. It returns, for each plain-language behavior you define, the probability that the behavior is present...",
+   "context_length": 0,
+   "architecture": {
+    "modality": "text->decisions",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "decisions"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0",
+    "completion": "0"
+   },
+   "top_provider": {
+    "context_length": 0,
+    "max_completion_tokens": 0,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/respan/span-01-lite-20260925/endpoints"
+   },
+   "_created_iso": "2026-09-26T01:52:22+00:00"
+  },
+  {
+   "id": "respan/span-01-lite:free",
+   "canonical_slug": "respan/span-01-lite-20260925",
+   "hugging_face_id": null,
+   "name": "Respan: Span-01 Lite (free)",
+   "created": 1790387542,
+   "description": "Span-01 Lite is the free, lighter tier of Span-01, a behavior scoring model from Respan. It returns, for each plain-language behavior you define, the probability that the behavior is present...",
+   "context_length": 0,
+   "architecture": {
+    "modality": "text->decisions",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "decisions"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0",
+    "completion": "0"
+   },
+   "top_provider": {
+    "context_length": 0,
+    "max_completion_tokens": 0,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/respan/span-01-lite-20260925/endpoints"
+   },
+   "_created_iso": "2026-09-26T01:52:22+00:00"
+  },
+  {
+   "id": "typesafe/jev-router",
+   "canonical_slug": "typesafe/jev-router",
+   "hugging_face_id": null,
+   "name": "TypeSafe: Jev Router",
+   "created": 1790363560,
+   "description": "Jev Router picks the best model and reasoning effort for each request, balancing quality, speed, and cost. It runs on [Jev](https://openrouter.ai/~typesafe/jev-latest), TypeSafe's first System One model, and adapts as your...",
+   "context_length": 1000000,
+   "architecture": {
+    "modality": "text+image+file+audio+video->text",
+    "input_modalities": [
+     "audio",
+     "file",
+     "image",
+     "text",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Router",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "-1",
+    "completion": "-1"
+   },
+   "top_provider": {
+    "context_length": null,
+    "max_completion_tokens": null,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/typesafe/jev-router/endpoints"
+   },
+   "_created_iso": "2026-09-25T19:12:40+00:00"
+  },
+  {
+   "id": "jaredpalmer/kev-4b",
+   "canonical_slug": "jaredpalmer/kev-4b-20260924",
+   "hugging_face_id": "jaredpalmer/kev-4b",
+   "name": "Jared Palmer: Kev 4B",
+   "created": 1790354233,
+   "description": "Kev 4B is a small open-weight decision model from Jared Palmer, built as a LoRA adapter and pointer head on Qwen3.5-4B-Base and served over the same /v1/systemone contract as TypeSafe's...",
+   "context_length": 8192,
+   "architecture": {
+    "modality": "text->decisions",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "decisions"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.000000042",
+    "completion": "0"
+   },
+   "top_provider": {
+    "context_length": 8192,
+    "max_completion_tokens": 7372,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/jaredpalmer/kev-4b-20260924/endpoints"
+   },
+   "_created_iso": "2026-09-25T16:37:13+00:00"
+  },
+  {
+   "id": "~typesafe/jev-latest",
+   "canonical_slug": "~typesafe/jev-latest",
+   "alias_target": {
+    "name": "TypeSafe: Jev 1.13",
+    "slug": "typesafe/jev-1.13"
+   },
+   "hugging_face_id": null,
+   "name": "TypeSafe: Jev Latest",
+   "created": 1789689685,
+   "description": "This model always redirects to the latest model in the Jev family.",
+   "context_length": 32000,
+   "architecture": {
+    "modality": "text->decisions",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "decisions"
+    ],
+    "tokenizer": "Router",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.000000042",
+    "completion": "0"
+   },
+   "top_provider": {
+    "context_length": 32000,
+    "max_completion_tokens": 28800,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/~typesafe/jev-latest/endpoints"
+   },
+   "_created_iso": "2026-09-18T00:01:25+00:00"
+  },
+  {
+   "id": "typesafe/jev-1.13",
+   "canonical_slug": "typesafe/jev-1.13-20260917",
+   "hugging_face_id": null,
+   "name": "TypeSafe: Jev 1.13",
+   "created": 1789689684,
+   "description": "Jev is a structured decision model from TypeSafe, and the first of its System One models. System One models make fast, structured decisions for software, returning a typed choice rather...",
+   "context_length": 32000,
+   "architecture": {
+    "modality": "text->decisions",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "decisions"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.000000042",
+    "completion": "0"
+   },
+   "top_provider": {
+    "context_length": 32000,
+    "max_completion_tokens": 28800,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/typesafe/jev-1.13-20260917/endpoints"
+   },
+   "_created_iso": "2026-09-18T00:01:24+00:00"
+  }
+ ]
+}
