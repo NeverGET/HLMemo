@@ -32,3 +32,11 @@ the LLM on low confidence.
 
 Working rules: ≤ 3 workstreams; timebox per phase; every claim measured; test split untouched until the end.
 HLMemo stays paused; the local DB container may be started read-only-ish when item bodies are needed (owner: restart on resume).
+
+## Progress (2026-09-28)
+- Phase 1 playbook DONE (09-JEV-PLAYBOOK.md). Phase 2 data DONE: fact_presence 663, supersession 287 (after 120 reader labels;
+  2 readers, overlap coarse 15/15), relevance 1,446 (50 q). Phase 3 rack DONE (docs/private/jev-lab/rack; 30 unit tests; smoke $0.021;
+  designs auto-discovered per module; test split gated by --final + TEST-ACCESS.log).
+- Smoke (40 train items/task): Jev AUC fact .963 vs luna .887; supersession .881 vs .614; relevance .864 vs .709; Jev ~0.4 s vs ~2.8 s.
+- Phase 4 round 1 running: 3 parallel agents (fact_presence $0.30, supersession $0.20, relevance $0.20 caps), own design modules,
+  train/dev only → 10-ITER-<task>.md.
