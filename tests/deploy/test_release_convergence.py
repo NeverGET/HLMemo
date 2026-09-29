@@ -21,14 +21,15 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import r4_fixtures  # noqa: E402
 import test_deploy_recovery as harness  # noqa: E402  (module import: its tests are not re-collected)
 import test_llm_env_release as d108  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 NEXT, PREVIOUS = harness.NEXT, harness.PREVIOUS
 R2_ENV, R3_ENV, R2_KEY, R3_KEY = d108.R2_ENV, d108.R3_ENV, d108.R2_KEY, d108.R3_KEY
-INSTALL = ROOT / "deploy/scripts/install_llm_env.sh"
 INSTALL_KEY = "fake-or-" + "IN" * 16
+GEMINI_KEY = r4_fixtures.GEMINI_KEY
 
 
 def _release_state():
@@ -133,17 +134,32 @@ class ConvergenceTest(d108.D108RollbackTest):
             rs.main(["publish", str(root), "--current", NEXT, "--previous", NEXT, "--previous-dump", "/d"])
 
     # ------------------------------------------------------------------ 3 env install under the lock
-    def install(self, root, env, *extra, fail=""):
+    def install(self, root, env, *extra, fail="", keys=None):
+        """install_llm_env.sh from a workstation copy (r4_fixtures: the Gemini writer profiles) with
+        a key file holding every key the R4 env needs (``keys`` replaces it)."""
         state = root / "install-state"
         state.mkdir(exist_ok=True)
         (state / "ssh_config").write_text("Host hlm-deploy\n  HostName 203.0.113.10\n")
+        workstation = root / "workstation"
+        if not workstation.exists():
+            r4_fixtures.workstation_repo(workstation)
         key_file = root / "operator.env"
-        key_file.write_text(f"OPENROUTER_API_KEY={INSTALL_KEY}\n")
+        if keys is None:
+            keys = {"OPENROUTER_API_KEY": INSTALL_KEY, "GEMINI_API_KEY": GEMINI_KEY}
+        key_file.write_text("".join(f"{k}={v}\n" for k, v in keys.items()))
         run_env = dict(
             env, FAIL=fail, HLM_REMOTE_DIR=str(root / "app"), HLM_REMOTE_ENV=str(root / "prod.env")
         )
         result = subprocess.run(
-            ["bash", str(INSTALL), "--state", str(state), "--key-file", str(key_file), *extra],
+            [
+                "bash",
+                str(workstation / "deploy/scripts/install_llm_env.sh"),
+                "--state",
+                str(state),
+                "--key-file",
+                str(key_file),
+                *extra,
+            ],
             env=run_env,
             text=True,
             capture_output=True,
@@ -167,6 +183,7 @@ class ConvergenceTest(d108.D108RollbackTest):
         self.assertEqual(disk, self.running_env(root, "librarian"))
         self.assertNotIn("env_switch", self.state(root))
         self.assertNotIn(INSTALL_KEY, output)
+        self.assertNotIn(GEMINI_KEY, output)
         # the deploy lock is the SAME lock deploy/rollback take: held by another run, nothing changes
         with open(root / ".deploy.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

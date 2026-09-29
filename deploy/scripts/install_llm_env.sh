@@ -6,11 +6,14 @@
 #
 # Builds llm.env from deploy/llm.env.example with HLM_LIBRARIAN_ENABLED=true,
 # HLM_LIBRARIAN_ROLE=observer, HLM_PROFILE=openrouter-gpt6-luna, the template's fallbacks (D-094:
-# HLM_FALLBACK_PROFILE and the per-task HLM_FALLBACK_PROFILE__<TASK> lines; --fallback replaces the
-# default one only) and the template's budget guard (D-058 development defaults). Every profile the
-# file names must exist. The key variable names come from those
-# profiles (HLM_LLM_API_KEY = "env:NAME", D-017; R2: OPENROUTER_API_KEY) and ONLY those are
-# read from --key-file (default: the repository's .env). The key travels to the host on ssh STDIN,
+# HLM_FALLBACK_PROFILE and the per-task HLM_FALLBACK_PROFILE__<TASK> lines, __RERANK included;
+# --fallback replaces the default one only), the research writer (R4 B5: HLM_RESEARCH_WRITER_PROFILE
+# when the template sets it) and the template's budget guard. Every profile the file names must
+# exist. The key variable names come from those
+# profiles (HLM_LLM_API_KEY = "env:NAME", D-017; R2: OPENROUTER_API_KEY, R4: + GEMINI_API_KEY) and
+# ONLY those are read from --key-file (default: the repository's .env); every one must be there. The
+# template carries an empty line for each key (NAME=), so an installed value is preserved (D-121).
+# The key travels to the host on ssh STDIN,
 # never in argv, a log or this script's output, and is written atomically to <env dir>/llm.env
 # (default /etc/hlmemo/llm.env, next to $HLM_REMOTE_ENV), 0600, owned by the deploy user.
 # D-121: an install PRESERVES what the operator set by hand in the installed llm.env: the spend caps
@@ -52,10 +55,13 @@ while (($#)); do
   esac
 done
 [[ -n $state ]] || { usage >&2; die '--state DIR is required (the target host is never guessed)'; }
-[[ -n $fallback ]] || fallback=$(sed -n 's/^HLM_FALLBACK_PROFILE=//p' "$REPO_ROOT/deploy/llm.env.example" | tail -n 1)
+template=$REPO_ROOT/deploy/llm.env.example
+[[ -n $fallback ]] || fallback=$(sed -n 's/^HLM_FALLBACK_PROFILE=//p' "$template" | tail -n 1)
 # D-111/D-116 (review 79 T5): the release marker comes from the template (R4 here), never a literal
-release=$(sed -n 's/^HLM_ENV_RELEASE=\(r[0-9][0-9]*\)$/\1/p' "$REPO_ROOT/deploy/llm.env.example" | tail -n 1)
-[[ -n $release ]] || die 'deploy/llm.env.example has no HLM_ENV_RELEASE=rN marker'
+release=$(sed -n 's/^HLM_ENV_RELEASE=\(r[0-9][0-9]*\)$/\1/p' "$template" | tail -n 1)
+[[ -n $release ]] || die "$template has no HLM_ENV_RELEASE=rN marker"
+# R4 B5: the research writer the template names (empty: the research profile writes)
+writer=$(sed -n 's/^HLM_RESEARCH_WRITER_PROFILE=//p' "$template" | tail -n 1)
 ssh_config=${HLM_OPS_SSH_CONFIG:-$state/ssh_config}
 [[ -f $ssh_config ]] || die "no SSH config at $ssh_config (run first_deploy.sh first)"
 remote_env=${HLM_REMOTE_ENV:-/etc/hlmemo/prod.env}
@@ -231,18 +237,20 @@ fi
 [[ -f $key_file && -r $key_file ]] || die "key file not readable: $key_file (pass --key-file FILE)"
 # Build the whole file first (the key stays in this shell's memory; printf is a builtin, so it never
 # appears in any process argv), then send it in one piece on ssh stdin.
-content=$(python3 - "$REPO_ROOT/deploy/llm.env.example" "$key_file" "$REPO_ROOT/profiles" "$profile" "$fallback" "$release" <<'PY'
+content=$(python3 - "$template" "$key_file" "$REPO_ROOT/profiles" "$profile" "$fallback" "$release" <<'PY'
 import os, re, sys, tomllib
 example, key_file, profiles, primary, fallback, release = sys.argv[1:7]
 END = "# END llm.env (install_llm_env.sh)"
 def fail(msg):
     print(f"install_llm_env: {msg}", file=sys.stderr)
     sys.exit(65)
-# D-094: the per-task fallbacks the template sets are kept verbatim; their profiles must exist too
+# D-094: the per-task fallbacks the template sets (HLM_FALLBACK_PROFILE__RERANK included) are kept
+# verbatim; R4 B5: so is the research writer (HLM_RESEARCH_WRITER_PROFILE). Their profiles must
+# exist too, and their keys are read like the primary's.
 task_profiles = []
 with open(example, encoding="utf-8") as fh:
     for line in fh:
-        m = re.fullmatch(r"HLM_FALLBACK_PROFILE__[A-Z][A-Z0-9_]*=(.*)", line.strip())
+        m = re.fullmatch(r"(?:HLM_FALLBACK_PROFILE__[A-Z][A-Z0-9_]*|HLM_RESEARCH_WRITER_PROFILE)=(.*)", line.strip())
         if m and m.group(1).strip():
             task_profiles.append(m.group(1).strip())
 names = []
@@ -280,7 +288,7 @@ settings = {
     "HLM_FALLBACK_PROFILE": fallback,
     # D-111/D-116: the release marker, the template's (check_librarian.py evaluate checks this env
     # against that release's manifest: R4 = no query rewrite, no per-source cap, the D-094 fallback
-    # mapping, memory.ask and the Memory Map summaries on with their fallbacks and limits)
+    # mapping, memory.ask on (prose, the writer) and the Memory Map summaries off, with the limits)
     "HLM_ENV_RELEASE": release,
     **{name: found[name] for name in names},
 }
@@ -301,7 +309,7 @@ out.append(END)
 sys.stdout.write("\n".join(out) + "\n")
 PY
 ) || die "llm.env not built; nothing was sent" 65
-echo "install_llm_env: $target on hlm-deploy ($ssh_config): profile=$profile fallback=$fallback role=observer enabled=true"
+echo "install_llm_env: $target on hlm-deploy ($ssh_config): release=$release profile=$profile fallback=$fallback writer=${writer:--} role=observer enabled=true"
 printf '%s\n' "$content" | rssh "$remote_cmd"
 unset content
 echo "Done. On a deployed host the switch (both services recreated + the --release $release check) ran under the deploy lock; re-run this command if it was interrupted (RUNBOOK \"R3 release\", \"R4 release\")."

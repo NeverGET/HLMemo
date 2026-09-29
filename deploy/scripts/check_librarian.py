@@ -27,7 +27,7 @@ evaluate --llm-env present|absent --librarian FILE --api FILE [--release r3] [--
     D-108 step 4) or a service running an llm.env labelled HLM_ENV_RELEASE=rN of a known manifest
     (install_llm_env.sh writes the template's label) — additionally requires that release's env
     (env_release=rN) with its EXACT profile mapping (D-094; R4 also the research and map-summary
-    fallbacks), its "on" switches (R4: HLM_RESEARCH_ENABLED, HLM_MAP_SUMMARY_ENABLED), its
+    fallbacks), its "on" switches (R4: HLM_RESEARCH_ENABLED; the summaries are "off"), its
     per-question limits (R4) and the spend guard (D-121: every cap present,
     HLM_LLM_BUDGET_DISABLED=false, month <= 10, day and hour <= month). The R3 manifest keeps the R4
     switches off, so an R3 env on this image never serves memory.ask. Only an UNLABELLED llm.env is
@@ -106,9 +106,10 @@ RELEASE_MANIFESTS: dict[str, dict[str, Any]] = {
         "budgets": _BUDGETS,
     },
     "r4": {
-        "off": ("HLM_QUERY_REWRITE", "HLM_RETRIEVAL_SOURCE_CAP"),
-        # "on": present and true in every env (the release's features, pinned)
-        "on": RESEARCH_SWITCHES,
+        # R4 plan §1.5 (D-192/D-195): the Memory Map summaries made answers worse; they stay OFF
+        "off": ("HLM_QUERY_REWRITE", "HLM_RETRIEVAL_SOURCE_CAP", "HLM_MAP_SUMMARY_ENABLED"),
+        # "on": present and true in every env (the release's features, pinned): memory.ask
+        "on": ("HLM_RESEARCH_ENABLED",),
         "exact": {
             **_D094,
             # the question waits for a research call: its fallback is the fast profile (D-094 style)
@@ -116,8 +117,9 @@ RELEASE_MANIFESTS: dict[str, dict[str, Any]] = {
             # the summaries are async: the default fallback, pinned explicitly
             "HLM_FALLBACK_PROFILE__MAP_SUMMARY": "openrouter-glm53-flash",
         },
-        # "limits": present, positive and at most this (the per-question runaway guard, addendum 5)
-        "limits": {"HLM_RESEARCH_MAX_USD": 0.01, "HLM_RESEARCH_MAX_TOKENS": 100_000},
+        # "limits": present, positive and at most this (the per-question runaway guard, addendum 5).
+        # R4 §1.5: 0.12 = one worst-case Gemini attempt + one luna fallback + planner/rerank/attribution
+        "limits": {"HLM_RESEARCH_MAX_USD": 0.12, "HLM_RESEARCH_MAX_TOKENS": 100_000},
         "budgets": _BUDGETS,
     },
 }

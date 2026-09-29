@@ -54,14 +54,14 @@ R3_MANIFEST_ENV = {
     "HLM_LLM_BUDGET_MONTH_USD": "10",
     "HLM_LLM_BUDGET_DISABLED": "false",
 }
-#: D-136 / review 79 T5: what the R4 template adds (install_llm_env.sh)
+#: D-136 / review 79 T5 / R4 plan §1.5: what the R4 template adds (install_llm_env.sh)
 R4_MANIFEST_ENV = {
     **R3_MANIFEST_ENV,
     "HLM_RESEARCH_ENABLED": "true",
-    "HLM_MAP_SUMMARY_ENABLED": "true",
+    "HLM_MAP_SUMMARY_ENABLED": "false",
     "HLM_FALLBACK_PROFILE__RESEARCH": "openrouter",
     "HLM_FALLBACK_PROFILE__MAP_SUMMARY": "openrouter-glm53-flash",
-    "HLM_RESEARCH_MAX_USD": "0.01",
+    "HLM_RESEARCH_MAX_USD": "0.12",
     "HLM_RESEARCH_MAX_TOKENS": "100000",
 }
 #: ... and an R2 llm.env (no marker, no per-task fallbacks)
@@ -362,8 +362,8 @@ class R2DeployCheckTest(unittest.TestCase):
 
     def test_the_template_satisfies_the_current_release_manifest(self):
         """deploy/llm.env.example (what install_llm_env.sh writes) carries the marker (R4), the D-094
-        keys, no query rewrite / per-source cap switched on, and (review 79 T5) memory.ask and the
-        map summaries switched ON with their pinned fallbacks and bounded per-question limits."""
+        keys, no query rewrite / per-source cap switched on, and (review 79 T5, R4 plan §1.5)
+        memory.ask ON, the map summaries OFF, the pinned fallbacks and bounded per-question limits."""
         spec = importlib.util.spec_from_file_location("check_librarian", CHECK)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -383,25 +383,30 @@ class R2DeployCheckTest(unittest.TestCase):
         )
         for key in manifest["off"]:
             self.assertIn(env.get(key, "false").lower(), ("", "0", "false", "no", "off"), key)
-        self.assertEqual(("HLM_RESEARCH_ENABLED", "HLM_MAP_SUMMARY_ENABLED"), tuple(manifest["on"]))
+        self.assertEqual(("HLM_RESEARCH_ENABLED",), tuple(manifest["on"]))
+        self.assertIn("HLM_MAP_SUMMARY_ENABLED", manifest["off"])
+        self.assertEqual("false", env.get("HLM_MAP_SUMMARY_ENABLED"))
         for key in manifest["on"]:
             self.assertEqual("true", env.get(key), key)
         self.assertEqual([], mod._limit_problems(env, manifest["limits"]))
+        self.assertEqual("0.12", env["HLM_RESEARCH_MAX_USD"])
         # the R3 manifest keeps memory.ask and the summaries OFF (an R3 env on this image)
         self.assertTrue(set(manifest["on"]) <= set(mod.RELEASE_MANIFESTS["r3"]["off"]))
+        self.assertIn("HLM_MAP_SUMMARY_ENABLED", mod.RELEASE_MANIFESTS["r3"]["off"])
 
     def test_r4_manifest_pins_research_map_summary_and_their_fallbacks(self):
-        """Review 79 T5: an R4 env is checked against the R4 manifest: the research switches ON, the
-        research and map-summary fallbacks exact, the per-question limits present and bounded; an R3
-        env with memory.ask switched on fails the R3 manifest; the effective state is reported."""
-        research = {"enabled": True, "map_summary": True, "max_usd": 0.01, "max_tokens": 100000}
+        """Review 79 T5 / R4 plan §1.5: an R4 env is checked against the R4 manifest: memory.ask ON,
+        the summaries OFF, the research and map-summary fallbacks exact, the per-question limits
+        present and bounded; an R3 env with memory.ask switched on fails the R3 manifest; the
+        effective state is reported."""
+        research = {"enabled": True, "map_summary": False, "max_usd": 0.12, "max_tokens": 100000}
         lib = report("librarian", env_release="r4", research=research)
         api = report("api", env_release="r4", research=research)
         code, output = self.evaluate(lib, api)
         self.assertEqual(0, code, output)
         self.assertIn("llm.env manifest: env_release=r4 (code r4, check mode r4)", output)
         self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
-        self.assertIn("api research: memory.ask enabled=true map_summary=true max_usd=0.01", output)
+        self.assertIn("api research: memory.ask enabled=true map_summary=false max_usd=0.12", output)
         code, output = self.evaluate(lib, api, "--release", "r4")
         self.assertEqual(0, code, output)
         cases = {
@@ -409,9 +414,9 @@ class R2DeployCheckTest(unittest.TestCase):
                 {"HLM_RESEARCH_ENABLED": "false"},
                 "runs HLM_RESEARCH_ENABLED=false (r4 manifest: true, review 79 T5",
             ),
-            "map summary absent": (
-                {"HLM_MAP_SUMMARY_ENABLED": None},
-                "runs HLM_MAP_SUMMARY_ENABLED=- (r4 manifest: true",
+            "map summary on": (
+                {"HLM_MAP_SUMMARY_ENABLED": "true"},
+                "runs HLM_MAP_SUMMARY_ENABLED=true (r4 manifest: absent or false",
             ),
             "research fallback other": (
                 {"HLM_FALLBACK_PROFILE__RESEARCH": "openrouter-glm53-flash"},
@@ -422,9 +427,9 @@ class R2DeployCheckTest(unittest.TestCase):
                 "HLM_FALLBACK_PROFILE__MAP_SUMMARY=- (expected openrouter-glm53-flash)",
             ),
             "question cap raised": (
-                {"HLM_RESEARCH_MAX_USD": "0.5"},
-                "per-question limits violate the r4 manifest: HLM_RESEARCH_MAX_USD=0.5"
-                " (positive, at most 0.01)",
+                {"HLM_RESEARCH_MAX_USD": "0.13"},
+                "per-question limits violate the r4 manifest: HLM_RESEARCH_MAX_USD=0.13"
+                " (positive, at most 0.12)",
             ),
             "token cap missing": (
                 {"HLM_RESEARCH_MAX_TOKENS": None},
