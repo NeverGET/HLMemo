@@ -310,6 +310,11 @@ if args[0] == "show":
         sys.stdout.write(path.read_text())
     elif ":deploy/scripts/" in args[-1] and not args[-1].endswith("remote-deploy.sh"):
         sys.stdout.write((Path(os.environ["HLM_REMOTE_DIR"])/args[-1].split(":", 1)[1]).read_text())
+    elif args[-1].endswith(":deploy/llm.env.example"):
+        # R4 R-3: install_llm_env.sh --release-template REF (the workstation's checkout); the
+        # template of that release is RELEASE_TEMPLATE (unset: not a commit here)
+        if not os.environ.get("RELEASE_TEMPLATE"): sys.exit(128)
+        sys.stdout.write(Path(os.environ["RELEASE_TEMPLATE"]).read_text())
     else:
         print((Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
     sys.exit()

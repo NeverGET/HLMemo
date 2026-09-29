@@ -285,6 +285,104 @@ class ConvergenceTest(d108.D108RollbackTest):
         self.assertEqual(0, code, output)
         self.assertIn("RESULT librarian PASS llm.env=present release=r4", output)
 
+    # ------------------------------------------------------------------ R-3 env switches R3 <-> R4
+    def caps(self, root):
+        env = r4_fixtures.dotenv((root / "llm.env").read_text())
+        return tuple(env.get(f"HLM_LLM_BUDGET_{w}_USD") for w in ("HOUR", "DAY", "MONTH"))
+
+    def test_r4_env_switch_with_reset_then_behaviour_only_rollback_to_the_r3_template(self):
+        """R4 plan §4.3 and §6.2(a) (R-3), on a deployed host under the deploy lock:
+        1. the R3 template installed on the R4 code (--release-template <R3 ref>): caps 1/2/10;
+        2. the R4 switch WITH --reset-operator-values (the key file holds every key the R4 env
+           needs): the template's caps 3/8/60 replace R3's, the keys are the key file's, r4 PASS;
+        3. the behaviour-only rollback (--release-template <R3 ref>, a key file with ANOTHER
+           OpenRouter value): the R3 caps 1/2/10 explicitly (MONTH 60 would fail the R3 manifest), the
+           INSTALLED key kept, research off, evaluate --release r3 PASS, the env_switch journal empty.
+        """
+        root, env = self.r3_deployed()
+        template = root / "r3-template.env.example"
+        template.write_text(r4_fixtures.R3_TEMPLATE)
+        env = dict(env, RELEASE_TEMPLATE=str(template))
+        r3_ref = "805f4cd"
+        prod_key = "fake-or-" + "PR" * 16
+        # 1. an R3-installed env (the state the R4 switch starts from)
+        result, output = self.install(
+            root, env, "--release-template", r3_ref, keys={"OPENROUTER_API_KEY": prod_key}
+        )
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r3 manifest=r3", output)
+        self.assertEqual(("1", "2", "10"), self.caps(root))
+        # 2. the R4 switch: --reset-operator-values, every key in the key file
+        keys = {"OPENROUTER_API_KEY": prod_key, "GEMINI_API_KEY": GEMINI_KEY}
+        result, output = self.install(root, env, "--reset-operator-values", keys=keys)
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
+        disk = r4_fixtures.dotenv((root / "llm.env").read_text())
+        self.assertEqual(("3", "8", "60"), self.caps(root), "the template's caps replace R3's 1/2/10")
+        self.assertEqual((prod_key, GEMINI_KEY), (disk["OPENROUTER_API_KEY"], disk["GEMINI_API_KEY"]))
+        self.assertNotIn("env_switch", self.state(root))
+        # without the reset, the installed R3 caps would have won (the reason §4.3 uses it)
+        # 3. the behaviour-only rollback to the R3 template, R4 caps (MONTH 60) installed
+        other = "fake-or-" + "XX" * 16
+        result, output = self.install(
+            root, env, "--release-template", r3_ref, keys={"OPENROUTER_API_KEY": other}
+        )
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn(f"release=r3 (template {r3_ref}; its caps, the installed keys kept)", output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r3 manifest=r3", output)
+        self.assertIn("switch complete", output)
+        self.assertNotIn("env_switch", self.state(root))
+        disk_text = (root / "llm.env").read_text()
+        disk = r4_fixtures.dotenv(disk_text)
+        self.assertEqual(("1", "2", "10"), self.caps(root))
+        self.assertEqual("r3", disk["HLM_ENV_RELEASE"])
+        self.assertEqual(prod_key, disk["OPENROUTER_API_KEY"], "the installed key is kept")
+        self.assertIn("kept the operator's OPENROUTER_API_KEY", output)
+        self.assertNotIn("kept the operator's HLM_LLM_BUDGET", output)
+        self.assertFalse(
+            [k for k in disk if k.startswith(("HLM_RESEARCH_", "HLM_MAP_SUMMARY"))], "research off"
+        )
+        self.assertNotIn("GEMINI_API_KEY", disk, "the R3 template has no Gemini key")
+        self.assertEqual(disk_text, self.running_env(root, "api"))
+        self.assertEqual(disk_text, self.running_env(root, "librarian"))
+        for key in (prod_key, other, GEMINI_KEY):
+            self.assertNotIn(key, output)
+
+    def test_keep_mode_install_of_the_r4_template_keeps_the_installed_r3_caps(self):
+        """Why §4.3 needs --reset-operator-values: a plain (keep) R4 install over the R3 env keeps the
+        installed caps 1/2/10 (they satisfy the R4 manifest, so it passes, but the owner's 3/8/60 are
+        not installed)."""
+        root, env = self.r3_deployed()
+        template = root / "r3-template.env.example"
+        template.write_text(r4_fixtures.R3_TEMPLATE)
+        env = dict(env, RELEASE_TEMPLATE=str(template))
+        self.assertEqual(0, self.install(root, env, "--release-template", "805f4cd")[0].returncode)
+        result, output = self.install(root, env)
+        self.assertEqual(0, result.returncode, output)
+        self.assertEqual(("1", "2", "10"), self.caps(root))
+        self.assertIn("kept the operator's HLM_LLM_BUDGET_MONTH_USD", output)
+
+    def test_release_template_refusals_send_nothing(self):
+        """--release-template: an unknown ref or path, or a template whose caps violate its own
+        release's manifest, stops the install before anything is sent (no journal, no file)."""
+        root, env = self.r3_deployed()
+        before = (root / "llm.env").read_text()
+        result, output = self.install(root, env, "--release-template", "no-such-ref")
+        self.assertEqual(64, result.returncode, output)
+        self.assertIn("not a commit of this checkout", output)
+        bad = root / "r3-bad.env.example"
+        bad.write_text(
+            r4_fixtures.R3_TEMPLATE.replace("HLM_LLM_BUDGET_MONTH_USD=10", "HLM_LLM_BUDGET_MONTH_USD=60")
+        )
+        result, output = self.install(root, env, "--release-template", str(bad))
+        self.assertEqual(65, result.returncode, output)
+        self.assertIn(
+            "the template's spend guard violates the r3 manifest: HLM_LLM_BUDGET_MONTH_USD=60 (at most 10)",
+            output,
+        )
+        self.assertEqual(before, (root / "llm.env").read_text())
+        self.assertNotIn("env_switch", self.state(root))
+
     # ------------------------------------------------------------------ 4 rollback DB restore retry
     def test_killed_rollback_retry_reuses_the_first_safety_dump(self):
         root, env = self.r3_deployed()
