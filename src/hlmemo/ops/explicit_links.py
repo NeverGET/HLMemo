@@ -107,9 +107,15 @@ def _action(p: es.Proposal, docs: dict[int, es.Doc]) -> dict[str, Any]:
 
 
 async def _record(
-    conn: AsyncConnection, pid: int, request: dict[str, Any], records: list[dict[str, Any]]
+    conn: AsyncConnection,
+    pid: int,
+    request: dict[str, Any],
+    records: list[dict[str, Any]],
+    *,
+    client: str = CLIENT,
 ) -> tuple[int, Any]:
-    """ONE ``librarian`` system event holding ``records`` as ``resolved.mutations``, then applied."""
+    """ONE ``librarian`` system event holding ``records`` as ``resolved.mutations``, then applied.
+    ``client``: the operator pass that writes it (D-195/R4: ``hlm-backfill`` uses the same path)."""
     from hlmemo.librarian.actor import apply_mutations
     from hlmemo.librarian.events import insert_system_event, lock_event_refs
 
@@ -121,7 +127,7 @@ async def _record(
         kind="librarian",
         project_id=pid,
         device_id=OPERATOR_DEVICE_ID,
-        client=CLIENT,
+        client=client,
         request_id=uuid.uuid4(),
         request=request,
         resolved={"recorded_at": fmt_ts(at), "mutations": records},
@@ -179,7 +185,8 @@ async def apply(conn: AsyncConnection, slug: str, *, dry_run: bool = False) -> d
     return out
 
 
-async def explicit_links(conn: AsyncConnection, pid: int) -> list[dict[str, Any]]:
+async def explicit_links(conn: AsyncConnection, pid: int, *, by: str = es.BY) -> list[dict[str, Any]]:
+    """The live ``supersedes`` links of the project written by ``by`` (``props.by``)."""
     cur = await conn.execute(
         """
         SELECT link_id, src_logical_id, dst_logical_id, props FROM links
@@ -187,7 +194,7 @@ async def explicit_links(conn: AsyncConnection, pid: int) -> list[dict[str, Any]
            AND %s = ANY(project_ids)
          ORDER BY link_id
         """,
-        (es.BY, pid),
+        (by, pid),
     )
     return [
         {"link_id": int(i), "src_logical_id": int(s), "dst_logical_id": int(d), "props": props}
