@@ -119,6 +119,10 @@ async def ask(connect, world, deps, researcher, question: str, **args: Any) -> d
             await conn.rollback()
 
 
+def _chat_text(content: str) -> dict[str, Any]:
+    return {"content": content}
+
+
 def handle_re(vid: int) -> re.Pattern[str]:
     return re.compile(rf"\bv{vid}(\.\d+)?\b")
 
@@ -706,6 +710,137 @@ async def test_ask_prose_mode_slow_writer_times_out_and_the_task_writes(connect,
     # the spend guard is disabled in these settings, so no worst case is reserved and the cut attempt
     # costs 0 here (its worst-case charge with the guard on: test_d172_writer_past_its_timeout_...)
     assert out["meta"]["cost_usd"] == round(2 * (100 * 1.0 + 20 * 2.0) / 1_000_000, 6)
+
+
+async def test_ask_r4_writer_truncation_and_bad_output_fall_back_counted(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """R4 (R-9) through memory.ask: a writer answer cut at HLM_RESEARCH_PROSE_MAX_TOKENS (16000,
+    finish_reason length) is not retried and the task profile writes; a writer answering bad output
+    twice falls back too. meta.flags counts every fallback; the question never ends in schema_fail."""
+    fake = FakeResearcher(facts=["1.2 s"])
+    for writer_reply, reason, writer_attempts in (
+        (
+            lambda body: {**_chat_text("STATUS: answered\nANSWER:\nThe retrieval p95 targ"), "length": True},
+            "truncated",
+            1,
+        ),
+        (lambda body: {**_chat_text("no layout at all"), "length": False}, "schema_fail", 2),
+    ):
+
+        def model(body: dict[str, Any], reply=writer_reply) -> Any:  # noqa: ANN001
+            if body["model"] != "z-ai/glm-5":
+                return fake(body)
+            r = reply(body)
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": r["content"]},
+                        "finish_reason": "length" if r["length"] else "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+            }
+
+        llm = ScriptedLLM(default=model)
+        r = make_researcher(
+            db_dsn,
+            llm,
+            research_answer_mode="prose",
+            research_writer_profile="openrouter-glm5",
+            research_prose_max_tokens=16000,
+        )
+        try:
+            out = await ask(connect, world, deps, r, "What is the current retrieval p95 target?")
+        finally:
+            await r.aclose()
+        flags = out["meta"]["flags"]
+        assert out["abstained"] is False and "1.2 s" in out["answer"], reason
+        assert flags["writer_used"] == "stub-primary" and flags["writer_fallbacks"] == 1
+        assert flags["writer_fallback_reasons"] == [f"openrouter-glm5:{reason}"]
+        writer = [b for b in llm.requests if b["model"] == "z-ai/glm-5"]
+        assert len(writer) == writer_attempts and all(b["max_tokens"] == 16000 for b in writer)
+
+
+async def test_ask_r4_ops_status_shows_the_writer_fallback(
+    connect, world, deps, db_dsn, tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    """R4 (R-6): a (mocked) Gemini writer answers 5xx, the research primary writes: the answer's flags
+    AND ops status (from the ledger's research.prose rows) show the fallback, with a warning line; with
+    no writer profile the research primary is the configured writer (no fallback)."""
+    from hlmemo.ops import cli as ops_cli
+    from hlmemo.ops import service
+
+    (tmp_path / "w-gem.toml").write_text(
+        'HLM_LLM_BASE_URL = "http://w-gem.invalid/v1"\nHLM_LLM_MODEL = "stub/w-gem"\n'
+        'HLM_LLM_API_KEY = "test-key-not-secret"\nprice_in_per_m = 0.75\nprice_out_per_m = 3.75\n'
+        'usage_reasoning = "excluded"\nextra = { response_format = { type = "json_object" } }\n'
+    )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    async with await connect() as conn:
+        await conn.execute("DELETE FROM llm_calls")  # this test's rows only
+        await conn.commit()
+    fake = FakeResearcher(facts=["1.2 s"])
+    llm = ScriptedLLM(default=lambda body: 503 if body["model"] == "stub/w-gem" else fake(body))
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", research_writer_profile="w-gem")
+    try:
+        out = await ask(connect, world, deps, r, "What is the current retrieval p95 target?")
+    finally:
+        await r.aclose()
+    flags = out["meta"]["flags"]
+    assert out["abstained"] is False and flags["writer_used"] == "stub-primary"
+    assert flags["writer_fallbacks"] == 1 and flags["writer_fallback_reasons"] == ["w-gem:unavailable"]
+    settings = ask_settings(db_dsn, research_answer_mode="prose", research_writer_profile="w-gem")
+    async with await connect() as conn:
+        st = await service.research_status(conn, settings)
+        await conn.rollback()
+    assert st["writer_profile"] == "w-gem" and st["writer_configured"] == "w-gem"
+    assert st["writer_used_24h"] == {"stub-primary": 1} and st["writer_fallback_24h"] == 1
+    assert st["writer_outcomes_24h"] == {"http_error": 1, "ok": 1} and st["writer_fallback_share_24h"] == 1.0
+    lines = ops_cli.research_lines(st)
+    assert lines[0].startswith("research    enabled=True mode=prose writer=w-gem")
+    assert lines[1].startswith("WARNING     writer fallback 100%")
+    # the writer unset: the research primary is the configured writer (the luna-revert state)
+    unset = ask_settings(db_dsn, research_answer_mode="prose", profile="stub-primary")
+    async with await connect() as conn:
+        st2 = await service.research_status(conn, unset)
+        await conn.rollback()
+    assert st2["writer_profile"] == "stub-primary" and st2["writer_configured"] is None
+    assert st2["writer_fallback_24h"] == 0 and len(ops_cli.research_lines(st2)) == 1
+
+
+async def test_ask_r4_an_expired_writer_price_falls_back_counted(
+    connect, world, deps, db_dsn, tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    """R4 (R-5): a writer profile past its price_valid_until is never called: the research primary
+    writes, the answer counts the fallback (price_expired), ops status warns."""
+    from hlmemo.ops import cli as ops_cli
+    from hlmemo.ops import service
+
+    (tmp_path / "w-old.toml").write_text(
+        'HLM_LLM_BASE_URL = "http://w-old.invalid/v1"\nHLM_LLM_MODEL = "stub/w-old"\n'
+        'HLM_LLM_API_KEY = "test-key-not-secret"\nprice_in_per_m = 0.75\nprice_out_per_m = 3.75\n'
+        'price_valid_until = "2026-01-31"\n'
+    )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    fake = FakeResearcher(facts=["1.2 s"])
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", research_writer_profile="w-old")
+    try:
+        out = await ask(connect, world, deps, r, "What is the current retrieval p95 target?")
+    finally:
+        await r.aclose()
+    flags = out["meta"]["flags"]
+    assert out["abstained"] is False and flags["writer_used"] == "stub-primary"
+    assert flags["writer_fallback_reasons"] == ["w-old:price_expired"]
+    assert not any(b["model"] == "stub/w-old" for b in llm.requests)
+    assert r.provider.price_expired_skips == {"w-old": 1}
+    settings = ask_settings(db_dsn, research_answer_mode="prose", research_writer_profile="w-old")
+    async with await connect() as conn:
+        st = await service.research_status(conn, settings)
+        await conn.rollback()
+    assert st["writer_price_valid_until"] == "2026-01-31" and st["writer_price_expired"] is True
+    assert any("price_valid_until 2026-01-31 passed" in ln for ln in ops_cli.research_lines(st))
 
 
 async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
@@ -1761,12 +1896,10 @@ async def test_ask_over_mcp_outlives_the_request_db_deadline(world, db_dsn) -> N
 async def test_ask_without_the_hold_hits_the_request_deadline(world, db_dsn, monkeypatch) -> None:  # noqa: ANN001
     """Negative control of the test above: with the hold disabled, the same slow loop is cut by the
     request deadline (so the extension is what makes a long memory.ask possible)."""
-    from hlmemo.server import middleware
-
-    monkeypatch.setattr(middleware, "DETACHED_HOLD_MAX_S", 0.0)
     fake = FakeResearcher(facts=["1.2 s"])
     llm = ScriptedLLM(default=lambda body: ("stall", 0.8, fake(body)))
-    async with ask_app(db_dsn, llm, request_db_timeout_s=1.5) as client:
+    # R4 (B3): the hold cap is the setting HLM_DETACHED_HOLD_MAX_S (was a module constant)
+    async with ask_app(db_dsn, llm, request_db_timeout_s=1.5, detached_hold_max_s=0.0) as client:
         _did, token = await trusted_device(client, "ask-nohold", grants=[{"project": MAIN, "role": "read"}])
         r = await mcp_rpc(
             client, token, "tools/call", {"name": "memory.ask", "arguments": {"question": "p95 target?"}}

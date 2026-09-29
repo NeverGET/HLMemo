@@ -10,6 +10,7 @@ hlm close --notes ... [--decision ...] [--lesson "title::body"] [--card FILE]
 hlm claude|codex|agy [--task ...] [--ask] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]
 hlm bench [--profile|--model] [--suite v1|v2] [--runs N] [--max-usd X] [--compare A B] | rescore | leaderboard
 hlm links explicit --project P [--dry-run] [--revert] [--dsn DSN]   (operator, direct DB; D-184)
+hlm links backfill --project P --apply|--dry-run --proposals F | --revert [--dry-run]   (R4, LLM-free)
 """
 
 from __future__ import annotations

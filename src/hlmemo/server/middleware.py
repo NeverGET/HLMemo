@@ -74,7 +74,8 @@ NO_BEARER_OK = (HEALTH, READY)
 # W0a route filter (D-061): paths closed when admin_http=disabled, regardless of method.
 ADMIN_HTTP_PATHS = frozenset({"/devices/approve", "/devices/grant", "/devices/list"})
 NOT_FOUND = HlmError("E_NOT_FOUND", "not found")
-#: D-136: the longest a handler may extend its request after detaching (``detach(hold_s=...)``)
+#: D-136: the longest a handler may extend its request after detaching (``detach(hold_s=...)``);
+#: R4 (B3): the default of ``HLM_DETACHED_HOLD_MAX_S`` (``settings.detached_hold_max_s``)
 DETACHED_HOLD_MAX_S = 60.0
 
 
@@ -448,7 +449,7 @@ class AuthMiddleware:
 
             ``hold_s`` (D-136, memory.ask): once the connection is released, the request's deadline
             (``request_db_timeout_s``, which bounds DB work the request holds) is moved to ``hold_s``
-            from now, at most ``DETACHED_HOLD_MAX_S``: nothing is held any more, and the handler
+            from now, at most ``HLM_DETACHED_HOLD_MAX_S``: nothing is held any more, and the handler
             enforces its own absolute deadline. Without it the deadline is unchanged."""
             nonlocal detached
             if detached or conn is None or streaming or commit_error is not None:
@@ -464,7 +465,8 @@ class AuthMiddleware:
                     await _rollback_quietly(conn)
             await release()
             if hold_s is not None and deadline_cm is not None:
-                hold = min(max(float(hold_s), 0.0), DETACHED_HOLD_MAX_S)
+                cap = float(getattr(settings, "detached_hold_max_s", DETACHED_HOLD_MAX_S))
+                hold = min(max(float(hold_s), 0.0), cap)
                 now = asyncio.get_running_loop().time()
                 current = deadline_cm.when()
                 if current is not None and now + hold > current:

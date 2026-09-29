@@ -2878,15 +2878,15 @@ async def test_d178_text_writer_falls_back_to_the_json_job_and_retries_a_bad_lay
         await r2.aclose()
     assert res2.profile == "w-text" and res2.output["answer"] == "The target is 1.2 s."
     assert rows == [("w-text", "schema_fail"), ("w-text", "schema_retry_ok")]
-    # twice malformed: the call fails as a schema failure does today
-    from hlmemo.librarian.errors import SchemaFail
-
+    # twice malformed: R4 (R-9) the writer is given up and its fallback (the task profile) writes
     r3 = _writer_researcher(_protocol_handler([], lambda _job: "no layout at all"), writer="w-text")
     try:
-        with pytest.raises(SchemaFail):
-            await _complete(r3, "prose", user)
+        res3 = await _complete(r3, "prose", user)
+        rows3 = [(row.profile, row.outcome) for row in r3.provider.ledger.inner.rows]
     finally:
         await r3.aclose()
+    assert res3.profile == "t-task" and res3.fallbacks == [("w-text", "schema_fail")]
+    assert rows3 == [("w-text", "schema_fail"), ("w-text", "schema_fail"), ("t-task", "ok")]
 
 
 # --------------------------------------------------------------------------- D-184 temporal layer

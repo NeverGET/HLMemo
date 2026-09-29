@@ -90,7 +90,14 @@ from hlmemo.librarian.errors import AuthorityLost, LlmConfigError, PrivacyDenied
 from hlmemo.librarian.ledger import NETWORK_OUTCOMES, DbLedger, Ledger, LedgerRow
 from hlmemo.librarian.profiles import LlmProfile, for_task, named_profile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
-from hlmemo.librarian.provider import AttemptGuard, ChainBreakers, Clock, LlmResult, Provider
+from hlmemo.librarian.provider import (
+    AttemptAffordable,
+    AttemptGuard,
+    ChainBreakers,
+    Clock,
+    LlmResult,
+    Provider,
+)
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.risk_judge import ConnectFactory, direct_connector
 from hlmemo.librarian.tasks.synthesis import claims as literal_claims
@@ -120,6 +127,8 @@ WRITER_TIMEOUT_S = 12.0
 #: fallback, qualification), the candidates it sees, the characters of each one's text, the handles
 #: kept from its answer, and its default time (``HLM_RESEARCH_RERANK_TIMEOUT_S``)
 RERANK_TASK = "rerank"
+#: R4 (R-6): the ``llm_calls.task`` of the JOB prose's rows (the writer); ops status reads them
+WRITER_LEDGER_TASK = "research.prose"
 RERANK_CANDIDATES = 30
 RERANK_TEXT_CHARS = 300
 RERANK_KEEP = 8
@@ -3096,6 +3105,16 @@ def research_chain(settings: Any) -> list[LlmProfile]:
     return [p for p in chain if TASK not in p.disabled_tasks]
 
 
+def writer_name(settings: Any) -> str:
+    """R4 (R-6, R-14): the profile configured to write the prose answer: ``HLM_RESEARCH_WRITER_PROFILE``,
+    else the research primary (the profile that writes when no writer profile is set)."""
+    name = str(getattr(settings, "research_writer_profile", None) or "").strip()
+    if name:
+        return name
+    chain = research_chain(settings)
+    return chain[0].name if chain else str(getattr(settings, "profile", "") or "")
+
+
 def writer_chain(settings: Any, task_chain: list[LlmProfile]) -> list[LlmProfile]:
     """D-171: the chain of the jobs that write the prose answer (``WRITER_JOBS``): the named profile
     ``HLM_RESEARCH_WRITER_PROFILE`` (resolved like ``HLM_FALLBACK_PROFILE__<TASK>``: its own file,
@@ -3155,6 +3174,10 @@ class Researcher:
     ) -> None:
         self.settings = settings
         self.in_flight = 0
+        #: R4 (B2): the JOB prose's max_tokens (``HLM_RESEARCH_PROSE_MAX_TOKENS``)
+        self.prose_max_tokens: int = int(
+            getattr(settings, "research_prose_max_tokens", JOB_MAX_TOKENS["prose"])
+        )
         self.clock = clock or Clock()
         self.provider: Provider | None = None
         self.breaker = ChainBreakers(lambda: self.provider, task=TASK)
@@ -3245,7 +3268,10 @@ class Researcher:
             transport=transport,
             clock=self.clock,
             redactor=Redactor.from_settings(s),
-            timeout_s=min(float(s.llm_timeout_s), HTTP_TIMEOUT_S),
+            # R4 (B3): HLM_RESEARCH_HTTP_TIMEOUT_S (default HTTP_TIMEOUT_S), bounded by HLM_LLM_TIMEOUT_S
+            timeout_s=min(
+                float(s.llm_timeout_s), float(getattr(s, "research_http_timeout_s", HTTP_TIMEOUT_S))
+            ),
             breaker_threshold=BREAKER_THRESHOLD,
             breaker_open_s=BREAKER_OPEN_S,
             breaker_max_open_s=BREAKER_MAX_OPEN_S,
@@ -3289,6 +3315,9 @@ class Researcher:
         (prompt, max_tokens, per-task fallback and ledger rows ``rerank``)."""
         if job == RERANK_TASK and self.rerank_spec is not None:
             return self.rerank_spec
+        if job == "prose":  # R4 (B2): HLM_RESEARCH_PROSE_MAX_TOKENS (expand keeps its own, R-17)
+            # R4 (R-6): its ledger rows are research.prose (ops status counts the writer's calls)
+            return replace(self.spec, max_tokens=self.prose_max_tokens, ledger_task=WRITER_LEDGER_TASK)
         return replace(self.spec, max_tokens=JOB_MAX_TOKENS.get(job, self.spec.max_tokens))
 
     def chain_for_job(self, job: str) -> list[LlmProfile] | None:
@@ -3366,6 +3395,7 @@ class Researcher:
         carried_ids: list[int] | None = None,
         attempt_guard: AttemptGuard | None = None,
         observe: Callable[[dict[str, Any]], None] | None = None,
+        attempt_affordable: AttemptAffordable | None = None,
     ) -> LlmResult:
         """One logical call. Before EVERY attempt (retries and the fallback included), and before any
         byte is sent: the strict privacy gate over ``gate_ids`` (the text of this prompt) and the
@@ -3404,6 +3434,10 @@ class Researcher:
             lineage=lineage,
             attempt_policy="latency",
             attempt_guard=attempt_guard,
+            # R4 (R-9): a writer JOB with a writer profile falls back to the task profile on a schema
+            # failure or a truncation (not the other jobs, not without a writer profile)
+            schema_fallback=job in WRITER_JOBS and bool(self.writer_chain),
+            attempt_affordable=attempt_affordable,
         )
 
     @contextlib.contextmanager
@@ -3460,6 +3494,7 @@ __all__ = [
     "TASK",
     "TEXT_JOBS",
     "WRITER_JOBS",
+    "WRITER_LEDGER_TASK",
     "WRITER_TIMEOUT_S",
     "Claim",
     "Excerpt",
@@ -3530,5 +3565,6 @@ __all__ = [
     "validate_cited",
     "validate_prose",
     "writer_chain",
+    "writer_name",
     "write_user",
 ]

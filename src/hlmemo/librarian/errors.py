@@ -33,6 +33,11 @@ class ProviderUnavailable(LibrarianError):
         self.retry_after_s = retry_after_s
 
 
+class PriceExpired(ProviderUnavailable):
+    """R4 (R-5): every profile of the chain is past its ``price_valid_until``: unusable for live calls
+    (fail closed, never priced with stale prices)."""
+
+
 class BreakerOpen(ProviderUnavailable):
     pass
 
@@ -51,7 +56,12 @@ class DeadlineExceeded(LibrarianError):
 
 
 class SchemaFail(LibrarianError):
-    """The model answered twice with output that is not schema-valid JSON."""
+    """The model answered twice with output that is not schema-valid JSON. R4 (R-9): ``why`` says how
+    a profile was given up (``schema_fail``, ``truncated``, ``retry_unaffordable``)."""
+
+    def __init__(self, *args: object, why: str = "schema_fail") -> None:
+        super().__init__(*args)
+        self.why = why
 
 
 class AuthorityLost(LibrarianError):
