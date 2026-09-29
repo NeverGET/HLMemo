@@ -6,7 +6,8 @@ automatic proposer of wf-supersede-backfill is not ported).
   declaration, ...}`` with ``quote`` = the older span for a part-scope link (the read contract).
   Idempotent and replayable; ``--dry-run`` rolls back.
 * R-1: under the endpoint locks BOTH heads must be the proposal's versions AND belong to the
-  requested project; any stale or foreign pair rejects the WHOLE apply (zero events, zero links).
+  requested project, for EVERY record of the file (before the ``already_linked`` filter); any stale
+  or foreign record rejects the WHOLE apply (zero events, zero links).
 * ``revert`` needs ``--project`` and supersedes every live backfill link of the project in ONE
   event (project-wide); apply -> revert round-trips and replays deterministically.
 """
@@ -184,6 +185,54 @@ async def test_a_cross_project_proposal_rejects_the_whole_apply(connect, world: 
     assert details["foreign"][0]["src_vid"] == foreign["D-021"].version_id
     assert world.main_id not in details["foreign"][0]["src_projects"]
     assert await _counts(connect) == before  # zero events, zero links
+
+
+async def test_an_already_linked_foreign_pair_rejects_the_whole_apply(  # noqa: ANN001
+    db_dsn: str, connect, world: World, tmp_path: Path
+) -> None:
+    """Astra 90 R-1: the validation covers the WHOLE file BEFORE the ``already_linked`` filter. A
+    valid MAIN proposal plus a pair labelled MAIN whose heads live in OTHER and which a live link
+    already joins (so it would be skipped as ``already_linked``): exit 65, zero events, zero links."""
+    from hlmemo.cli.hlm import app
+
+    mine = await _seed(connect, world)
+    foreign = await _seed(connect, world, project=OTHER, suffix=" (other)")
+    theirs = _proposal(
+        foreign["D-021"], foreign["D-011"], "The restore drill runs yearly", "now runs monthly", project=OTHER
+    )
+    async with await connect() as conn:  # OTHER's own, legitimate link
+        assert (await bf.apply(conn, OTHER, [theirs]))["applied"] == 1
+        await conn.commit()
+    mixed = tmp_path / "mixed.jsonl"
+    mixed.write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in (_proposal(mine["D-020"], mine["D-010"], SPAN, QUOTE), {**theirs, "project": MAIN})
+        )
+        + "\n"
+    )
+    before = await _counts(connect)
+    res = await asyncio.to_thread(
+        CliRunner().invoke,
+        app,
+        [
+            "links",
+            "backfill",
+            "--project",
+            MAIN,
+            "--dsn",
+            db_dsn,
+            "--json",
+            "--apply",
+            "--proposals",
+            str(mixed),
+        ],
+    )
+    assert res.exit_code == 65, res.output
+    out = json.loads(res.stdout)
+    assert out["rejected"] is True and out["stale"] == [] and out["validated"] == 2
+    assert [f["src_vid"] for f in out["foreign"]] == [foreign["D-021"].version_id]
+    assert await _counts(connect) == before  # the valid MAIN pair was not written either
 
 
 async def test_a_stale_head_rejects_the_whole_apply(connect, world: World) -> None:  # noqa: ANN001

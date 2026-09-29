@@ -9,9 +9,12 @@ a pair proposed in both directions, or on a cycle with each other or with a live
 a pair a live link already joins, in either direction, is ``already_linked``) become ``supersedes``
 links through the SAME path ``hlm links explicit`` writes (``ops/explicit_links``): the project's
 advisory lock, the per-item locks, then UNDER THOSE LOCKS each endpoint's head is re-checked. R-1: the
-apply is ALL OR NOTHING. If any selected pair's head moved (``stale``: not the version the record
-names) or any endpoint does not belong to ``--project`` (``foreign``: the head's ``project_ids`` lack
-the project), the WHOLE apply is rejected (``BackfillRejected``): zero events, zero links. Otherwise
+apply is ALL OR NOTHING and validates the WHOLE FILE: EVERY ``proposed`` record labelled for
+``--project`` (whatever it later becomes: below ``min_confidence``, a duplicate, dropped, already
+linked or fresh; Astra 90 R-1) is checked under the locks. If any record's head moved (``stale``: not
+the version the record names) or any endpoint does not belong to ``--project`` (``foreign``: the
+head's ``project_ids`` lack the project), the WHOLE apply is rejected (``BackfillRejected``): zero
+events, zero links. Otherwise
 ``librarian.actor.materialize`` and ONE ``librarian`` system event (operator device 1, client
 ``hlm-backfill``, op ``supersede_backfill``) whose ``resolved.mutations`` are the records, then
 ``apply_mutations``. Replayable (``db/replay`` re-applies the recorded mutations); no version changes.
@@ -61,6 +64,12 @@ class BackfillRejected(Exception):
 def read_proposals(path: Path) -> list[dict[str, Any]]:
     with path.open(encoding="utf-8") as fh:
         return [json.loads(line) for line in fh if line.strip()]
+
+
+def candidates(records: list[dict[str, Any]], slug: str) -> list[dict[str, Any]]:
+    """R-1: every ``proposed`` record the file labels for ``slug`` (explicitly or by default): the
+    records the whole-file validation checks, before any drop or ``already_linked`` filtering."""
+    return [r for r in records if r.get("status") == "proposed" and r.get("project", slug) == slug]
 
 
 def select(
@@ -121,6 +130,47 @@ def _pair(r: dict[str, Any]) -> tuple[int, int]:
     return int(r["src_logical_id"]), int(r["dst_logical_id"])
 
 
+async def _validate(
+    conn: AsyncConnection, pid: int, slug: str, whole: list[dict[str, Any]], *, selected: int
+) -> None:
+    """R-1, UNDER the endpoint locks: every record's heads must be the versions it names and belong
+    to the project; any ``stale`` or ``foreign`` record raises ``BackfillRejected`` (all or nothing)."""
+    from hlmemo.librarian.actor import head_endpoint
+
+    stale: list[dict[str, Any]] = []
+    foreign: list[dict[str, Any]] = []
+    for r in whole:
+        src = await head_endpoint(conn, int(r["src_logical_id"]))
+        dst = await head_endpoint(conn, int(r["dst_logical_id"]))
+        where = {"src_vid": int(r["src_vid"]), "dst_vid": int(r["dst_vid"])}
+        if (
+            src is None
+            or dst is None
+            or (src.version_id, dst.version_id) != (where["src_vid"], where["dst_vid"])
+        ):
+            stale.append(
+                {
+                    **where,
+                    "src_head": src.version_id if src else None,
+                    "dst_head": dst.version_id if dst else None,
+                }
+            )
+        elif pid not in src.project_ids or pid not in dst.project_ids:
+            foreign.append(
+                {**where, "src_projects": list(src.project_ids), "dst_projects": list(dst.project_ids)}
+            )
+    if stale or foreign:
+        raise BackfillRejected(
+            {
+                "project": slug,
+                "validated": len(whole),
+                "selected": selected,
+                "stale": stale,
+                "foreign": foreign,
+            }
+        )
+
+
 async def apply(
     conn: AsyncConnection,
     slug: str,
@@ -152,35 +202,13 @@ async def apply(
         "event_id": None,
         "links": [],
     }
+    whole = candidates(records, slug)  # R-1: the WHOLE file, not only the fresh pairs
+    await q.lock_logical_ids(conn, sorted({lid for r in whole for lid in _pair(r)}))
+    await _validate(conn, pid, slug, whole, selected=len(kept))
     if not fresh:
         return out
-    from hlmemo.librarian.actor import head_endpoint, materialize
+    from hlmemo.librarian.actor import materialize
 
-    await q.lock_logical_ids(conn, sorted({lid for r in fresh for lid in _pair(r)}))
-    stale: list[dict[str, Any]] = []
-    foreign: list[dict[str, Any]] = []
-    for r in fresh:  # UNDER the locks: the heads must be the versions read, in the project
-        src = await head_endpoint(conn, int(r["src_logical_id"]))
-        dst = await head_endpoint(conn, int(r["dst_logical_id"]))
-        where = {"src_vid": int(r["src_vid"]), "dst_vid": int(r["dst_vid"])}
-        if (
-            src is None
-            or dst is None
-            or (src.version_id, dst.version_id) != (where["src_vid"], where["dst_vid"])
-        ):
-            stale.append(
-                {
-                    **where,
-                    "src_head": src.version_id if src else None,
-                    "dst_head": dst.version_id if dst else None,
-                }
-            )
-        elif pid not in src.project_ids or pid not in dst.project_ids:
-            foreign.append(
-                {**where, "src_projects": list(src.project_ids), "dst_projects": list(dst.project_ids)}
-            )
-    if stale or foreign:  # R-1: all or nothing
-        raise BackfillRejected({"project": slug, "selected": len(kept), "stale": stale, "foreign": foreign})
     out["links"] = [
         {
             "src_vid": r["src_vid"],
@@ -276,6 +304,7 @@ __all__ = [
     "OP_REVERT",
     "BackfillRejected",
     "apply",
+    "candidates",
     "link_props",
     "read_proposals",
     "revert",
