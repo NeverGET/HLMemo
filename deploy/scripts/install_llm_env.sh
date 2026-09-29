@@ -220,8 +220,9 @@ trap 'rm -rf -- "$reports"' EXIT
 bash deploy/scripts/stack.sh exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
   < deploy/scripts/check_librarian.py > "$reports/l.json" || true
 bash deploy/scripts/stack.sh exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$reports/a.json" || true
+# R4 R-14: --writer-probe api runs probe-writer in the api container (r4 mode with a writer only)
 python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file "$target" --release "$release" \
-  --librarian "$reports/l.json" --api "$reports/a.json" </dev/null
+  --writer-probe api --librarian "$reports/l.json" --api "$reports/a.json" </dev/null
 python3 deploy/scripts/release_state.py end-env-switch "$parent" </dev/null
 echo 'install_llm_env (remote): switch complete (both services run this llm.env, the check passed)'
 SH

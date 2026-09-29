@@ -184,6 +184,12 @@ class ConvergenceTest(d108.D108RollbackTest):
         self.assertNotIn("env_switch", self.state(root))
         self.assertNotIn(INSTALL_KEY, output)
         self.assertNotIn(GEMINI_KEY, output)
+        # R4 R-14: the writer probe ran once, in the API container, with the api's writer
+        self.assertIn(
+            "writer probe (api container): exit=0 ok=True profile=google-gemini38-flash-medium", output
+        )
+        self.assertEqual("google-gemini38-flash-medium\n", (root / "events.probe-writer").read_text())
+        self.assertIn("writer=google-gemini38-flash-medium", output)
         # the deploy lock is the SAME lock deploy/rollback take: held by another run, nothing changes
         with open(root / ".deploy.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -212,6 +218,72 @@ class ConvergenceTest(d108.D108RollbackTest):
         self.assertEqual(disk, self.running_env(root, "api"))
         self.assertEqual(disk, self.running_env(root, "librarian"))
         self.assertNotIn("env_switch", self.state(root))
+
+    def host_evaluate(self, root, env, release="r4"):
+        """The RUNBOOK's standalone re-check on the (harness) host: collect in both containers, then
+        evaluate --release rN --writer-probe api against the llm.env on disk."""
+        script = (
+            'cd "$HLM_REMOTE_DIR" && d=$(mktemp -d) && '
+            "bash deploy/scripts/stack.sh exec -T librarian python - collect --service librarian --probe"
+            ' --wait-heartbeat 45 < deploy/scripts/check_librarian.py > "$d/l.json" && '
+            "bash deploy/scripts/stack.sh exec -T api python - collect --service api"
+            ' < deploy/scripts/check_librarian.py > "$d/a.json" && '
+            'python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file "$LLM_ENV"'
+            f' --release {release} --writer-probe api --librarian "$d/l.json" --api "$d/a.json"'
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            env=dict(
+                env,
+                HLM_REMOTE_DIR=str(root / "app"),
+                HLM_ENV_FILE=str(root / "prod.env"),
+                LLM_ENV=str(root / "llm.env"),
+            ),
+            text=True,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
+        return result.returncode, result.stdout + result.stderr
+
+    def test_install_fails_when_the_writer_probe_fails_and_never_prints_the_key(self):
+        """R4 R-14: the env switch's check includes probe-writer in the api container; a refused
+        probe fails it (the journal stays, so deploy/rollback refuse until a passing re-run), and the
+        probe's stderr/extra fields (a leaky probe prints the key there) never reach the output."""
+        root, env = self.r3_deployed()
+        result, output = self.install(root, env, fail="probe-writer")
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("the writer probe FAILED in the api container (exit 3, HTTP 401)", output)
+        self.assertNotIn(GEMINI_KEY, output)
+        self.assertNotIn("HTTP 401 for key", output)
+        self.assertIn("env_switch", self.state(root))
+        result, output = self.install(root, env)
+        self.assertEqual(0, result.returncode, output)
+        self.assertNotIn("env_switch", self.state(root))
+
+    def test_wrong_writer_key_in_the_api_only_fails_the_probe(self):
+        """R4 R-14 (consult 89: the librarian-side probe could not see the api's credential): the
+        librarian runs the right Gemini key, the api a wrong but non-empty one. key_set passes for
+        both; the probe in the API container fails, and neither key is printed."""
+        root, env = self.r3_deployed()
+        result, output = self.install(root, env)
+        self.assertEqual(0, result.returncode, output)
+        wrong = "fake-gm-" + "W0" * 16
+        right_env = self.running_env(root, "api")
+        (root / "events.running-env.api").write_text(
+            right_env.replace(f"GEMINI_API_KEY={GEMINI_KEY}", f"GEMINI_API_KEY={wrong}")
+        )
+        env = dict(env, GOOD_GEMINI_KEY=GEMINI_KEY)
+        code, output = self.host_evaluate(root, env)
+        self.assertEqual(1, code, output)
+        self.assertIn("provider google-gemini38-flash-medium https://gemini.invalid/v1: key set", output)
+        self.assertIn("the writer probe FAILED in the api container (exit 3, HTTP 401)", output)
+        self.assertNotIn(wrong, output)
+        self.assertNotIn(GEMINI_KEY, output)
+        (root / "events.running-env.api").write_text(right_env)
+        code, output = self.host_evaluate(root, env)
+        self.assertEqual(0, code, output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4", output)
 
     # ------------------------------------------------------------------ 4 rollback DB restore retry
     def test_killed_rollback_retry_reuses_the_first_safety_dump(self):

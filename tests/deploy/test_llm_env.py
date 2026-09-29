@@ -111,10 +111,10 @@ class InstallLlmEnvTest(unittest.TestCase):
             "HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast",
             f"OPENROUTER_API_KEY={KEY_A}",
             "HLM_LLM_MODE=live",
-            # D-121: the owner's production target, <= $10/month
-            "HLM_LLM_BUDGET_HOUR_USD=1",
-            "HLM_LLM_BUDGET_DAY_USD=2",
-            "HLM_LLM_BUDGET_MONTH_USD=10",
+            # R4 (owner, D-198): the test month caps (the R4 manifest: _BUDGETS_R4)
+            "HLM_LLM_BUDGET_HOUR_USD=3",
+            "HLM_LLM_BUDGET_DAY_USD=8",
+            "HLM_LLM_BUDGET_MONTH_USD=60",
             "HLM_LLM_BUDGET_DISABLED=false",
             "HLM_LLM_JOB_CALL_CAP=20",
             # D-111/D-116: the release marker (the post-cutover check expects the R4 manifest)
@@ -263,9 +263,9 @@ class InstallLlmEnvTest(unittest.TestCase):
         edited = self.target.read_text()
         for old, new in (
             (f"OPENROUTER_API_KEY={KEY_A}", f"OPENROUTER_API_KEY={operator_key}"),
-            ("HLM_LLM_BUDGET_MONTH_USD=10", "HLM_LLM_BUDGET_MONTH_USD=7"),
-            ("HLM_LLM_BUDGET_DAY_USD=2", "HLM_LLM_BUDGET_DAY_USD=1"),
-            ("HLM_LLM_BUDGET_HOUR_USD=1", "HLM_LLM_BUDGET_HOUR_USD=0.5"),
+            ("HLM_LLM_BUDGET_MONTH_USD=60", "HLM_LLM_BUDGET_MONTH_USD=7"),
+            ("HLM_LLM_BUDGET_DAY_USD=8", "HLM_LLM_BUDGET_DAY_USD=1"),
+            ("HLM_LLM_BUDGET_HOUR_USD=3", "HLM_LLM_BUDGET_HOUR_USD=0.5"),
         ):
             self.assertIn(old + "\n", edited)
             edited = edited.replace(old + "\n", new + "\n")
@@ -300,8 +300,8 @@ class InstallLlmEnvTest(unittest.TestCase):
         content = self.target.read_text()
         for line in (
             f"OPENROUTER_API_KEY={KEY_B}",
-            "HLM_LLM_BUDGET_MONTH_USD=10",
-            "HLM_LLM_BUDGET_DAY_USD=2",
+            "HLM_LLM_BUDGET_MONTH_USD=60",
+            "HLM_LLM_BUDGET_DAY_USD=8",
         ):
             self.assertIn(line + "\n", content)
         self.assertNotIn(operator_key, content)

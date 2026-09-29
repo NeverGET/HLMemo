@@ -336,8 +336,9 @@ post_publish_checks() {
   dc exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
     < deploy/scripts/check_librarian.py > "$run_dir/librarian-report.json" || true
   dc exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$run_dir/api-report.json" || true
+  # R4 R-14: an api that runs an R4 env with a writer is also probed (probe-writer in the api container)
   if ! python3 deploy/scripts/check_librarian.py evaluate --llm-env "$llm_env_state" --llm-env-file "$llm_env_file" \
-    --librarian "$run_dir/librarian-report.json" --api "$run_dir/api-report.json" </dev/null; then
+    --writer-probe api --librarian "$run_dir/librarian-report.json" --api "$run_dir/api-report.json" </dev/null; then
     echo 'Librarian check failed (RESULT librarian above); new stack left running (no database rollback). Fix llm.env (deploy/scripts/install_llm_env.sh), then stack.sh up -d --no-deps librarian api.' >&2
     exit 1
   fi
