@@ -201,6 +201,10 @@ class Settings(BaseSettings):
     # do not (json_mode = false) gets a plain-text protocol where a task has one (research prose and
     # expand); default true.
     json_mode: bool = True
+    # B1/R-8: the endpoint's usage convention (librarian.profiles.LlmProfile.usage_reasoning):
+    # "included" (OpenAI/OpenRouter) or "excluded" (Google OpenAI-compatible: thinking not counted in
+    # completion_tokens). Set in the profile file.
+    usage_reasoning: Literal["included", "excluded"] = "included"
     # Model quirks live only here (D-017): {task: {"system_append": str}}.
     prompt_overrides: dict[str, Any] = Field(default_factory=dict)
 

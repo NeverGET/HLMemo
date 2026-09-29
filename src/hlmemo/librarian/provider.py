@@ -40,6 +40,16 @@ Attempt policies (``complete(attempt_policy=)``):
 
 Every attempt writes exactly one ``llm_calls`` row. ``HLM_LLM_MODE`` selects live / record /
 replay (strict cassettes) / off. The raw provider response is never stored anywhere.
+
+B1/R-8 cost and usage (``normalize_usage``): ``usage.cost``, when the endpoint reports it, is the USD
+authority. The billed OUTPUT tokens are normalized per profile convention (``usage_reasoning``):
+``included`` (OpenAI/OpenRouter) books ``completion_tokens``; ``excluded`` (Google's
+OpenAI-compatible API, whose ``completion_tokens`` leave thinking out) books ``completion_tokens`` +
+``completion_tokens_details.reasoning_tokens``, else ``total_tokens`` − ``prompt_tokens``, cross-checked
+against ``total_tokens`` when both are there. Usage that is missing, contradictory (e.g. zero
+reasoning with a total gap) or cannot show the thinking is UNRELIABLE: the attempt settles at its
+worst case and books ``max_tokens`` output tokens, never less. The ledger's ``output_tokens``, the
+USD settlement and a caller's per-question tally all use the same normalized number.
 """
 
 from __future__ import annotations
@@ -333,6 +343,53 @@ def parse_json_object(text: str | None) -> tuple[dict[str, Any] | None, str | No
     if not isinstance(obj, dict):
         return None, "top-level JSON is not an object"
     return obj, None
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedUsage:
+    """B1/R-8: one response's billed tokens. ``output_tokens`` counts every generated token (the
+    answer and the thinking); unreliable usage books the call's ``max_tokens`` (the worst case)."""
+
+    input_tokens: int | None
+    output_tokens: int | None
+    reliable: bool
+    basis: str  # completion_tokens | reasoning_tokens | total_tokens | missing | contradictory | no_thinking
+
+
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def normalize_usage(
+    usage: dict[str, Any] | None, *, reasoning: str = "included", max_tokens: int | None = None
+) -> NormalizedUsage:
+    """The billed input/output tokens of ``usage`` under the profile's convention (module doc)."""
+    usage = usage if isinstance(usage, dict) else {}
+    pt = _count(usage.get("prompt_tokens"))
+    ct = _count(usage.get("completion_tokens"))
+    total = _count(usage.get("total_tokens"))
+    details = usage.get("completion_tokens_details")
+    rt = _count(details.get("reasoning_tokens")) if isinstance(details, dict) else None
+
+    def unreliable(basis: str) -> NormalizedUsage:
+        return NormalizedUsage(pt, max_tokens if max_tokens is not None else ct, False, basis)
+
+    if pt is None or ct is None:
+        return unreliable("missing")
+    if reasoning == "excluded":  # Google OpenAI-compatible: completion_tokens leaves thinking out
+        if rt is not None:
+            if total is not None and pt + ct + rt != total:
+                return unreliable("contradictory")
+            return NormalizedUsage(pt, ct + rt, True, "reasoning_tokens")
+        if total is not None:
+            if total < pt + ct:
+                return unreliable("contradictory")
+            return NormalizedUsage(pt, total - pt, True, "total_tokens")
+        return unreliable("no_thinking")  # the thinking cannot be counted: never under-book
+    # included (OpenAI/OpenRouter): completion_tokens already counts every generated token
+    if (total is not None and total != pt + ct) or (rt is not None and rt > ct):
+        return unreliable("contradictory")
+    return NormalizedUsage(pt, ct, True, "completion_tokens")
 
 
 def _sha(data: str | bytes) -> str:
@@ -961,7 +1018,8 @@ class Provider:
                 response=self._redacted_response(data),
             )
         usage = data.get("usage") or {}
-        actual = self._actual_cost(profile, usage)
+        norm = normalize_usage(usage, reasoning=profile.usage_reasoning, max_tokens=task.max_tokens)
+        actual = self._actual_cost(profile, usage, norm)
         await _finalize(self.budget.settle(call_id, actual))
         att = self._response(
             profile, task, job_id, data, request_sha, worst, latency, replay=False, raw=raw_bytes
@@ -975,13 +1033,19 @@ class Provider:
         """Record mode: any content shape is normalized to text and redacted before persisting."""
         return sanitize_response(data, redact=self.redactor.text)
 
-    def _actual_cost(self, profile: LlmProfile, usage: dict[str, Any]) -> Decimal | None:
+    def _actual_cost(
+        self, profile: LlmProfile, usage: dict[str, Any], norm: NormalizedUsage | None = None
+    ) -> Decimal | None:
+        """The attempt's USD: ``usage.cost`` when reported (the authority), else the NORMALIZED tokens
+        priced by the profile; None (settle at the worst case) when the usage is unreliable."""
         cost = usage.get("cost")
-        if isinstance(cost, int | float) and not isinstance(cost, bool):
+        if isinstance(cost, int | float) and not isinstance(cost, bool) and cost >= 0:
             return Decimal(str(cost))
-        pt, ct = usage.get("prompt_tokens"), usage.get("completion_tokens")
-        if isinstance(pt, int) and isinstance(ct, int) and profile.priced:
-            return profile.cost_usd(pt, ct)
+        norm = norm or normalize_usage(usage, reasoning=profile.usage_reasoning)
+        if norm.reliable and profile.priced:  # reliable: both counts are known
+            return profile.cost_usd(int(norm.input_tokens or 0), int(norm.output_tokens or 0))
+        if not norm.reliable:
+            log.warning("profile %s: usage %s, settled at the worst case", profile.name, norm.basis)
         return None  # unknown: settle as worst case
 
     def _response(
@@ -1002,6 +1066,7 @@ class Provider:
         content = normalize_content(msg if isinstance(msg, dict) else {"content": msg})
         usage = data.get("usage") or {}
         details = usage.get("prompt_tokens_details") or {}
+        norm = normalize_usage(usage, reasoning=profile.usage_reasoning, max_tokens=task.max_tokens)
         row = self._row(
             profile,
             task,
@@ -1009,9 +1074,9 @@ class Provider:
             "ok",
             request_sha256=request_sha,
             response_sha256=_sha(raw if raw is not None else canonical(data)),
-            input_tokens=usage.get("prompt_tokens"),
+            input_tokens=norm.input_tokens,
             cached_input_tokens=details.get("cached_tokens"),
-            output_tokens=usage.get("completion_tokens"),
+            output_tokens=norm.output_tokens,  # B1: thinking included, the worst case when unreliable
             reserved_usd=worst,
             latency_ms=latency,
         )
@@ -1041,6 +1106,8 @@ __all__ = [
     "LATENCY_PRIMARY_SHARE",
     "MAX_TRANSIENT_ATTEMPTS",
     "Breaker",
+    "NormalizedUsage",
+    "normalize_usage",
     "Clock",
     "LlmResult",
     "AttemptGuard",

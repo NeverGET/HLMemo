@@ -56,6 +56,10 @@ class LlmProfile:
     #: D-178 capability: the endpoint honours JSON mode (``response_format``). False: a caller that
     #: has a plain-text protocol for a JOB uses it (research prose/expand, ``research.TEXT_JOBS``)
     json_mode: bool = True
+    #: B1/R-8 usage convention of the endpoint: ``included`` (OpenAI/OpenRouter: ``completion_tokens``
+    #: counts every generated token, thinking included) or ``excluded`` (Google's OpenAI-compatible
+    #: API: ``completion_tokens`` EXCLUDES thinking; ``provider.normalize_usage`` adds it back)
+    usage_reasoning: str = "included"
 
     @property
     def priced(self) -> bool:
@@ -133,7 +137,18 @@ def _build(name: str, raw: dict[str, Any], disabled: frozenset[str] = frozenset(
         prompt_overrides=dict(_json(raw.get("prompt_overrides")) or {}),
         disabled_tasks=disabled or _tasks(raw.get("disabled_tasks")),
         json_mode=_flag(raw.get("json_mode"), True),
+        usage_reasoning=_usage_reasoning(name, raw.get("usage_reasoning")),
     )
+
+
+USAGE_REASONING = ("included", "excluded")
+
+
+def _usage_reasoning(name: str, value: Any) -> str:
+    v = str(value or "included").strip().lower()
+    if v not in USAGE_REASONING:
+        raise LlmConfigError(f"profile {name!r}: usage_reasoning must be one of {USAGE_REASONING}, not {v!r}")
+    return v
 
 
 def primary_profile(settings: Settings) -> LlmProfile:
@@ -150,6 +165,7 @@ def primary_profile(settings: Settings) -> LlmProfile:
             "supports_json_schema": settings.supports_json_schema,
             "prompt_overrides": settings.prompt_overrides,
             "json_mode": settings.json_mode,
+            "usage_reasoning": settings.usage_reasoning,
         },
         profile_disabled_tasks(settings.profile),
     )
