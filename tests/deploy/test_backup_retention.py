@@ -1,6 +1,7 @@
 """Regression tests for independent pre-upgrade and calendar backup retention."""
 
 import importlib.util
+import json
 import os
 import tempfile
 import unittest
@@ -69,6 +70,56 @@ class RetentionTest(unittest.TestCase):
             self.assertEqual(3, retention.prune(root, 2))
             with self.assertRaises(ValueError):
                 retention.prune(root, 0)
+
+    def test_rotation_and_prune_never_delete_a_dump_the_release_state_references(self):
+        """R4 R-2 (review 77): an open rollback's safety dump journalled in daily/ (an older runner's
+        path), the rollback pair's pre-upgrade dump and a deploy attempt's dump survive rotation and
+        pruning; without the state (the old behaviour) the same rotation deletes the safety dump."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for tier in ("daily", "weekly", "pre-upgrade"):
+                (root / tier).mkdir()
+            safety = root / "daily/hlmemo-2026-09-22T090000Z-safety.dump"
+            safety.write_text("the current database, saved before the rollback replaced it")
+            upgrades = []
+            for index, name in enumerate("abcdefg"):
+                path = root / "pre-upgrade" / f"{name}.dump"
+                path.write_text(name)
+                os.utime(path, (index + 1, index + 1))
+                upgrades.append(path)
+            state = root / "release-state.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "rollback_in_progress": "a" * 40,
+                        "rollback_safety": str(safety),
+                        "rollback_destructive": True,
+                        "previous_dump": str(upgrades[0]),  # the oldest: prune would take it first
+                        "deploy_attempt": {"previous_dump": str(upgrades[1])},
+                    }
+                )
+            )
+            protected = retention.protected_dumps(state)
+            later = root / "daily/hlmemo-2026-09-22T100000Z-later.dump"  # the same day's timer backup
+            later.write_text("later")
+            retention.rotate(later, root, protected)
+            self.assertTrue(safety.exists(), "the open rollback's safety dump is kept")
+            self.assertTrue(later.exists())
+            self.assertEqual(3, retention.prune(root, 2, protected))
+            self.assertEqual(
+                {"a.dump", "b.dump", "f.dump", "g.dump"},
+                {p.name for p in (root / "pre-upgrade").glob("*.dump")},
+            )
+            # without the release state: the same-day rotation deletes it (review 77's trigger)
+            newest = root / "daily/hlmemo-2026-09-22T110000Z-newest.dump"
+            newest.write_text("newest")
+            retention.rotate(newest, root)
+            self.assertFalse(safety.exists())
+            # no state file: nothing protected; an unreadable one stops (nothing is guessed away)
+            self.assertEqual(frozenset(), retention.protected_dumps(root / "missing.json"))
+            state.write_text("{not json")
+            with self.assertRaises(SystemExit):
+                retention.protected_dumps(state)
 
     def test_rotation_rejects_pre_upgrade_input(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -54,15 +54,31 @@ R3_MANIFEST_ENV = {
     "HLM_LLM_BUDGET_MONTH_USD": "10",
     "HLM_LLM_BUDGET_DISABLED": "false",
 }
-#: D-136 / review 79 T5: what the R4 template adds (install_llm_env.sh)
+#: R4 plan §1.3 (D-198): the prod writer
+WRITER = "google-gemini38-flash-medium"
+#: D-136 / review 79 T5 / R4 plan §1.5: what the R4 template adds (install_llm_env.sh)
 R4_MANIFEST_ENV = {
     **R3_MANIFEST_ENV,
     "HLM_RESEARCH_ENABLED": "true",
-    "HLM_MAP_SUMMARY_ENABLED": "true",
+    "HLM_MAP_SUMMARY_ENABLED": "false",
     "HLM_FALLBACK_PROFILE__RESEARCH": "openrouter",
     "HLM_FALLBACK_PROFILE__MAP_SUMMARY": "openrouter-glm53-flash",
-    "HLM_RESEARCH_MAX_USD": "0.01",
+    "HLM_RESEARCH_MAX_USD": "0.12",
     "HLM_RESEARCH_MAX_TOKENS": "100000",
+    "HLM_RESEARCH_ANSWER_MODE": "prose",
+    "HLM_RESEARCH_ATTRIBUTION": "llm",
+    "HLM_RESEARCH_RERANK": "llm",
+    "HLM_RESEARCH_WRITER_PROFILE": WRITER,
+    "HLM_RESEARCH_WRITER_TIMEOUT_S": "120",
+    "HLM_RESEARCH_HTTP_TIMEOUT_S": "150",
+    "HLM_DETACHED_HOLD_MAX_S": "180",
+    "HLM_RESEARCH_TIMEOUT_S": "170",
+    "HLM_RESEARCH_PROSE_MAX_TOKENS": "16000",
+    "HLM_LLM_TIMEOUT_S": "180",
+    # R4 plan §1.5 / D-198: the owner's caps for the test month (_BUDGETS_R4)
+    "HLM_LLM_BUDGET_HOUR_USD": "3",
+    "HLM_LLM_BUDGET_DAY_USD": "8",
+    "HLM_LLM_BUDGET_MONTH_USD": "60",
 }
 #: ... and an R2 llm.env (no marker, no per-task fallbacks)
 R2_MANIFEST_ENV = {
@@ -78,7 +94,30 @@ def _manifest_env(label):
     return R3_MANIFEST_ENV if label else R2_MANIFEST_ENV
 
 
+#: the research primary (HLM_PROFILE: the head of the research chain)
+PRIMARY = "openrouter-gpt6-luna"
+
+
+def r4_research(writer=WRITER, *, key=True, until="2099-12-31", trace=False, primary_until=None, **extra):
+    """R4 collect's effective research state: the writer profile and the research primary as the
+    container loads them (key SET or not, price_valid_until; luna's profile carries none) and
+    whether the research tracer is on."""
+    return {
+        "enabled": True,
+        "map_summary": False,
+        "max_usd": 0.12,
+        "max_tokens": 100000,
+        "answer_mode": "prose",
+        "writer": None if writer is None else {"profile": writer, "key_set": key, "price_valid_until": until},
+        "primary": {"profile": PRIMARY, "key_set": True, "price_valid_until": primary_until},
+        "primary_research_disabled": False,
+        "trace_dir_set": trace,
+        **extra,
+    }
+
+
 def report(service, *, enabled=True, role="observer", mode="live", hb_enabled=True, hb_role="observer", **kw):
+    manifest_env = {**_manifest_env(kw.get("env_release", "r3")), **kw.get("manifest", {})}
     out = {
         "service": service,
         "enabled": enabled,
@@ -89,8 +128,15 @@ def report(service, *, enabled=True, role="observer", mode="live", hb_enabled=Tr
         "profiles": profiles(kw.get("reachable", True), kw.get("key", True)),
         "env_release": kw.get("env_release", "r3"),  # D-111: the llm.env marker the container runs
         # D-116: the manifest keys the container runs with (R2 env when it carries no marker)
-        "manifest_env": {**_manifest_env(kw.get("env_release", "r3")), **kw.get("manifest", {})},
+        "manifest_env": manifest_env,
     }
+    writer = manifest_env.get("HLM_RESEARCH_WRITER_PROFILE")
+    if kw.get("env_release") == "r4" and "research" not in kw:  # R4 collect: the research state
+        kw["research"] = r4_research(writer, key=kw.get("writer_key", True))
+    if writer:  # R4 B5: the writer is a profile of the chain (key_set covers its key)
+        out["profiles"].append(
+            {"name": writer, "base_url": "https://gemini.invalid/v1", "key_set": kw.get("writer_key", True)}
+        )
     if "research" in kw:  # review 79 T5: the effective research state (collect)
         out["research"] = kw["research"]
     if service == "librarian":
@@ -115,6 +161,12 @@ def report(service, *, enabled=True, role="observer", mode="live", hb_enabled=Tr
             out.pop("risk_judge")
             out["risk_judge_error"] = kw["risk_judge_error"]
     return json.dumps(out)
+
+
+#: the spend caps (hour, day, month)
+CAP_KEYS = ("HLM_LLM_BUDGET_HOUR_USD", "HLM_LLM_BUDGET_DAY_USD", "HLM_LLM_BUDGET_MONTH_USD")
+#: R4 R-14: a captured probe-writer result (evaluate --writer-probe FILE): exit status + stdout
+PROBE_OK = {"exit": 0, "stdout": json.dumps({"ok": True, "profile": WRITER, "status": 200, "latency_ms": 41})}
 
 
 def env_for(report_json):
@@ -362,8 +414,8 @@ class R2DeployCheckTest(unittest.TestCase):
 
     def test_the_template_satisfies_the_current_release_manifest(self):
         """deploy/llm.env.example (what install_llm_env.sh writes) carries the marker (R4), the D-094
-        keys, no query rewrite / per-source cap switched on, and (review 79 T5) memory.ask and the
-        map summaries switched ON with their pinned fallbacks and bounded per-question limits."""
+        keys, no query rewrite / per-source cap switched on, and (review 79 T5, R4 plan §1.5)
+        memory.ask ON, the map summaries OFF, the pinned fallbacks and bounded per-question limits."""
         spec = importlib.util.spec_from_file_location("check_librarian", CHECK)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -377,31 +429,50 @@ class R2DeployCheckTest(unittest.TestCase):
         self.assertEqual(mod.CODE_RELEASE, env.get(mod.ENV_RELEASE_KEY))
         for key, value in manifest["exact"].items():
             self.assertEqual(value, env.get(key), key)
-        self.assertEqual([], mod._budget_problems(env, manifest["budgets"]))  # D-121
+        self.assertEqual([], mod._budget_problems(env, manifest["budgets"]))  # D-121 / D-198
         self.assertEqual(
-            ("1", "2", "10"), tuple(env[k] for k in manifest["budgets"]["keys"]), "the owner's caps"
+            ("3", "8", "60"), tuple(env[k] for k in manifest["budgets"]["keys"]), "the owner's R4 caps"
         )
+        self.assertIs(mod._BUDGETS_R4, manifest["budgets"])
+        # R-3: R3's budgets are untouched (month <= 10): the R4 caps would fail an R3 env
+        self.assertIs(mod._BUDGETS, mod.RELEASE_MANIFESTS["r3"]["budgets"])
+        self.assertEqual(10.0, mod._BUDGETS["month_max_usd"])
+        self.assertNotIn("max_usd", mod._BUDGETS)
+        self.assertTrue(mod._budget_problems(env, mod._BUDGETS))
+        # the writer is one the manifest accepts, the tracked limits are set, the tracer is absent
+        for key, allowed in manifest["one_of"].items():
+            self.assertIn(env.get(key) or None, allowed, key)
+        self.assertEqual("google-gemini38-flash-medium", env["HLM_RESEARCH_WRITER_PROFILE"])
+        for key in manifest["tracked"]:
+            self.assertTrue(env.get(key), key)
+        self.assertNotIn(mod.TRACE_KEY, env)
+        self.assertEqual("", env["GEMINI_API_KEY"], "the key's line, empty in the template")
         for key in manifest["off"]:
             self.assertIn(env.get(key, "false").lower(), ("", "0", "false", "no", "off"), key)
-        self.assertEqual(("HLM_RESEARCH_ENABLED", "HLM_MAP_SUMMARY_ENABLED"), tuple(manifest["on"]))
+        self.assertEqual(("HLM_RESEARCH_ENABLED",), tuple(manifest["on"]))
+        self.assertIn("HLM_MAP_SUMMARY_ENABLED", manifest["off"])
+        self.assertEqual("false", env.get("HLM_MAP_SUMMARY_ENABLED"))
         for key in manifest["on"]:
             self.assertEqual("true", env.get(key), key)
         self.assertEqual([], mod._limit_problems(env, manifest["limits"]))
+        self.assertEqual("0.12", env["HLM_RESEARCH_MAX_USD"])
         # the R3 manifest keeps memory.ask and the summaries OFF (an R3 env on this image)
         self.assertTrue(set(manifest["on"]) <= set(mod.RELEASE_MANIFESTS["r3"]["off"]))
+        self.assertIn("HLM_MAP_SUMMARY_ENABLED", mod.RELEASE_MANIFESTS["r3"]["off"])
 
     def test_r4_manifest_pins_research_map_summary_and_their_fallbacks(self):
-        """Review 79 T5: an R4 env is checked against the R4 manifest: the research switches ON, the
-        research and map-summary fallbacks exact, the per-question limits present and bounded; an R3
-        env with memory.ask switched on fails the R3 manifest; the effective state is reported."""
-        research = {"enabled": True, "map_summary": True, "max_usd": 0.01, "max_tokens": 100000}
+        """Review 79 T5 / R4 plan §1.5: an R4 env is checked against the R4 manifest: memory.ask ON,
+        the summaries OFF, the research and map-summary fallbacks exact, the per-question limits
+        present and bounded; an R3 env with memory.ask switched on fails the R3 manifest; the
+        effective state is reported."""
+        research = r4_research()
         lib = report("librarian", env_release="r4", research=research)
         api = report("api", env_release="r4", research=research)
         code, output = self.evaluate(lib, api)
         self.assertEqual(0, code, output)
         self.assertIn("llm.env manifest: env_release=r4 (code r4, check mode r4)", output)
         self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
-        self.assertIn("api research: memory.ask enabled=true map_summary=true max_usd=0.01", output)
+        self.assertIn("api research: memory.ask enabled=true map_summary=false max_usd=0.12", output)
         code, output = self.evaluate(lib, api, "--release", "r4")
         self.assertEqual(0, code, output)
         cases = {
@@ -409,9 +480,9 @@ class R2DeployCheckTest(unittest.TestCase):
                 {"HLM_RESEARCH_ENABLED": "false"},
                 "runs HLM_RESEARCH_ENABLED=false (r4 manifest: true, review 79 T5",
             ),
-            "map summary absent": (
-                {"HLM_MAP_SUMMARY_ENABLED": None},
-                "runs HLM_MAP_SUMMARY_ENABLED=- (r4 manifest: true",
+            "map summary on": (
+                {"HLM_MAP_SUMMARY_ENABLED": "true"},
+                "runs HLM_MAP_SUMMARY_ENABLED=true (r4 manifest: absent or false",
             ),
             "research fallback other": (
                 {"HLM_FALLBACK_PROFILE__RESEARCH": "openrouter-glm53-flash"},
@@ -422,9 +493,9 @@ class R2DeployCheckTest(unittest.TestCase):
                 "HLM_FALLBACK_PROFILE__MAP_SUMMARY=- (expected openrouter-glm53-flash)",
             ),
             "question cap raised": (
-                {"HLM_RESEARCH_MAX_USD": "0.5"},
-                "per-question limits violate the r4 manifest: HLM_RESEARCH_MAX_USD=0.5"
-                " (positive, at most 0.01)",
+                {"HLM_RESEARCH_MAX_USD": "0.13"},
+                "per-question limits violate the r4 manifest: HLM_RESEARCH_MAX_USD=0.13"
+                " (positive, at most 0.12)",
             ),
             "token cap missing": (
                 {"HLM_RESEARCH_MAX_TOKENS": None},
@@ -462,6 +533,330 @@ class R2DeployCheckTest(unittest.TestCase):
             " (api=false, librarian=yes)",
             output,
         )
+
+    def r4(self, *, probe=PROBE_OK, extra=(), api_kw=None, lib_kw=None, **kw):
+        """evaluate an R4 env (both services run it; ``kw`` applies to both, ``api_kw``/``lib_kw``
+        to one) in release mode r4."""
+        lib = report("librarian", env_release="r4", **{**kw, **(lib_kw or {})})
+        api = report("api", env_release="r4", **{**kw, **(api_kw or {})})
+        return self.evaluate(lib, api, "--release", "r4", *extra, probe=probe)
+
+    def test_r4_manifest_pins_the_answer_contract_and_accepts_the_two_gemini_writers(self):
+        """R4 plan §1.5 (B6): prose / attribution llm / rerank llm are pinned (the code defaults are
+        claims / sources / off); the writer is unset or one of the two Gemini profiles; the tracked
+        limits must match across api and librarian."""
+        code, output = self.r4()
+        self.assertEqual(0, code, output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
+        self.assertIn("writer=google-gemini38-flash-medium", output)
+        self.assertIn("answer_mode=prose", output)
+        high = "google-gemini38-flash-high"
+        probe_high = {
+            "exit": 0,
+            "stdout": json.dumps({"ok": True, "profile": high, "status": 200, "latency_ms": 9}),
+        }
+        code, output = self.r4(manifest={"HLM_RESEARCH_WRITER_PROFILE": high}, probe=probe_high)
+        self.assertEqual(0, code, output)
+        cases = {
+            "claims": (
+                {"HLM_RESEARCH_ANSWER_MODE": "claims"},
+                "HLM_RESEARCH_ANSWER_MODE=claims (expected prose)",
+            ),
+            "attribution default": (
+                {"HLM_RESEARCH_ATTRIBUTION": None},
+                "HLM_RESEARCH_ATTRIBUTION=- (expected llm)",
+            ),
+            "rerank off": ({"HLM_RESEARCH_RERANK": "off"}, "HLM_RESEARCH_RERANK=off (expected llm)"),
+            "another writer": (
+                {"HLM_RESEARCH_WRITER_PROFILE": "openrouter-glm5"},
+                "runs HLM_RESEARCH_WRITER_PROFILE=openrouter-glm5 (r4 manifest: one of unset,"
+                " google-gemini38-flash-medium, google-gemini38-flash-high)",
+            ),
+        }
+        for name, (manifest, message) in cases.items():
+            with self.subTest(name):
+                code, output = self.r4(manifest=manifest)
+                self.assertEqual(1, code, output)
+                self.assertIn(message, output)
+        code, output = self.r4(api_kw={"manifest": {"HLM_RESEARCH_HTTP_TIMEOUT_S": "20"}})
+        self.assertEqual(1, code, output)
+        self.assertIn(
+            "api and librarian run different llm.env values for HLM_RESEARCH_HTTP_TIMEOUT_S"
+            " (api=20, librarian=150)",
+            output,
+        )
+
+    def test_r4_accepts_an_unset_writer_without_a_gemini_key(self):
+        """R4 plan §6.2(b) (the REVERT option "R4 env with the luna writer"): an UNSET writer passes
+        the r4 manifest; no Gemini profile is in the chain, so key_set needs no GEMINI_API_KEY. The
+        research PRIMARY (HLM_PROFILE) writes, so probe-writer is still REQUIRED and must report
+        that profile (the decided contract); the price date applies only when its profile carries
+        one (luna's does not: skipped, even long after the Gemini date)."""
+        unset = {"HLM_RESEARCH_WRITER_PROFILE": None}
+        primary_ok = {"exit": 0, "stdout": json.dumps({"ok": True, "profile": PRIMARY, "status": 200})}
+        for extra in ((), ("--today", "2031-01-01")):
+            with self.subTest(extra=extra):
+                code, output = self.r4(
+                    manifest=unset, research=r4_research(None), probe=primary_ok, extra=extra
+                )
+                self.assertEqual(0, code, output)
+                self.assertIn(f"writer: unset (the research primary {PRIMARY} writes; HLM_PROFILE)", output)
+                self.assertIn(f"writer: {PRIMARY} key=set price_valid_until=-", output)
+                self.assertIn(f"writer probe (api container): exit=0 ok=True profile={PRIMARY}", output)
+                self.assertIn(f"writer=unset(research primary {PRIMARY})", output)
+                self.assertNotIn("gemini", output.lower())
+        cases = {
+            "no probe": (None, "the writer probe did not run (evaluate --writer-probe api; R-14)"),
+            "probe reports the gemini writer": (
+                PROBE_OK,
+                f"the writer probe used profile {WRITER}, the api runs {PRIMARY} (R-14)",
+            ),
+            "probe refused": (
+                {"exit": 1, "stdout": json.dumps({"ok": False, "profile": PRIMARY, "status": 401})},
+                "the writer probe FAILED in the api container (exit 1, status 401)",
+            ),
+        }
+        for name, (probe, message) in cases.items():
+            with self.subTest(name):
+                code, output = self.r4(manifest=unset, research=r4_research(None), probe=probe)
+                self.assertEqual(1, code, output)
+                self.assertIn(message, output)
+        # a primary whose profile DOES carry price_valid_until is checked like a writer's
+        for until, expected, message in (
+            ("2026-09-28", 1, f"writer profile {PRIMARY}: price_valid_until 2026-09-28 has passed"),
+            ("2026-10-05", 0, f"WARNING writer profile {PRIMARY}: price_valid_until 2026-10-05 is within 14"),
+        ):
+            with self.subTest(primary_until=until):
+                code, output = self.r4(
+                    manifest=unset,
+                    research=r4_research(None, primary_until=until),
+                    probe=primary_ok,
+                    extra=("--today", "2026-09-29"),
+                )
+                self.assertEqual(expected, code, output)
+                self.assertIn(message, output)
+        # the api report must name the primary it loaded (a stale/other primary fails)
+        research = r4_research(None)
+        research["primary"]["profile"] = "openrouter"
+        code, output = self.r4(manifest=unset, research=research, probe=primary_ok)
+        self.assertEqual(1, code, output)
+        self.assertIn(f"the api's writer profile does not load as HLM_PROFILE={PRIMARY} says", output)
+
+    def test_r4_unset_writer_probes_the_research_chain_head(self):
+        """The probe's rule with the writer unset (r4-code): HLM_PROFILE, unless its profile file lists
+        research in disabled_tasks; then HLM_FALLBACK_PROFILE__RESEARCH, else HLM_FALLBACK_PROFILE.
+        evaluate expects exactly that profile from the probe (and from collect's report)."""
+        unset = {"HLM_RESEARCH_WRITER_PROFILE": None}
+
+        def research_for(head, disabled):
+            research = r4_research(None)
+            research["primary"]["profile"] = head
+            research["primary_research_disabled"] = disabled
+            return research
+
+        def probe(profile):
+            return {"exit": 0, "stdout": json.dumps({"ok": True, "profile": profile, "status": 200})}
+
+        # the primary disables research: the research fallback (openrouter) heads the chain
+        code, output = self.r4(
+            manifest=unset, research=research_for("openrouter", True), probe=probe("openrouter")
+        )
+        self.assertEqual(0, code, output)
+        self.assertIn(
+            "writer: unset (the research primary openrouter writes; HLM_FALLBACK_PROFILE__RESEARCH)", output
+        )
+        code, output = self.r4(
+            manifest=unset, research=research_for("openrouter", True), probe=probe(PRIMARY)
+        )
+        self.assertEqual(1, code, output)
+        self.assertIn(f"the writer probe used profile {PRIMARY}, the api runs openrouter (R-14)", output)
+        # ... without a research fallback, the default fallback (the r4 manifest pins the research
+        # fallback, so this env fails that pin; the head rule itself is what is checked here)
+        no_task_fallback = {**unset, "HLM_FALLBACK_PROFILE__RESEARCH": None}
+        code, output = self.r4(
+            manifest=no_task_fallback,
+            research=research_for("openrouter-glm53-flash", True),
+            probe=probe("openrouter-glm53-flash"),
+        )
+        self.assertIn("(the research primary openrouter-glm53-flash writes; HLM_FALLBACK_PROFILE)", output)
+        self.assertIn("HLM_FALLBACK_PROFILE__RESEARCH=- (expected openrouter)", output)
+        self.assertNotIn("R-14", output, "the probe matched the head")
+        # the primary may run research: HLM_PROFILE, and a report that names another head fails
+        code, output = self.r4(
+            manifest=unset, research=research_for("openrouter", False), probe=probe(PRIMARY)
+        )
+        self.assertEqual(1, code, output)
+        self.assertIn(f"the api's writer profile does not load as HLM_PROFILE={PRIMARY} says", output)
+        # a report that cannot say whether the primary runs research fails closed
+        research = r4_research(None)
+        del research["primary_research_disabled"]
+        code, output = self.r4(manifest=unset, research=research, probe=probe(PRIMARY))
+        self.assertEqual(1, code, output)
+        self.assertIn("the research chain's head is unknown (R-14)", output)
+
+    def test_r4_probe_status_token_price_expired_is_shown(self):
+        """r4-code: probe-writer prints ONE JSON line and exits 1 on failure; its status may be a
+        token (price_expired: the profile's price date passed, no call made). evaluate shows it."""
+        expired = {"ok": False, "profile": WRITER, "status": "price_expired", "latency_ms": 0}
+        code, output = self.r4(probe={"exit": 1, "stdout": json.dumps(expired)})
+        self.assertEqual(1, code, output)
+        self.assertIn("the writer probe FAILED in the api container (exit 1, status price_expired)", output)
+        odd = {**expired, "status": "Price Expired; key=abc"}
+        code, output = self.r4(probe={"exit": 1, "stdout": json.dumps(odd)})
+        self.assertEqual(1, code, output)
+        self.assertIn("(exit 1, status -)", output)
+        self.assertNotIn("key=abc", output)
+
+    def test_r4_missing_writer_key_fails(self):
+        """R4 B5: key_set covers the writer's key: a writer without GEMINI_API_KEY in the api (or the
+        librarian) fails the check."""
+        code, output = self.r4(api_kw={"writer_key": False})
+        self.assertEqual(1, code, output)
+        self.assertIn(
+            "api: provider key missing for google-gemini38-flash-medium (install_llm_env.sh)", output
+        )
+        self.assertIn("writer: google-gemini38-flash-medium key=MISSING", output)
+
+    def test_r4_budgets_are_the_owners_and_r3_budgets_are_unchanged(self):
+        """R4 §1.5 / D-198 (R-3): _BUDGETS_R4 = HOUR 3 / DAY 8 / MONTH 60, each an upper bound; lower
+        caps pass; R3's _BUDGETS (month <= 10) is separate, so an R3 env with MONTH 60 still fails."""
+        for caps in (("3", "8", "60"), ("1", "2", "10"), ("0.5", "8", "8")):
+            with self.subTest(caps=caps):
+                manifest = dict(zip(CAP_KEYS, caps, strict=True))
+                code, output = self.r4(manifest=manifest)
+                self.assertEqual(0, code, output)
+        cases = {
+            "hour": (("4", "8", "60"), "HLM_LLM_BUDGET_HOUR_USD=4 (at most 3)"),
+            "day": (("3", "9", "60"), "HLM_LLM_BUDGET_DAY_USD=9 (at most 8)"),
+            "month": (("3", "8", "61"), "HLM_LLM_BUDGET_MONTH_USD=61 (at most 60)"),
+            "guard off": (None, "HLM_LLM_BUDGET_DISABLED=true (must be false)"),
+        }
+        for name, (caps, message) in cases.items():
+            with self.subTest(name):
+                manifest = (
+                    {"HLM_LLM_BUDGET_DISABLED": "true"}
+                    if caps is None
+                    else dict(zip(CAP_KEYS, caps, strict=True))
+                )
+                code, output = self.r4(manifest=manifest)
+                self.assertEqual(1, code, output)
+                self.assertIn("spend guard violates the r4 manifest (D-121)", output)
+                self.assertIn(message, output)
+        r3_with_r4_caps = dict(zip(CAP_KEYS, ("3", "8", "60"), strict=True))
+        code, output = self.evaluate(
+            report("librarian", manifest=r3_with_r4_caps),
+            report("api", manifest=r3_with_r4_caps),
+            "--release",
+            "r3",
+        )
+        self.assertEqual(1, code, output)
+        self.assertIn(
+            "spend guard violates the r3 manifest (D-121): HLM_LLM_BUDGET_MONTH_USD=60 (at most 10)", output
+        )
+
+    def test_r4_trace_dir_in_the_api_fails(self):
+        """R4 R-11: a stale HLM_RESEARCH_TRACE_DIR (=/tmp/traces) in the api's env (llm.env, app.env
+        or hlm.toml: the effective setting) fails the R4 check; a report without the research state
+        cannot prove it is off and fails too."""
+        code, output = self.r4(api_kw={"research": r4_research(trace=True)})
+        self.assertEqual(1, code, output)
+        self.assertIn("the api runs with HLM_RESEARCH_TRACE_DIR set (R-11", output)
+        self.assertIn("trace_dir_set=True", output)
+        api = json.loads(report("api", env_release="r4"))
+        del api["research"]
+        code, output = self.evaluate(
+            report("librarian", env_release="r4"), json.dumps(api), "--release", "r4"
+        )
+        self.assertEqual(1, code, output)
+        self.assertIn("the api report has no research state (collect)", output)
+        # the R3 manifest has no tracer rule (memory.ask is off there)
+        code, output = self.evaluate(
+            report("librarian", research=r4_research(trace=True)),
+            report("api", research=r4_research(trace=True)),
+            "--release",
+            "r3",
+        )
+        self.assertEqual(0, code, output)
+
+    def test_r4_writer_price_date_fails_when_passed_and_warns_ahead(self):
+        """R4 R-5: the writer profile's price_valid_until: passed or missing -> FAIL (the guard would
+        book at stale prices); within 14 days -> WARNING and PASS; later -> PASS without a warning."""
+        today = ("--today", "2026-09-29")
+        for until, code_expected, message in (
+            ("2026-09-28", 1, "price_valid_until 2026-09-28 has passed (today 2026-09-29)"),
+            (None, 1, "price_valid_until=- is missing or not YYYY-MM-DD (R-5"),
+            ("31.12.2026", 1, "price_valid_until=31.12.2026 is missing or not YYYY-MM-DD"),
+            (
+                "2026-09-29",
+                0,
+                "WARNING writer profile google-gemini38-flash-medium: price_valid_until 2026-09-29",
+            ),
+            ("2026-10-13", 0, "is within 14 days (today 2026-09-29)"),
+            ("2026-10-14", 0, "price_valid_until=2026-10-14"),
+        ):
+            with self.subTest(until=until):
+                code, output = self.r4(research=r4_research(until=until), extra=today)
+                self.assertEqual(code_expected, code, output)
+                self.assertIn(message, output)
+                if until == "2026-10-14":
+                    self.assertNotIn("WARNING", output)
+
+    def test_r4_writer_probe_must_pass_in_the_api_container(self):
+        """R4 R-14: the probe (probe-writer in the api container) is required in r4 mode with a
+        writer; a non-zero exit, ok!=true or another profile than the api's writer FAILS; only the
+        probe's ok/profile/status/latency_ms fields are ever printed (a leaky probe's key never)."""
+        code, output = self.r4(probe=None)
+        self.assertEqual(1, code, output)
+        self.assertIn("the writer probe did not run (evaluate --writer-probe api; R-14)", output)
+        sentinel = "sentinel-" + "K7" * 12
+        leaky = {
+            "ok": False,
+            "profile": WRITER,
+            "status": 401,
+            "latency_ms": 5,
+            "key": sentinel,
+            "body": sentinel,
+        }
+        cases = {
+            "refused": (
+                {"exit": 1, "stdout": f"{sentinel}\n" + json.dumps(leaky)},
+                "the writer probe FAILED in the api container (exit 1, status 401)",
+            ),
+            "not ok": (
+                {"exit": 0, "stdout": json.dumps({**leaky, "status": 200})},
+                "the writer probe did not report ok (ok=False; R-14)",
+            ),
+            "other profile": (
+                {"exit": 0, "stdout": json.dumps({"ok": True, "profile": "google-gemini38-flash-high"})},
+                "the writer probe used profile google-gemini38-flash-high, the api runs"
+                " google-gemini38-flash-medium",
+            ),
+            "garbage": (
+                {"exit": 0, "stdout": f"Traceback {sentinel}\n"},
+                "the writer probe did not report ok (ok=None; R-14)",
+            ),
+            "profile field injection": (
+                {"exit": 0, "stdout": json.dumps({"ok": True, "profile": f"x {sentinel}", "status": 200})},
+                "the writer probe used profile -, the api runs google-gemini38-flash-medium",
+            ),
+            "unreadable capture": ("not json", "the writer probe could not run in the api container"),
+        }
+        for name, (probe, message) in cases.items():
+            with self.subTest(name):
+                if isinstance(probe, str):
+                    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+                        fh.write(probe)
+                    self.addCleanup(Path(fh.name).unlink)
+                    code, output = self.r4(probe=None, extra=("--writer-probe", fh.name))
+                else:
+                    code, output = self.r4(probe=probe)
+                self.assertEqual(1, code, output)
+                self.assertIn(message, output)
+                self.assertNotIn(sentinel, output)
+        # an R3 env never runs the probe (research is off there)
+        code, output = self.evaluate(report("librarian"), report("api"), "--release", "r3", probe=None)
+        self.assertEqual(0, code, output)
+        self.assertNotIn("writer probe", output)
 
     def test_no_llm_env_fails_whatever_runs(self):
         """D-111 #6: without llm.env an R3 cutover fails, idle or active."""
@@ -510,13 +905,17 @@ class R2DeployCheckTest(unittest.TestCase):
             "api and librarian run different llm.env values for HLM_ENV_RELEASE (api=r3, librarian=-)",
         )
 
-    def evaluate(self, lib, api, *extra):
+    def evaluate(self, lib, api, *extra, probe=PROBE_OK):
+        """``probe``: the captured probe-writer result passed as --writer-probe FILE (None: none)."""
         with tempfile.TemporaryDirectory() as tmp:
             paths = []
             for name, rep in (("librarian", lib), ("api", api)):
                 path = Path(tmp) / f"{name}.json"
                 path.write_text(rep + "\n")
                 paths.append(str(path))
+            if probe is not None:
+                (Path(tmp) / "probe.json").write_text(json.dumps(probe))
+                extra = ("--writer-probe", str(Path(tmp) / "probe.json"), *extra)
             result = subprocess.run(
                 [sys.executable, str(CHECK), "evaluate", "--llm-env", "present",
                  "--librarian", paths[0], "--api", paths[1], *extra],

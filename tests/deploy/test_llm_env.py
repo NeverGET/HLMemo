@@ -1,16 +1,22 @@
 """R2 `install_llm_env.sh` under a fake ssh (no host): the provider key travels only on ssh stdin,
-never in argv or output; llm.env is 0600, complete and idempotent; backups; --remove."""
+never in argv or output; llm.env is 0600, complete and idempotent; backups; --remove.
+R4 B5: the research writer's key (GEMINI_API_KEY) is resolved from --key-file like every other
+profile's, and an installed value survives a re-install. The script runs from a workstation copy
+(tests/deploy/r4_fixtures.py: the Gemini profiles ship with the code branch)."""
 
 import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "deploy/scripts/install_llm_env.sh"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import r4_fixtures  # noqa: E402
+
+GEMINI_KEY, GEMINI_KEY_B = r4_fixtures.GEMINI_KEY, r4_fixtures.GEMINI_KEY_B
 # Built at runtime: no secret-shaped literal in the repository (pre-commit / gitleaks).
 KEY_A = "fake-or-" + "Q7" * 16
 KEY_B = "fake-or-" + "Z3" * 16
@@ -34,6 +40,8 @@ class InstallLlmEnvTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
+        self.repo = r4_fixtures.workstation_repo(self.root / "ws")
+        self.script = self.repo / "deploy/scripts/install_llm_env.sh"
         self.state = self.root / "state"
         self.state.mkdir()
         (self.state / "ssh_config").write_text("Host hlm-deploy\n  HostName 203.0.113.10\n")
@@ -54,13 +62,16 @@ class InstallLlmEnvTest(unittest.TestCase):
             HLM_REMOTE_ENV=str(self.etc / "prod.env"),
         )
 
-    def write_key(self, key):
-        # A dotenv with other secrets: only the profiles' key variable may ever be read.
-        self.key_file.write_text(f"OTHER_SECRET={OTHER}\nexport OPENROUTER_API_KEY='{key}'\n")
+    def write_key(self, key, gemini=GEMINI_KEY):
+        # A dotenv with other secrets: only the profiles' key variables may ever be read.
+        lines = f"OTHER_SECRET={OTHER}\nexport OPENROUTER_API_KEY='{key}'\n"
+        if gemini is not None:
+            lines += f"GEMINI_API_KEY={gemini}\n"
+        self.key_file.write_text(lines)
 
     def run_install(self, *extra, env=None):
         result = subprocess.run(
-            ["bash", str(SCRIPT), "--state", str(self.state), "--key-file", str(self.key_file), *extra],
+            ["bash", str(self.script), "--state", str(self.state), "--key-file", str(self.key_file), *extra],
             env=env or self.env,
             text=True,
             capture_output=True,
@@ -100,23 +111,38 @@ class InstallLlmEnvTest(unittest.TestCase):
             "HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast",
             f"OPENROUTER_API_KEY={KEY_A}",
             "HLM_LLM_MODE=live",
-            # D-121: the owner's production target, <= $10/month
-            "HLM_LLM_BUDGET_HOUR_USD=1",
-            "HLM_LLM_BUDGET_DAY_USD=2",
-            "HLM_LLM_BUDGET_MONTH_USD=10",
+            # R4 (owner, D-198): the test month caps (the R4 manifest: _BUDGETS_R4)
+            "HLM_LLM_BUDGET_HOUR_USD=3",
+            "HLM_LLM_BUDGET_DAY_USD=8",
+            "HLM_LLM_BUDGET_MONTH_USD=60",
             "HLM_LLM_BUDGET_DISABLED=false",
             "HLM_LLM_JOB_CALL_CAP=20",
             # D-111/D-116: the release marker (the post-cutover check expects the R4 manifest)
             "HLM_ENV_RELEASE=r4",
-            # review 79 T5: the R4 manifest pins memory.ask and the map summaries ON
+            # R4 plan §1.5: memory.ask ON, the map summaries OFF (D-192/D-195), the writer and limits
             "HLM_RESEARCH_ENABLED=true",
-            "HLM_MAP_SUMMARY_ENABLED=true",
+            "HLM_MAP_SUMMARY_ENABLED=false",
             "HLM_FALLBACK_PROFILE__RESEARCH=openrouter",
             "HLM_FALLBACK_PROFILE__MAP_SUMMARY=openrouter-glm53-flash",
-            "HLM_RESEARCH_MAX_USD=0.01",
+            "HLM_RESEARCH_MAX_USD=0.12",
             "HLM_RESEARCH_MAX_TOKENS=100000",
+            "HLM_RESEARCH_ANSWER_MODE=prose",
+            "HLM_RESEARCH_ATTRIBUTION=llm",
+            "HLM_RESEARCH_RERANK=llm",
+            "HLM_RESEARCH_WRITER_PROFILE=google-gemini38-flash-medium",
+            "HLM_RESEARCH_WRITER_TIMEOUT_S=120",
+            "HLM_RESEARCH_HTTP_TIMEOUT_S=150",
+            "HLM_DETACHED_HOLD_MAX_S=180",
+            "HLM_RESEARCH_TIMEOUT_S=170",
+            "HLM_RESEARCH_PROSE_MAX_TOKENS=16000",
+            "HLM_LLM_TIMEOUT_S=180",
+            # R4 B5: the writer's key, resolved from --key-file like the primary's
+            f"GEMINI_API_KEY={GEMINI_KEY}",
         ):
             self.assertIn(line + "\n", content)
+        self.assertNotIn("\nHLM_RESEARCH_TRACE_DIR=", content, "R-11: the tracer stays off")
+        self.assertIn("GEMINI_API_KEY=<set>", output)
+        self.assertIn("writer=google-gemini38-flash-medium", output)
         # D-116: R3 ships without the query rewrite and the per-source cap
         self.assertNotIn("\nHLM_QUERY_REWRITE=", content)
         self.assertNotIn("\nHLM_RETRIEVAL_SOURCE_CAP=", content)
@@ -129,7 +155,7 @@ class InstallLlmEnvTest(unittest.TestCase):
         (call,) = self.calls()
         self.assertEqual(call["argv"][call["argv"].index("-F") + 1], str(self.state / "ssh_config"))
         self.assertIn("hlm-deploy", call["argv"])
-        self.assert_never_exposed(output, KEY_A)
+        self.assert_never_exposed(output, KEY_A, GEMINI_KEY)
         self.assertEqual([], self.backups())
         # Idempotent: same key, same file, no backup.
         before = self.target.read_bytes()
@@ -138,7 +164,78 @@ class InstallLlmEnvTest(unittest.TestCase):
         self.assertIn(f"unchanged {self.target}", output)
         self.assertEqual(before, self.target.read_bytes())
         self.assertEqual([], self.backups())
-        self.assert_never_exposed(output, KEY_A)
+        self.assert_never_exposed(output, KEY_A, GEMINI_KEY)
+
+    def test_writer_key_is_preserved_across_a_reinstall(self):
+        """R4 B5: the Gemini key installed on the host survives a later install whose key file holds
+        another value (the template's empty GEMINI_API_KEY= line keeps the name in the file); only
+        --reset-operator-values replaces it."""
+        self.assertEqual(0, self.run_install()[0].returncode)
+        self.write_key(KEY_A, gemini=GEMINI_KEY_B)
+        result, output = self.run_install()
+        self.assertEqual(0, result.returncode, output)
+        content = self.target.read_text()
+        self.assertIn(f"GEMINI_API_KEY={GEMINI_KEY}\n", content)
+        self.assertNotIn(GEMINI_KEY_B, content)
+        self.assertIn("kept the operator's GEMINI_API_KEY", output)
+        self.assertIn("unchanged", output, "the preserved file is the installed one")
+        self.assert_never_exposed(output, GEMINI_KEY, GEMINI_KEY_B)
+        result, output = self.run_install("--reset-operator-values")
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn(f"GEMINI_API_KEY={GEMINI_KEY_B}\n", self.target.read_text())
+        self.assert_never_exposed(output, GEMINI_KEY, GEMINI_KEY_B)
+
+    def test_missing_writer_key_sends_nothing(self):
+        """R4 B5: the writer's key is required like the primary's: a key file without it (or with an
+        empty value) stops the install before anything is sent."""
+        for gemini in (None, ""):
+            with self.subTest(gemini=gemini):
+                self.write_key(KEY_A, gemini=gemini)
+                result, output = self.run_install()
+                self.assertEqual(65, result.returncode, output)
+                self.assertIn("GEMINI_API_KEY is missing or empty", output)
+                self.assertEqual([], self.calls(), "ssh must not run without the writer's key")
+                self.assertFalse(self.target.exists())
+                self.assert_never_exposed(output, KEY_A)
+
+    def test_rerank_fallback_and_writer_profiles_are_resolved_from_the_template(self):
+        """R4 B5: HLM_FALLBACK_PROFILE__RERANK (when the template sets it) and the writer name
+        profiles whose keys are read from --key-file; an unknown writer profile sends nothing."""
+        template = self.repo / "deploy/llm.env.example"
+        text = template.read_text()
+        template.write_text(
+            text.replace(
+                "HLM_FALLBACK_PROFILE__RESEARCH=openrouter\n",
+                "HLM_FALLBACK_PROFILE__RESEARCH=openrouter\nHLM_FALLBACK_PROFILE__RERANK=mistral-eu\n"
+                "MISTRAL_API_KEY=\n",
+            )
+        )
+        result, output = self.run_install()
+        self.assertEqual(65, result.returncode, output)
+        self.assertIn("MISTRAL_API_KEY is missing or empty", output)
+        self.assertEqual([], self.calls())
+        mistral = "fake-ms-" + "M2" * 12
+        self.key_file.write_text(self.key_file.read_text() + f"MISTRAL_API_KEY={mistral}\n")
+        result, output = self.run_install()
+        self.assertEqual(0, result.returncode, output)
+        content = self.target.read_text()
+        self.assertIn("HLM_FALLBACK_PROFILE__RERANK=mistral-eu\n", content)
+        self.assertIn(f"MISTRAL_API_KEY={mistral}\n", content)
+        self.assert_never_exposed(output, KEY_A, GEMINI_KEY, mistral)
+        template.write_text(text.replace("=google-gemini38-flash-medium\n", "=google-no-such-writer\n"))
+        before = len(self.calls())
+        result, output = self.run_install()
+        self.assertEqual(65, result.returncode, output)
+        self.assertIn("unknown profile in llm.env: google-no-such-writer", output)
+        self.assertEqual(before, len(self.calls()), "nothing is sent")
+        # a template without a writer (the research profile writes) needs no Gemini key
+        template.write_text(text.replace("HLM_RESEARCH_WRITER_PROFILE=google-gemini38-flash-medium\n", ""))
+        self.write_key(KEY_A, gemini=None)
+        self.target.unlink()
+        result, output = self.run_install()
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("writer=-", output)
+        self.assertNotIn("HLM_RESEARCH_WRITER_PROFILE=", self.target.read_text())
 
     def test_changed_key_backs_up_previous_file_and_keeps_three(self):
         self.assertEqual(0, self.run_install()[0].returncode)
@@ -166,9 +263,9 @@ class InstallLlmEnvTest(unittest.TestCase):
         edited = self.target.read_text()
         for old, new in (
             (f"OPENROUTER_API_KEY={KEY_A}", f"OPENROUTER_API_KEY={operator_key}"),
-            ("HLM_LLM_BUDGET_MONTH_USD=10", "HLM_LLM_BUDGET_MONTH_USD=7"),
-            ("HLM_LLM_BUDGET_DAY_USD=2", "HLM_LLM_BUDGET_DAY_USD=1"),
-            ("HLM_LLM_BUDGET_HOUR_USD=1", "HLM_LLM_BUDGET_HOUR_USD=0.5"),
+            ("HLM_LLM_BUDGET_MONTH_USD=60", "HLM_LLM_BUDGET_MONTH_USD=7"),
+            ("HLM_LLM_BUDGET_DAY_USD=8", "HLM_LLM_BUDGET_DAY_USD=1"),
+            ("HLM_LLM_BUDGET_HOUR_USD=3", "HLM_LLM_BUDGET_HOUR_USD=0.5"),
         ):
             self.assertIn(old + "\n", edited)
             edited = edited.replace(old + "\n", new + "\n")
@@ -203,8 +300,8 @@ class InstallLlmEnvTest(unittest.TestCase):
         content = self.target.read_text()
         for line in (
             f"OPENROUTER_API_KEY={KEY_B}",
-            "HLM_LLM_BUDGET_MONTH_USD=10",
-            "HLM_LLM_BUDGET_DAY_USD=2",
+            "HLM_LLM_BUDGET_MONTH_USD=60",
+            "HLM_LLM_BUDGET_DAY_USD=8",
         ):
             self.assertIn(line + "\n", content)
         self.assertNotIn(operator_key, content)
@@ -216,7 +313,7 @@ class InstallLlmEnvTest(unittest.TestCase):
         self.assertEqual(0, self.run_install("--reset-operator-values")[0].returncode)
         self.assertEqual(1, len(self.backups()))
         result = subprocess.run(
-            ["bash", str(SCRIPT), "--state", str(self.state), "--remove"],
+            ["bash", str(self.script), "--state", str(self.state), "--remove"],
             env=self.env,
             text=True,
             capture_output=True,
@@ -244,7 +341,7 @@ class InstallLlmEnvTest(unittest.TestCase):
         self.assertEqual([], self.calls())
         for args in ((), ("--state", str(self.state), "--profile", "nope")):
             result = subprocess.run(
-                ["bash", str(SCRIPT), *args], env=self.env, capture_output=True, timeout=30
+                ["bash", str(self.script), *args], env=self.env, capture_output=True, timeout=30
             )
             self.assertEqual(64, result.returncode)
         self.assertFalse(self.target.exists())
@@ -259,22 +356,15 @@ class InstallLlmEnvTest(unittest.TestCase):
         self.assertIn("HLM_FALLBACK_PROFILE__RISK_JUDGE=openrouter-qwen38-27b-fast\n", content)
         self.assertEqual(1, content.count("HLM_FALLBACK_PROFILE="))
         self.assert_never_exposed(output, KEY_A)
-        # a copy of the script next to a template with a mistyped per-task profile
-        repo = self.root / "repo"
-        (repo / "deploy/scripts").mkdir(parents=True)
-        (repo / "deploy/scripts/install_llm_env.sh").write_text(SCRIPT.read_text())
-        (repo / "profiles").symlink_to(ROOT / "profiles")
-        template = (ROOT / "deploy/llm.env.example").read_text()
-        (repo / "deploy/llm.env.example").write_text(
-            template.replace("__RISK_JUDGE=openrouter-qwen38-27b-fast", "__RISK_JUDGE=no-such-profile")
+        # the workstation copy's template with a mistyped per-task profile
+        template = self.repo / "deploy/llm.env.example"
+        template.write_text(
+            template.read_text().replace(
+                "__RISK_JUDGE=openrouter-qwen38-27b-fast", "__RISK_JUDGE=no-such-profile"
+            )
         )
         before = len(self.calls())
-        result = subprocess.run(
-            ["bash", str(repo / "deploy/scripts/install_llm_env.sh"), "--state", str(self.state),
-             "--key-file", str(self.key_file)],
-            env=self.env, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
-        )  # fmt: skip
-        output = result.stdout + result.stderr
+        result, output = self.run_install()
         self.assertEqual(65, result.returncode, output)
         self.assertIn("unknown profile in llm.env: no-such-profile", output)
         self.assertEqual(before, len(self.calls()), "nothing is sent")

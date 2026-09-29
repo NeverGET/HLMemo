@@ -336,8 +336,9 @@ post_publish_checks() {
   dc exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
     < deploy/scripts/check_librarian.py > "$run_dir/librarian-report.json" || true
   dc exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$run_dir/api-report.json" || true
+  # R4 R-14: an api that runs an R4 env with a writer is also probed (probe-writer in the api container)
   if ! python3 deploy/scripts/check_librarian.py evaluate --llm-env "$llm_env_state" --llm-env-file "$llm_env_file" \
-    --librarian "$run_dir/librarian-report.json" --api "$run_dir/api-report.json" </dev/null; then
+    --writer-probe api --librarian "$run_dir/librarian-report.json" --api "$run_dir/api-report.json" </dev/null; then
     echo 'Librarian check failed (RESULT librarian above); new stack left running (no database rollback). Fix llm.env (deploy/scripts/install_llm_env.sh), then stack.sh up -d --no-deps librarian api.' >&2
     exit 1
   fi
@@ -489,7 +490,12 @@ if [[ -n $previous ]]; then
     [[ -n $id ]] || continue
     running_fps+=("$service=$(docker inspect --format '{{json .Config.Env}}' "$id" </dev/null | python3 deploy/scripts/llm_env_release.py fingerprint -)")
   done
-  python3 deploy/scripts/llm_env_release.py provenance "$llm_env_file" "${running_fps[@]}" </dev/null || {
+  # R4 R-4: every service of the previous model that reads llm.env must report (a missing
+  # librarian is a failure, not a skipped comparison); only a model without the librarian (pre-W2a)
+  # has the api alone
+  required=api
+  if [[ " ${rollback_services[*]} " == *" librarian "* ]]; then required=api,librarian; fi
+  python3 deploy/scripts/llm_env_release.py provenance "$llm_env_file" --require "$required" "${running_fps[@]}" </dev/null || {
     echo "The llm.env on disk is not the env the running $previous was created with (above): refusing before anything stops. Finish the env switch (install_llm_env.sh recreates librarian api) or put the running release's env back, then deploy (D-116)." >&2
     false
   }

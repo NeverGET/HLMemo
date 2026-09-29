@@ -11,6 +11,7 @@ and leave no copy of either env (they hold the provider key) behind.
 import importlib.util
 import json
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -280,6 +281,93 @@ class LlmEnvHelperTest(unittest.TestCase):
             [f"{k}={'yes' if k == 'HLM_RESEARCH_ENABLED' else v}" for k, v in disk.items()]
         )
         self.assertEqual([], ler.mismatches(disk, running))
+
+    def test_fingerprint_covers_the_r4_behaviour_keys_and_the_guard(self):
+        """R4 R-4 (consult 89: two envs differing only in the writer, the HTTP timeout or
+        budget-disabled gave mismatches=[]): every behaviour key of the R4 template, the caps and the
+        guard switch are in the fingerprint, and a difference in any one of them is listed."""
+        template = (ROOT / "deploy/llm.env.example").read_text()
+        disk = ler.fingerprint_of_dotenv(template)
+        for key in (
+            "HLM_RESEARCH_ANSWER_MODE",
+            "HLM_RESEARCH_ATTRIBUTION",
+            "HLM_RESEARCH_RERANK",
+            "HLM_RESEARCH_WRITER_PROFILE",
+            "HLM_RESEARCH_WRITER_TIMEOUT_S",
+            "HLM_RESEARCH_HTTP_TIMEOUT_S",
+            "HLM_DETACHED_HOLD_MAX_S",
+            "HLM_RESEARCH_TIMEOUT_S",
+            "HLM_RESEARCH_PROSE_MAX_TOKENS",
+            "HLM_LLM_TIMEOUT_S",
+            "HLM_RESEARCH_MAX_USD",
+            "HLM_RESEARCH_MAX_TOKENS",
+            "HLM_LLM_BUDGET_HOUR_USD",
+            "HLM_LLM_BUDGET_DAY_USD",
+            "HLM_LLM_BUDGET_MONTH_USD",
+            "HLM_LLM_BUDGET_DISABLED",
+            "HLM_LLM_JOB_CALL_CAP",
+        ):
+            self.assertIn(key, disk)
+        self.assertFalse([k for k in disk if k.endswith("_API_KEY")], "never a key")
+        self.assertEqual(
+            [], ler.mismatches(disk, ler.fingerprint_of_env_list([f"{k}={v}" for k, v in disk.items()]))
+        )
+        for key, other in (
+            ("HLM_RESEARCH_WRITER_PROFILE", "google-gemini38-flash-high"),
+            ("HLM_RESEARCH_HTTP_TIMEOUT_S", "20"),
+            ("HLM_LLM_BUDGET_DISABLED", "true"),
+            ("HLM_LLM_BUDGET_MONTH_USD", "600"),
+            ("HLM_RESEARCH_ANSWER_MODE", "claims"),
+            ("HLM_RESEARCH_PROSE_MAX_TOKENS", "3000"),
+            ("HLM_DETACHED_HOLD_MAX_S", "60"),
+        ):
+            with self.subTest(key=key):
+                running = ler.fingerprint_of_env_list(
+                    [f"{k}={other if k == key else v}" for k, v in disk.items()]
+                )
+                problems = ler.mismatches(disk, running)
+                self.assertEqual(1, len(problems), problems)
+                self.assertTrue(problems[0].startswith(f"{key}: disk="), problems)
+        # a running env WITHOUT the writer (the research profile writes) differs from a disk env with it
+        running = {k: v for k, v in disk.items() if k != "HLM_RESEARCH_WRITER_PROFILE"}
+        self.assertEqual(
+            ["HLM_RESEARCH_WRITER_PROFILE: disk=google-gemini38-flash-medium running=-"],
+            ler.mismatches(disk, running),
+        )
+        # the guard switch compares by state: absent == false
+        running = {k: v for k, v in disk.items() if k != "HLM_LLM_BUDGET_DISABLED"}
+        self.assertEqual([], ler.mismatches(disk, running))
+
+    def test_provenance_requires_both_the_api_and_the_librarian(self):
+        """R4 R-4 (review 77): a missing librarian (or api) report is a provenance failure, not a
+        skipped comparison."""
+        self.target.write_text(R3_ENV)
+        fp = ler.fingerprint_of_dotenv(R3_ENV)
+        self.assertEqual([], ler.provenance(str(self.target), {"api": fp, "librarian": fp}))
+        for present in ("api", "librarian"):
+            with self.subTest(present=present):
+                (problem,) = ler.provenance(str(self.target), {present: fp})
+                missing = "librarian" if present == "api" else "api"
+                self.assertIn(f"{missing}: no {missing} container reported the env", problem)
+
+        # the CLI (what rollback.sh / remote-deploy.sh run: --require = the llm.env services of the
+        # model, both for every W2a+ model) exits 1 and names only the service
+        def cli(*args):
+            return subprocess.run(
+                [sys.executable, str(ROOT / "deploy/scripts/llm_env_release.py"), "provenance",
+                 str(self.target), *args],
+                text=True, capture_output=True, timeout=30,
+            )  # fmt: skip
+
+        for args in ((), ("--require", "api,librarian")):
+            result = cli(*args, "api=" + json.dumps(fp))
+            self.assertEqual(1, result.returncode, args)
+            self.assertIn("llm.env provenance: librarian: no librarian container reported", result.stderr)
+            self.assertNotIn(R3_KEY, result.stdout + result.stderr)
+        # a model without the librarian service (pre-W2a) requires the api alone
+        self.assertEqual(0, cli("--require", "api", "api=" + json.dumps(fp)).returncode)
+        self.assertEqual(1, cli("--require", "api", "librarian=" + json.dumps(fp)).returncode)
+        self.assertEqual(64, cli("--require", "librarian", "api=" + json.dumps(fp)).returncode)
 
 
 if __name__ == "__main__":

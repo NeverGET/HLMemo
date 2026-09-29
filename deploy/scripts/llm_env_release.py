@@ -7,9 +7,11 @@
                                              # atomically with a 0600 copy of SOURCE
     llm_env_release.py fingerprint -         # stdin: a container's env as docker inspect's JSON
                                              # list ("K=V"); prints its non-secret FINGERPRINT (JSON)
-    llm_env_release.py provenance TARGET SERVICE=FINGERPRINT_JSON...
+    llm_env_release.py provenance TARGET [--require api[,librarian]] SERVICE=FINGERPRINT_JSON...
                                              # exit 1 unless every running service's fingerprint
-                                             # matches the llm.env on disk (TARGET or "absent")
+                                             # matches the llm.env on disk (TARGET or "absent") and
+                                             # every --require service reported (default both, R-4:
+                                             # the callers pass the services their model defines)
 
 remote-deploy.sh snapshots the llm.env the PREVIOUS release runs with (release-state.json
 previous_llm_env); rollback.sh restores it before the previous image starts, and on a failed
@@ -17,10 +19,11 @@ rollback step puts the newer env back (rollback_llm_env) before the current rele
 
 D-116 #1 (review 75): a snapshot is recorded as "the env the previous release runs with" only after
 its PROVENANCE is proven: the non-secret fingerprint of the file on disk (the release marker, the
-D-094 profile mapping, the switches the release manifests keep off or pin on and the per-question
-limits) equals what the api AND the
-librarian containers were created with. Otherwise the disk env is not what runs (an install that did
-not recreate the services, a half-finished switch) and the runner STOPS before anything changes.
+D-094 profile mapping, the switches the release manifests keep off or pin on, the per-question
+limits and, R4 R-4, memory.ask's behaviour keys, the spend caps and the guard switch) equals what
+the api AND the librarian containers were created with; both must report (R-4). Otherwise the disk
+env is not what runs (an install that did not recreate the services, a half-finished switch) and the
+runner STOPS before anything changes.
 The fingerprint never holds a key: only these names are read.
 """
 
@@ -95,22 +98,44 @@ FINGERPRINT_KEYS = (
     "HLM_MAP_SUMMARY_ENABLED",
     "HLM_RESEARCH_MAX_USD",
     "HLM_RESEARCH_MAX_TOKENS",
+    # R4 R-4 (consult 89; review 77): memory.ask's behaviour keys (the writer, the answer settings,
+    # every timeout and the prose limit) and the guard. A disk env that differed from the running one
+    # only in these used to pass (the running api on luna / 20 s, the disk env on Gemini / 150 s).
+    "HLM_RESEARCH_ANSWER_MODE",
+    "HLM_RESEARCH_ATTRIBUTION",
+    "HLM_RESEARCH_RERANK",
+    "HLM_RESEARCH_EXPAND",
+    "HLM_RESEARCH_SELECT",
+    "HLM_RESEARCH_PROSE_PROMPT",
+    "HLM_RESEARCH_WRITER_PROFILE",
+    "HLM_RESEARCH_WRITER_TIMEOUT_S",
+    "HLM_RESEARCH_HTTP_TIMEOUT_S",
+    "HLM_DETACHED_HOLD_MAX_S",
+    "HLM_RESEARCH_TIMEOUT_S",
+    "HLM_RESEARCH_PROSE_MAX_TOKENS",
+    "HLM_LLM_TIMEOUT_S",
+    "HLM_LLM_JOB_CALL_CAP",
 )
 TASK_FALLBACK_PREFIX = "HLM_FALLBACK_PROFILE__"
+#: R4 R-4: the spend guard, whatever it grows: the caps (HOUR/DAY/MONTH_USD) and HLM_LLM_BUDGET_DISABLED
+BUDGET_PREFIX = "HLM_LLM_BUDGET_"
 SWITCHES = (
     "HLM_QUERY_REWRITE",
     "HLM_RETRIEVAL_SOURCE_CAP",
     "HLM_RESEARCH_ENABLED",
     "HLM_MAP_SUMMARY_ENABLED",
+    "HLM_LLM_BUDGET_DISABLED",
 )
 #: keys another env file (app.env) may also set: compared only when llm.env sets them
 SHARED = ("HLM_PROFILE", "HLM_FALLBACK_PROFILE")
+#: R4 R-4 (review 77): the services that read llm.env; each must report the env it was created with
+REQUIRED_SERVICES = ("api", "librarian")
 _FALSE = frozenset({"", "0", "false", "no", "off"})
 _LINE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*")
 
 
 def _fingerprint_key(key: str) -> bool:
-    return key in FINGERPRINT_KEYS or key.startswith(TASK_FALLBACK_PREFIX)
+    return key in FINGERPRINT_KEYS or key.startswith((TASK_FALLBACK_PREFIX, BUDGET_PREFIX))
 
 
 def _unquote(value: str) -> str:
@@ -163,9 +188,22 @@ def mismatches(disk: dict[str, str], running: dict[str, str]) -> list[str]:
     return out
 
 
-def provenance(target: str, running: dict[str, dict[str, str]]) -> list[str]:
+def provenance(
+    target: str, running: dict[str, dict[str, str]], required: tuple[str, ...] = REQUIRED_SERVICES
+) -> list[str]:
+    """The problems (names only) that stop a snapshot: a service of ``required`` (the services of the
+    model that reads llm.env; default api AND librarian, R4 R-4) reported nothing, or a running env
+    differs from the disk env."""
     disk = fingerprint_of_file(target)
-    return [f"{service} {m}" for service, fp in sorted(running.items()) for m in mismatches(disk, fp)]
+    missing = [
+        f"{service}: no {service} container reported the env it was created with (every llm.env"
+        f" service of the model must report: {','.join(required)}; R-4)"
+        for service in required
+        if service not in running
+    ]
+    return missing + [
+        f"{service} {m}" for service, fp in sorted(running.items()) for m in mismatches(disk, fp)
+    ]
 
 
 def main(argv: list[str]) -> int:
@@ -173,11 +211,17 @@ def main(argv: list[str]) -> int:
         print(json.dumps(fingerprint_of_env_list(json.loads(sys.stdin.read() or "[]")), sort_keys=True))
         return 0
     if len(argv) >= 2 and argv[0] == "provenance":
-        running = {}
-        for pair in argv[2:]:
+        running, pairs, required = {}, argv[2:], REQUIRED_SERVICES
+        if pairs[:1] == ["--require"] and len(pairs) >= 2:
+            required = tuple(s for s in pairs[1].split(",") if s)
+            pairs = pairs[2:]
+        if not set(required) <= set(REQUIRED_SERVICES) or "api" not in required:
+            print(f"llm_env_release: --require {','.join(required)}: api[,librarian]", file=sys.stderr)
+            return 64
+        for pair in pairs:
             service, _, fp = pair.partition("=")
             running[service] = json.loads(fp or "{}")
-        problems = provenance(argv[1], running)
+        problems = provenance(argv[1], running, required)
         for problem in problems:
             print(f"llm.env provenance: {problem}", file=sys.stderr)
         return 1 if problems else 0
