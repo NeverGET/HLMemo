@@ -1160,6 +1160,7 @@ class _Run:
                         lineage=self.lineage,
                         attempt_guard=self.attempt_guard,
                         observe=self.trace.observe if self.trace is not None else None,
+                        attempt_affordable=self.attempt_affordable,
                     )
             except PrivacyDenied:
                 continue  # changed between our gate and the attempt's: gate (and rebuild) again
@@ -1222,6 +1223,15 @@ class _Run:
         extra = chain[0].attempt_timeout_s if chain else None
         return cap_s + extra if extra else cap_s
 
+    def count_fallbacks(self) -> None:
+        """R4 (R-9, R-6): every profile the last call gave up (``LlmResult.fallbacks``) counts in
+        ``meta.flags.writer_fallbacks`` and ``writer_fallback_reasons`` ("profile:reason"); the keys
+        appear only once a fallback happened."""
+        res = self.last_result
+        for profile, why in getattr(res, "fallbacks", None) or []:
+            self.flags["writer_fallbacks"] = int(self.flags.get("writer_fallbacks", 0)) + 1
+            self.flags.setdefault("writer_fallback_reasons", []).append(f"{profile}:{why}")
+
     def writer_timed_out(self, since: int) -> bool:
         """D-172: a writer-profile attempt of this question timed out after its first ``since``
         attempts."""
@@ -1230,6 +1240,15 @@ class _Run:
             return False
         name = chain[0].name
         return any(p == name and o == "timeout" for p, o in self.researcher.attempts(self.lineage)[since:])
+
+    async def attempt_affordable(self, _profile: Any, worst_usd: Decimal, worst_tokens: int) -> bool:
+        """R4 (R-9): would one more attempt (its worst case) still fit the per-question USD and token
+        budget? No side effect: a writer's schema retry that does not fit is never reserved and the
+        writer's fallback answers instead (``attempt_guard`` still checks that one)."""
+        usd, tokens = self.researcher.spent(self.lineage)
+        return usd + worst_usd <= Decimal(
+            str(self.settings.research_max_usd)
+        ) and tokens + worst_tokens <= int(self.settings.research_max_tokens)
 
     async def attempt_guard(self, _profile: Any, worst_usd: Decimal, worst_tokens: int) -> None:
         """Review 79 T4: before EVERY provider attempt (a schema retry and the fallback included),
@@ -1397,6 +1416,7 @@ class _Run:
         if obj is None:
             return rs.validate_prose(obj, shown, self.researcher.redactor.text)
         self.flags["writer_used"] = self.last_profile
+        self.count_fallbacks()
         if self.trace is not None:
             self.trace.enrich_last(
                 parsed={k: obj.get(k) for k in ("status", "answer", "sources", "related", "confidence")}
@@ -1497,6 +1517,7 @@ class _Run:
         if out is None:
             self.flags["expand_skipped"] = True
             return None
+        self.count_fallbacks()  # R4 (R-9): the expand is a writer JOB too
         added = rs.parse_expand(out, sentences)
         if self.trace is not None:
             self.trace.enrich_last(numbered=sentences, added=added)

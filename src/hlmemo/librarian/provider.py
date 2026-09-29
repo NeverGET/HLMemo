@@ -11,7 +11,12 @@ whose file lists the task in ``disabled_tasks`` is never used for it. Per profil
 * transient failures (HTTP 408/429/5xx, timeouts, transport errors, a provider ``finish_reason``
   of ``error``) are retried with backoff 1/2/4/8 s, at most 5 attempts;
 * a schema-invalid answer (unparseable, not an object, schema or task-level violation) is retried
-  once; a second one raises ``SchemaFail`` (no fallback: the provider is up, the model is wrong);
+  once; a second one raises ``SchemaFail`` (no fallback: the provider is up, the model is wrong).
+  R4 (R-9) ``complete(schema_fallback=True)`` (the research writer): a schema failure falls through
+  to the NEXT profile of the chain instead: at once for a TRUNCATED answer (``finish_reason`` length,
+  a retry would truncate again), after the one retry otherwise, and without that retry when the
+  caller's ``attempt_affordable`` says its worst case does not fit (it is never reserved). Only the
+  chain's last profile raises ``SchemaFail``. Every profile given up is in ``LlmResult.fallbacks``;
 * an exhausted or fatally failing profile falls through to the fallback profile once;
 * a per-profile circuit breaker opens after N consecutive exhausted calls for 60 s, doubling on
   each failed half-open trial up to 15 min; an open breaker costs a ``breaker_open`` ledger row
@@ -65,7 +70,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
@@ -120,6 +125,12 @@ _PRECHECK: contextvars.ContextVar[Callable[[], Awaitable[None]] | None] = contex
 #: (its own prices) and worst-case tokens; it raises to stop the call (a per-question budget)
 AttemptGuard = Callable[[LlmProfile, Decimal, int], Awaitable[None]]
 _GUARD: contextvars.ContextVar[AttemptGuard | None] = contextvars.ContextVar("hlm_llm_guard", default=None)
+#: R4 (R-9): a caller's side-effect-free check whether one more attempt (its worst case) still fits:
+#: a schema retry that does not fit is never reserved (``complete(schema_fallback=True)``)
+AttemptAffordable = Callable[[LlmProfile, Decimal, int], Awaitable[bool]]
+_AFFORD: contextvars.ContextVar[AttemptAffordable | None] = contextvars.ContextVar(
+    "hlm_llm_afford", default=None
+)
 #: D-189: a caller's read-only observer of each attempt (the messages sent, the raw output)
 _OBSERVE: contextvars.ContextVar[Callable[[dict[str, Any]], None] | None] = contextvars.ContextVar(
     "hlm_llm_observe", default=None
@@ -293,6 +304,9 @@ class LlmResult:
     cost_usd: Decimal
     latency_ms: int
     usage: dict[str, Any]
+    #: R4 (R-9, R-6): ``(profile, reason)`` of every profile given up before the one that answered
+    #: (reason: schema_fail | truncated | retry_unaffordable | timeout | cut | unavailable | breaker_open)
+    fallbacks: list[tuple[str, str]] = field(default_factory=list)
 
     def audit(self, redactor: Redactor) -> dict[str, Any]:
         """One call of the ``llm/1`` audit record (CC-5): schema-valid output AFTER redaction."""
@@ -324,6 +338,7 @@ class _Attempt:
     row: LedgerRow | None = None
     usage: dict[str, Any] | None = None
     latency_ms: int = 0
+    finish: str | None = None  # the choice's finish_reason (R-9: "length" = a truncated answer)
 
 
 #: D-178: a response parser: content -> (object, None) or (None, why it is not one)
@@ -584,6 +599,8 @@ class Provider:
         attempt_guard: AttemptGuard | None = None,
         variant: Variant | None = None,
         observe: Callable[[dict[str, Any]], None] | None = None,
+        schema_fallback: bool = False,
+        attempt_affordable: AttemptAffordable | None = None,
     ) -> LlmResult:
         """``deadline`` (event-loop time): the caller's hard cap. HTTP timeouts are budgeted to end
         before it and no attempt starts without room (``DeadlineExceeded``), so an outer
@@ -593,7 +610,8 @@ class Provider:
         ``variant`` (D-178): per PROFILE of the chain, ``(user message, parser)`` to use instead of
         ``user`` and the JSON parser (a text protocol for a profile without JSON mode), or None.
         ``observe`` (D-189): a read-only callback per attempt (profile, attempt, the messages sent,
-        the raw output, its outcome); it never changes the call."""
+        the raw output, its outcome); it never changes the call. ``schema_fallback`` and
+        ``attempt_affordable`` (R4, R-9): a schema failure moves on to the next profile (module doc)."""
         if attempt_policy not in ATTEMPT_POLICIES:
             raise LlmConfigError(f"unknown attempt_policy {attempt_policy!r}")
         token = _LINEAGE.set(lineage) if lineage is not None else None
@@ -601,6 +619,7 @@ class Provider:
         dtoken = _DEADLINE.set(deadline)
         gtoken = _GUARD.set(attempt_guard)
         otoken = _OBSERVE.set(observe)
+        atoken = _AFFORD.set(attempt_affordable)
         try:
             return await self._complete(
                 task,
@@ -610,8 +629,10 @@ class Provider:
                 chain=chain,
                 latency=attempt_policy == "latency",
                 variant=variant,
+                schema_fallback=schema_fallback,
             )
         finally:
+            _AFFORD.reset(atoken)
             _OBSERVE.reset(otoken)
             _GUARD.reset(gtoken)
             _DEADLINE.reset(dtoken)
@@ -629,6 +650,7 @@ class Provider:
         chain: list[LlmProfile] | None,
         latency: bool = False,
         variant: Variant | None = None,
+        schema_fallback: bool = False,
     ) -> LlmResult:
         if self.mode == "off":
             raise LlmDisabled("HLM_LLM_MODE=off")
@@ -637,19 +659,25 @@ class Provider:
         attempted = False
         timeouts_only = True
         reasons: list[str] = []
+        fallbacks: list[tuple[str, str]] = []  # R4 (R-9, R-6): every profile given up, and why
+        schema_exc: SchemaFail | None = None
+        tried_after_schema = False
         for i, profile in enumerate(profiles):
             breaker = self.breaker(profile.name)
             if self.mode != "replay" and not breaker.allow():
                 await self.ledger.record(self._row(profile, task, job_id, "breaker_open"))
                 reasons.append(f"{profile.name}: breaker open")
+                fallbacks.append((profile.name, "breaker_open"))
                 continue
             attempted = True
+            tried_after_schema = schema_exc is not None
             share = None
             if latency and any(self.breaker(p.name).available() for p in profiles[i + 1 :]):
                 remaining = _remaining_s()
                 if remaining is None or remaining * LATENCY_PRIMARY_SHARE >= MIN_ATTEMPT_S:
                     share = LATENCY_PRIMARY_SHARE  # leave the rest of the deadline to the next profile
             own = variant(profile) if variant is not None else None  # D-178: its protocol
+            onward = schema_fallback and i < len(profiles) - 1  # R-9: a later profile may answer
             try:
                 result = await self._run_profile(
                     profile,
@@ -660,6 +688,7 @@ class Provider:
                     latency=latency,
                     share=share,
                     parse=own[1] if own is not None else parse_json_object,
+                    schema_onward=onward,
                 )
             except _Exhausted as exc:
                 if exc.cut:
@@ -668,12 +697,27 @@ class Provider:
                     breaker.failure()  # per PROFILE: a failing primary never closes the fallback's way
                 reasons.append(f"{profile.name}: {exc}")
                 timeouts_only = timeouts_only and exc.timeout
+                why = "cut" if exc.cut else ("timeout" if exc.timeout else "unavailable")
+                fallbacks.append((profile.name, why))
                 continue
-            except SchemaFail:
+            except SchemaFail as exc:
                 breaker.success()  # the endpoint answered; the model output was the problem
-                raise
+                if not onward:
+                    raise
+                # R4 (R-9): the next profile answers instead (counted, never silent)
+                schema_exc = exc
+                timeouts_only = False
+                reasons.append(f"{profile.name}: {exc}")
+                fallbacks.append((profile.name, exc.why))
+                log.warning(
+                    "task %s: %s gave up on %s, next profile", task.name, profile.name, fallbacks[-1][1]
+                )
+                continue
             breaker.success()
+            result.fallbacks = fallbacks
             return result
+        if schema_exc is not None and not tried_after_schema:
+            raise schema_exc  # no later profile was even tried: the model output was the problem
         if not attempted:
             raise BreakerOpen("; ".join(reasons), retry_after_s=self.retry_after_s(profiles))
         if latency and timeouts_only:  # every bounded attempt ran out of time: the caller's timeout
@@ -708,6 +752,7 @@ class Provider:
         latency: bool = False,
         share: float | None = None,
         parse: Parser | None = None,
+        schema_onward: bool = False,
     ) -> LlmResult:
         parse = parse or parse_json_object
         messages = [
@@ -758,6 +803,9 @@ class Provider:
             obj, err = parse(att.content)
             if obj is not None:
                 err = task.schema_errors(obj) or (validate(obj) if validate else None)
+            if err is None and schema_onward and att.finish == "length":
+                # R4 (R-9): a cut-off answer is not kept even when it parses (a text layout does)
+                err = "truncated: finish_reason length"
             if _OBSERVE.get() is not None:  # D-189: diagnostics only
                 _emit(
                     {
@@ -794,6 +842,17 @@ class Provider:
             att.row.outcome = "schema_fail"
             await _finalize(self.ledger.record(att.row))
             schema_fails += 1
+            if schema_onward:  # R4 (R-9): a later profile answers instead of a doubtful retry
+                why = None
+                if att.finish == "length":
+                    why = "truncated"  # the same max_tokens would truncate again
+                elif schema_fails >= 2:
+                    why = "schema_fail"
+                elif not await self._affordable(profile, task, messages):
+                    why = "retry_unaffordable"  # never reserved
+                if why is not None:
+                    raise SchemaFail(f"E_SCHEMA_FAIL task={task.name} ({why})", why=why)
+                continue
             if schema_fails >= 2:
                 raise SchemaFail(f"E_SCHEMA_FAIL task={task.name}")  # never the model output
 
@@ -817,6 +876,16 @@ class Provider:
         tokens_in = self.estimate_input_tokens(messages)
         worst = profile.worst_usd(tokens_in, task.max_tokens) if profile.priced else Decimal(0)
         await guard(profile, worst, -(-tokens_in * 11 // 10) + task.max_tokens)
+
+    async def _affordable(self, profile: LlmProfile, task: TaskSpec, messages: list[dict[str, str]]) -> bool:
+        """R4 (R-9): the caller's ``attempt_affordable`` for one more attempt of ``profile`` (its worst
+        case, priced by this profile); True when the caller has none."""
+        check = _AFFORD.get()
+        if check is None:
+            return True
+        tokens_in = self.estimate_input_tokens(messages)
+        worst = profile.worst_usd(tokens_in, task.max_tokens) if profile.priced else Decimal(0)
+        return bool(await check(profile, worst, -(-tokens_in * 11 // 10) + task.max_tokens))
 
     async def _run_precheck(self) -> None:
         """The caller's privacy/authority gate, re-run before EVERY attempt (retries after backoff
@@ -1080,7 +1149,15 @@ class Provider:
             reserved_usd=worst,
             latency_ms=latency,
         )
-        return _Attempt("response", content=content, row=row, usage=usage, latency_ms=latency)
+        finish = choice.get("finish_reason")
+        return _Attempt(
+            "response",
+            content=content,
+            row=row,
+            usage=usage,
+            latency_ms=latency,
+            finish=finish if isinstance(finish, str) else None,
+        )
 
     def _client(self, profile: LlmProfile) -> httpx.AsyncClient:
         client = self._clients.get(profile.name)
@@ -1110,6 +1187,7 @@ __all__ = [
     "normalize_usage",
     "Clock",
     "LlmResult",
+    "AttemptAffordable",
     "AttemptGuard",
     "Provider",
     "lineage_scope",

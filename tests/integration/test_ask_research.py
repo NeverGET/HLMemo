@@ -119,6 +119,10 @@ async def ask(connect, world, deps, researcher, question: str, **args: Any) -> d
             await conn.rollback()
 
 
+def _chat_text(content: str) -> dict[str, Any]:
+    return {"content": content}
+
+
 def handle_re(vid: int) -> re.Pattern[str]:
     return re.compile(rf"\bv{vid}(\.\d+)?\b")
 
@@ -706,6 +710,56 @@ async def test_ask_prose_mode_slow_writer_times_out_and_the_task_writes(connect,
     # the spend guard is disabled in these settings, so no worst case is reserved and the cut attempt
     # costs 0 here (its worst-case charge with the guard on: test_d172_writer_past_its_timeout_...)
     assert out["meta"]["cost_usd"] == round(2 * (100 * 1.0 + 20 * 2.0) / 1_000_000, 6)
+
+
+async def test_ask_r4_writer_truncation_and_bad_output_fall_back_counted(
+    connect, world, deps, db_dsn
+) -> None:  # noqa: ANN001
+    """R4 (R-9) through memory.ask: a writer answer cut at HLM_RESEARCH_PROSE_MAX_TOKENS (16000,
+    finish_reason length) is not retried and the task profile writes; a writer answering bad output
+    twice falls back too. meta.flags counts every fallback; the question never ends in schema_fail."""
+    fake = FakeResearcher(facts=["1.2 s"])
+    for writer_reply, reason, writer_attempts in (
+        (
+            lambda body: {**_chat_text("STATUS: answered\nANSWER:\nThe retrieval p95 targ"), "length": True},
+            "truncated",
+            1,
+        ),
+        (lambda body: {**_chat_text("no layout at all"), "length": False}, "schema_fail", 2),
+    ):
+
+        def model(body: dict[str, Any], reply=writer_reply) -> Any:  # noqa: ANN001
+            if body["model"] != "z-ai/glm-5":
+                return fake(body)
+            r = reply(body)
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": r["content"]},
+                        "finish_reason": "length" if r["length"] else "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+            }
+
+        llm = ScriptedLLM(default=model)
+        r = make_researcher(
+            db_dsn,
+            llm,
+            research_answer_mode="prose",
+            research_writer_profile="openrouter-glm5",
+            research_prose_max_tokens=16000,
+        )
+        try:
+            out = await ask(connect, world, deps, r, "What is the current retrieval p95 target?")
+        finally:
+            await r.aclose()
+        flags = out["meta"]["flags"]
+        assert out["abstained"] is False and "1.2 s" in out["answer"], reason
+        assert flags["writer_used"] == "stub-primary" and flags["writer_fallbacks"] == 1
+        assert flags["writer_fallback_reasons"] == [f"openrouter-glm5:{reason}"]
+        writer = [b for b in llm.requests if b["model"] == "z-ai/glm-5"]
+        assert len(writer) == writer_attempts and all(b["max_tokens"] == 16000 for b in writer)
 
 
 async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001

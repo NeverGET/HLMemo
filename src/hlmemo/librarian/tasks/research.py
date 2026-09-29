@@ -90,7 +90,14 @@ from hlmemo.librarian.errors import AuthorityLost, LlmConfigError, PrivacyDenied
 from hlmemo.librarian.ledger import NETWORK_OUTCOMES, DbLedger, Ledger, LedgerRow
 from hlmemo.librarian.profiles import LlmProfile, for_task, named_profile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
-from hlmemo.librarian.provider import AttemptGuard, ChainBreakers, Clock, LlmResult, Provider
+from hlmemo.librarian.provider import (
+    AttemptAffordable,
+    AttemptGuard,
+    ChainBreakers,
+    Clock,
+    LlmResult,
+    Provider,
+)
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.risk_judge import ConnectFactory, direct_connector
 from hlmemo.librarian.tasks.synthesis import claims as literal_claims
@@ -3375,6 +3382,7 @@ class Researcher:
         carried_ids: list[int] | None = None,
         attempt_guard: AttemptGuard | None = None,
         observe: Callable[[dict[str, Any]], None] | None = None,
+        attempt_affordable: AttemptAffordable | None = None,
     ) -> LlmResult:
         """One logical call. Before EVERY attempt (retries and the fallback included), and before any
         byte is sent: the strict privacy gate over ``gate_ids`` (the text of this prompt) and the
@@ -3413,6 +3421,10 @@ class Researcher:
             lineage=lineage,
             attempt_policy="latency",
             attempt_guard=attempt_guard,
+            # R4 (R-9): a writer JOB with a writer profile falls back to the task profile on a schema
+            # failure or a truncation (not the other jobs, not without a writer profile)
+            schema_fallback=job in WRITER_JOBS and bool(self.writer_chain),
+            attempt_affordable=attempt_affordable,
         )
 
     @contextlib.contextmanager
