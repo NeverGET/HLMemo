@@ -264,6 +264,36 @@ async def test_a_stale_head_rejects_the_whole_apply(connect, world: World) -> No
     assert await _counts(connect) == before  # the valid D-020 pair was not written either
 
 
+@pytest.mark.parametrize(
+    ("live", "proposed"),
+    [
+        ([("A", "B"), ("B", "C")], [("C", "A")]),  # Sol 90 N-2
+        ([("C", "B"), ("B", "A")], [("A", "C")]),  # Astra 90 N-3 (the order variant)
+        ([("A", "B"), ("B", "C")], [("C", "D"), ("D", "A")]),  # live links PLUS another proposal
+    ],
+    ids=["sol-n2", "astra-n3", "live-plus-proposal"],
+)
+async def test_a_cycle_through_the_live_graph_is_dropped(  # noqa: ANN001
+    connect, world: World, live: list[tuple[str, str]], proposed: list[tuple[str, str]]
+) -> None:
+    """Astra 90 N-3 / Sol 90 N-2: the cycle check sees the live ``supersedes`` graph beyond the
+    proposal's endpoints (an intermediate item B): a proposal whose ``dst`` reaches its ``src``
+    through live links (plus the file's other proposals) writes zero events and zero links."""
+    v = await _seed(connect, world)
+    node = {"A": v["D-010"], "B": v["D-020"], "C": v["D-011"], "D": v["D-021"]}
+
+    def prop(s: str, d: str) -> dict[str, Any]:
+        return _proposal(node[s], node[d], f"span {s}{d}", f"quote {s}{d}")
+
+    first = await _write(connect, bf.apply, [prop(s, d) for s, d in live])
+    assert first["applied"] == len(live)
+    before = await _counts(connect)
+    out = await _write(connect, bf.apply, [prop(s, d) for s, d in proposed])
+    assert out["applied"] == 0 and out["event_id"] is None and out["links"] == []
+    assert out["dropped"]["cycle_with_live"] == len(proposed) and out["already_linked"] == 0
+    assert await _counts(connect) == before
+
+
 async def test_revert_is_project_wide(connect, world: World) -> None:  # noqa: ANN001
     v = await _seed(connect, world)
     first = await _write(connect, bf.apply, [_proposal(v["D-020"], v["D-010"], SPAN, QUOTE)])

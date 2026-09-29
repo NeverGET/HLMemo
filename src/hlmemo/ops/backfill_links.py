@@ -5,9 +5,13 @@ proposals file comes from a curated, reader-verified review.
 
 ``apply`` (``--apply --proposals F``; ``--dry-run`` computes the same result and rolls back): the
 ``proposed`` records of the file for ``--project`` (``min_confidence`` filter; one per logical pair;
-a pair proposed in both directions, or on a cycle with each other or with a live link, is dropped;
-a pair a live link already joins, in either direction, is ``already_linked``) become ``supersedes``
-links through the SAME path ``hlm links explicit`` writes (``ops/explicit_links``): the project's
+a pair proposed in both directions, or on a cycle with each other or with the LIVE graph, is
+dropped; a pair a live link already joins, in either direction, is ``already_linked``) become
+``supersedes`` links. The cycle check sees every live ``supersedes`` link reachable from the
+proposals' endpoints (``live_reachable``; any project), not only the links between the endpoints:
+a proposal ``src -> dst`` is dropped (``cycle_with_live``) when ``dst`` reaches ``src`` through live
+links plus the other proposals of the file (Astra 90 N-3, Sol 90 N-2). The links are written
+through the SAME path ``hlm links explicit`` writes (``ops/explicit_links``): the project's
 advisory lock, the per-item locks, then UNDER THOSE LOCKS each endpoint's head is re-checked. R-1: the
 apply is ALL OR NOTHING and validates the WHOLE FILE: EVERY ``proposed`` record labelled for
 ``--project`` (whatever it later becomes: below ``min_confidence``, a duplicate, dropped, already
@@ -130,6 +134,30 @@ def _pair(r: dict[str, Any]) -> tuple[int, int]:
     return int(r["src_logical_id"]), int(r["dst_logical_id"])
 
 
+async def live_reachable(conn: AsyncConnection, seeds: list[int]) -> set[tuple[int, int]]:
+    """``(src, dst)`` of EVERY live ``supersedes`` link reachable from ``seeds`` along ``src -> dst``
+    (any project). A cycle through a proposed edge ``u -> v`` returns from ``v`` to ``u`` over live
+    links and other proposed edges; every proposed edge starts and ends at a seed, so every live
+    link such a cycle can use is in this set (Astra 90 N-3, Sol 90 N-2)."""
+    if not seeds:
+        return set()
+    cur = await conn.execute(
+        """
+        WITH RECURSIVE reach(node) AS (
+            SELECT unnest(%(s)s::bigint[])
+          UNION
+            SELECT l.dst_logical_id FROM links l JOIN reach r ON l.src_logical_id = r.node
+             WHERE l.rel = 'supersedes' AND l.superseded_at = 'infinity' AND l.valid_to = 'infinity'
+        )
+        SELECT DISTINCT l.src_logical_id, l.dst_logical_id
+          FROM links l JOIN reach r ON l.src_logical_id = r.node
+         WHERE l.rel = 'supersedes' AND l.superseded_at = 'infinity' AND l.valid_to = 'infinity'
+        """,
+        {"s": sorted(set(seeds))},
+    )
+    return {(int(s), int(d)) for s, d in await cur.fetchall()}
+
+
 async def _validate(
     conn: AsyncConnection, pid: int, slug: str, whole: list[dict[str, Any]], *, selected: int
 ) -> None:
@@ -185,7 +213,7 @@ async def apply(
     await _lock(conn, pid)
     kept, dropped = select(records, slug, min_confidence)
     lids = sorted({lid for r in kept for lid in _pair(r)})
-    existing = await xl.live_supersedes(conn, lids)
+    existing = await live_reachable(conn, lids)  # N-3/N-2: the live graph, not only {src, dst}
     already = [r for r in kept if _pair(r) in existing or _pair(r)[::-1] in existing]  # either direction
     fresh = [r for r in kept if r not in already]
     cyclic = _cyclic([*(_pair(r) for r in fresh), *existing])
@@ -306,6 +334,7 @@ __all__ = [
     "apply",
     "candidates",
     "link_props",
+    "live_reachable",
     "read_proposals",
     "revert",
     "select",
