@@ -403,6 +403,96 @@ class ConvergenceTest(d108.D108RollbackTest):
         self.assertNotIn("rollback_safety", state)
         self.assertNotIn("rollback_destructive", state)
 
+    # ------------------------------------------------------------------ R-2 rollback safety dump
+    def killed_destructive_rollback(self):
+        """R3 over R2, the R3 env installed, a rollback killed inside its destructive phase."""
+        root, env = self.r3_deployed()
+        self.install_r3_env(root)
+        killed, output, _ = self.remote(root, dict(env, FAIL="rollback-kill"), "--rollback")
+        self.assertNotEqual(0, killed.returncode, output)
+        state = self.state(root)
+        self.assertTrue(state["rollback_destructive"], "the destructive phase began")
+        safety = Path(state["rollback_safety"])
+        # R-2: outside every rotated tier (daily/weekly/pre-upgrade)
+        self.assertEqual((root / "backups/rollback").resolve(), safety.parent.resolve())
+        return root, env, safety
+
+    def backup_until_unlocked(self, root, env):
+        """The daily backup timer's run (the harness's backup.sh), retried while the killed
+        runner's last child still holds the operation lock."""
+        for _ in range(40):
+            result = subprocess.run(
+                ["bash", str(root / "app/deploy/backup/backup.sh")],
+                env=dict(env, HLM_ENV_FILE=str(root / "prod.env")),
+                text=True,
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=60,
+            )
+            if "Another backup/restore is active" not in result.stderr:
+                return result
+            time.sleep(0.25)
+        self.fail("operation lock never released")
+
+    def test_missing_safety_dump_after_the_destructive_phase_fails_closed(self):
+        """R4 R-2 (review 77 / consult 89 (h)): a rollback_destructive=true journal whose safety dump
+        is gone (an older release's rotation, a manual delete): the retry, with every service
+        healthy, must NOT restore nothing, start the current release and close the journal. It stops
+        FAIL CLOSED: writers stay stopped, nothing restarts, no end-rollback, the journal stays open."""
+        root, env, safety = self.killed_destructive_rollback()
+        safety.unlink()
+        result, output, rows = self.rerun_until_unlocked(root, env)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("FAIL CLOSED: the destructive phase of the rollback to", output)
+        self.assertIn(f"the saved database of {NEXT} ({safety}) is missing", output)
+        self.assertNotIn("rollback aborted", output)
+        self.assertNotIn("Rollback complete", output)
+        self.assertFalse([r for r in rows if "up" in r], "nothing was started")
+        self.assertFalse([r for r in rows if "dropdb" in r[-1]], "no database was touched")
+        state = self.state(root)
+        self.assertEqual(PREVIOUS, state["rollback_in_progress"], "the journal stays open")
+        self.assertEqual(str(safety), state["rollback_safety"])
+        self.assertTrue(state["rollback_destructive"])
+        # and it stays closed on every re-run until the operator recovers by hand
+        result, output, rows = self.rerun_until_unlocked(root, env)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("FAIL CLOSED", output)
+        self.assertFalse([r for r in rows if "up" in r])
+
+    def test_daily_backups_after_a_killed_rollback_keep_its_safety_dump(self):
+        """R4 R-2: the backup timer runs (twice, the same day) after a killed destructive rollback;
+        the safety dump survives (outside rotation), and the retry's recovery restores from it."""
+        root, env, safety = self.killed_destructive_rollback()
+        for _ in range(2):
+            result = self.backup_until_unlocked(root, env)
+            self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(safety.exists())
+        result, output, _ = self.rerun_until_unlocked(root, dict(env, FAIL="rollback-up"))
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn(f"Current release {NEXT} restored (database from {safety})", output)
+        self.assertNotIn("rollback_safety", self.state(root))
+        self.assertTrue(safety.exists(), "kept (deleted by hand once settled)")
+
+    def test_rollback_refuses_while_a_backup_or_restore_holds_the_operation_lock(self):
+        """R4 R-2 (review 77): backup, restore and rollback share $HLM_BACKUP_DIR/.operation.flock;
+        a rollback started while a backup or restore holds it refuses before anything stops, and
+        the backup timer cannot start while a rollback holds it."""
+        root, env = self.r3_deployed()
+        self.install_r3_env(root)
+        (root / "backups").mkdir(exist_ok=True)
+        with open(root / "backups/.operation.flock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result, output, rows = self.remote(root, env, "--rollback")
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("Rollback refused (nothing was stopped): a backup or restore is running", output)
+        self.assertFalse([r for r in rows if "stop" in r])
+        self.assertNotIn("rollback_in_progress", self.state(root))
+        result, output, _ = self.remote(root, env, "--rollback")
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("Rollback complete", output)
+        saved = [line for line in output.splitlines() if line.startswith("Saved the current database")]
+        self.assertTrue(saved and "/backups/rollback/hlmemo-rollback-" in saved[0], saved)
+
     # ------------------------------------------------------------------ 5 accept during rollback
     def test_accept_refuses_during_an_unfinished_rollback(self):
         root, env = self.r3_deployed()

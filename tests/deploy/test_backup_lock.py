@@ -130,6 +130,61 @@ with open(os.environ["TEST_UPLOAD_LOG"], "a") as log:
                     holder.kill()
                 holder.communicate(timeout=10)
 
+    @unittest.skipUnless(shutil.which("flock"), "flock is required")
+    def test_rollback_safety_dump_is_outside_rotation_and_journalled_dumps_survive_it(self):
+        """R4 R-2 (review 77): `backup.sh --rollback-safety` writes to rollback/, a tier no rotation
+        touches: same-day timer backups keep it. A safety dump an older runner journalled in daily/
+        (release-state.json rollback_safety) survives the rotation too."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backup, scripts, commands, data = (root / name for name in ("backup", "scripts", "bin", "data"))
+            for path in (backup, scripts, commands, data):
+                path.mkdir()
+            for name in ("backup.sh", "retention.py", "upload.py"):
+                shutil.copy2(ROOT / "deploy/backup" / name, backup / name)
+            (scripts / "common.sh").write_text(
+                'dc() { printf "%s\\n" "$TEST_PAYLOAD"; }\n'
+                'backup_env() { printf "S3_BUCKET=\\n"; }\n'
+                'backup_dir() { printf "%s\\n" "$HLM_BACKUP_DIR"; }\n'
+                'backup_path() { printf "%s\\n" "$1"; }\n'
+            )
+            frozen_date = commands / "date"
+            frozen_date.write_text('#!/bin/sh\nprintf "2026-09-22T100000Z\\n"\n')
+            frozen_date.chmod(0o755)
+            (data / "daily").mkdir()
+            legacy = data / "daily/hlmemo-2026-09-22T090000Z-legacy.dump"
+            legacy.write_text("an older runner's journalled safety dump")
+            state = root / "release-state.json"
+            state.write_text(json.dumps({"rollback_in_progress": "a" * 40, "rollback_safety": str(legacy)}))
+            environment = dict(
+                os.environ,
+                PATH=f"{commands}:{os.environ['PATH']}",
+                HLM_BACKUP_DIR=str(data),
+                HLM_RELEASE_STATE_FILE=str(state),
+            )
+
+            def run(*args, payload="db"):
+                return subprocess.run(
+                    ["bash", str(backup / "backup.sh"), *args],
+                    env=dict(environment, TEST_PAYLOAD=payload),
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+
+            safety = run("--rollback-safety", payload="current database")
+            self.assertEqual(0, safety.returncode, safety.stderr)
+            dump = Path(safety.stdout.strip())
+            self.assertEqual(data / "rollback", dump.parent)
+            self.assertTrue(dump.name.startswith("hlmemo-rollback-2026-09-22T100000Z-"))
+            self.assertIn("outside every rotation", safety.stderr)
+            daily = [Path(run(payload=f"timer {i}").stdout.strip()) for i in range(3)]
+            self.assertTrue(dump.exists(), "the rollback safety dump survives the timer's rotation")
+            self.assertEqual("current database\n", dump.read_text())
+            self.assertTrue(legacy.exists(), "a journalled daily/ safety dump survives too")
+            self.assertEqual({daily[-1], legacy}, set((data / "daily").glob("*.dump")))
+            self.assertEqual(64, run("--rollback-safety", "extra").returncode)
+
 
 class BackupEnvironmentTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("docker"), "Docker Compose parser is required")

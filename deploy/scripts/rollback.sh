@@ -23,6 +23,12 @@
 # so a retry reuses that dump; secret-bearing copies are journalled and cleaned idempotently.
 # accept: verifies the running release, deletes every recorded env backup (retired secrets) and, for
 # a W0+ current release, sweeps any unrecorded *.pre-w0-* next to the env files.
+# R4 R-2 (review 77, consult 89): a rollback holds the backup/restore operation lock
+# ($HLM_BACKUP_DIR/.operation.flock, the lock backup.sh and restore.sh take) from before anything
+# stops to its end, recovery included; its safety dump goes to $HLM_BACKUP_DIR/rollback/
+# (backup.sh --rollback-safety), a tier no rotation touches; and once the destructive phase began, a
+# recovery that finds that dump missing FAILS CLOSED: writers stay stopped, nothing restarts and the
+# journal stays open (no end-rollback), because the database is then in an unknown state.
 # shellcheck disable=SC2016,SC2217
 set -Eeuo pipefail
 umask 077
@@ -112,6 +118,13 @@ case $mode in
   rollback) ;;
   *) echo "unknown mode $mode" >&2; exit 64 ;;
 esac
+# R4 R-2: backup, restore and rollback share ONE lock, held from here to the end (recovery
+# included): the backup timer (rotation) or a restore can never change the database or its dumps
+# while this runner stops, dumps, restores or recovers. A held lock refuses before anything stops.
+backup_root=$(backup_dir)
+mkdir -p "$backup_root"
+exec 8>"$backup_root/.operation.flock"
+flock -n 8 || refuse "a backup or restore is running ($backup_root/.operation.flock): retry when it has finished"
 
 previous=$(state previous_ref)
 dump=$(state previous_dump)
@@ -220,6 +233,13 @@ recover_current() {
   echo "Rollback step failed; restoring the current release $current." >&2
   rb stop caddy api worker >&2
   stop_librarian >&2
+  if ((db_replaced)) && [[ ! -f ${safety:-} ]]; then
+    # R4 R-2: the database was (being) replaced and the saved current database is gone: its state
+    # is unknown. Starting the current release on it, or closing the journal, would pass a
+    # half-restored database off as recovered. FAIL CLOSED instead.
+    echo "FAIL CLOSED: the destructive phase of the rollback to $previous began, but the saved database of $current (${safety:-none recorded}) is missing, so the database is in an unknown state. Writers stay stopped, nothing was restarted and the rollback journal stays open (no end-rollback). Recover by hand (RUNBOOK \"R4 release\", full rollback): restore a dump you trust with deploy/backup/restore.sh, or the VM snapshot." >&2
+    exit 1
+  fi
   git checkout --detach "$current" >&2
   for mounted in deploy/Caddyfile deploy/scripts/worker_entrypoint.py deploy/scripts/worker_health.py; do
     [[ ! -e $mounted ]] || chmod go+r "$mounted"
@@ -257,7 +277,8 @@ if [[ " ${previous_services[*]} " == *" librarian "* ]]; then stop_librarian; el
 # D-116 #4: taken ONCE per attempt and journalled before any database change; a retry reuses it
 # and never re-snapshots a half-restored database.
 if [[ -z $safety ]]; then
-  safety=$(bash deploy/backup/backup.sh)
+  # R4 R-2: outside every rotated tier, under the operation lock this runner holds (fd 8)
+  safety=$(HLM_OPERATION_LOCK_HELD=1 bash deploy/backup/backup.sh --rollback-safety)
   python3 "$helpers/release_state.py" rollback-mark "$parent_dir" --safety "$safety"
   printf 'Saved the current database before replacing it: %s\n' "$safety"
 else
