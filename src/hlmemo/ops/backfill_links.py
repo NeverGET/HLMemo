@@ -12,7 +12,10 @@ proposals' endpoints (``live_reachable``; any project), not only the links betwe
 a proposal ``src -> dst`` is dropped (``cycle_with_live``) when ``dst`` reaches ``src`` through live
 links plus the other proposals of the file (Astra 90 N-3, Sol 90 N-2). The links are written
 through the SAME path ``hlm links explicit`` writes (``ops/explicit_links``): the project's
-advisory lock, the per-item locks, then UNDER THOSE LOCKS each endpoint's head is re-checked. R-1: the
+advisory lock, then the per-item locks of every endpoint of the file, and only then, UNDER THOSE
+LOCKS, every check: heads, projects, live links, cycles, duplicates (Sol 90 N-3). Limit: the locks
+cover the file's endpoints only; a concurrent link between two OTHER items on a longer path is not
+serialized with the apply (no writer takes a project-wide supersession lock). R-1: the
 apply is ALL OR NOTHING and validates the WHOLE FILE: EVERY ``proposed`` record labelled for
 ``--project`` (whatever it later becomes: below ``min_confidence``, a duplicate, dropped, already
 linked or fresh; Astra 90 R-1) is checked under the locks. If any record's head moved (``stale``: not
@@ -212,6 +215,12 @@ async def apply(
     pid = await xl.project_id(conn, slug)
     await _lock(conn, pid)
     kept, dropped = select(records, slug, min_confidence)
+    whole = candidates(records, slug)  # R-1: the WHOLE file, not only the fresh pairs
+    # Sol 90 N-3: the endpoint locks FIRST. Every check below (heads, projects, live links, cycles,
+    # duplicates) runs UNDER them, so a concurrent writer of a link between two endpoints (explicit,
+    # librarian: the same per-item locks) either committed before these reads or waits for us.
+    await q.lock_logical_ids(conn, sorted({lid for r in whole for lid in _pair(r)}))
+    await _validate(conn, pid, slug, whole, selected=len(kept))
     lids = sorted({lid for r in kept for lid in _pair(r)})
     existing = await live_reachable(conn, lids)  # N-3/N-2: the live graph, not only {src, dst}
     already = [r for r in kept if _pair(r) in existing or _pair(r)[::-1] in existing]  # either direction
@@ -230,9 +239,6 @@ async def apply(
         "event_id": None,
         "links": [],
     }
-    whole = candidates(records, slug)  # R-1: the WHOLE file, not only the fresh pairs
-    await q.lock_logical_ids(conn, sorted({lid for r in whole for lid in _pair(r)}))
-    await _validate(conn, pid, slug, whole, selected=len(kept))
     if not fresh:
         return out
     from hlmemo.librarian.actor import materialize

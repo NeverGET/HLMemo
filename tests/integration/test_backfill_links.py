@@ -8,6 +8,8 @@ automatic proposer of wf-supersede-backfill is not ported).
 * R-1: under the endpoint locks BOTH heads must be the proposal's versions AND belong to the
   requested project, for EVERY record of the file (before the ``already_linked`` filter); any stale
   or foreign record rejects the WHOLE apply (zero events, zero links).
+* Astra 90 N-3 / Sol 90 N-2, N-3: the endpoint locks come FIRST and every check runs under them;
+  the cycle check sees the live graph beyond the endpoints (an intermediate item).
 * ``revert`` needs ``--project`` and supersedes every live backfill link of the project in ONE
   event (project-wide); apply -> revert round-trips and replays deterministically.
 """
@@ -344,3 +346,64 @@ async def test_cli(db_dsn: str, connect, world: World, tmp_path: Path) -> None: 
     assert human.exit_code == 0 and "reverted=1" in human.output and "project-wide" in human.output
     missing = await run("links", "backfill", "--project", "nope", "--dsn", db_dsn, "--revert")
     assert missing.exit_code == 64
+
+
+async def _link_under_the_endpoint_locks(conn, world: World, src: Any, dst: Any) -> None:  # noqa: ANN001
+    """A concurrent explicit/librarian-style writer: the SAME per-item locks, then one evented
+    ``supersedes`` link ``src -> dst`` (left uncommitted: the caller commits)."""
+    from hlmemo.db import write_queries as q
+    from hlmemo.librarian.actor import materialize
+    from hlmemo.ops import explicit_links as xl
+
+    await q.lock_logical_ids(conn, [src.logical_id, dst.logical_id])
+    action = {
+        "op": "link_insert",
+        "rel": "supersedes",
+        "src_logical_id": src.logical_id,
+        "dst_logical_id": dst.logical_id,
+        "dst_version_id": None,
+        "valid_from": "2026-09-23T00:00:00.000000Z",
+        "props": {"by": "explicit", "scope": "whole", "quote": "concurrent"},
+        "assessed": {str(src.logical_id): src.version_id, str(dst.logical_id): dst.version_id},
+    }
+    records, _ = await materialize(conn, None, None, [action])
+    assert len(records) == 1
+    await xl._record(conn, world.main_id, {"actor": "test", "op": "concurrent_writer"}, records)
+
+
+async def test_a_concurrent_reverse_link_is_seen_under_the_locks(connect, world: World) -> None:  # noqa: ANN001
+    """Sol 90 N-3: transaction 1 holds the endpoint locks and commits ``B -> A``; the backfill of
+    ``A -> B`` waits for those locks, THEN reads the live links and runs its checks: it writes
+    nothing (no 2-cycle, no duplicate)."""
+    v = await _seed(connect, world)
+    a, b = v["D-020"], v["D-010"]
+    before = await _counts(connect)
+    holder = await connect()
+    try:
+        await _link_under_the_endpoint_locks(holder, world, b, a)  # B -> A, uncommitted, locks held
+        backfill = asyncio.create_task(_write(connect, bf.apply, [_proposal(a, b, SPAN, QUOTE)]))
+        async with await connect() as probe:  # the backfill is blocked on an endpoint lock
+            for _ in range(200):
+                cur = await probe.execute(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+                    " AND wait_event_type = 'Lock' AND wait_event = 'advisory'"
+                )
+                (waiting,) = await cur.fetchone()
+                await probe.commit()
+                if waiting or backfill.done():
+                    break
+                await asyncio.sleep(0.05)
+        assert waiting == 1 and not backfill.done()
+        await holder.commit()
+    finally:
+        await holder.close()
+    out = await asyncio.wait_for(backfill, 30)
+    assert out["applied"] == 0 and out["event_id"] is None and out["links"] == []
+    assert out["already_linked"] == 1  # the live B -> A joins the pair: never a second, reverse edge
+    live = await _rows(
+        connect,
+        "SELECT src_logical_id, dst_logical_id FROM links"
+        " WHERE rel = 'supersedes' AND superseded_at = 'infinity' ORDER BY link_id",
+    )
+    assert live == [(b.logical_id, a.logical_id)]  # no 2-cycle, no duplicate
+    assert await _counts(connect) == (before[0] + 1, before[1] + 1)  # the holder's link and event only
