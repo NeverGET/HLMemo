@@ -93,6 +93,10 @@ class TaskSpec:
     system: str
     schema: dict[str, Any]
     max_tokens: int
+    #: R4 (R-6): the ``llm_calls.task`` of this spec's rows when it differs from ``name`` (memory.ask's
+    #: prose writer JOB is ``research.prose``, so ops status can count the writer's calls); routing
+    #: (the per-task fallback), cassettes and qualification keep ``name``
+    ledger_task: str | None = None
 
     def system_for(self, overrides: dict[str, Any] | None) -> str:
         extra = ((overrides or {}).get(self.name) or {}).get("system_append")

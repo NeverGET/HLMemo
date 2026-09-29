@@ -260,9 +260,32 @@ async def _status(args: argparse.Namespace, settings: Any) -> int:
     )
     for line in chain_lines(lib.get("chains") or {}):
         sys.stdout.write(line + "\n")
+    for line in research_lines(st.get("research") or {}):
+        sys.stdout.write(line + "\n")
     for j in st["jobs"]:
         sys.stdout.write(f"jobs        {j['kind']:<14} {j['status']:<8} {j['count']}\n")
     return rc
+
+
+def research_lines(r: dict[str, Any]) -> list[str]:
+    """R4 (R-6): who wrote memory.ask's prose answers (24 h), and a WARNING line when more than 10%
+    of them came from another profile than the configured writer."""
+    if not r:
+        return []
+    lines = [
+        f"research    enabled={r.get('enabled')} mode={r.get('answer_mode')} writer={r.get('writer_profile')}"
+        f" used_24h={r.get('writer_used_24h')} fallback_24h={r.get('writer_fallback_24h')}"
+        f" outcomes_24h={r.get('writer_outcomes_24h')}"
+    ]
+    share = float(r.get("writer_fallback_share_24h") or 0.0)
+    if share > service.WRITER_FALLBACK_WARN:
+        answered = sum((r.get("writer_used_24h") or {}).values())
+        lines.append(
+            f"WARNING     writer fallback {share:.0%} of the prose answers in 24 h"
+            f" ({r.get('writer_fallback_24h')} of {answered}): {r.get('writer_profile')} did not write them"
+            " (see outcomes_24h)"
+        )
+    return lines
 
 
 def chain_lines(chains: dict[str, Any]) -> list[str]:

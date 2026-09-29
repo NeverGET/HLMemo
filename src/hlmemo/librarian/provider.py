@@ -729,7 +729,7 @@ class Provider:
         self, profile: LlmProfile, task: TaskSpec, job_id: int | None, outcome: str, **kw: Any
     ) -> LedgerRow:
         return LedgerRow(
-            task=task.name,
+            task=task.ledger_task or task.name,  # R4 (R-6): research.prose for the writer JOB
             profile=profile.name,
             model_id=profile.model_id,
             prompt_version=task.prompt_version,

@@ -127,6 +127,8 @@ WRITER_TIMEOUT_S = 12.0
 #: fallback, qualification), the candidates it sees, the characters of each one's text, the handles
 #: kept from its answer, and its default time (``HLM_RESEARCH_RERANK_TIMEOUT_S``)
 RERANK_TASK = "rerank"
+#: R4 (R-6): the ``llm_calls.task`` of the JOB prose's rows (the writer); ops status reads them
+WRITER_LEDGER_TASK = "research.prose"
 RERANK_CANDIDATES = 30
 RERANK_TEXT_CHARS = 300
 RERANK_KEEP = 8
@@ -3103,6 +3105,16 @@ def research_chain(settings: Any) -> list[LlmProfile]:
     return [p for p in chain if TASK not in p.disabled_tasks]
 
 
+def writer_name(settings: Any) -> str:
+    """R4 (R-6, R-14): the profile configured to write the prose answer: ``HLM_RESEARCH_WRITER_PROFILE``,
+    else the research primary (the profile that writes when no writer profile is set)."""
+    name = str(getattr(settings, "research_writer_profile", None) or "").strip()
+    if name:
+        return name
+    chain = research_chain(settings)
+    return chain[0].name if chain else str(getattr(settings, "profile", "") or "")
+
+
 def writer_chain(settings: Any, task_chain: list[LlmProfile]) -> list[LlmProfile]:
     """D-171: the chain of the jobs that write the prose answer (``WRITER_JOBS``): the named profile
     ``HLM_RESEARCH_WRITER_PROFILE`` (resolved like ``HLM_FALLBACK_PROFILE__<TASK>``: its own file,
@@ -3304,7 +3316,8 @@ class Researcher:
         if job == RERANK_TASK and self.rerank_spec is not None:
             return self.rerank_spec
         if job == "prose":  # R4 (B2): HLM_RESEARCH_PROSE_MAX_TOKENS (expand keeps its own, R-17)
-            return replace(self.spec, max_tokens=self.prose_max_tokens)
+            # R4 (R-6): its ledger rows are research.prose (ops status counts the writer's calls)
+            return replace(self.spec, max_tokens=self.prose_max_tokens, ledger_task=WRITER_LEDGER_TASK)
         return replace(self.spec, max_tokens=JOB_MAX_TOKENS.get(job, self.spec.max_tokens))
 
     def chain_for_job(self, job: str) -> list[LlmProfile] | None:
@@ -3481,6 +3494,7 @@ __all__ = [
     "TASK",
     "TEXT_JOBS",
     "WRITER_JOBS",
+    "WRITER_LEDGER_TASK",
     "WRITER_TIMEOUT_S",
     "Claim",
     "Excerpt",
@@ -3551,5 +3565,6 @@ __all__ = [
     "validate_cited",
     "validate_prose",
     "writer_chain",
+    "writer_name",
     "write_user",
 ]

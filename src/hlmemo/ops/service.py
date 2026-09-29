@@ -494,6 +494,7 @@ async def status(conn: AsyncConnection) -> dict[str, Any]:
     admin = await q.admin_state(conn)
     return {
         "librarian": await librarian_status(conn),
+        "research": await research_status(conn),
         "jobs": jobs,
         "worker": {
             "ready_jobs": int(ledger.get("ready") or 0),
@@ -555,6 +556,56 @@ async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[
     out["breaker_source"] = "ledger"
     out["llm_calls_15m"] = int(row[1]) if row else 0
     return out
+
+
+#: R4 (R-6): the window of the writer counters, and the fallback share that prints a warning
+WRITER_WINDOW = "24 hours"
+WRITER_FALLBACK_WARN = 0.10
+#: the ledger outcomes of an answered call (the profile that wrote)
+_ANSWERED = ("ok", "schema_retry_ok")
+
+
+async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[str, Any]:
+    """R4 (R-6): who wrote memory.ask's prose answers in the last 24 h, from the ``llm_calls`` rows of
+    the writer JOB (``task = research.prose``; this process's configuration names the writer).
+
+    ``writer_profile``: the configured writer (``HLM_RESEARCH_WRITER_PROFILE``, else the research
+    primary); ``writer_used_24h``: ``{profile: answered calls}``; ``writer_fallback_24h``: answered
+    calls whose writer is NOT the configured one; ``writer_outcomes_24h``: ``{outcome: rows}`` (every
+    attempt: ok, schema_fail, http_error, timeout, breaker_open, ...); ``writer_fallback_share_24h``:
+    the fallback share of the answered calls (``ops status`` warns above 10%)."""
+    from hlmemo.config import get_settings
+    from hlmemo.librarian.errors import LlmConfigError
+    from hlmemo.librarian.tasks import research as rs
+
+    settings = settings or get_settings()
+    try:
+        configured = rs.writer_name(settings)
+    except (LlmConfigError, OSError, ValueError):
+        configured = str(getattr(settings, "research_writer_profile", None) or settings.profile)
+    cur = await conn.execute(
+        "SELECT profile, outcome, count(*) FROM llm_calls WHERE task = %s"
+        f" AND created_at > now() - interval '{WRITER_WINDOW}' GROUP BY profile, outcome ORDER BY 1, 2",
+        (rs.WRITER_LEDGER_TASK,),
+    )
+    used: dict[str, int] = {}
+    outcomes: dict[str, int] = {}
+    for profile, outcome, n in await cur.fetchall():
+        outcomes[str(outcome)] = outcomes.get(str(outcome), 0) + int(n)
+        if outcome in _ANSWERED:
+            used[str(profile)] = used.get(str(profile), 0) + int(n)
+    answered = sum(used.values())
+    fallback = sum(n for p, n in used.items() if p != configured)
+    return {
+        "enabled": bool(getattr(settings, "research_enabled", False)),
+        "answer_mode": getattr(settings, "research_answer_mode", None),
+        "writer_profile": configured,
+        "writer_configured": getattr(settings, "research_writer_profile", None) or None,
+        "writer_used_24h": used,
+        "writer_fallback_24h": fallback,
+        "writer_outcomes_24h": outcomes,
+        "writer_fallback_share_24h": round(fallback / answered, 4) if answered else 0.0,
+    }
 
 
 #: open current rows = the rows the UNIQUE index mv_source_owner (0007) covers
