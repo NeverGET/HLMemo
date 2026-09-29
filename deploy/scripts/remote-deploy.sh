@@ -489,7 +489,12 @@ if [[ -n $previous ]]; then
     [[ -n $id ]] || continue
     running_fps+=("$service=$(docker inspect --format '{{json .Config.Env}}' "$id" </dev/null | python3 deploy/scripts/llm_env_release.py fingerprint -)")
   done
-  python3 deploy/scripts/llm_env_release.py provenance "$llm_env_file" "${running_fps[@]}" </dev/null || {
+  # R4 R-4: every service of the previous model that reads llm.env must report (a missing
+  # librarian is a failure, not a skipped comparison); only a model without the librarian (pre-W2a)
+  # has the api alone
+  required=api
+  if [[ " ${rollback_services[*]} " == *" librarian "* ]]; then required=api,librarian; fi
+  python3 deploy/scripts/llm_env_release.py provenance "$llm_env_file" --require "$required" "${running_fps[@]}" </dev/null || {
     echo "The llm.env on disk is not the env the running $previous was created with (above): refusing before anything stops. Finish the env switch (install_llm_env.sh recreates librarian api) or put the running release's env back, then deploy (D-116)." >&2
     false
   }

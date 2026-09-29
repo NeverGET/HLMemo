@@ -199,7 +199,10 @@ if [[ -n $previous_llm_env && -z $newer_llm_env ]]; then
     [[ -n $id ]] || continue
     running_fps+=("$service=$(docker inspect --format '{{json .Config.Env}}' "$id" | python3 "$helpers/llm_env_release.py" fingerprint -)")
   done
-  python3 "$helpers/llm_env_release.py" provenance "$llm_env_file" "${running_fps[@]}" ||
+  # R4 R-4: every service of the current model that reads llm.env must report
+  required=api
+  if [[ " $(current_services) " == *" librarian "* ]]; then required=api,librarian; fi
+  python3 "$helpers/llm_env_release.py" provenance "$llm_env_file" --require "$required" "${running_fps[@]}" ||
     refuse "the llm.env on disk is not the env the running $current was created with (above): finish the env switch (install_llm_env.sh) first"
   newer_llm_env=$(python3 "$helpers/llm_env_release.py" snapshot "$llm_env_file" "$current")
   [[ $newer_llm_env == absent ]] || python3 "$helpers/release_state.py" record-pending "$parent_dir" "$newer_llm_env"
