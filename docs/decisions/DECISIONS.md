@@ -1514,3 +1514,17 @@ Other findings:
 - The eval tree also needed HTTP_TIMEOUT_S and DETACHED_HOLD_MAX_S raised.
 
 Next: Gemini at reasoning_effort low/minimal on the real system, scored by readers only.
+D-198 | 2026-09-29 | ACCEPTED | **Gemini 3.8 Flash reasoning HIGH is no better than MEDIUM (adjudicated correct .72 vs .74, within run noise) at +39% cost and ~2× p95. Owner: the R4 prod writer and the final test use MEDIUM; the R4 caps are HOUR 3 / DAY 8 / MONTH 60 USD.**
+
+Measurement (same system as D-197, Google API direct, reasoning_effort high, PROSE max_tokens 16k):
+
+| Setting | Correct (adjudicated) | Contradiction | Negatives fabricated | p95 | $/question 2026 → 2027 |
+|---|---|---|---|---|---|
+| high (G3 / G4, reader-only: every answer read) | .76 / .68 | .00 / .04 | 0/10, 0/10 | 53–69 s | .0298 → .0562 |
+| medium (G1 / G2, judge-assisted D-195) | .78 / .70 | .04 / .02 | 1/10, 0/10 | 33–38 s | .0214 → .0405 |
+
+- High thinks ~2.2× longer than medium (mean writer output 3.4k tokens, max 15.4k); no truncation at 16k. Standard tests are still saturated (WS .94, ORACLE-sel .92).
+- Grading rule, applied to all real-system sets: an EMPTY answer to a negative question (status insufficient_evidence) is a correct abstention. D-195 never packets such answers. One of three readers graded them "no".
+- Price/performance ranking (private report 04): in the production view, luna low > Gemini medium > Gemini high > DeepSeek max. Latency ignored: Gemini medium first. No writer reaches .80 correct (oracle ceiling .78, D-193).
+- Monthly budget incl. VPS at 20 / 100 / 300 asks per day, Gemini medium: $24 / $77 / $208 (2026) → $35 / $134 / $380 (2027). With luna: $13 / $23 / $49.
+- Consequence for R4: Gemini fails both C6 gates (p95 ≤ 20 s, ≤ $0.01/q). The prod final test therefore measures quality on prod data; it cannot self-certify Production Ready. R4 plan v2 pre-registers what the result means (Astra R-16). The OpenRouter prod key keeps its own $50/month provider-side limit as the outer guard.
