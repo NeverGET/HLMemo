@@ -40,7 +40,9 @@ evaluate --llm-env present|absent --librarian FILE --api FILE [--release r3|r4] 
     when the writer profile's price_valid_until has passed or is missing (R-5; a WARNING within 14
     days) or when ``--writer-probe api`` (python -m hlmemo.ops probe-writer in the api container,
     the api's own writer credential) does not pass (R-14; only its ok/profile/status/latency_ms
-    fields are printed). An unset writer skips R-5 and R-14. Only an UNLABELLED llm.env is
+    fields are printed). With the writer UNSET the research PRIMARY (HLM_PROFILE) writes: the
+    probe must then report that profile, and R-5 applies only when its profile file carries a
+    price_valid_until. Only an UNLABELLED llm.env is
     the R2 env of the D-108 interim: every switch any manifest keeps off must be off, it passes the
     R2 checks and the result line says so; an unknown label fails.
 job --version-id V [--wait S]                INSIDE the api container (remote_gates.sh
@@ -133,6 +135,12 @@ R4_TRACKED = (
     "HLM_RESEARCH_PROSE_MAX_TOKENS",
     "HLM_LLM_TIMEOUT_S",
 )
+#: the research PRIMARY: research_chain = profile_chain(settings, "research"), whose head is
+#: settings.profile (HLM_PROFILE); it writes when no writer is set (§6.2(b))
+PRIMARY_KEY = "HLM_PROFILE"
+#: ... and when HLM_PROFILE's file lists research in disabled_tasks: the research fallback, then the
+#: default fallback (the order profile_chain resolves them in)
+RESEARCH_FALLBACK_KEYS = ("HLM_FALLBACK_PROFILE__RESEARCH", "HLM_FALLBACK_PROFILE")
 #: R4 R-11: the research tracer's directory; it must be unset in the api (any env file)
 TRACE_KEY = "HLM_RESEARCH_TRACE_DIR"
 #: R4 R-5: a writer profile's prices are trusted until its price_valid_until; WARN this many days ahead
@@ -141,6 +149,7 @@ PRICE_WARN_DAYS = 14
 PROBE_FIELDS = ("ok", "profile", "status", "latency_ms")
 PROBE_TIMEOUT_S = 120.0
 _PROFILE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+_STATUS_TOKEN = re.compile(r"[a-z][a-z0-9_]{0,31}")
 RELEASE_MANIFESTS: dict[str, dict[str, Any]] = {
     "r3": {
         # R3 predates memory.ask: an R3 env on a newer image keeps it (and its spend) off
@@ -290,6 +299,25 @@ def _writer_report(name: str) -> dict[str, Any]:
     return out
 
 
+def _research_head(s: Any) -> tuple[bool | None, dict[str, Any] | None]:
+    """R4: the head of the research chain, the profile that writes when no writer is set (the rule
+    probe-writer follows): HLM_PROFILE, unless its profile file lists ``research`` in
+    disabled_tasks; then HLM_FALLBACK_PROFILE__RESEARCH, else HLM_FALLBACK_PROFILE. Returns
+    (primary_research_disabled, that profile's report)."""
+    name = getattr(s, "profile", None)
+    if not name:
+        return None, None
+    try:
+        from hlmemo.librarian.profiles import profile_disabled_tasks, task_fallback_names
+
+        disabled = "research" in profile_disabled_tasks(str(name))
+    except Exception as exc:  # noqa: BLE001
+        return None, {"profile": str(name), "error": type(exc).__name__}
+    if disabled:
+        name = task_fallback_names(s).get("research") or getattr(s, "fallback_profile", None)
+    return disabled, (_writer_report(str(name)) if name else None)
+
+
 def collect(service: str, with_probe: bool, wait_heartbeat_s: float = 0.0) -> int:
     from hlmemo.config import get_settings
     from hlmemo.librarian.profiles import describe_chains, named_profile, profile_chain
@@ -300,6 +328,7 @@ def collect(service: str, with_probe: bool, wait_heartbeat_s: float = 0.0) -> in
     except Exception as exc:  # noqa: BLE001 - the type only: a validation message could quote a value
         emit({**out, "error": f"settings: {type(exc).__name__}"})
         return 0
+    primary_research_disabled, research_head = _research_head(s)
     out.update(
         enabled=bool(s.librarian_enabled),
         role=s.librarian_role,
@@ -331,6 +360,10 @@ def collect(service: str, with_probe: bool, wait_heartbeat_s: float = 0.0) -> in
                 if getattr(s, "research_writer_profile", None)
                 else None
             ),
+            # the head of the research chain (HLM_PROFILE, or the research fallback when its file
+            # disables research): it writes when no writer is set, and probe-writer probes it
+            "primary": research_head,
+            "primary_research_disabled": primary_research_disabled,
             "trace_dir_set": bool(getattr(s, "research_trace_dir", None) or os.environ.get(TRACE_KEY)),
         },
     )
@@ -620,9 +653,41 @@ def run_writer_probe(source: str) -> dict[str, Any]:
             result["profile"] = None
         for key in ("status", "latency_ms"):
             value = result[key]
+            if key == "status" and isinstance(value, str) and _STATUS_TOKEN.fullmatch(value):
+                continue  # e.g. "price_expired" (the profile's price date passed: no call made)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 result[key] = None
     return {"exit": exit_code, "result": result}
+
+
+def _price_date_failures(
+    name: str, until: Any, required: bool, today: datetime.date, warnings: list[str]
+) -> list[str]:
+    """R4 R-5: the writing profile's price_valid_until: FAIL when passed or unparsable (or missing
+    when ``required``: the Gemini writers carry it), WARN (appended to ``warnings``) within
+    PRICE_WARN_DAYS. A research primary without the field is not checked."""
+    if until is None and not required:
+        return []
+    try:
+        valid = datetime.date.fromisoformat(str(until))
+    except ValueError:
+        return [
+            f"writer profile {name}: price_valid_until={until or '-'} is missing or not YYYY-MM-DD"
+            " (R-5: prices without a validity date are not trusted)"
+        ]
+    if valid < today:
+        return [
+            f"writer profile {name}: price_valid_until {valid} has passed (today {today}): its"
+            " prices are stale, so the spend guard would under-book; ship a profile with the new"
+            " prices and date (R-5)"
+        ]
+    if (valid - today).days <= PRICE_WARN_DAYS:
+        warnings.append(
+            f"writer profile {name}: price_valid_until {valid} is within {PRICE_WARN_DAYS} days"
+            f" (today {today}): ship the new prices and date before it passes, or"
+            " evaluate --release r4 FAILS (R-5)"
+        )
+    return []
 
 
 def _writer_failures(
@@ -631,7 +696,9 @@ def _writer_failures(
     """R4 (the manifest's "writer_checks"): (failures, warnings) for R-11 (the api runs without the
     research tracer), R-5 (the writer profile's price_valid_until: FAIL when passed or missing, WARN
     within PRICE_WARN_DAYS) and R-14 (probe-writer in the api container: exit 0, ok, the api's own
-    writer). An UNSET writer (the research profile writes, §6.2(b)) skips R-5 and R-14."""
+    writer). With the writer UNSET (§6.2(b)) the research PRIMARY writes (HLM_PROFILE, the head of the
+    research chain): probe-writer probes it and must report that name (R-14, still required), and
+    R-5 applies only when its profile file carries a price_valid_until (skipped when absent)."""
     failures: list[str] = []
     warnings: list[str] = []
     research = api.get("research")
@@ -644,15 +711,35 @@ def _writer_failures(
             f"the api runs with {TRACE_KEY} set (R-11: the research tracer writes questions, excerpts and"
             " answers to files; remove it from llm.env/app.env, then stack.sh up -d --no-deps librarian api)"
         )
-    name = (api.get("manifest_env") or {}).get(WRITER_KEY)
+    env = api.get("manifest_env") or {}
+    name, key, price_required = env.get(WRITER_KEY), WRITER_KEY, True
     writer = research.get("writer")
     if not name and not writer:
-        print("writer: unset (the research profile writes); probe-writer and the price date do not apply")
-        return failures, warnings
+        # the head of the research chain writes; probe-writer probes it (its rule: HLM_PROFILE, or,
+        # when that profile's file disables research, the research fallback); its price date only
+        # when its profile carries one
+        disabled = research.get("primary_research_disabled")
+        if disabled is None:
+            failures.append(
+                "the api report does not say whether its primary may run research (collect): the"
+                " research chain's head is unknown (R-14)"
+            )
+            return failures, warnings
+        key = (
+            next((k for k in RESEARCH_FALLBACK_KEYS if env.get(k)), RESEARCH_FALLBACK_KEYS[-1])
+            if disabled
+            else PRIMARY_KEY
+        )
+        name, price_required = env.get(key), False
+        writer = research.get("primary")
+        if not name:
+            failures.append(f"the api runs no {key}: the research chain's head is unknown (R-14)")
+            return failures, warnings
+        print(f"writer: unset (the research primary {name} writes; {key})")
     if not isinstance(writer, dict) or writer.get("profile") != name or writer.get("error"):
         detail = writer.get("error") if isinstance(writer, dict) else None
         failures.append(
-            f"the api's writer profile does not load as {WRITER_KEY}={name or '-'} says"
+            f"the api's writer profile does not load as {key}={name or '-'} says"
             f" ({detail or 'the effective writer differs'}; profiles/<name>.toml,"
             " stack.sh up -d --no-deps librarian api)"
         )
@@ -661,26 +748,7 @@ def _writer_failures(
     print(
         f"writer: {name} key={'set' if writer.get('key_set') else 'MISSING'} price_valid_until={until or '-'}"
     )
-    try:
-        valid = datetime.date.fromisoformat(str(until))
-    except ValueError:
-        failures.append(
-            f"writer profile {name}: price_valid_until={until or '-'} is missing or not YYYY-MM-DD"
-            " (R-5: prices without a validity date are not trusted)"
-        )
-    else:
-        if valid < today:
-            failures.append(
-                f"writer profile {name}: price_valid_until {valid} has passed (today {today}): its"
-                " prices are stale, so the spend guard would under-book; ship a profile with the new"
-                " prices and date (R-5)"
-            )
-        elif (valid - today).days <= PRICE_WARN_DAYS:
-            warnings.append(
-                f"writer profile {name}: price_valid_until {valid} is within {PRICE_WARN_DAYS} days"
-                f" (today {today}): ship the new prices and date before it passes, or"
-                " evaluate --release r4 FAILS (R-5)"
-            )
+    failures += _price_date_failures(name, until, price_required, today, warnings)
     if writer_probe is None:
         failures.append("the writer probe did not run (evaluate --writer-probe api; R-14)")
         return failures, warnings
@@ -692,7 +760,7 @@ def _writer_failures(
         failures.append(f"the writer probe could not run in the api container ({probe['error']}; R-14)")
     elif probe.get("exit") != 0:
         failures.append(
-            f"the writer probe FAILED in the api container (exit {probe.get('exit')}, HTTP"
+            f"the writer probe FAILED in the api container (exit {probe.get('exit')}, status"
             f" {result.get('status') or '-'}): the api's writer credential or endpoint does not answer"
             " (hlm_ops.sh ... probe-writer; the probe's output is not shown; R-14)"
         )
@@ -829,7 +897,8 @@ def evaluate(
         return 1
     common = f"enabled=true mode={R2_MODE} role={R2_ROLE} risk_judge={','.join(api['risk_judge'])}"
     if mode is not None and RELEASE_MANIFESTS[mode].get("writer_checks"):
-        writer = (api.get("manifest_env") or {}).get(WRITER_KEY) or "unset(research profile)"
+        env = api.get("manifest_env") or {}
+        writer = env.get(WRITER_KEY) or f"unset(research primary {env.get(PRIMARY_KEY) or '-'})"
         print(
             f"RESULT librarian PASS llm.env=present release={mode} manifest={mode} {common} writer={writer}"
         )

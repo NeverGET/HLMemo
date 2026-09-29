@@ -94,9 +94,14 @@ def _manifest_env(label):
     return R3_MANIFEST_ENV if label else R2_MANIFEST_ENV
 
 
-def r4_research(writer=WRITER, *, key=True, until="2099-12-31", trace=False, **extra):
-    """R4 collect's effective research state: the writer profile as the container loads it (key
-    SET or not, its price_valid_until) and whether the research tracer is on."""
+#: the research primary (HLM_PROFILE: the head of the research chain)
+PRIMARY = "openrouter-gpt6-luna"
+
+
+def r4_research(writer=WRITER, *, key=True, until="2099-12-31", trace=False, primary_until=None, **extra):
+    """R4 collect's effective research state: the writer profile and the research primary as the
+    container loads them (key SET or not, price_valid_until; luna's profile carries none) and
+    whether the research tracer is on."""
     return {
         "enabled": True,
         "map_summary": False,
@@ -104,6 +109,8 @@ def r4_research(writer=WRITER, *, key=True, until="2099-12-31", trace=False, **e
         "max_tokens": 100000,
         "answer_mode": "prose",
         "writer": None if writer is None else {"profile": writer, "key_set": key, "price_valid_until": until},
+        "primary": {"profile": PRIMARY, "key_set": True, "price_valid_until": primary_until},
+        "primary_research_disabled": False,
         "trace_dir_set": trace,
         **extra,
     }
@@ -581,17 +588,124 @@ class R2DeployCheckTest(unittest.TestCase):
 
     def test_r4_accepts_an_unset_writer_without_a_gemini_key(self):
         """R4 plan §6.2(b) (the REVERT option "R4 env with the luna writer"): an UNSET writer passes
-        the r4 manifest; no Gemini profile is in the chain, so key_set needs no GEMINI_API_KEY, and
-        probe-writer and the price date do not apply."""
+        the r4 manifest; no Gemini profile is in the chain, so key_set needs no GEMINI_API_KEY. The
+        research PRIMARY (HLM_PROFILE) writes, so probe-writer is still REQUIRED and must report
+        that profile (the decided contract); the price date applies only when its profile carries
+        one (luna's does not: skipped, even long after the Gemini date)."""
         unset = {"HLM_RESEARCH_WRITER_PROFILE": None}
+        primary_ok = {"exit": 0, "stdout": json.dumps({"ok": True, "profile": PRIMARY, "status": 200})}
         for extra in ((), ("--today", "2031-01-01")):
             with self.subTest(extra=extra):
-                code, output = self.r4(manifest=unset, research=r4_research(None), probe=None, extra=extra)
+                code, output = self.r4(
+                    manifest=unset, research=r4_research(None), probe=primary_ok, extra=extra
+                )
                 self.assertEqual(0, code, output)
-                self.assertIn("writer: unset (the research profile writes)", output)
-                self.assertIn("writer=unset(research profile)", output)
+                self.assertIn(f"writer: unset (the research primary {PRIMARY} writes; HLM_PROFILE)", output)
+                self.assertIn(f"writer: {PRIMARY} key=set price_valid_until=-", output)
+                self.assertIn(f"writer probe (api container): exit=0 ok=True profile={PRIMARY}", output)
+                self.assertIn(f"writer=unset(research primary {PRIMARY})", output)
                 self.assertNotIn("gemini", output.lower())
-                self.assertNotIn("writer probe", output)
+        cases = {
+            "no probe": (None, "the writer probe did not run (evaluate --writer-probe api; R-14)"),
+            "probe reports the gemini writer": (
+                PROBE_OK,
+                f"the writer probe used profile {WRITER}, the api runs {PRIMARY} (R-14)",
+            ),
+            "probe refused": (
+                {"exit": 1, "stdout": json.dumps({"ok": False, "profile": PRIMARY, "status": 401})},
+                "the writer probe FAILED in the api container (exit 1, status 401)",
+            ),
+        }
+        for name, (probe, message) in cases.items():
+            with self.subTest(name):
+                code, output = self.r4(manifest=unset, research=r4_research(None), probe=probe)
+                self.assertEqual(1, code, output)
+                self.assertIn(message, output)
+        # a primary whose profile DOES carry price_valid_until is checked like a writer's
+        for until, expected, message in (
+            ("2026-09-28", 1, f"writer profile {PRIMARY}: price_valid_until 2026-09-28 has passed"),
+            ("2026-10-05", 0, f"WARNING writer profile {PRIMARY}: price_valid_until 2026-10-05 is within 14"),
+        ):
+            with self.subTest(primary_until=until):
+                code, output = self.r4(
+                    manifest=unset,
+                    research=r4_research(None, primary_until=until),
+                    probe=primary_ok,
+                    extra=("--today", "2026-09-29"),
+                )
+                self.assertEqual(expected, code, output)
+                self.assertIn(message, output)
+        # the api report must name the primary it loaded (a stale/other primary fails)
+        research = r4_research(None)
+        research["primary"]["profile"] = "openrouter"
+        code, output = self.r4(manifest=unset, research=research, probe=primary_ok)
+        self.assertEqual(1, code, output)
+        self.assertIn(f"the api's writer profile does not load as HLM_PROFILE={PRIMARY} says", output)
+
+    def test_r4_unset_writer_probes_the_research_chain_head(self):
+        """The probe's rule with the writer unset (r4-code): HLM_PROFILE, unless its profile file lists
+        research in disabled_tasks; then HLM_FALLBACK_PROFILE__RESEARCH, else HLM_FALLBACK_PROFILE.
+        evaluate expects exactly that profile from the probe (and from collect's report)."""
+        unset = {"HLM_RESEARCH_WRITER_PROFILE": None}
+
+        def research_for(head, disabled):
+            research = r4_research(None)
+            research["primary"]["profile"] = head
+            research["primary_research_disabled"] = disabled
+            return research
+
+        def probe(profile):
+            return {"exit": 0, "stdout": json.dumps({"ok": True, "profile": profile, "status": 200})}
+
+        # the primary disables research: the research fallback (openrouter) heads the chain
+        code, output = self.r4(
+            manifest=unset, research=research_for("openrouter", True), probe=probe("openrouter")
+        )
+        self.assertEqual(0, code, output)
+        self.assertIn(
+            "writer: unset (the research primary openrouter writes; HLM_FALLBACK_PROFILE__RESEARCH)", output
+        )
+        code, output = self.r4(
+            manifest=unset, research=research_for("openrouter", True), probe=probe(PRIMARY)
+        )
+        self.assertEqual(1, code, output)
+        self.assertIn(f"the writer probe used profile {PRIMARY}, the api runs openrouter (R-14)", output)
+        # ... without a research fallback, the default fallback (the r4 manifest pins the research
+        # fallback, so this env fails that pin; the head rule itself is what is checked here)
+        no_task_fallback = {**unset, "HLM_FALLBACK_PROFILE__RESEARCH": None}
+        code, output = self.r4(
+            manifest=no_task_fallback,
+            research=research_for("openrouter-glm53-flash", True),
+            probe=probe("openrouter-glm53-flash"),
+        )
+        self.assertIn("(the research primary openrouter-glm53-flash writes; HLM_FALLBACK_PROFILE)", output)
+        self.assertIn("HLM_FALLBACK_PROFILE__RESEARCH=- (expected openrouter)", output)
+        self.assertNotIn("R-14", output, "the probe matched the head")
+        # the primary may run research: HLM_PROFILE, and a report that names another head fails
+        code, output = self.r4(
+            manifest=unset, research=research_for("openrouter", False), probe=probe(PRIMARY)
+        )
+        self.assertEqual(1, code, output)
+        self.assertIn(f"the api's writer profile does not load as HLM_PROFILE={PRIMARY} says", output)
+        # a report that cannot say whether the primary runs research fails closed
+        research = r4_research(None)
+        del research["primary_research_disabled"]
+        code, output = self.r4(manifest=unset, research=research, probe=probe(PRIMARY))
+        self.assertEqual(1, code, output)
+        self.assertIn("the research chain's head is unknown (R-14)", output)
+
+    def test_r4_probe_status_token_price_expired_is_shown(self):
+        """r4-code: probe-writer prints ONE JSON line and exits 1 on failure; its status may be a
+        token (price_expired: the profile's price date passed, no call made). evaluate shows it."""
+        expired = {"ok": False, "profile": WRITER, "status": "price_expired", "latency_ms": 0}
+        code, output = self.r4(probe={"exit": 1, "stdout": json.dumps(expired)})
+        self.assertEqual(1, code, output)
+        self.assertIn("the writer probe FAILED in the api container (exit 1, status price_expired)", output)
+        odd = {**expired, "status": "Price Expired; key=abc"}
+        code, output = self.r4(probe={"exit": 1, "stdout": json.dumps(odd)})
+        self.assertEqual(1, code, output)
+        self.assertIn("(exit 1, status -)", output)
+        self.assertNotIn("key=abc", output)
 
     def test_r4_missing_writer_key_fails(self):
         """R4 B5: key_set covers the writer's key: a writer without GEMINI_API_KEY in the api (or the
@@ -705,8 +819,8 @@ class R2DeployCheckTest(unittest.TestCase):
         }
         cases = {
             "refused": (
-                {"exit": 3, "stdout": f"{sentinel}\n" + json.dumps(leaky)},
-                "the writer probe FAILED in the api container (exit 3, HTTP 401)",
+                {"exit": 1, "stdout": f"{sentinel}\n" + json.dumps(leaky)},
+                "the writer probe FAILED in the api container (exit 1, status 401)",
             ),
             "not ok": (
                 {"exit": 0, "stdout": json.dumps({**leaky, "status": 200})},

@@ -253,7 +253,7 @@ class ConvergenceTest(d108.D108RollbackTest):
         root, env = self.r3_deployed()
         result, output = self.install(root, env, fail="probe-writer")
         self.assertNotEqual(0, result.returncode, output)
-        self.assertIn("the writer probe FAILED in the api container (exit 3, HTTP 401)", output)
+        self.assertIn("the writer probe FAILED in the api container (exit 1, status 401)", output)
         self.assertNotIn(GEMINI_KEY, output)
         self.assertNotIn("HTTP 401 for key", output)
         self.assertIn("env_switch", self.state(root))
@@ -277,7 +277,7 @@ class ConvergenceTest(d108.D108RollbackTest):
         code, output = self.host_evaluate(root, env)
         self.assertEqual(1, code, output)
         self.assertIn("provider google-gemini38-flash-medium https://gemini.invalid/v1: key set", output)
-        self.assertIn("the writer probe FAILED in the api container (exit 3, HTTP 401)", output)
+        self.assertIn("the writer probe FAILED in the api container (exit 1, status 401)", output)
         self.assertNotIn(wrong, output)
         self.assertNotIn(GEMINI_KEY, output)
         (root / "events.running-env.api").write_text(right_env)
@@ -347,6 +347,49 @@ class ConvergenceTest(d108.D108RollbackTest):
         self.assertEqual(disk_text, self.running_env(root, "librarian"))
         for key in (prod_key, other, GEMINI_KEY):
             self.assertNotIn(key, output)
+
+    def test_r4_env_with_the_luna_writer_probes_the_research_primary(self):
+        """R4 plan §6.2(b) with the decided contract: the R4 template without its writer line,
+        installed with --release-template PATH over the Gemini env. The switch passes the r4
+        manifest; probe-writer still runs in the api container and reports the research primary
+        (HLM_PROFILE), and the installed Gemini key is kept in the file (the template keeps its line)."""
+        root, env = self.r3_deployed()
+        self.assertEqual(0, self.install(root, env, "--reset-operator-values")[0].returncode)
+        workstation = root / "workstation"
+        luna = root / "r4-luna.env.example"
+        luna.write_text(
+            "".join(
+                line
+                for line in (workstation / "deploy/llm.env.example").read_text().splitlines(keepends=True)
+                if not line.startswith("HLM_RESEARCH_WRITER_PROFILE=")
+            )
+        )
+        (root / "events.probe-writer").unlink()
+        result, output = self.install(
+            root, env, "--release-template", str(luna), keys={"OPENROUTER_API_KEY": INSTALL_KEY}
+        )
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("writer: unset (the research primary openrouter-gpt6-luna writes; HLM_PROFILE)", output)
+        self.assertIn("writer probe (api container): exit=0 ok=True profile=openrouter-gpt6-luna", output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
+        self.assertEqual("openrouter-gpt6-luna\n", (root / "events.probe-writer").read_text())
+        disk = r4_fixtures.dotenv((root / "llm.env").read_text())
+        self.assertNotIn("HLM_RESEARCH_WRITER_PROFILE", disk)
+        self.assertEqual(GEMINI_KEY, disk["GEMINI_API_KEY"], "the installed key is kept")
+        self.assertEqual(("3", "8", "60"), self.caps(root))
+        self.assertNotIn("env_switch", self.state(root))
+        self.assertNotIn(GEMINI_KEY, output)
+        # a refused probe of the primary fails the switch too
+        result, output = self.install(
+            root,
+            env,
+            "--release-template",
+            str(luna),
+            fail="probe-writer",
+            keys={"OPENROUTER_API_KEY": INSTALL_KEY},
+        )
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("the writer probe FAILED in the api container (exit 1, status 401)", output)
 
     def test_keep_mode_install_of_the_r4_template_keeps_the_installed_r3_caps(self):
         """Why §4.3 needs --reset-operator-values: a plain (keep) R4 install over the R3 env keeps the

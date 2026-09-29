@@ -689,8 +689,8 @@ of the R2/R3 checks):
 - memory.ask ON, the map summaries OFF (D-192/D-195), `HLM_RESEARCH_ANSWER_MODE=prose`,
   `HLM_RESEARCH_ATTRIBUTION=llm`, `HLM_RESEARCH_RERANK=llm`, the D-094 mapping plus the research and
   map-summary fallbacks, exactly;
-- `HLM_RESEARCH_WRITER_PROFILE` unset (the research profile, luna, writes: the plan's §6.2(b)) or
-  `google-gemini38-flash-medium` (the template) or `google-gemini38-flash-high`;
+- `HLM_RESEARCH_WRITER_PROFILE` unset (the research primary `HLM_PROFILE`, luna, writes: the plan's
+  §6.2(b)) or `google-gemini38-flash-medium` (the template) or `google-gemini38-flash-high`;
 - `HLM_RESEARCH_MAX_USD` ≤ 0.12, `HLM_RESEARCH_MAX_TOKENS` ≤ 100000; the research, HTTP, writer and
   LLM timeouts, the detached hold and the prose limit run the same in api, librarian and the file;
 - the spend guard ON with the owner's R4 caps (`_BUDGETS_R4`, D-198): HOUR ≤ 3, DAY ≤ 8, MONTH ≤ 60
@@ -699,9 +699,13 @@ of the R2/R3 checks):
 - **R-11:** the api runs WITHOUT the research tracer (`HLM_RESEARCH_TRACE_DIR` unset everywhere);
 - **R-14:** `python -m hlmemo.ops probe-writer` in the **api** container (the api's own writer
   profile and key; one tiny request, no retry, no fallback) exits 0 with `ok=true` and the api's
-  writer; only its `ok/profile/status/latency_ms` are printed;
+  writer; only its `ok/profile/status/latency_ms` are printed (`status` may be `price_expired`).
+  With the writer unset it probes the head of the research chain and must report it: `HLM_PROFILE`,
+  or, when that profile's file lists `research` in `disabled_tasks`,
+  `HLM_FALLBACK_PROFILE__RESEARCH` (else `HLM_FALLBACK_PROFILE`). Required either way;
 - **R-5:** the writer profile's `price_valid_until` has not passed (a WARNING within 14 days): the
-  2027-01-01 Gemini prices need a new profile commit with the new prices and date first;
+  2027-01-01 Gemini prices need a new profile commit with the new prices and date first. With the
+  writer unset, the research primary's profile is checked only if it carries the field;
 - **R-4:** the llm.env fingerprint (deploy/rollback provenance) covers all of the above keys and the
   caps, and both api and librarian must report.
 
@@ -813,7 +817,9 @@ ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/h
      bash deploy/scripts/install_llm_env.sh --state "$STATE" --key-file "$KEYS" --release-template "$R3"
      ```
    - (b) **R4 env with the luna writer** (memory.ask stays ON; the r4 manifest accepts an unset
-     writer; probe-writer and the price date then do not apply):
+     writer; probe-writer then probes the head of the research chain, `HLM_PROFILE` (luna), and
+     must report it; the price date applies only if that profile carries one). The installed `GEMINI_API_KEY` stays in
+     the file (the template keeps its line):
      ```sh
      sed '/^HLM_RESEARCH_WRITER_PROFILE=/d' deploy/llm.env.example > "$KEYDIR/r4-luna.env.example"
      bash deploy/scripts/install_llm_env.sh --state "$STATE" --key-file "$KEYS" --release-template "$KEYDIR/r4-luna.env.example"
@@ -857,7 +863,7 @@ after the R4 deploy work (detail and test names: `tests/deploy/RESIDUALS.md`):
 | 7 | R3-REHEARSAL.md stale | not carried over: this section and the plan's §2.2 are the procedure |
 | 8 | Extra fallback overrides / an unreadable env file fail open | accepted (read the printed per-task fallbacks) |
 | 9 | Secret orphan windows (snapshot/tmp copies after a kill) | accepted (0600 in /etc/hlmemo; after an interrupted run delete `llm.env.*` strays release-state.json does not name) |
-| 10 | A preserved wrong key passes (unauthenticated probe) | closed for the writer (R-14 probe-writer); accepted for the OpenRouter key R3 already runs with |
+| 10 | A preserved wrong key passes (unauthenticated probe) | closed for the writing profile (R-14 probe-writer: the Gemini writer, or the research primary when the writer is unset); accepted for the other OpenRouter profiles (fallbacks, librarian tasks) |
 
 **Convergence (D-116, review 75).** Every step is journalled in `release-state.json` first, so a
 kill anywhere converges on a re-run of the same command:

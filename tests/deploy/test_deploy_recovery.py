@@ -218,13 +218,16 @@ elif "exec" in args and "hlmemo.ops" in args:
         # check_librarian.py evaluate must never show either.
         created = dotenv(running_env("api"))
         writer, key = created.get("HLM_RESEARCH_WRITER_PROFILE"), created.get("GEMINI_API_KEY", "")
+        if not writer:  # the contract: an unset writer probes the research chain's head (HLM_PROFILE
+            # here: the harness's primaries never disable research)
+            writer, key = created.get("HLM_PROFILE"), os.environ.get("GOOD_GEMINI_KEY", "")
         good = os.environ.get("GOOD_GEMINI_KEY")
         with open(os.environ["EVENTS"] + ".probe-writer", "a") as f: f.write((writer or "-") + "\n")
         if fail == "probe-writer" or (good is not None and key != good):
             sys.stderr.write("probe-writer: HTTP 401 for key " + key + "\n")
             print(json.dumps({"ok": False, "profile": writer, "status": 401, "latency_ms": 17,
                               "error": "AuthenticationError", "key": key}))
-            sys.exit(3)
+            sys.exit(1)  # the contract: exactly one JSON line, exit 1 on failure
         print(json.dumps({"ok": True, "profile": writer, "status": 200, "latency_ms": 42}))
 elif "exec" in args and "collect" in args:
     # R2: deploy/scripts/check_librarian.py collect, fed on stdin like check_edge.py. Default: the
@@ -246,6 +249,9 @@ elif "exec" in args and "collect" in args:
         "enabled": created.get("HLM_RESEARCH_ENABLED") == "true",
         "map_summary": created.get("HLM_MAP_SUMMARY_ENABLED") == "true",
         "trace_dir_set": bool(created.get("HLM_RESEARCH_TRACE_DIR")),
+        "primary": {"profile": created.get("HLM_PROFILE"), "key_set": True,
+                    "price_valid_until": os.environ.get("PRIMARY_PRICE_VALID_UNTIL")},
+        "primary_research_disabled": False,
         "writer": None if not writer else {
             "profile": writer, "key_set": bool(created.get("GEMINI_API_KEY")),
             "price_valid_until": os.environ.get("WRITER_PRICE_VALID_UNTIL", "2099-12-31")},
