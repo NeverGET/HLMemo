@@ -1492,3 +1492,25 @@ Next levers, in order:
 3. Multihop composition.
 4. A new hold-out, then the final gate (judge v1 + blind-reader adjudication).
 5. R4: the D-118 port, a reviewed curated backfill on prod, the manifest (summaries OFF, rerank ON), rehearsal.
+D-197 | 2026-09-29 | ACCEPTED | **Writer model test (owner request): Gemini 3.8 Flash (medium) is the best memory.ask writer measured (adjudicated correct .74 vs luna .63, contradiction .03 vs .06), but it fails the latency (p95 33–38 s) and cost ($.021/q) gates. DeepSeek V4.1 Flash max is rejected. The standard writer tests are saturated.**
+
+Method:
+- Same final system (8d36f74, rerank on, 121 curated links), with only the writer swapped. The eval-only tree raised the token and timeout limits uniformly.
+- Blind-reader adjudication is the primary score; calibration overlap with earlier reads 19/20.
+- Standard tests (WS 33q, ORACLE-sel 25q) were re-read blind for all prior models too. Re-read consistency 20/20. Every model scores ~.97 WS and .84–.92 ORACLE, so the old judge-based spread was mostly a judge artefact.
+
+Real system:
+
+| Writer | Correct (adjudicated) | Contradiction | p95 | $/question |
+|---|---|---|---|---|
+| luna | .63 | .06 | ~15 s | .0034–.0042 |
+| DeepSeek V4.1 Flash max (D1) | .64 | .08 | 119 s | .0094 |
+| Gemini 3.8 Flash (G1/G2) | .78 / .70 | .03 | 33–38 s | .021 |
+
+DeepSeek's D2 run is invalid: circuit-breaker fallbacks to luna.
+
+Other findings:
+- The product under-counts Gemini cost: thinking tokens are excluded from `completion_tokens`.
+- The eval tree also needed HTTP_TIMEOUT_S and DETACHED_HOLD_MAX_S raised.
+
+Next: Gemini at reasoning_effort low/minimal on the real system, scored by readers only.
