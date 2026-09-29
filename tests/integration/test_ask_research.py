@@ -1761,12 +1761,10 @@ async def test_ask_over_mcp_outlives_the_request_db_deadline(world, db_dsn) -> N
 async def test_ask_without_the_hold_hits_the_request_deadline(world, db_dsn, monkeypatch) -> None:  # noqa: ANN001
     """Negative control of the test above: with the hold disabled, the same slow loop is cut by the
     request deadline (so the extension is what makes a long memory.ask possible)."""
-    from hlmemo.server import middleware
-
-    monkeypatch.setattr(middleware, "DETACHED_HOLD_MAX_S", 0.0)
     fake = FakeResearcher(facts=["1.2 s"])
     llm = ScriptedLLM(default=lambda body: ("stall", 0.8, fake(body)))
-    async with ask_app(db_dsn, llm, request_db_timeout_s=1.5) as client:
+    # R4 (B3): the hold cap is the setting HLM_DETACHED_HOLD_MAX_S (was a module constant)
+    async with ask_app(db_dsn, llm, request_db_timeout_s=1.5, detached_hold_max_s=0.0) as client:
         _did, token = await trusted_device(client, "ask-nohold", grants=[{"project": MAIN, "role": "read"}])
         r = await mcp_rpc(
             client, token, "tools/call", {"name": "memory.ask", "arguments": {"question": "p95 target?"}}

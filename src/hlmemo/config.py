@@ -255,7 +255,7 @@ class Settings(BaseSettings):
     research_enabled: bool = False
     # The whole memory.ask request (DB phases + at most 4 LLM calls, 6 with research_select, one more
     # each with research_expand and research_attribution=llm), seconds.
-    research_timeout_s: float = Field(default=25.0, gt=0, le=120)
+    research_timeout_s: float = Field(default=25.0, gt=0, le=240)  # R4: le raised to 240 (was 120)
     # A runaway guard PER QUESTION (addendum 5): actual spend so far + the next call's worst case
     # (its max_tokens) must stay within these, else the remaining steps are skipped and the answer
     # so far is returned (meta.flags.budget_stop). The hour/day/month spend guard applies on top.
@@ -300,6 +300,12 @@ class Settings(BaseSettings):
     # only. A writer attempt that runs past it fails like a transport failure and the task profile
     # writes (the writer's fallback, with its normal timeout); the question deadline still binds.
     research_writer_timeout_s: float = Field(default=12.0, gt=0, le=120)
+    # R4 (B2): max_tokens of the JOB prose (the writer's answer, reasoning tokens included); the JOB
+    # expand keeps its own 1500 (R-17). Default = the former constant.
+    research_prose_max_tokens: int = Field(default=3000, gt=0, le=32000)
+    # R4 (B3): the HTTP timeout of ONE memory.ask provider attempt (the provider's timeout is
+    # min(HLM_LLM_TIMEOUT_S, this)); default = the former constant research.HTTP_TIMEOUT_S.
+    research_http_timeout_s: float = Field(default=20.0, gt=0, le=180)
     # D-189: a directory for the memory.ask TRACE (one JSON file per request: every step, prompt,
     # LLM attempt, hit list, drop and verdict). Unset = off. Diagnostics only: it never changes an
     # answer; it holds the (redacted) prompts and excerpts, so treat the directory as memory data.
@@ -360,6 +366,9 @@ class Settings(BaseSettings):
     request_body_spool_threshold_bytes: int = Field(default=1024 * 1024, gt=0)
     request_spool_dir: Path | None = None  # None uses the system temporary directory.
     request_db_timeout_s: float = Field(default=15.0, gt=0)
+    # R4 (B3): the longest a handler may extend its request after releasing its DB connection
+    # (``detach(hold_s=...)``, memory.ask); default = the former constant middleware.DETACHED_HOLD_MAX_S.
+    detached_hold_max_s: float = Field(default=60.0, ge=0, le=240)
     readiness_timeout_s: float = Field(default=2.0, gt=0)
     readiness_cache_ttl_s: float = Field(default=1.0, gt=0)
     # No implicit trust, including loopback; configure the actual Caddy subnet explicitly.

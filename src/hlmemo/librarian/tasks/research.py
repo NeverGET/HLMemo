@@ -3155,6 +3155,10 @@ class Researcher:
     ) -> None:
         self.settings = settings
         self.in_flight = 0
+        #: R4 (B2): the JOB prose's max_tokens (``HLM_RESEARCH_PROSE_MAX_TOKENS``)
+        self.prose_max_tokens: int = int(
+            getattr(settings, "research_prose_max_tokens", JOB_MAX_TOKENS["prose"])
+        )
         self.clock = clock or Clock()
         self.provider: Provider | None = None
         self.breaker = ChainBreakers(lambda: self.provider, task=TASK)
@@ -3245,7 +3249,10 @@ class Researcher:
             transport=transport,
             clock=self.clock,
             redactor=Redactor.from_settings(s),
-            timeout_s=min(float(s.llm_timeout_s), HTTP_TIMEOUT_S),
+            # R4 (B3): HLM_RESEARCH_HTTP_TIMEOUT_S (default HTTP_TIMEOUT_S), bounded by HLM_LLM_TIMEOUT_S
+            timeout_s=min(
+                float(s.llm_timeout_s), float(getattr(s, "research_http_timeout_s", HTTP_TIMEOUT_S))
+            ),
             breaker_threshold=BREAKER_THRESHOLD,
             breaker_open_s=BREAKER_OPEN_S,
             breaker_max_open_s=BREAKER_MAX_OPEN_S,
@@ -3289,6 +3296,8 @@ class Researcher:
         (prompt, max_tokens, per-task fallback and ledger rows ``rerank``)."""
         if job == RERANK_TASK and self.rerank_spec is not None:
             return self.rerank_spec
+        if job == "prose":  # R4 (B2): HLM_RESEARCH_PROSE_MAX_TOKENS (expand keeps its own, R-17)
+            return replace(self.spec, max_tokens=self.prose_max_tokens)
         return replace(self.spec, max_tokens=JOB_MAX_TOKENS.get(job, self.spec.max_tokens))
 
     def chain_for_job(self, job: str) -> list[LlmProfile] | None:
