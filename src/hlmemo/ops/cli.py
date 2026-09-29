@@ -8,6 +8,7 @@ Run inside the api container (it has the app DSN), normally through `deploy/scri
     python -m hlmemo.ops project create SLUG [--name N] [--exists-ok] | project list
     python -m hlmemo.ops project policy show SLUG | policy set SLUG librarian_cross_project include|exclude
     python -m hlmemo.ops status [--json]
+    python -m hlmemo.ops probe-writer    (R4, R-14: one authenticated 16-token writer call; ops/probe.py)
     python -m hlmemo.ops librarian audit|questions list|approve-batch|role set|expire (ops/librarian.py)
 
 `device mint` and `device rotate` print ONLY the token on stdout (so it can be piped into
@@ -95,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
         "status", help="jobs ledger, worker progress, librarian heartbeat, devices, migration"
     )
     st.add_argument("--json", action="store_true")
+    sub.add_parser(
+        "probe-writer",
+        help="R4: one authenticated minimal call of the prose writer with this process's settings; "
+        'prints only {"ok","profile","status","latency_ms"}, exit 1 on failure',
+    )
     librarian.add_parser(sub)  # W2b/W2c: librarian audit|questions|approve-batch|role|expire
     return ap
 
@@ -120,6 +126,12 @@ async def run(args: argparse.Namespace) -> int:
     settings = get_settings()
     if args.group == "status":
         return await _status(args, settings)
+    if args.group == "probe-writer":  # R4 (R-14): no database; this process's credentials
+        from hlmemo.ops import probe
+
+        result = await probe.probe(settings)
+        _print(result)
+        return 0 if result["ok"] else EX_REFUSED
     async with await AsyncConnection.connect(settings.db_dsn, autocommit=False, connect_timeout=10) as conn:
         await conn.execute("SET TIME ZONE 'UTC'")
         for name, value in (
