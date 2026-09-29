@@ -17,6 +17,11 @@ whose file lists the task in ``disabled_tasks`` is never used for it. Per profil
   a retry would truncate again), after the one retry otherwise, and without that retry when the
   caller's ``attempt_affordable`` says its worst case does not fit (it is never reserved). Only the
   chain's last profile raises ``SchemaFail``. Every profile given up is in ``LlmResult.fallbacks``;
+* R4 (R-5): a profile past its ``price_valid_until`` is unusable for live calls: skipped without any
+  network or reservation (``price_expired`` in ``LlmResult.fallbacks``, counted per profile in
+  ``Provider.price_expired_skips``, logged) and the next profile answers; a chain with no usable
+  profile raises ``PriceExpired`` (fail closed). Not an ``llm_calls`` outcome: the row's outcome is
+  a closed set (migration 0006), so the skip writes no row;
 * an exhausted or fatally failing profile falls through to the fallback profile once;
 * a per-profile circuit breaker opens after N consecutive exhausted calls for 60 s, doubling on
   each failed half-open trial up to 15 min; an open breaker costs a ``breaker_open`` ledger row
@@ -92,6 +97,7 @@ from hlmemo.librarian.errors import (
     JobCallCapExceeded,
     LlmConfigError,
     LlmDisabled,
+    PriceExpired,
     ProviderUnavailable,
     SchemaFail,
 )
@@ -456,6 +462,8 @@ class Provider:
         self._breakers: dict[str, Breaker] = {}
         #: D-173: the recent attempt-cap cuts per profile (monotonic times), for the valve
         self._cuts: dict[str, deque[float]] = {}
+        #: R4 (R-5): per profile, the calls that skipped it because its price_valid_until had passed
+        self.price_expired_skips: dict[str, int] = {}
         self._clients: dict[str, httpx.AsyncClient] = {}
 
     # ------------------------------------------------------------------ construction
@@ -662,7 +670,20 @@ class Provider:
         fallbacks: list[tuple[str, str]] = []  # R4 (R-9, R-6): every profile given up, and why
         schema_exc: SchemaFail | None = None
         tried_after_schema = False
+        expired = 0
         for i, profile in enumerate(profiles):
+            if self.mode in ("live", "record") and profile.price_expired():
+                # R4 (R-5): past price_valid_until: never priced with stale prices (no network, counted)
+                self.price_expired_skips[profile.name] = self.price_expired_skips.get(profile.name, 0) + 1
+                log.warning(
+                    "profile %s: price_valid_until %s passed, unusable for live calls: skipped",
+                    profile.name,
+                    profile.price_valid_until,
+                )
+                reasons.append(f"{profile.name}: price_valid_until {profile.price_valid_until} passed")
+                fallbacks.append((profile.name, "price_expired"))
+                expired += 1
+                continue
             breaker = self.breaker(profile.name)
             if self.mode != "replay" and not breaker.allow():
                 await self.ledger.record(self._row(profile, task, job_id, "breaker_open"))
@@ -718,6 +739,8 @@ class Provider:
             return result
         if schema_exc is not None and not tried_after_schema:
             raise schema_exc  # no later profile was even tried: the model output was the problem
+        if not attempted and expired == len(profiles):
+            raise PriceExpired("; ".join(reasons))  # R4 (R-5): fail closed
         if not attempted:
             raise BreakerOpen("; ".join(reasons), retry_after_s=self.retry_after_s(profiles))
         if latency and timeouts_only:  # every bounded attempt ran out of time: the caller's timeout

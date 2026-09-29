@@ -33,6 +33,11 @@ class ProviderUnavailable(LibrarianError):
         self.retry_after_s = retry_after_s
 
 
+class PriceExpired(ProviderUnavailable):
+    """R4 (R-5): every profile of the chain is past its ``price_valid_until``: unusable for live calls
+    (fail closed, never priced with stale prices)."""
+
+
 class BreakerOpen(ProviderUnavailable):
     pass
 

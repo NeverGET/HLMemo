@@ -277,6 +277,11 @@ def research_lines(r: dict[str, Any]) -> list[str]:
         f" used_24h={r.get('writer_used_24h')} fallback_24h={r.get('writer_fallback_24h')}"
         f" outcomes_24h={r.get('writer_outcomes_24h')}"
     ]
+    if r.get("writer_price_expired"):
+        lines.append(
+            f"WARNING     writer {r.get('writer_profile')}: price_valid_until"
+            f" {r.get('writer_price_valid_until')} passed: unusable for live calls (update its prices)"
+        )
     share = float(r.get("writer_fallback_share_24h") or 0.0)
     if share > service.WRITER_FALLBACK_WARN:
         answered = sum((r.get("writer_used_24h") or {}).values())

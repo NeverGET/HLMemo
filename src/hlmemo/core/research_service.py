@@ -160,6 +160,7 @@ from hlmemo.librarian.errors import (
     JobCallCapExceeded,
     LlmConfigError,
     LlmDisabled,
+    PriceExpired,
     PrivacyDenied,
     ProviderUnavailable,
     SchemaFail,
@@ -1174,6 +1175,8 @@ class _Run:
                 raise rs.ResearchUnavailable("call_cap") from exc
             except SchemaFail as exc:
                 raise rs.ResearchUnavailable("schema_fail") from exc
+            except PriceExpired as exc:  # R4 (R-5): every profile's prices expired (fail closed)
+                raise rs.ResearchUnavailable("price_expired") from exc
             except (ProviderUnavailable, httpx.HTTPError, OSError) as exc:
                 raise rs.ResearchUnavailable("unavailable") from exc
             except (LlmDisabled, LlmConfigError) as exc:

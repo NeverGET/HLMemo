@@ -596,6 +596,16 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
             used[str(profile)] = used.get(str(profile), 0) + int(n)
     answered = sum(used.values())
     fallback = sum(n for p, n in used.items() if p != configured)
+    valid_until, expired = None, None
+    try:  # R4 (R-5): the configured writer's price validity (its own profile file)
+        from hlmemo.librarian.profiles import named_profile
+
+        writer = named_profile(configured) if getattr(settings, "research_writer_profile", None) else None
+        if writer is not None:
+            valid_until = writer.price_valid_until.isoformat() if writer.price_valid_until else None
+            expired = writer.price_expired()
+    except (LlmConfigError, OSError, ValueError):
+        pass
     return {
         "enabled": bool(getattr(settings, "research_enabled", False)),
         "answer_mode": getattr(settings, "research_answer_mode", None),
@@ -605,6 +615,8 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
         "writer_fallback_24h": fallback,
         "writer_outcomes_24h": outcomes,
         "writer_fallback_share_24h": round(fallback / answered, 4) if answered else 0.0,
+        "writer_price_valid_until": valid_until,
+        "writer_price_expired": expired,
     }
 
 

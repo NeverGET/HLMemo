@@ -809,6 +809,40 @@ async def test_ask_r4_ops_status_shows_the_writer_fallback(
     assert st2["writer_fallback_24h"] == 0 and len(ops_cli.research_lines(st2)) == 1
 
 
+async def test_ask_r4_an_expired_writer_price_falls_back_counted(
+    connect, world, deps, db_dsn, tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    """R4 (R-5): a writer profile past its price_valid_until is never called: the research primary
+    writes, the answer counts the fallback (price_expired), ops status warns."""
+    from hlmemo.ops import cli as ops_cli
+    from hlmemo.ops import service
+
+    (tmp_path / "w-old.toml").write_text(
+        'HLM_LLM_BASE_URL = "http://w-old.invalid/v1"\nHLM_LLM_MODEL = "stub/w-old"\n'
+        'HLM_LLM_API_KEY = "test-key-not-secret"\nprice_in_per_m = 0.75\nprice_out_per_m = 3.75\n'
+        'price_valid_until = "2026-01-31"\n'
+    )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    fake = FakeResearcher(facts=["1.2 s"])
+    llm = ScriptedLLM(default=fake)
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", research_writer_profile="w-old")
+    try:
+        out = await ask(connect, world, deps, r, "What is the current retrieval p95 target?")
+    finally:
+        await r.aclose()
+    flags = out["meta"]["flags"]
+    assert out["abstained"] is False and flags["writer_used"] == "stub-primary"
+    assert flags["writer_fallback_reasons"] == ["w-old:price_expired"]
+    assert not any(b["model"] == "stub/w-old" for b in llm.requests)
+    assert r.provider.price_expired_skips == {"w-old": 1}
+    settings = ask_settings(db_dsn, research_answer_mode="prose", research_writer_profile="w-old")
+    async with await connect() as conn:
+        st = await service.research_status(conn, settings)
+        await conn.rollback()
+    assert st["writer_price_valid_until"] == "2026-01-31" and st["writer_price_expired"] is True
+    assert any("price_valid_until 2026-01-31 passed" in ln for ln in ops_cli.research_lines(st))
+
+
 async def test_ask_prose_mode_abstains_and_refines_with_prose(connect, world, deps, db_dsn) -> None:  # noqa: ANN001
     fake = FakeResearcher(facts=[], abstain=True)
     llm = ScriptedLLM(default=fake)

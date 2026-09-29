@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -60,6 +61,15 @@ class LlmProfile:
     #: counts every generated token, thinking included) or ``excluded`` (Google's OpenAI-compatible
     #: API: ``completion_tokens`` EXCLUDES thinking; ``provider.normalize_usage`` adds it back)
     usage_reasoning: str = "included"
+    #: R4 (R-5): the last day (UTC) its prices hold (``price_valid_until = "YYYY-MM-DD"``); after it the
+    #: profile is unusable for live calls (``Provider`` skips it, counted, and falls back)
+    price_valid_until: date | None = None
+
+    def price_expired(self, today: date | None = None) -> bool:
+        """R4 (R-5): today (UTC) is past ``price_valid_until``."""
+        if self.price_valid_until is None:
+            return False
+        return (today or datetime.now(UTC).date()) > self.price_valid_until
 
     @property
     def priced(self) -> bool:
@@ -138,7 +148,24 @@ def _build(name: str, raw: dict[str, Any], disabled: frozenset[str] = frozenset(
         disabled_tasks=disabled or _tasks(raw.get("disabled_tasks")),
         json_mode=_flag(raw.get("json_mode"), True),
         usage_reasoning=_usage_reasoning(name, raw.get("usage_reasoning")),
+        price_valid_until=_valid_until(name, raw.get("price_valid_until")),
     )
+
+
+def _valid_until(name: str, value: Any) -> date | None:
+    """``price_valid_until``: a TOML date or a ``"YYYY-MM-DD"`` string (R-5); empty = none."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError:
+        raise LlmConfigError(
+            f"profile {name!r}: price_valid_until must be YYYY-MM-DD, not {value!r}"
+        ) from None
 
 
 USAGE_REASONING = ("included", "excluded")
@@ -166,6 +193,7 @@ def primary_profile(settings: Settings) -> LlmProfile:
             "prompt_overrides": settings.prompt_overrides,
             "json_mode": settings.json_mode,
             "usage_reasoning": settings.usage_reasoning,
+            "price_valid_until": settings.price_valid_until,
         },
         profile_disabled_tasks(settings.profile),
     )

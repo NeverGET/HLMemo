@@ -15,6 +15,7 @@ import os
 import re
 import tomllib
 from collections.abc import Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -205,6 +206,9 @@ class Settings(BaseSettings):
     # "included" (OpenAI/OpenRouter) or "excluded" (Google OpenAI-compatible: thinking not counted in
     # completion_tokens). Set in the profile file.
     usage_reasoning: Literal["included", "excluded"] = "included"
+    # R4 (R-5): the last day (UTC) the profile's prices hold; after it the profile is unusable for
+    # live calls (the provider skips it and falls back). Set in the profile file.
+    price_valid_until: date | None = None
     # Model quirks live only here (D-017): {task: {"system_append": str}}.
     prompt_overrides: dict[str, Any] = Field(default_factory=dict)
 
