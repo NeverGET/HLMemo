@@ -1,0 +1,22 @@
+# memory.ask prose WRITER (HLM_RESEARCH_WRITER_PROFILE, R4): Google Gemini 3.8 Flash with reasoning
+# HIGH, called directly on Google's OpenAI-compatible endpoint (a paid Google project). Key from env
+# only (GEMINI_API_KEY; never in this file). Measured on the replica (D-195/D-197): medium .74 correct,
+# p95 33-38 s, $.021/question; high p95 53 s, $.0285/question. Not qualified for the risk judge.
+HLM_LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+HLM_LLM_MODEL    = "gemini-3.8-flash"
+HLM_LLM_API_KEY  = "env:GEMINI_API_KEY"
+# Google's OpenAI-compatible API takes the thinking level as reasoning_effort (no "reasoning" object)
+# and honours JSON mode. max_tokens (thinking included) comes from the task: memory.ask's prose JOB
+# uses HLM_RESEARCH_PROSE_MAX_TOKENS.
+extra = { reasoning_effort = "high", response_format = { type = "json_object" } }
+# USD per 1M tokens, Google list price for 2026. From 2027-01-01 the price is 1.50 / 7.50: the prices
+# hold through price_valid_until, after which the profile is unusable for live calls (R-5: skipped and
+# counted, the research primary writes) until this file carries the new prices and date.
+price_in_per_m    = 0.75
+price_out_per_m   = 3.75
+price_valid_until = "2026-12-31"
+# Google's usage.completion_tokens EXCLUDES the thinking tokens (B1): the provider books
+# completion + completion_tokens_details.reasoning_tokens (else total - prompt), never less.
+usage_reasoning = "excluded"
+supports_json_schema = false
+disabled_tasks = ["risk_judge"]
