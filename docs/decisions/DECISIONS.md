@@ -1550,3 +1550,39 @@ Final-test rule v2.1 (orchestrator, fixed before any question exists; plan §5.1
 Owner approvals:
 - a disposable Lima VM on the owner's Mac for the rehearsal (deleted afterwards);
 - `MCP_TOOL_TIMEOUT=180000` added to the owner's Claude Code settings by the orchestrator (effective after a restart).
+D-200 | 2026-09-30 | ACCEPTED (measurement) / OWNER CALL pending | **R4 final test: memory.ask with the Gemini 3.8 Flash MEDIUM writer, on a one-to-one replica of prod. 38/50 correct (.76), 3/50 contradictions (.06), 1/10 fabricated negatives (abstain .90), 0/60 fallbacks, $0.0201/q, p95 30.8 s, no HIGH incident. By the pre-registered §5.1 rule (v2.1) this is an OWNER CALL: every KEEP condition holds except contradictions (3 > 2), and nothing reaches REVERT.**
+
+Plan deviation (owner proposal):
+- This Mac's IPv4 route to the prod VM broke after the deploy. It was an ISP↔Hostinger routing fault: prod was healthy from 4+ external nodes and over IPv6; fail2ban had 0 bans.
+- So the test ran against a one-to-one replica on a local Lima VM, the same as prod in:
+  - code 5025db5;
+  - the R4 env, with the same config fingerprint 8f03e7ac0882;
+  - data: prod's pre-R4 safety dump (sha 66ff4467…), migrated 0008 → 0009;
+  - the prod-approved links applied with the §4.6 commands (252 explicit + 119 curated);
+  - the Caddy edge, reached over verified TLS through the local CA.
+- The orchestrator asked each sealed question once via `claude -p` (MCP), at most 3 in flight, with a verbatim-input check and the raw tool results saved.
+- Still to do on prod itself once the IPv4 route heals: the §4.6 link apply and a 3-ask smoke. Prod still has 0 links.
+
+Measurement (sealed hold-out, 50 answerable + 10 negatives, seal sha 3f8d0d67… / 50f649cc…):
+- **Blind readers:** 3 readers, majority per question; unanimous on 59/60; per reader 38 / 39 / 38 correct.
+- **By category:** recent 10/13, multihop 8/12 (1 contradiction), temporal 10/13 (2 contradictions), procedure 10/12.
+- **The contradictions:**
+  - H031: gives the superseded G3 Recall@5 0.930 as current; gold 0.980 after D-055.
+  - H034: states the D-058 role ladder, then says it was eliminated.
+  - H015 (2 of 3 readers): an extra claim that an observer answer is recorded as a fact.
+- **Fabricated negative H019** ("MIT license"): the memory holds only the indirect phrase "çevreleyen MIT kodu" (the surrounding MIT code). It is a borderline gold call and does not change the verdict.
+- **Operations:**
+  - writer gemini medium 60/60, 0 fallbacks;
+  - server p50 20.3 s / p95 30.8 s (max 38.2 s);
+  - ledger window $1.20366 → $0.0201/q;
+  - query/write p95 75/53 ms;
+  - 7 of 63 LLM-rerank calls timed out, and those asks used the fused order;
+  - 5 abstentions returned an empty answer text.
+- **C1 consumer utility** (consumer_v1, without the drill rule because no drill texts existed): 1.77; answerable 42/4/4, negatives 9/0/1.
+- **Versus luna on pr-dev (.63 correct, .06 contradiction, D-193/D-195):** correct +.13, contradiction the same. D-130 cannot self-certify (the C6 p95/cost gates, D-198).
+
+Follow-ups:
+- temporal stale-as-current (H031/H034);
+- empty-text abstentions (give the closest leads);
+- the literal validator dropping a lead sentence (H013/H024 start mid-thought);
+- the rerank deadline (7/63 timeouts).
