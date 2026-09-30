@@ -818,7 +818,7 @@ Same 33 dev questions, consumer gate v2.1 criteria:
 **Kept from the experiment:** the select-job output cap is 800 tokens, because reasoning counts against the cap.
 **Next:** an offline test of the product's V14 write prompt + `validate_cited` over the ORACLE-sel contexts. It separates the context-selection effect from the answer-format effect in the .60 → .76 gap.
 D-160 | 2026-09-26 | ACCEPTED | **The NotebookLM reference is measured, and the per-sentence citation instruction by itself costs about .3 correct. Next: V15 "write freely, then attribute separately".**
-**Reference (D-158):** notebook `0a2e5f63-704c-4b78-83f9-91d4971a4b12` holds all 91 dev-DB items (bodies) as 36 sources, secret-scanned with 0 hits. It was asked the same 33 questions, each through a fresh `nlm query` CLI process: the MCP tool reuses the notebook's cached conversation, which would make every question a follow-up.
+**Reference (D-158):** a private NotebookLM notebook (id in docs/private) holds all 91 dev-DB items (bodies) as 36 sources, secret-scanned with 0 hits. It was asked the same 33 questions, each through a fresh `nlm query` CLI process: the MCP tool reuses the notebook's cached conversation, which would make every question a follow-up.
 | System | Correct | c+partial | Abstain | Contradiction | p50 / p95 | Median answer |
 |---|---|---|---|---|---|---|
 | **NotebookLM** | **.88** | .92 | **.125** (fabricates on 7/8 negatives) | .04 | 22.9 / 37.0 s | 1,305 chars |
@@ -1286,7 +1286,7 @@ Errors: 0. The temporal layer fired (sealed B: 5 superseded excerpts shown, 2 pu
 **Next (proposed):** build a REPRESENTATIVE dev set from the current memory (the same generator as the PR set, a disjoint commit range) with multi-hop, procedure, temporal and recent questions, then attack those capabilities on it. The NotebookLM reference on these sets is still running, for context.
 D-189 | 2026-09-26 | ACCEPTED | **The real-memory regime is hard for BOTH systems. NotebookLM on the PR set: correct .42, contradiction .28. A representative dev set (pr-dev) now exists, and memory.ask's baseline on it mirrors the hold-out.**
 **NotebookLM PR reference:**
-- notebook `5250ed30-…`: all 558 items of hlm_research_cur, 44 content sources, secret-scanned with 0 hits;
+- a private NotebookLM notebook (id in docs/private): all 558 items of hlm_research_cur, 44 content sources, secret-scanned with 0 hits;
 - 60/60 questions, a fresh `nlm query` per question, judge only (codex adjudication is blocked until 09-30).
 | PR set (60) | memory.ask fd83f95 | NotebookLM |
 |---|---|---|

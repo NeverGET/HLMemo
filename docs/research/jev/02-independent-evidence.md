@@ -426,7 +426,7 @@ GitHub as of September 22, 2026" [S27]. `INDEPENDENT`
    - Forbes, via Wikipedia [S12]: "Forbes reported that the round valued TypeSafe at US$200 million."
    - [S10]: "The funding announcement does not disclose revenue, customers, ownership percentages or a formal
      valuation."
-   - The founder's credential is overstated. [S13]: "He is not an author of Christiano et al. (2017), which introduced
+   - [S13]: "He is not an author of Christiano et al. (2017), which introduced
      it; he is a primary author of InstructGPT".
    - `INDEPENDENT`
 5. **Privacy and data retention.**

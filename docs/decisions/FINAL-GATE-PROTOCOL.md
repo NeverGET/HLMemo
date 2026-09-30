@@ -45,7 +45,7 @@ Every question stays in the denominator.
   - D-165 faithfulness: all rejections plus 20% of accepts; the false-accept rate is extrapolated per stratum.
 - **C1 rater:** a fresh Claude subagent per set, rubric `consumer_v1.md` (sha `9b40039f9318`, drill rule included), `consumer_rate.py build --normalise`, seed 158; the slot key is kept out of the rater's reach.
 - **Reference (NotebookLM):**
-  - sealed B → notebook `0a2e5f63-704c-4b78-83f9-91d4971a4b12` (corpus B, the same 91 items).
+  - sealed B → a private NotebookLM notebook (id in docs/private) (corpus B, the same 91 items).
   - PR set → a new notebook holding the SAME items as `hlm_research_cur` (secret-scanned), with a fresh `nlm query` process per question.
   - The reference is judged, adjudicated and rated exactly as memory.ask is. If the NotebookLM daily query quota blocks part of a set, the reference covers the queried subset, and that is reported.
 
