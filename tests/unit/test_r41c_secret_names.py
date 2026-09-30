@@ -11,7 +11,8 @@ VAL = "Abcd" + "1234!"  # built at runtime: the literal would trip the repo secr
 
 NAMES = [
     "PRIMARY_API_KEY", "CACHE_API_KEY", "APIToken", "JWTToken", "apiKey", "API_KEY", "MY_SERVICE_API_KEY",
-    "HMAC_KEY", "SIGNING_KEY", "CLIENT_SECRET", "DB_PASSWORD", "GITHUB_TOKEN", "ACCESS_TOKEN", "REFRESH_TOKEN",
+    "HMAC_KEY", "SIGNING_KEY", "CLIENT_SECRET", "DB_PASSWORD", "GITHUB_TOKEN", "ACCESS_TOKEN",
+    "REFRESH_TOKEN",
 ]  # fmt: skip
 
 
@@ -25,6 +26,8 @@ def test_camel_acronym_split() -> None:
     assert common._secret_name("APIToken") and common._secret_name("JWTToken")
 
 
-@pytest.mark.parametrize("name", ["PRIMARY_KEY", "CACHE_KEY", "TOKENIZER", "MAX_TOKENS", "SORT_KEY", "API_KEY_FILE"])
+@pytest.mark.parametrize(
+    "name", ["PRIMARY_KEY", "CACHE_KEY", "TOKENIZER", "MAX_TOKENS", "SORT_KEY", "API_KEY_FILE"]
+)
 def test_non_credential_names_stay_clean(name: str) -> None:
     assert common.secret_hit(f"{name}={VAL}") is None

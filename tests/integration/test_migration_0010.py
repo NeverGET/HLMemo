@@ -111,7 +111,9 @@ def test_migration_0010_final_constraint_name_and_rerun_after_a_leftover(
 
 
 def _no_billing_and_valid(conn: psycopg.Connection) -> None:
-    assert conn.execute("SELECT count(*) FROM llm_calls WHERE outcome = 'billing_or_quota'").fetchone()[0] == 0
+    assert (
+        conn.execute("SELECT count(*) FROM llm_calls WHERE outcome = 'billing_or_quota'").fetchone()[0] == 0
+    )
     rows = conn.execute(CHECK_SQL).fetchall()
     assert [(r[0], r[1]) for r in rows] == [("llm_calls_outcome_check", True)]
     assert "billing_or_quota" not in rows[0][2]

@@ -29,7 +29,12 @@ def test_invented_short_decision_labels_are_scrubbed_everywhere() -> None:
             "Decision (D-1): stage the constraint. Also D-2 was taken, per D-217.",
             decisions=["D-3 use a staged swap"],
             lessons=[
-                {"title": "Lock (D-4)", "body": "The lock timeout was 3s (D-5).", "tags": [], "evidence": EVIDENCE}
+                {
+                    "title": "Lock (D-4)",
+                    "body": "The lock timeout was 3s (D-5).",
+                    "tags": [],
+                    "evidence": EVIDENCE,
+                }
             ],
         ),
         TRANSCRIPT,
@@ -51,7 +56,10 @@ def test_a_lesson_body_keeps_only_evidence_supported_sentences() -> None:
         _obj("note", lessons=[{"title": "Lock timeout", "body": body, "tags": ["db"], "evidence": EVIDENCE}]),
         TRANSCRIPT,
     )
-    assert v.lessons[0]["body"] == "The migration failed because the lock timeout was 3s and a reader held the table."
+    assert (
+        v.lessons[0]["body"]
+        == "The migration failed because the lock timeout was 3s and a reader held the table."
+    )
     assert v.dropped["lessons_body_trimmed"] == 1
 
 
@@ -62,7 +70,7 @@ def test_a_lesson_body_with_no_supported_sentence_becomes_the_evidence() -> None
             lessons=[
                 {
                     "title": "Lock timeout",
-                    "body": "Migrations in general should always be wrapped in retries with exponential backoff.",
+                    "body": "Migrations should always be wrapped in retries with exponential backoff.",
                     "tags": [],
                     "evidence": EVIDENCE,
                 }
