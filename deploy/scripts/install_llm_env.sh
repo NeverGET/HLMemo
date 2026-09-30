@@ -2,46 +2,62 @@
 # R2 (D-058, D-066): install the librarian/risk-judge llm.env on the production host.
 #
 #   deploy/scripts/install_llm_env.sh --state DIR [--key-file FILE] [--profile P] [--fallback F] [--reset-operator-values]
+#   deploy/scripts/install_llm_env.sh --state DIR [--key-file FILE] --release-template REF|PATH [--reset-operator-values]
 #   deploy/scripts/install_llm_env.sh --state DIR --remove
 #
 # Builds llm.env from deploy/llm.env.example with HLM_LIBRARIAN_ENABLED=true,
 # HLM_LIBRARIAN_ROLE=observer, HLM_PROFILE=openrouter-gpt6-luna, the template's fallbacks (D-094:
-# HLM_FALLBACK_PROFILE and the per-task HLM_FALLBACK_PROFILE__<TASK> lines; --fallback replaces the
-# default one only) and the template's budget guard (D-058 development defaults). Every profile the
-# file names must exist. The key variable names come from those
-# profiles (HLM_LLM_API_KEY = "env:NAME", D-017; R2: OPENROUTER_API_KEY) and ONLY those are
-# read from --key-file (default: the repository's .env). The key travels to the host on ssh STDIN,
+# HLM_FALLBACK_PROFILE and the per-task HLM_FALLBACK_PROFILE__<TASK> lines, __RERANK included;
+# --fallback replaces the default one only), the research writer (R4 B5: HLM_RESEARCH_WRITER_PROFILE
+# when the template sets it) and the template's budget guard. Every profile the file names must
+# exist. The key variable names come from those
+# profiles (HLM_LLM_API_KEY = "env:NAME", D-017; R2: OPENROUTER_API_KEY, R4: + GEMINI_API_KEY) and
+# ONLY those are read from --key-file (default: the repository's .env); every one must be there. The
+# template carries an empty line for each key (NAME=), so an installed value is preserved (D-121).
+# The key travels to the host on ssh STDIN,
 # never in argv, a log or this script's output, and is written atomically to <env dir>/llm.env
 # (default /etc/hlmemo/llm.env, next to $HLM_REMOTE_ENV), 0600, owned by the deploy user.
 # D-121: an install PRESERVES what the operator set by hand in the installed llm.env: the spend caps
 # (HLM_LLM_BUDGET_HOUR/DAY/MONTH_USD) and every key variable (*_API_KEY, *_TOKEN, ...) keep their
 # installed values (names are printed, never values); --reset-operator-values replaces them with the
 # template's caps and the --key-file key. The guard itself stays on (HLM_LLM_BUDGET_DISABLED=false).
+# R4 R-3: --release-template REF|PATH installs ANOTHER release's template (the behaviour-only rollback:
+# the R3 template on the R4 code, research OFF): PATH, an existing file, is used as it is; otherwise
+# REF is a commit of THIS checkout and the template is REF:deploy/llm.env.example (git show; e.g. the
+# R3 commit 805f4cd). The release marker (its HLM_ENV_RELEASE, checked with evaluate --release rN),
+# the default fallback, the writer and the CAPS come from that template: its caps are installed
+# explicitly (never the installed ones, which may be another release's: R4's MONTH 60 would fail the
+# R3 manifest's MONTH <= 10 and leave the env_switch journal open); the installed keys are kept
+# (--reset-operator-values takes them from --key-file too). Before anything is sent, every install
+# checks the template's caps against that release's manifest in this checkout's check_librarian.py.
 # Idempotent: identical content is left alone ("unchanged", no backup); a different previous file
 # is first copied to llm.env.bak-<UTC stamp> (0600; the newest 3 are kept). --remove deletes
 # llm.env and its backups (they hold keys). Containers read the file only when (re)created.
 # D-116 #3 (review 75): on a host with a deployed release (release-state.json next to the app
 # checkout, $HLM_REMOTE_DIR, default /opt/hlmemo/app) the install is ONE durable, resumable step
 # under the SAME deploy lock as deploy/rollback: journal (release-state.json env_switch) -> write
-# llm.env -> recreate librarian AND api together -> check_librarian.py evaluate --release r3 against
-# the file on disk -> clear the journal. A kill at any point leaves the journal: deploy and rollback
+# llm.env -> recreate librarian AND api together -> check_librarian.py evaluate --release <the
+# template's HLM_ENV_RELEASE, R4 here> against the file on disk -> clear the journal. A kill at any point leaves the journal: deploy and rollback
 # refuse until install_llm_env.sh is re-run, which finishes the step (the same file is "unchanged",
 # both services are recreated again and checked), so api and librarian never stay on different
-# env releases. A checkout that predates R3 is refused (D-108: deploy R3 first, then its env).
+# env releases. A checkout that predates R3, or whose check_librarian.py has no manifest for the
+# template's release, is refused (D-108: deploy the release first, then its env).
 # SSH: host alias hlm-deploy from <state>/ssh_config (written by first_deploy.sh), like hlm_ops.sh.
 set -Eeuo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-usage() { sed -n '4,5p' "${BASH_SOURCE[0]}" | sed 's/^# *//'; }
+usage() { sed -n '4,6p' "${BASH_SOURCE[0]}" | sed 's/^# *//'; }
 die() { printf 'install_llm_env: %s\n' "$*" >&2; exit "${2:-64}"; }
 
 state='' key_file=$REPO_ROOT/.env profile=openrouter-gpt6-luna fallback='' mode=install operator=keep
+release_template=''
 while (($#)); do
   case $1 in
-    --state|--key-file|--profile|--fallback)
+    --state|--key-file|--profile|--fallback|--release-template)
       (($# >= 2)) || die "$1 needs a value"
       case $1 in
         --state) state=$2 ;; --key-file) key_file=$2 ;; --profile) profile=$2 ;; --fallback) fallback=$2 ;;
+        --release-template) release_template=$2 ;;
       esac
       shift 2 ;;
     --remove) mode=remove; shift ;;
@@ -51,7 +67,30 @@ while (($#)); do
   esac
 done
 [[ -n $state ]] || { usage >&2; die '--state DIR is required (the target host is never guessed)'; }
-[[ -n $fallback ]] || fallback=$(sed -n 's/^HLM_FALLBACK_PROFILE=//p' "$REPO_ROOT/deploy/llm.env.example" | tail -n 1)
+template=$REPO_ROOT/deploy/llm.env.example
+scratch=''
+trap '[[ -z $scratch ]] || rm -rf -- "$scratch"' EXIT
+if [[ -n $release_template ]]; then
+  [[ $mode == install ]] || die '--release-template is an install option'
+  if [[ -f $release_template ]]; then
+    template=$release_template
+  elif [[ $release_template =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && $release_template != *..* ]]; then
+    scratch=$(mktemp -d)
+    template=$scratch/llm.env.example
+    (cd "$REPO_ROOT" && git show "$release_template:deploy/llm.env.example") > "$template" 2>/dev/null </dev/null ||
+      die "--release-template $release_template: no such file, and not a commit of this checkout with deploy/llm.env.example"
+  else
+    die "--release-template needs a commit of this checkout (e.g. the R3 release 805f4cd) or a template file"
+  fi
+  # R-3: that template's caps, explicitly; the installed keys are kept (unless reset)
+  [[ $operator == reset ]] || operator=keys
+fi
+[[ -n $fallback ]] || fallback=$(sed -n 's/^HLM_FALLBACK_PROFILE=//p' "$template" | tail -n 1)
+# D-111/D-116 (review 79 T5): the release marker comes from the template (R4 here), never a literal
+release=$(sed -n 's/^HLM_ENV_RELEASE=\(r[0-9][0-9]*\)$/\1/p' "$template" | tail -n 1)
+[[ -n $release ]] || die "$template has no HLM_ENV_RELEASE=rN marker"
+# R4 B5: the research writer the template names (empty: the research profile writes)
+writer=$(sed -n 's/^HLM_RESEARCH_WRITER_PROFILE=//p' "$template" | tail -n 1)
 ssh_config=${HLM_OPS_SSH_CONFIG:-$state/ssh_config}
 [[ -f $ssh_config ]] || die "no SSH config at $ssh_config (run first_deploy.sh first)"
 remote_env=${HLM_REMOTE_ENV:-/etc/hlmemo/prod.env}
@@ -110,7 +149,8 @@ except UnicodeDecodeError:
 if text.rstrip("\n").rsplit("\n", 1)[-1] != END or "HLM_LIBRARIAN_ENABLED=" not in text:
     fail("incomplete llm.env on stdin (no end marker)")
 if exists and operator != "reset":
-    # D-121: the operator's hand edits in the INSTALLED file win (caps and keys), unless reset
+    # D-121: the operator's hand edits in the INSTALLED file win (caps and keys), unless reset;
+    # R4 R-3 ("keys", --release-template): the keys only, the caps are the template's
     installed = {}
     with open(target, encoding="utf-8", errors="replace") as fh:
         for line in fh.read().splitlines():
@@ -121,7 +161,7 @@ if exists and operator != "reset":
     for line in text.splitlines():
         key, sep, value = line.partition("=")
         key = key.strip()
-        if sep and not line.startswith("#") and (key in PRESERVE or SECRET.search(key)):
+        if sep and not line.startswith("#") and ((operator == "keep" and key in PRESERVE) or SECRET.search(key)):
             if installed.get(key) and installed[key] != value:
                 line = f"{key}={installed[key]}"
                 kept.append(key)
@@ -178,7 +218,7 @@ PY
 read -r -d '' remote_sh <<'SH' || true
 set -Eeuo pipefail
 umask 077
-mode=$1 target=$2 app_dir=$3 remote_env=$4 remote_py=$5 operator=$6
+mode=$1 target=$2 app_dir=$3 remote_env=$4 remote_py=$5 operator=$6 release=$7
 parent=$(dirname "$app_dir")
 deployed=0
 [[ -f $parent/release-state.json && -f $app_dir/deploy/scripts/release_state.py ]] && deployed=1
@@ -190,6 +230,10 @@ apply=0
 if ((deployed)) && [[ $mode == install ]]; then
   grep -q RELEASE_MANIFESTS "$app_dir/deploy/scripts/check_librarian.py" || {
     echo 'install_llm_env (remote): the deployed release predates R3; deploy R3 first, then install its llm.env (D-108 Order B); nothing changed' >&2
+    exit 3
+  }
+  grep -q "\"$release\": {" "$app_dir/deploy/scripts/check_librarian.py" || {
+    echo "install_llm_env (remote): the deployed release has no $release manifest; deploy it first, then install its llm.env (D-108 Order B); nothing changed" >&2
     exit 3
   }
   apply=1
@@ -206,12 +250,13 @@ trap 'rm -rf -- "$reports"' EXIT
 bash deploy/scripts/stack.sh exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
   < deploy/scripts/check_librarian.py > "$reports/l.json" || true
 bash deploy/scripts/stack.sh exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$reports/a.json" || true
-python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file "$target" --release r3 \
-  --librarian "$reports/l.json" --api "$reports/a.json" </dev/null
+# R4 R-14: --writer-probe api runs probe-writer in the api container (r4 mode with a writer only)
+python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file "$target" --release "$release" \
+  --writer-probe api --librarian "$reports/l.json" --api "$reports/a.json" </dev/null
 python3 deploy/scripts/release_state.py end-env-switch "$parent" </dev/null
 echo 'install_llm_env (remote): switch complete (both services run this llm.env, the check passed)'
 SH
-printf -v remote_cmd 'exec bash -c %q install_llm_env %q %q %q %q %q %q' "$remote_sh" "$mode" "$target" "$remote_dir" "$remote_env" "$remote_py" "$operator"
+printf -v remote_cmd 'exec bash -c %q install_llm_env %q %q %q %q %q %q %q' "$remote_sh" "$mode" "$target" "$remote_dir" "$remote_env" "$remote_py" "$operator" "$release"
 rssh() { ssh -F "$ssh_config" -o BatchMode=yes hlm-deploy "$@"; }
 
 if [[ $mode == remove ]]; then
@@ -223,18 +268,21 @@ fi
 [[ -f $key_file && -r $key_file ]] || die "key file not readable: $key_file (pass --key-file FILE)"
 # Build the whole file first (the key stays in this shell's memory; printf is a builtin, so it never
 # appears in any process argv), then send it in one piece on ssh stdin.
-content=$(python3 - "$REPO_ROOT/deploy/llm.env.example" "$key_file" "$REPO_ROOT/profiles" "$profile" "$fallback" <<'PY'
-import os, re, sys, tomllib
-example, key_file, profiles, primary, fallback = sys.argv[1:6]
+content=$(python3 - "$template" "$key_file" "$REPO_ROOT/profiles" "$profile" "$fallback" "$release" \
+  "$REPO_ROOT/deploy/scripts/check_librarian.py" <<'PY'
+import importlib.util, os, re, sys, tomllib
+example, key_file, profiles, primary, fallback, release, checker = sys.argv[1:8]
 END = "# END llm.env (install_llm_env.sh)"
 def fail(msg):
     print(f"install_llm_env: {msg}", file=sys.stderr)
     sys.exit(65)
-# D-094: the per-task fallbacks the template sets are kept verbatim; their profiles must exist too
+# D-094: the per-task fallbacks the template sets (HLM_FALLBACK_PROFILE__RERANK included) are kept
+# verbatim; R4 B5: so is the research writer (HLM_RESEARCH_WRITER_PROFILE). Their profiles must
+# exist too, and their keys are read like the primary's.
 task_profiles = []
 with open(example, encoding="utf-8") as fh:
     for line in fh:
-        m = re.fullmatch(r"HLM_FALLBACK_PROFILE__[A-Z][A-Z0-9_]*=(.*)", line.strip())
+        m = re.fullmatch(r"(?:HLM_FALLBACK_PROFILE__[A-Z][A-Z0-9_]*|HLM_RESEARCH_WRITER_PROFILE)=(.*)", line.strip())
         if m and m.group(1).strip():
             task_profiles.append(m.group(1).strip())
 names = []
@@ -270,9 +318,10 @@ settings = {
     "HLM_LIBRARIAN_ROLE": "observer",
     "HLM_PROFILE": primary,
     "HLM_FALLBACK_PROFILE": fallback,
-    # D-111/D-116: the release marker (check_librarian.py evaluate checks this env against the R3
-    # manifest: no query rewrite, no per-source cap, the D-094 fallback mapping)
-    "HLM_ENV_RELEASE": "r3",
+    # D-111/D-116: the release marker, the template's (check_librarian.py evaluate checks this env
+    # against that release's manifest: R4 = no query rewrite, no per-source cap, the D-094 fallback
+    # mapping, memory.ask on (prose, the writer) and the Memory Map summaries off, with the limits)
+    "HLM_ENV_RELEASE": release,
     **{name: found[name] for name in names},
 }
 out = [
@@ -289,10 +338,26 @@ with open(example, encoding="utf-8") as fh:
         out.append(line)
 out += [f"{k}={v}" for k, v in settings.items() if k not in applied]
 out.append(END)
+# R4 R-3: the template's caps must satisfy that release's manifest in this checkout (the caps an
+# install with --release-template or --reset-operator-values writes; the others keep the installed ones)
+spec = importlib.util.spec_from_file_location("check_librarian", checker)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+manifest = module.RELEASE_MANIFESTS.get(release)
+if manifest is None:
+    fail(f"this checkout's check_librarian.py has no {release} manifest (template release {release})")
+built = {}
+for line in out:
+    key, sep, value = line.partition("=")
+    if sep and not line.startswith("#"):
+        built[key.strip()] = value.strip()
+problems = module._budget_problems(built, manifest["budgets"])
+if problems:
+    fail(f"the template's spend guard violates the {release} manifest: {'; '.join(problems)}")
 sys.stdout.write("\n".join(out) + "\n")
 PY
 ) || die "llm.env not built; nothing was sent" 65
-echo "install_llm_env: $target on hlm-deploy ($ssh_config): profile=$profile fallback=$fallback role=observer enabled=true"
+echo "install_llm_env: $target on hlm-deploy ($ssh_config): release=$release${release_template:+ (template $release_template; its caps, the installed keys kept)} profile=$profile fallback=$fallback writer=${writer:--} role=observer enabled=true"
 printf '%s\n' "$content" | rssh "$remote_cmd"
 unset content
-echo "Done. On a deployed R3 host the switch (both services recreated + the --release r3 check) ran under the deploy lock; re-run this command if it was interrupted (RUNBOOK \"R3 release\")."
+echo "Done. On a deployed host the switch (both services recreated + the --release $release check) ran under the deploy lock; re-run this command if it was interrupted (RUNBOOK \"R3 release\", \"R4 release\")."

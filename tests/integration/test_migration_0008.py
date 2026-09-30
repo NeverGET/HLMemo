@@ -12,6 +12,7 @@ import uuid
 import psycopg
 import pytest
 
+from tests._heads import main_head
 from tests.integration.test_migration_0006 import _alembic, fresh_dsn  # noqa: F401 - fixture by import
 
 pytestmark = pytest.mark.integration
@@ -91,9 +92,8 @@ def test_main_head_is_0008_from_empty_0006_and_0007(fresh_dsn: str, start: str |
             assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [(start,)]
     _alembic(fresh_dsn, "upgrade", "main@head")
     with psycopg.connect(fresh_dsn) as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0008_librarian_tasks",)
-        ]
+        # 0009_memory_map (D-136) follows 0008 on the chain: main@head passes through 0008
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [(main_head(),)]
         cur = conn.execute(
             "SELECT to_regclass('version_signals') IS NOT NULL, to_regclass('code_refs') IS NOT NULL,"
             " EXISTS (SELECT 1 FROM information_schema.columns"

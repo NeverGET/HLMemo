@@ -674,19 +674,234 @@ renders the previous model with it and restores it atomically before the previou
 (a failed rollback step puts the newer env back first). Reinstalling the R2 env by hand before a
 rollback is no longer needed, but harmless.
 
+### R4 release (memory.ask with the Gemini writer; docs/decisions/R4-RELEASE-PLAN.md)
+
+R4 = the R3 code plus `memory.ask` (the research librarian) with the Gemini 3.8 Flash **medium**
+writer (D-198). `memory.ask` (api) and its Memory Map summaries (librarian) default **OFF** in the
+code: an R3 `llm.env` on the R4 image never serves `memory.ask` and never spends on it (the R3
+manifest keeps `HLM_RESEARCH_ENABLED` and `HLM_MAP_SUMMARY_ENABLED` absent or false). The order is
+the R3 one (D-108 Order B): deploy the R4 ref with the R3 env still installed (checked against the R3
+manifest), then switch the env with the R4 checkout's `install_llm_env.sh`. The only migration is
+0009 (a create-only cache table) and the Compose model is unchanged (no `--accept-compose-change`).
+
+**What `evaluate --release r4` checks** (`RELEASE_MANIFESTS["r4"]` in `check_librarian.py`, on top
+of the R2/R3 checks):
+- memory.ask ON, the map summaries OFF (D-192/D-195), `HLM_RESEARCH_ANSWER_MODE=prose`,
+  `HLM_RESEARCH_ATTRIBUTION=llm`, `HLM_RESEARCH_RERANK=llm`, the D-094 mapping plus the research and
+  map-summary fallbacks, exactly;
+- `HLM_RESEARCH_WRITER_PROFILE` unset (the research primary `HLM_PROFILE`, luna, writes: the plan's
+  §6.2(b)) or `google-gemini38-flash-medium` (the template) or `google-gemini38-flash-high`;
+- `HLM_RESEARCH_MAX_USD` ≤ 0.12, `HLM_RESEARCH_MAX_TOKENS` ≤ 100000; the research, HTTP, writer and
+  LLM timeouts, the detached hold and the prose limit run the same in api, librarian and the file;
+- the spend guard ON with the owner's R4 caps (`_BUDGETS_R4`, D-198): HOUR ≤ 3, DAY ≤ 8, MONTH ≤ 60
+  (R3's `_BUDGETS` stays MONTH ≤ 10, so an R3 env never passes with the R4 caps);
+- every profile key set, the writer's `GEMINI_API_KEY` included (an unset writer needs none);
+- **R-11:** the api runs WITHOUT the research tracer (`HLM_RESEARCH_TRACE_DIR` unset everywhere);
+- **R-14:** `python -m hlmemo.ops probe-writer` in the **api** container (the api's own writer
+  profile and key; one tiny request, no retry, no fallback) exits 0 with `ok=true` and the api's
+  writer; only its `ok/profile/status/latency_ms` are printed (`status` may be `price_expired`).
+  With the writer unset it probes the head of the research chain and must report it: `HLM_PROFILE`,
+  or, when that profile's file lists `research` in `disabled_tasks`,
+  `HLM_FALLBACK_PROFILE__RESEARCH` (else `HLM_FALLBACK_PROFILE`). Required either way;
+- **R-5:** the writer profile's `price_valid_until` has not passed (a WARNING within 14 days): the
+  2027-01-01 Gemini prices need a new profile commit with the new prices and date first. With the
+  writer unset, the research primary's profile is checked only if it carries the field;
+- **R-4:** the llm.env fingerprint (deploy/rollback provenance) covers all of the above keys and the
+  caps, and both api and librarian must report.
+
+**Exact sequence** (operator workstation, the repository root checked out at the `r4-rc` merge;
+`STATE` is the production state directory; every remote command uses the host form
+`cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh …`):
+
+```sh
+STATE=deploy/.local/153.92.1.166
+REF=$(git rev-parse r4-rc)        # the FULL 40-character SHA, pushed to origin (the host fetches it)
+R3=$(git rev-parse 805f4cd)       # the R3 release (behaviour-only rollback template)
+
+# 0. Snapshot VM 2002259 ONLY (Hostinger VPS_createSnapshotV1), wait for it, record its id. Hostinger
+#    keeps ONE snapshot per VM and a new one overwrites the old: take it now, before step 2, and never
+#    again during or after the test (it would overwrite this rollback point). The other VPSs are
+#    never touched. Pause the backup timer for the attended window (D-123; an admin session):
+#    sudo systemctl stop hlmemo-backup.timer
+
+# 1. The key file: a private directory, 0600, EVERY key the R4 env needs (--reset-operator-values
+#    below takes every key from it): the OpenRouter prod key (D-120) and the Gemini key (the paid
+#    Google project, the local .env). Values never on a command line, never printed.
+umask 077
+KEYDIR=$(mktemp -d)
+KEYS=$KEYDIR/r4-keys.env
+printf 'OPENROUTER_API_KEY=%s\n' "$(tr -d '\n' < "$STATE/openrouter-prod.key")" > "$KEYS"
+grep '^GEMINI_API_KEY=' .env >> "$KEYS"
+chmod 600 "$KEYS"
+cut -d= -f1 "$KEYS"                                            # names only: both lines present
+sed -n 's/^GEMINI_API_KEY=//p' "$KEYS" | tr -d '\n' | shasum -a 256 | cut -c1-12   # prefix to compare
+
+# 2. Deploy the R4 ref with the R3 env still installed (no Compose change). Interim check: the
+#    librarian check prints "RESULT librarian PASS llm.env=present release=r3 manifest=r3" (research
+#    OFF under the R3 env), then "Deployment ready".
+PATH="$PWD/$STATE/bin:$PATH" bash deploy/scripts/deploy.sh hlm-deploy "$REF"
+
+# 3. The env switch, from this (R4) checkout, WITH --reset-operator-values: without it the installed
+#    R3 caps 1/2/10 win over the template's 3/8/60 (and the installed keys over the key file's).
+#    Under the deploy lock: journal, write llm.env, recreate librarian+api, evaluate --release r4
+#    --writer-probe api, clear the journal. Pass: "writer probe (api container): exit=0 ok=True
+#    profile=google-gemini38-flash-medium ..." and "RESULT librarian PASS llm.env=present release=r4
+#    ... writer=google-gemini38-flash-medium". Interrupted: re-run the same command.
+bash deploy/scripts/install_llm_env.sh --state "$STATE" --key-file "$KEYS" --reset-operator-values
+ssh -F "$STATE/ssh_config" hlm-deploy \
+  "sed -n 's/^GEMINI_API_KEY=//p' /etc/hlmemo/llm.env | tr -d '\n' | sha256sum | cut -c1-12" </dev/null
+#    (the same prefix as step 1)
+rm -f -- "$KEYS" && rmdir -- "$KEYDIR"     # a rollback install rebuilds it with the step-1 recipe
+
+# 4. Gates from outside (the drill restores a fresh backup over the live data: run it BEFORE the
+#    links apply, with no other client writing), the postgres-closed gate included; then status.
+bash deploy/scripts/remote_gates.sh --url https://mcp.hlmemo.com --state "$STATE" --librarian
+bash deploy/scripts/hlm_ops.sh --state "$STATE" status
+bash deploy/scripts/hlm_ops.sh --state "$STATE" status --json | python3 -c 'import json,sys
+r = json.load(sys.stdin)["research"]
+print({k: r.get(k) for k in ("writer_used_24h", "writer_fallback_24h", "writer_outcomes_24h",
+                             "writer_questions_24h", "writer_fallback_questions_24h")})'
+#    (the 24 h numbers are operational: per call AND per question, one ledger lineage per ask; the
+#    final test's fallback share comes from the answers' meta.flags.writer_fallback, plan §5.1)
+#    Resume the backup timer (admin): sudo systemctl start hlmemo-backup.timer
+```
+
+The same check at any time (read-only apart from the probe's one tiny Google request, ~$0.0001),
+and the probe alone:
+
+```sh
+ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && export HLM_ENV_FILE=/etc/hlmemo/prod.env &&
+  d=$(mktemp -d) &&
+  bash deploy/scripts/stack.sh exec -T librarian python - collect --service librarian --probe --wait-heartbeat 45 \
+    < deploy/scripts/check_librarian.py > "$d/l.json" &&
+  bash deploy/scripts/stack.sh exec -T api python - collect --service api < deploy/scripts/check_librarian.py > "$d/a.json" &&
+  python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file /etc/hlmemo/llm.env \
+    --release r4 --writer-probe api --librarian "$d/l.json" --api "$d/a.json"; rc=$?; rm -rf "$d"; exit $rc' </dev/null
+bash deploy/scripts/hlm_ops.sh --state "$STATE" probe-writer   # {"ok","profile","status","latency_ms"}; non-zero exit on failure
+```
+
+**Curated links** (prod data change, plan §4.6; `--proposals` must name a file INSIDE the api
+container, and `docker compose cp` cannot write into its `/tmp` tmpfs, so the file is streamed in):
+
+The preview is `--dry-run` (it runs every check under the locks, then rolls back; `applied` stays 0
+in its output). A stale or foreign record anywhere in the file rejects the whole apply: exit 65,
+`{"rejected": true, "stale": [...], "foreign": [...]}`, nothing written. `counts` prints
+`<events>|<links>|<live backfill links of hlmemo>` (read-only).
+
+```sh
+counts() {
+  ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T db sh -s' <<'SQL'
+psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT (SELECT count(*) FROM events), (SELECT count(*) FROM links), (SELECT count(*) FROM links l JOIN projects p ON p.project_id = ANY (l.project_ids) WHERE p.slug = 'hlmemo' AND l.rel = 'supersedes' AND l.props->>'by' = 'backfill' AND l.superseded_at = 'infinity')"
+SQL
+}
+P=docs/private/<the approved proposals file>.jsonl
+APPROVED=<the approved count of the review>   # = the file's "proposed" records for hlmemo
+ssh -F "$STATE/ssh_config" hlm-deploy "cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api sh -c 'umask 077 && cat > /tmp/r4-links.jsonl'" < "$P"
+# preview (rolls back). PASS: exit 0, len(links) == $APPROVED, and the counts unchanged
+before=$(counts)
+ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --apply --proposals /tmp/r4-links.jsonl --dry-run --json' </dev/null > "$STATE/r4-links-preview.json"
+python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); n = len(d["links"]); ok = d["preview"] and n == int(sys.argv[2]); print("preview", "PASS" if ok else "FAIL", n, "of", sys.argv[2]); sys.exit(not ok)' "$STATE/r4-links-preview.json" "$APPROVED"
+test "$(counts)" = "$before" && echo "counts unchanged: $before"
+# apply: ONE librarian event; record its id
+ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --apply --proposals /tmp/r4-links.jsonl' </dev/null
+ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api rm -f /tmp/r4-links.jsonl' </dev/null
+```
+
+**Rollback** (plan §6; triggers in §6 of the plan). In order of reach:
+
+1. **Links only.** Project-WIDE: it closes EVERY live `by=backfill` link of hlmemo in ONE
+   `link_supersede` event, not only the links of one apply event. `--project` is required (without
+   it the command exits 64 and the links stay live). Preview first (`counts` above). PASS: exit 0,
+   len(links) == the live backfill link count (the third `counts` field), counts unchanged:
+   ```sh
+   before=$(counts)
+   ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --revert --dry-run --json' </dev/null > "$STATE/r4-revert-preview.json"
+   python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); n = len(d["links"]); ok = d["preview"] and n == int(sys.argv[2]); print("preview", "PASS" if ok else "FAIL", n, "of", sys.argv[2]); sys.exit(not ok)' "$STATE/r4-revert-preview.json" "${before##*|}"
+   test "$(counts)" = "$before" && echo "counts unchanged: $before"
+   ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --revert' </dev/null
+   ```
+2. **Behaviour only** (the R4 code stays; the 0009 cache table stays and affects neither option).
+   Rebuild the key file with the step-1 recipe first (every installer run needs `--key-file`).
+   `--release-template REF|PATH`: **PATH**, an existing file, is used as it is; otherwise **REF** is
+   a commit of THIS checkout and the template is `REF:deploy/llm.env.example` (`git show`). Its
+   release marker (checked with `evaluate --release <its HLM_ENV_RELEASE>`), its default fallback,
+   its writer and its **caps** are installed as that template says; the installed keys are kept
+   (their values are not taken from the key file, but every key that template's profiles name must
+   still be in it). Before anything is sent, the template's caps are checked against that release's
+   manifest in this checkout (a violation sends nothing).
+   - (a) **R3 env** (memory.ask OFF): the R3 template with its caps 1/2/10 (the R4 MONTH 60 would fail
+     the R3 manifest's MONTH ≤ 10 and leave the env_switch journal open, R-3). Pass: "RESULT
+     librarian PASS llm.env=present release=r3 manifest=r3" and "switch complete" (the journal is
+     empty). The R3 template has no `GEMINI_API_KEY` line, so the key leaves `llm.env` (its previous
+     copy stays in the newest `llm.env.bak-*`, 0600, until three later installs rotate it out).
+     ```sh
+     bash deploy/scripts/install_llm_env.sh --state "$STATE" --key-file "$KEYS" --release-template "$R3"
+     ```
+   - (b) **R4 env with the luna writer** (memory.ask stays ON; the r4 manifest accepts an unset
+     writer; probe-writer then probes the head of the research chain, `HLM_PROFILE` (luna), and
+     must report it; the price date applies only if that profile carries one). The installed `GEMINI_API_KEY` stays in
+     the file (the template keeps its line):
+     ```sh
+     sed '/^HLM_RESEARCH_WRITER_PROFILE=/d' deploy/llm.env.example > "$KEYDIR/r4-luna.env.example"
+     bash deploy/scripts/install_llm_env.sh --state "$STATE" --key-file "$KEYS" --release-template "$KEYDIR/r4-luna.env.example"
+     ```
+   Then delete the key file again. Back to the Gemini writer: step 3.
+3. **Full** (R3 code, image, the R3 `llm.env` snapshot and the pre-R4 quiesced dump):
+   ```sh
+   PATH="$PWD/$STATE/bin:$PATH" bash deploy/scripts/deploy.sh --rollback hlm-deploy
+   ```
+   Every write after the deploy is lost, the curated links AND their events included; a later
+   redeploy does not bring them back (a re-verified apply is needed). R-2: the rollback holds the
+   backup/restore operation lock from before anything stops to its end (a running backup or restore
+   refuses it: retry when it has finished); it saves the current database to
+   `$HLM_BACKUP_DIR/rollback/hlmemo-rollback-<stamp>.dump`, outside every rotation (delete it by hand
+   once the rollback is settled). If it prints **`FAIL CLOSED`**, the destructive phase began and
+   that saved database is missing: the writers stay stopped and the journal stays open on purpose.
+   Do not re-run blindly: restore a dump you trust with `deploy/backup/restore.sh DUMP --yes`
+   (release-state.json `previous_dump`, or the saved database fetched back from S3) or go to 4.
+4. **Last resort:** restore the step-0 Hostinger snapshot of VM 2002259 (~30 min; writes after it are
+   lost).
+
+**Spend.** The R4 caps are HOUR 3 / DAY 8 / MONTH 60 USD (the template; the owner's decision for the
+Gemini test month, D-198) with the guard on; `HLM_RESEARCH_MAX_USD=0.12` bounds one question. The
+**outer guard** is the OpenRouter prod key's own provider-side limit of **$50/month** (D-120): an
+operator step in the OpenRouter dashboard, not a script. Before the deploy, confirm there that the
+prod key's monthly limit is still $50 (reset monthly). Check `hlm_ops.sh status` (`spend_*`,
+`writer_fallback_24h`) daily during the test, the ledger against the Google console, and the
+writer's price date (R-5) before 2026-12-31.
+
+**Review-77 residuals (D-122/D-123).** D-123 made the tooling hardening an R4 precondition. Status
+after the R4 deploy work (detail and test names: `tests/deploy/RESIDUALS.md`):
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | A resumed deploy publishes a half-switched stack | accepted (attended deploy; read the re-run's output) |
+| 2 | Backup timer / restore race a rollback or a recovery | closed for rollback (R-2: one operation lock, held to the end); accepted for a resumed deploy's recovery (timer paused in the window) |
+| 3 | Rotation deletes the rollback safety dump; a retry closes the journal without restoring | closed (R-2: `rollback/` tier, journalled dumps protected, FAIL CLOSED recovery) |
+| 4 | Install and deploy/rollback journals can deadlock | accepted: never run `install_llm_env.sh` while `python3 /opt/hlmemo/app/deploy/scripts/release_state.py get /opt/hlmemo deploy_attempt` (or `rollback_in_progress`) prints anything on the host |
+| 5 | Persistent image selection not reverted on a resumed deploy's recovery | accepted: after any recovered deploy compare `HLM_IMAGE` in prod.env with the running api |
+| 6 | Fingerprint ignores budget/guard fields, does not require both services | closed (R-4) |
+| 7 | R3-REHEARSAL.md stale | not carried over: this section and the plan's §2.2 are the procedure |
+| 8 | Extra fallback overrides / an unreadable env file fail open | accepted (read the printed per-task fallbacks) |
+| 9 | Secret orphan windows (snapshot/tmp copies after a kill) | accepted (0600 in /etc/hlmemo; after an interrupted run delete `llm.env.*` strays release-state.json does not name) |
+| 10 | A preserved wrong key passes (unauthenticated probe) | closed for the writing profile (R-14 probe-writer: the Gemini writer, or the research primary when the writer is unset); accepted for the other OpenRouter profiles (fallbacks, librarian tasks) |
+
 **Convergence (D-116, review 75).** Every step is journalled in `release-state.json` first, so a
 kill anywhere converges on a re-run of the same command:
 - The snapshot is taken only when its provenance is proven: the non-secret fingerprint of the file
-  on disk (release marker, D-094 mapping, rewrite/cap switches) must equal what the api AND the
-  librarian containers were created with; otherwise deploy and rollback stop before anything
-  changes ("finish the env switch").
+  on disk (release marker, D-094 mapping, rewrite/cap switches; R4 R-4: memory.ask's writer, answer
+  settings, timeouts and prose limit, the caps and the guard switch) must equal what the api AND the
+  librarian containers were created with, and both must report; otherwise deploy and rollback stop
+  before anything changes ("finish the env switch"). A cap edited by hand in `llm.env` therefore
+  needs `install_llm_env.sh` (it recreates both services) before the next deploy or rollback.
 - `install_llm_env.sh` on a deployed host is ONE step under the deploy lock: journal
-  (`env_switch`), write `llm.env`, recreate `librarian api` together, `evaluate --release r3`
-  against the file, clear the journal. If it is interrupted, deploy and rollback refuse until the
+  (`env_switch`), write `llm.env`, recreate `librarian api` together, `evaluate --release <marker>`
+  (the template's `HLM_ENV_RELEASE`: r3 or r4) against the file, clear the journal. If it is interrupted, deploy and rollback refuse until the
   same `install_llm_env.sh` command is re-run; the re-run finishes the step. It refuses on a
   checkout that predates R3 (Order B). It keeps the operator's hand-edited caps and key in the
   installed `llm.env` (D-121); `--reset-operator-values` replaces them with the template's caps and
-  the `--key-file` key.
+  the `--key-file` key; `--release-template REF|PATH` (R4 R-3) installs that template's caps and
+  keeps the installed keys.
 - A deploy re-run of the published ref (same ref) only verifies: the rollback pair and its llm.env
   snapshot stay. A pair of a release to itself is never published.
 - The deploy-attempt journal (`deploy_attempt`, with a 0600 copy of the rendered previous model)
@@ -696,12 +911,16 @@ kill anywhere converges on a re-run of the same command:
 - A rollback journals its FIRST safety dump and the start of the destructive phase before the
   database changes; a retry reuses that dump. `--accept-release` refuses while a rollback is
   unfinished and always checks that the running api is the current release.
+- R4 R-2: the rollback holds the backup/restore operation lock (`$HLM_BACKUP_DIR/.operation.flock`)
+  to its end; its safety dump lives in `$HLM_BACKUP_DIR/rollback/`, outside every rotation, and
+  rotation/pruning never delete a dump `release-state.json` references; after the destructive phase
+  began, a missing safety dump stops the recovery FAIL CLOSED (journal open, writers stopped).
 - Secret-bearing copies (`llm.env.release-*`, the attempt's model) are journalled in
   `pending_cleanup` in the same write that stops needing them and deleted by the next lock holder,
   idempotently.
 
-**Spend (D-121).** The owner's production target is at most $10/month: the template sets
-`HLM_LLM_BUDGET_MONTH_USD=10`, `DAY=2`, `HOUR=1`, the guard on. The R3 manifest requires every cap
+**Spend of an R3 env (D-121).** The owner's production target is at most $10/month: the R3 template
+(805f4cd) sets `HLM_LLM_BUDGET_MONTH_USD=10`, `DAY=2`, `HOUR=1`, the guard on. The R3 manifest requires every cap
 present, `HLM_LLM_BUDGET_DISABLED=false`, month at most 10 and day/hour at most month; the operator
 may edit the caps and the key in `/etc/hlmemo/llm.env` by hand (then re-run `install_llm_env.sh`,
 which keeps them and recreates both services).
@@ -749,11 +968,14 @@ Both first verify that the **running** api's image revision label equals `releas
 `--rollback` copies its helpers from the current release's git objects into a private temp dir,
 validates the previous commit (W0+), its quiesced dump and its image (by recorded ID) and renders
 the previous Compose model pinned to that ID, all before stopping anything. It then records the
-attempt in the state, stops writers, saves the current database (`backup.sh`), checks out the
+attempt in the state, stops writers, saves the current database (`backup.sh --rollback-safety`), checks out the
 previous commit, publishes its image, restores its `llm.env` snapshot (D-111) and its dump and
 starts it. If a step fails, the saved
 database is restored and the current release restarted (the saved dump is used only for that; it
-then ages out with the daily tier). If the runner is killed, the recorded attempt lets the same
+lives in `$HLM_BACKUP_DIR/rollback/`, outside every rotation, until deleted by hand; R4 R-2: after the
+destructive phase began, a recovery that finds it missing stops FAIL CLOSED instead: writers stay
+stopped, nothing restarts, the journal stays open). The whole run holds the backup/restore operation
+lock, so the backup timer and `restore.sh` wait (and a rollback refuses while they run). If the runner is killed, the recorded attempt lets the same
 `--rollback` command be re-run to completion. Success consumes the pair in one atomic state write
 plus a `derive` that rewrites or deletes the legacy marker files. `--accept-release` deletes every
 env backup ever recorded (`retired_backups`, including those of failed deployments) and, when the

@@ -8,6 +8,7 @@ Run inside the api container (it has the app DSN), normally through `deploy/scri
     python -m hlmemo.ops project create SLUG [--name N] [--exists-ok] | project list
     python -m hlmemo.ops project policy show SLUG | policy set SLUG librarian_cross_project include|exclude
     python -m hlmemo.ops status [--json]
+    python -m hlmemo.ops probe-writer    (R4, R-14: one authenticated 16-token writer call; ops/probe.py)
     python -m hlmemo.ops librarian audit|questions list|approve-batch|role set|expire (ops/librarian.py)
 
 `device mint` and `device rotate` print ONLY the token on stdout (so it can be piped into
@@ -95,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
         "status", help="jobs ledger, worker progress, librarian heartbeat, devices, migration"
     )
     st.add_argument("--json", action="store_true")
+    sub.add_parser(
+        "probe-writer",
+        help="R4: one authenticated minimal call of the prose writer with this process's settings; "
+        'prints only {"ok","profile","status","latency_ms"}, exit 1 on failure',
+    )
     librarian.add_parser(sub)  # W2b/W2c: librarian audit|questions|approve-batch|role|expire
     return ap
 
@@ -120,6 +126,12 @@ async def run(args: argparse.Namespace) -> int:
     settings = get_settings()
     if args.group == "status":
         return await _status(args, settings)
+    if args.group == "probe-writer":  # R4 (R-14): no database; this process's credentials
+        from hlmemo.ops import probe
+
+        result = await probe.probe(settings)
+        _print(result)
+        return 0 if result["ok"] else EX_REFUSED
     async with await AsyncConnection.connect(settings.db_dsn, autocommit=False, connect_timeout=10) as conn:
         await conn.execute("SET TIME ZONE 'UTC'")
         for name, value in (
@@ -260,9 +272,42 @@ async def _status(args: argparse.Namespace, settings: Any) -> int:
     )
     for line in chain_lines(lib.get("chains") or {}):
         sys.stdout.write(line + "\n")
+    for line in research_lines(st.get("research") or {}):
+        sys.stdout.write(line + "\n")
     for j in st["jobs"]:
         sys.stdout.write(f"jobs        {j['kind']:<14} {j['status']:<8} {j['count']}\n")
     return rc
+
+
+def research_lines(r: dict[str, Any]) -> list[str]:
+    """R4 (R-6): who wrote memory.ask's prose answers (24 h), and a WARNING line when more than 10%
+    of the questions (Astra 90 N-1) or of the answered prose calls fell back from the configured
+    writer."""
+    if not r:
+        return []
+    lines = [
+        f"research    enabled={r.get('enabled')} mode={r.get('answer_mode')} writer={r.get('writer_profile')}"
+        f" used_24h={r.get('writer_used_24h')} fallback_24h={r.get('writer_fallback_24h')}"
+        f" questions_24h={r.get('writer_questions_24h')}"
+        f" fallback_questions_24h={r.get('writer_fallback_questions_24h')}"
+        f" outcomes_24h={r.get('writer_outcomes_24h')}"
+    ]
+    if r.get("writer_price_expired"):
+        lines.append(
+            f"WARNING     writer {r.get('writer_profile')}: price_valid_until"
+            f" {r.get('writer_price_valid_until')} passed: unusable for live calls (update its prices)"
+        )
+    share = float(r.get("writer_fallback_share_24h") or 0.0)
+    q_share = float(r.get("writer_fallback_question_share_24h") or 0.0)
+    if max(share, q_share) > service.WRITER_FALLBACK_WARN:
+        answered = sum((r.get("writer_used_24h") or {}).values())
+        lines.append(
+            f"WARNING     writer fallback {q_share:.0%} of the questions"
+            f" ({r.get('writer_fallback_questions_24h')} of {r.get('writer_questions_24h')}) and"
+            f" {share:.0%} of the prose answers ({r.get('writer_fallback_24h')} of {answered}) in 24 h:"
+            f" {r.get('writer_profile')} did not write them (see outcomes_24h)"
+        )
+    return lines
 
 
 def chain_lines(chains: dict[str, Any]) -> list[str]:

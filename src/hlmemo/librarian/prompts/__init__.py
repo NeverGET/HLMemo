@@ -5,7 +5,13 @@ provider prompt caching applies, D-019) and ``<task>/v<N>.schema.json`` (the JSO
 response must satisfy). ``load_task(name)`` picks the highest version unless one is pinned: per call
 (``load_task(name, version)``), or process-wide (``pin_versions({"relate": 1})`` or the
 ``HLM_LIBRARIAN_PROMPT_PINS="relate=1,relate_verify=1"`` environment variable — a rollback that
-needs no code change; the G-LIVE-B runner's ``--prompts v1`` uses it). Model quirks are never
+needs no code change; the G-LIVE-B runner's ``--prompts v1`` uses it). An OPT-IN version
+(``OPT_IN_VERSIONS``) is never the default: it is loaded only when asked for by number (research/v2,
+the D-156 cite-mode prompt, is selected by ``HLM_RESEARCH_ANSWER_MODE=cite``; research/v3, the D-162
+prose-mode prompt, by ``HLM_RESEARCH_ANSWER_MODE=prose``). A MINOR revision ``<task>/v<N>.<m>.md`` (with
+its ``v<N>.<m>.schema.json``) is never listed by ``versions`` and is loaded only by its version string
+(``load_task("research", "3.2")``, D-193 (6): the prose writer rules selected by
+``HLM_RESEARCH_PROSE_PROMPT=v3.2``). Model quirks are never
 written here: a profile's ``prompt_overrides[<task>].system_append`` is appended at request time
 (D-017).
 """
@@ -36,10 +42,24 @@ MAX_TOKENS: dict[str, int] = {
     "place": 700,
     "relate": 1400,
     "relate_verify": 700,
+    # D-136 memory.ask (api process): one task for the JOBs plan / answer / check / refine (the
+    # per-task fallback key is `research`); an answer with up to 10 quoted claims + reasoning
+    "research": 4000,
+    # D-136 Memory Map L2 summaries (librarian process): 1-3 sentences + reasoning
+    "map_summary": 800,
+    # D-193 (5b) memory.ask rerank (api process, HLM_RESEARCH_RERANK=llm): the question and <= 30
+    # drill candidates -> the 8 most useful handles in order, reasoning included (its own task: the
+    # per-task fallback key is `rerank`)
+    "rerank": 1200,
 }
 #: per-version ``max_tokens`` where a version's answer is longer (relate/v2 adds scope, refiner and
 #: the replaced statements; relate_verify/v2 adds replaces_all and adds_detail)
-MAX_TOKENS_VERSION: dict[tuple[str, int], int] = {("relate", 2): 2000, ("relate_verify", 2): 900}
+MAX_TOKENS_VERSION: dict[tuple[str, int | str], int] = {("relate", 2): 2000, ("relate_verify", 2): 900}
+#: versions loaded only by number (a pin or ``load_task(name, version)``), never as the default;
+#: research/v2 is the D-156 "write, then cite" prompt of ``HLM_RESEARCH_ANSWER_MODE=cite`` and
+#: research/v3 the D-162 "prose" prompt of ``HLM_RESEARCH_ANSWER_MODE=prose``, so the default (claims)
+#: mode keeps research/v1 byte for byte
+OPT_IN_VERSIONS: dict[str, frozenset[int]] = {"research": frozenset({2, 3})}
 _PINS: dict[str, int] = {}
 
 
@@ -73,6 +93,10 @@ class TaskSpec:
     system: str
     schema: dict[str, Any]
     max_tokens: int
+    #: R4 (R-6): the ``llm_calls.task`` of this spec's rows when it differs from ``name`` (memory.ask's
+    #: prose writer JOB is ``research.prose``, so ops status can count the writer's calls); routing
+    #: (the per-task fallback), cassettes and qualification keep ``name``
+    ledger_task: str | None = None
 
     def system_for(self, overrides: dict[str, Any] | None) -> str:
         extra = ((overrides or {}).get(self.name) or {}).get("system_append")
@@ -94,18 +118,19 @@ def versions(name: str) -> list[int]:
     return sorted(int(m.group(1)) for p in d.iterdir() if (m := _VERSION.match(p.name)))
 
 
-def load_task(name: str, version: int | None = None) -> TaskSpec:
+def load_task(name: str, version: int | str | None = None) -> TaskSpec:
     if name not in MAX_TOKENS:
         raise KeyError(f"unknown librarian task {name!r}")
     available = versions(name)
     if not available:
         raise FileNotFoundError(f"no prompt for task {name!r} under {PROMPT_DIR}")
-    v = version if version is not None else _PINS.get(name, available[-1])
+    default = [x for x in available if x not in OPT_IN_VERSIONS.get(name, frozenset())] or available
+    v = version if version is not None else _PINS.get(name, default[-1])
     return _load(name, v)
 
 
 @lru_cache(maxsize=64)
-def _load(name: str, v: int) -> TaskSpec:
+def _load(name: str, v: int | str) -> TaskSpec:
     d = PROMPT_DIR / name
     system = (d / f"v{v}.md").read_text(encoding="utf-8")
     schema = json.loads((d / f"v{v}.schema.json").read_text(encoding="utf-8"))
@@ -123,6 +148,7 @@ def _load(name: str, v: int) -> TaskSpec:
 __all__ = [
     "MAX_TOKENS",
     "MAX_TOKENS_VERSION",
+    "OPT_IN_VERSIONS",
     "PROMPT_DIR",
     "TaskSpec",
     "load_task",

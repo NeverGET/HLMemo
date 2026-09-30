@@ -57,14 +57,15 @@ from hlmemo.config import get_settings
 from hlmemo.core.budget import BudgetError, canonical
 from hlmemo.core.clues import InvalidClue
 from hlmemo.core.errors import ToolError
-from hlmemo.server.tools import READ_TOOL_NAMES, TOOL_BY_NAME, TOOLS
+from hlmemo.server.tools import READ_TOOL_NAMES, TOOL_BY_NAME, TOOLS, advertised_tools
 from hlmemo.server.tools.handlers import ReadHandler
 
 log = logging.getLogger("hlmemo.server.mcp")
 
 SERVER_NAME = "hlmemo"
 INSTRUCTIONS = (
-    "HLMemo: bi-temporal long-term memory. Call memory.query before acting, memory.drilldown to "
+    "HLMemo: bi-temporal long-term memory. Call memory.query before acting (memory.ask, when listed, "
+    "to have the librarian research a question and answer with sources), memory.drilldown to "
     "expand clues, memory.raw for provenance, memory.write to remember, memory.call_the_day to "
     "close a session, memory.risk_check before a risky step, memory.register_lesson after a "
     "mistake. Every result is one JSON text block with a `budget` block; errors are "
@@ -169,8 +170,11 @@ async def on_list_tools(
     ctx: ServerRequestContext[Any, Any], params: types.PaginatedRequestParams | None
 ) -> types.ListToolsResult:
     log.info("mcp tools/list client=%s", _client_of(ctx))
+    request = ctx.request
+    settings = getattr(request.app.state, "settings", None) if isinstance(request, Request) else None
+    tools = TOOLS if settings is None else advertised_tools(settings)
     return types.ListToolsResult(
-        tools=[types.Tool(name=t.name, description=t.description, inputSchema=t.input_schema) for t in TOOLS]
+        tools=[types.Tool(name=t.name, description=t.description, inputSchema=t.input_schema) for t in tools]
     )
 
 

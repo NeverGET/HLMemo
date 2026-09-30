@@ -100,7 +100,15 @@ def service_filter():
 MANIFEST_KEYS = ("HLM_PROFILE", "HLM_FALLBACK_PROFILE", "HLM_FALLBACK_PROFILE__SYNTHESIS",
                  "HLM_FALLBACK_PROFILE__QUERY_REWRITE", "HLM_FALLBACK_PROFILE__RISK_JUDGE",
                  "HLM_QUERY_REWRITE", "HLM_RETRIEVAL_SOURCE_CAP", "HLM_LLM_BUDGET_HOUR_USD",
-                 "HLM_LLM_BUDGET_DAY_USD", "HLM_LLM_BUDGET_MONTH_USD", "HLM_LLM_BUDGET_DISABLED")
+                 "HLM_LLM_BUDGET_DAY_USD", "HLM_LLM_BUDGET_MONTH_USD", "HLM_LLM_BUDGET_DISABLED",
+                 # R4 (review 79 T5): the research switches, their fallbacks and limits
+                 "HLM_RESEARCH_ENABLED", "HLM_MAP_SUMMARY_ENABLED", "HLM_FALLBACK_PROFILE__RESEARCH",
+                 "HLM_FALLBACK_PROFILE__MAP_SUMMARY", "HLM_RESEARCH_MAX_USD", "HLM_RESEARCH_MAX_TOKENS",
+                 # R4 plan §1.5: the answer contract, the writer and the tracked limits
+                 "HLM_RESEARCH_ANSWER_MODE", "HLM_RESEARCH_ATTRIBUTION", "HLM_RESEARCH_RERANK",
+                 "HLM_RESEARCH_WRITER_PROFILE", "HLM_RESEARCH_WRITER_TIMEOUT_S",
+                 "HLM_RESEARCH_HTTP_TIMEOUT_S", "HLM_DETACHED_HOLD_MAX_S", "HLM_RESEARCH_TIMEOUT_S",
+                 "HLM_RESEARCH_PROSE_MAX_TOKENS", "HLM_LLM_TIMEOUT_S")
 def dotenv(text):
     out = {}
     for line in text.splitlines():
@@ -203,6 +211,24 @@ elif "exec" in args and "hlmemo.ops" in args:
         print(os.environ.get("ROUTES_TOKEN", "hlm_" + "r" * 43))
     elif "list" in args:
         print("   2  g7-mac   personal trusted  expires=- grants=gates-g7:write")
+    elif "probe-writer" in args:
+        # R4 R-14: python -m hlmemo.ops probe-writer in the api container, with the api's writer and
+        # key. GOOD_GEMINI_KEY: the key the provider accepts; FAIL=probe-writer: always refused. A
+        # refused probe is deliberately LEAKY here (the key on stderr and in an extra stdout field):
+        # check_librarian.py evaluate must never show either.
+        created = dotenv(running_env("api"))
+        writer, key = created.get("HLM_RESEARCH_WRITER_PROFILE"), created.get("GEMINI_API_KEY", "")
+        if not writer:  # the contract: an unset writer probes the research chain's head (HLM_PROFILE
+            # here: the harness's primaries never disable research)
+            writer, key = created.get("HLM_PROFILE"), os.environ.get("GOOD_GEMINI_KEY", "")
+        good = os.environ.get("GOOD_GEMINI_KEY")
+        with open(os.environ["EVENTS"] + ".probe-writer", "a") as f: f.write((writer or "-") + "\n")
+        if fail == "probe-writer" or (good is not None and key != good):
+            sys.stderr.write("probe-writer: HTTP 401 for key " + key + "\n")
+            print(json.dumps({"ok": False, "profile": writer, "status": 401, "latency_ms": 17,
+                              "error": "AuthenticationError", "key": key}))
+            sys.exit(1)  # the contract: exactly one JSON line, exit 1 on failure
+        print(json.dumps({"ok": True, "profile": writer, "status": 200, "latency_ms": 42}))
 elif "exec" in args and "collect" in args:
     # R2: deploy/scripts/check_librarian.py collect, fed on stdin like check_edge.py. Default: the
     # R3-live report of a host with the R3 llm.env (D-111: an R3 release needs one);
@@ -216,6 +242,23 @@ elif "exec" in args and "collect" in args:
               "profile": "openrouter", "fallback": None, "env_release": created.get("HLM_ENV_RELEASE"),
               "manifest_env": {k: created.get(k) for k in MANIFEST_KEYS},
               "profiles": [{"name": "openrouter", "base_url": "https://llm.invalid/v1", "key_set": True}]}
+    # R4: the effective research state; the writer profile (key SET or not, its price date) is also
+    # a profile of the chain; the tracer is on when the created env names a trace dir
+    writer = created.get("HLM_RESEARCH_WRITER_PROFILE")
+    report["research"] = {
+        "enabled": created.get("HLM_RESEARCH_ENABLED") == "true",
+        "map_summary": created.get("HLM_MAP_SUMMARY_ENABLED") == "true",
+        "trace_dir_set": bool(created.get("HLM_RESEARCH_TRACE_DIR")),
+        "primary": {"profile": created.get("HLM_PROFILE"), "key_set": True,
+                    "price_valid_until": os.environ.get("PRIMARY_PRICE_VALID_UNTIL")},
+        "primary_research_disabled": False,
+        "writer": None if not writer else {
+            "profile": writer, "key_set": bool(created.get("GEMINI_API_KEY")),
+            "price_valid_until": os.environ.get("WRITER_PRICE_VALID_UNTIL", "2099-12-31")},
+    }
+    if writer:
+        report["profiles"].append({"name": writer, "base_url": "https://gemini.invalid/v1",
+                                   "key_set": bool(created.get("GEMINI_API_KEY"))})
     if service == "librarian":
         report["heartbeat"] = {"enabled": True, "role": "observer", "breaker_state": "closed",
                                "age_s": 2.0}
@@ -273,6 +316,11 @@ if args[0] == "show":
         sys.stdout.write(path.read_text())
     elif ":deploy/scripts/" in args[-1] and not args[-1].endswith("remote-deploy.sh"):
         sys.stdout.write((Path(os.environ["HLM_REMOTE_DIR"])/args[-1].split(":", 1)[1]).read_text())
+    elif args[-1].endswith(":deploy/llm.env.example"):
+        # R4 R-3: install_llm_env.sh --release-template REF (the workstation's checkout); the
+        # template of that release is RELEASE_TEMPLATE (unset: not a commit here)
+        if not os.environ.get("RELEASE_TEMPLATE"): sys.exit(128)
+        sys.stdout.write(Path(os.environ["RELEASE_TEMPLATE"]).read_text())
     else:
         print((Path(os.environ["HLM_REMOTE_DIR"])/"deploy/scripts/remote-deploy.sh").read_text())
     sys.exit()

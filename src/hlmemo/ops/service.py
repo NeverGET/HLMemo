@@ -494,6 +494,7 @@ async def status(conn: AsyncConnection) -> dict[str, Any]:
     admin = await q.admin_state(conn)
     return {
         "librarian": await librarian_status(conn),
+        "research": await research_status(conn),
         "jobs": jobs,
         "worker": {
             "ready_jobs": int(ledger.get("ready") or 0),
@@ -555,6 +556,88 @@ async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[
     out["breaker_source"] = "ledger"
     out["llm_calls_15m"] = int(row[1]) if row else 0
     return out
+
+
+#: R4 (R-6): the window of the writer counters, and the fallback share that prints a warning
+WRITER_WINDOW = "24 hours"
+WRITER_FALLBACK_WARN = 0.10
+#: the ledger outcomes of an answered call (the profile that wrote)
+_ANSWERED = ("ok", "schema_retry_ok")
+
+
+async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[str, Any]:
+    """R4 (R-6): who wrote memory.ask's prose answers in the last 24 h, from the ``llm_calls`` rows of
+    the writer JOB (``task = research.prose``; this process's configuration names the writer).
+
+    ``writer_profile``: the configured writer (``HLM_RESEARCH_WRITER_PROFILE``, else the research
+    primary); ``writer_used_24h``: ``{profile: answered calls}``; ``writer_fallback_24h``: answered
+    calls whose writer is NOT the configured one; ``writer_outcomes_24h``: ``{outcome: rows}`` (every
+    attempt: ok, schema_fail, http_error, timeout, breaker_open, ...); ``writer_fallback_share_24h``:
+    the fallback share of the answered calls.
+
+    Astra 90 N-1: the call share is NOT the question share (a question whose first prose fell back
+    and whose prose after the refine the writer wrote has two answered calls, one of them a
+    fallback). Every ledger row carries its question's ``lineage`` (one per memory.ask), so the
+    PER-QUESTION counts come from the same rows: ``writer_questions_24h`` (lineages with a
+    research.prose row), ``writer_fallback_questions_24h`` (those with a research.prose row, of any
+    outcome, of another profile than the configured writer) and ``writer_fallback_question_share_24h``.
+    ``ops status`` warns when either share is above 10%. These 24 h numbers are operational only: a
+    release decision counts the answers' own ``meta.flags.writer_fallback`` over its questions (it
+    also sees an expand JOB's fallback, whose ledger rows are ``research``)."""
+    from hlmemo.config import get_settings
+    from hlmemo.librarian.errors import LlmConfigError
+    from hlmemo.librarian.tasks import research as rs
+
+    settings = settings or get_settings()
+    try:
+        configured = rs.writer_name(settings)
+    except (LlmConfigError, OSError, ValueError):
+        configured = str(getattr(settings, "research_writer_profile", None) or settings.profile)
+    cur = await conn.execute(
+        "SELECT profile, outcome, count(*) FROM llm_calls WHERE task = %s"
+        f" AND created_at > now() - interval '{WRITER_WINDOW}' GROUP BY profile, outcome ORDER BY 1, 2",
+        (rs.WRITER_LEDGER_TASK,),
+    )
+    used: dict[str, int] = {}
+    outcomes: dict[str, int] = {}
+    for profile, outcome, n in await cur.fetchall():
+        outcomes[str(outcome)] = outcomes.get(str(outcome), 0) + int(n)
+        if outcome in _ANSWERED:
+            used[str(profile)] = used.get(str(profile), 0) + int(n)
+    answered = sum(used.values())
+    fallback = sum(n for p, n in used.items() if p != configured)
+    cur = await conn.execute(
+        "SELECT count(DISTINCT lineage), count(DISTINCT lineage) FILTER (WHERE profile <> %s)"
+        " FROM llm_calls WHERE task = %s AND lineage IS NOT NULL"
+        f" AND created_at > now() - interval '{WRITER_WINDOW}'",
+        (configured, rs.WRITER_LEDGER_TASK),
+    )
+    questions, fallback_questions = (int(n) for n in (await cur.fetchone() or (0, 0)))
+    valid_until, expired = None, None
+    try:  # R4 (R-5): the configured writer's price validity (its own profile file)
+        from hlmemo.librarian.profiles import named_profile
+
+        writer = named_profile(configured) if getattr(settings, "research_writer_profile", None) else None
+        if writer is not None:
+            valid_until = writer.price_valid_until.isoformat() if writer.price_valid_until else None
+            expired = writer.price_expired()
+    except (LlmConfigError, OSError, ValueError):
+        pass
+    return {
+        "enabled": bool(getattr(settings, "research_enabled", False)),
+        "answer_mode": getattr(settings, "research_answer_mode", None),
+        "writer_profile": configured,
+        "writer_configured": getattr(settings, "research_writer_profile", None) or None,
+        "writer_used_24h": used,
+        "writer_fallback_24h": fallback,
+        "writer_outcomes_24h": outcomes,
+        "writer_fallback_share_24h": round(fallback / answered, 4) if answered else 0.0,
+        "writer_questions_24h": questions,
+        "writer_fallback_questions_24h": fallback_questions,
+        "writer_fallback_question_share_24h": round(fallback_questions / questions, 4) if questions else 0.0,
+        "writer_price_valid_until": valid_until,
+        "writer_price_expired": expired,
+    }
 
 
 #: open current rows = the rows the UNIQUE index mv_source_owner (0007) covers

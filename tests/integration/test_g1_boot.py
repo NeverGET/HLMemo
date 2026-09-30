@@ -72,10 +72,11 @@ async def _insert_version(
 async def test_migration_applies_and_device1_reserved(connect) -> None:
     async with await connect() as conn:
         cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
-        # main@head is 0008_librarian_tasks (0005_w0_access carries the `main` label,
-        # D-061/D-062/D-069: 0007_import -> 0008_librarian_tasks); the hnsw branch must NOT be applied.
+        # main@head is 0009_memory_map (0005_w0_access carries the `main` label,
+        # D-061/D-062/D-069: 0007_import -> 0008_librarian_tasks -> 0009_memory_map, D-136);
+        # the hnsw branch must NOT be applied.
         heads = [r[0] for r in await cur.fetchall()]
-        assert main_head() == "0008_librarian_tasks"
+        assert main_head() == "0009_memory_map"
         assert heads == [main_head()], "hnsw branch must NOT be applied"
         cur = await conn.execute(
             "SELECT indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
@@ -110,6 +111,7 @@ async def test_migration_applies_and_device1_reserved(connect) -> None:
             "llm_calls",
             "llm_lineage_calls",
             "llm_reservations",
+            "memory_map_summaries",  # 0009 (D-136): the Memory Map L2 summary cache
             "memory_versions",
             "projects",
             "version_signals",  # 0008 (W2b)

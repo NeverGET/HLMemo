@@ -9,6 +9,8 @@ hlm import markdown|automemory|serena|context <paths> --project P [--dry-run] [-
 hlm close --notes ... [--decision ...] [--lesson "title::body"] [--card FILE]
 hlm claude|codex|agy [--task ...] [--ask] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]
 hlm bench [--profile|--model] [--suite v1|v2] [--runs N] [--max-usd X] [--compare A B] | rescore | leaderboard
+hlm links explicit --project P [--dry-run] [--revert] [--dsn DSN]   (operator, direct DB; D-184)
+hlm links backfill --project P --apply|--dry-run --proposals F | --revert [--dry-run]   (R4, LLM-free)
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from hlmemo.cli.client_config import (
 )
 from hlmemo.cli.http_client import HlmHttp, HlmHttpError
 from hlmemo.cli.launch import CLIS, build_argv, exec_cli
+from hlmemo.cli.links import links_app
 from hlmemo.cli.mcp_client import MemoryClient, ToolCallError
 from hlmemo.cli.preflight import (
     RISK_TIMEOUT_S,
@@ -91,6 +94,7 @@ app.add_typer(device_app, name="device")
 app.add_typer(project_app, name="project")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(bench_app, name="bench")  # W2f: hlm bench (heavy imports are inside the commands)
+app.add_typer(links_app, name="links")  # D-184: hlm links explicit (operator, direct DB)
 
 
 # --------------------------------------------------------------------------- shared state / helpers

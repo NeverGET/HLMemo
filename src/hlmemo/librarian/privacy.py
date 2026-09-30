@@ -10,7 +10,11 @@ prompt will contain. An item is sent only if ALL hold:
   is visible to the triggering device (``all`` or its own class);
 * for EVERY project in the item's ``project_ids``: ``projects.policy.librarian`` is not ``off``,
   the device holds a current grant (read or better; the admin device counts as reading all), and
-  the project is in the job's enqueue-time ``question`` capability set.
+  the project is in the job's enqueue-time ``question`` capability set;
+* when the caller names the project the work is ABOUT (``capabilities["isolation_home"]``, the
+  asked project of ``memory.ask``; review 79 T1), the D-083 isolation holds NOW: the item's projects
+  plus that project touch no ``policy.librarian_cross_project = exclude`` project, or exactly one
+  (``candidates.relation_allowed``).
 
 Nothing here is configurable. Enqueue-time capabilities are an upper bound, never authority.
 
@@ -34,6 +38,7 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from hlmemo.auth.resolve import lock_device_access
+from hlmemo.librarian.candidates import relation_allowed
 
 DEVICE_NOT_TRUSTED = "device_not_trusted"
 POLICY_OFF = "policy_off"
@@ -42,6 +47,7 @@ NO_READ_GRANT = "no_read_grant"
 NOT_IN_CAPABILITIES = "not_in_capabilities"
 NOT_CURRENT = "not_current"
 SCOPE_NOT_VISIBLE = "scope_not_visible"
+CROSS_PROJECT_ISOLATED = "cross_project_isolated"
 
 
 @dataclass(slots=True)
@@ -74,12 +80,17 @@ SELECT version_id, logical_id, project_id, project_ids, device_scope, kind, stat
        valid_from, superseded_at = 'infinity' AND valid_to = 'infinity', pinned
   FROM memory_versions WHERE version_id = ANY(%s)
 """
+#: the same columns without the body (D-136: the Memory Map gate covers every item of a project's
+#: map; the verdict never reads the body)
+_ITEM_SQL_NO_BODY = _ITEM_SQL.replace("title, body,", "title, ''::text,")
 
 
-async def load_items(conn: AsyncConnection, version_ids: list[int]) -> dict[int, Item]:
+async def load_items(
+    conn: AsyncConnection, version_ids: list[int], *, bodies: bool = True
+) -> dict[int, Item]:
     if not version_ids:
         return {}
-    cur = await conn.execute(_ITEM_SQL, (list(version_ids),))
+    cur = await conn.execute(_ITEM_SQL if bodies else _ITEM_SQL_NO_BODY, (list(version_ids),))
     out = {}
     for r in await cur.fetchall():
         out[int(r[0])] = Item(int(r[0]), int(r[1]), int(r[2]), [int(x) for x in r[3]], *r[4:])
@@ -117,11 +128,17 @@ async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list
         (device_id,),
     )
     granted = {int(r[0]) for r in await cur.fetchall()}
-    wanted = sorted({p for it in items for p in it.project_ids})
+    home = capabilities.get("isolation_home")
+    home = int(home) if home is not None else None
+    wanted = sorted({p for it in items for p in it.project_ids} | ({home} if home is not None else set()))
     cur = await conn.execute(
-        "SELECT project_id, policy->>'librarian' FROM projects WHERE project_id = ANY(%s)", (wanted,)
+        "SELECT project_id, policy->>'librarian', policy->>'librarian_cross_project' FROM projects"
+        " WHERE project_id = ANY(%s)",
+        (wanted,),
     )
-    policy = {int(pid): pol for pid, pol in await cur.fetchall()}
+    rows = await cur.fetchall()
+    policy = {int(pid): pol for pid, pol, _cross in rows}
+    excluded = {int(pid) for pid, _pol, cross in rows if cross == "exclude"}
     capable = {int(p) for p in capabilities.get("question") or []}
     visible = {"all", f"class:{device_class}"}
     verdict = Verdict(True)
@@ -144,18 +161,33 @@ async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list
                 if pid not in capable:
                     reason = NOT_IN_CAPABILITIES
                     break
+            isolated = home is not None and not relation_allowed({*it.project_ids, home}, excluded)
+            if reason is None and isolated:
+                reason = CROSS_PROJECT_ISOLATED
         if reason:
             verdict.denied[it.version_id] = reason
     return verdict
 
 
 async def gate(
-    conn_factory: Any, capabilities: dict[str, Any], version_ids: list[int]
+    conn_factory: Any,
+    capabilities: dict[str, Any],
+    version_ids: list[int],
+    *,
+    bodies: bool = True,
+    ignore_currency: bool = False,
 ) -> tuple[Verdict, dict[int, Item]]:
     """Fresh short transaction: reload the items and evaluate the gate under the D-062 locks;
-    it commits before returning, so the caller sends the request with no transaction open."""
+    it commits before returning, so the caller sends the request with no transaction open.
+    ``bodies=False``: the returned items carry an empty body (the verdict is the same).
+    ``ignore_currency`` (D-136, text ALREADY sent): the verdict ignores whether an item is still
+    current/active, so a superseded item is judged on the privacy rules alone (NOT_CURRENT must not
+    mask a device-scope, policy or grant change)."""
     async with await conn_factory() as conn:
-        items = await load_items(conn, version_ids)
+        items = await load_items(conn, version_ids, bodies=bodies)
+        if ignore_currency:
+            for it in items.values():
+                it.current, it.status = True, "active"
         missing = [v for v in version_ids if v not in items]
         verdict = await check(conn, capabilities, list(items.values()))
         for v in missing:
@@ -165,6 +197,7 @@ async def gate(
 
 
 __all__ = [
+    "CROSS_PROJECT_ISOLATED",
     "DEVICE_NOT_TRUSTED",
     "DEVICE_SCOPED",
     "NOT_CURRENT",

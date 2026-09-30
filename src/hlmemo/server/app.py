@@ -60,6 +60,7 @@ from hlmemo.core.read_service import ReadDeps
 from hlmemo.db import auth_queries as q
 from hlmemo.db.pool import create_pool
 from hlmemo.librarian.risk_judge import close_app_judge
+from hlmemo.librarian.tasks.research import close_app_researcher
 from hlmemo.librarian.tasks.synthesis import close_app_synthesizer
 from hlmemo.server import admin, devices
 from hlmemo.server.common import device_view
@@ -70,10 +71,8 @@ log = logging.getLogger("hlmemo.server")
 
 ADMIN_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_TOKEN not set"
 ADMIN_HTTP_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_HTTP=disabled ignores HLM_ADMIN_TOKEN (D-061)"
-MIGRATION_BRANCH = "main"  # CC-1 / D-061: label on 0005_w0_access; head 0008_librarian_tasks (D-069)
-MIGRATION_HEAD_FALLBACK = (
-    "0008_librarian_tasks"  # used only when alembic/ is not on disk (never in the image)
-)
+MIGRATION_BRANCH = "main"  # CC-1 / D-061: label on 0005_w0_access; head 0009_memory_map (D-136)
+MIGRATION_HEAD_FALLBACK = "0009_memory_map"  # used only when alembic/ is not on disk (never in the image)
 MODELS_LOCK = "models.lock"
 
 
@@ -481,6 +480,7 @@ def create_app(
                 # race session/tokenizer destruction or outlive the event loop.
                 await close_app_judge(app)  # W2d: the risk judge's HTTP clients (built on first use)
                 await close_app_synthesizer(app)  # W2e: the query synthesizer's HTTP clients (same)
+                await close_app_researcher(app)  # D-136: memory.ask's research provider (same)
                 app.state.native_executor.shutdown(wait=True, cancel_futures=True)
                 app.state.native_executor = None
                 if app.state.embedder is not None:

@@ -79,6 +79,9 @@ def test_max_tokens_per_task() -> None:
         "place": 700,  # W2b batched tasks (<= 8 items / pairs per call)
         "relate": 1400,
         "relate_verify": 700,
+        "research": 4000,  # D-136 memory.ask (plan / answer / check / verify / refine)
+        "map_summary": 800,  # D-136 Memory Map L2 summaries
+        "rerank": 1200,  # D-193 (5b) memory.ask rerank (HLM_RESEARCH_RERANK=llm)
     }
     for task in ("placement", "contradiction", "summary", "risk"):
         spec = load_task(task)

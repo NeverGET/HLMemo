@@ -21,14 +21,15 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import r4_fixtures  # noqa: E402
 import test_deploy_recovery as harness  # noqa: E402  (module import: its tests are not re-collected)
 import test_llm_env_release as d108  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 NEXT, PREVIOUS = harness.NEXT, harness.PREVIOUS
 R2_ENV, R3_ENV, R2_KEY, R3_KEY = d108.R2_ENV, d108.R3_ENV, d108.R2_KEY, d108.R3_KEY
-INSTALL = ROOT / "deploy/scripts/install_llm_env.sh"
 INSTALL_KEY = "fake-or-" + "IN" * 16
+GEMINI_KEY = r4_fixtures.GEMINI_KEY
 
 
 def _release_state():
@@ -133,17 +134,32 @@ class ConvergenceTest(d108.D108RollbackTest):
             rs.main(["publish", str(root), "--current", NEXT, "--previous", NEXT, "--previous-dump", "/d"])
 
     # ------------------------------------------------------------------ 3 env install under the lock
-    def install(self, root, env, *extra, fail=""):
+    def install(self, root, env, *extra, fail="", keys=None):
+        """install_llm_env.sh from a workstation copy (r4_fixtures: the Gemini writer profiles) with
+        a key file holding every key the R4 env needs (``keys`` replaces it)."""
         state = root / "install-state"
         state.mkdir(exist_ok=True)
         (state / "ssh_config").write_text("Host hlm-deploy\n  HostName 203.0.113.10\n")
+        workstation = root / "workstation"
+        if not workstation.exists():
+            r4_fixtures.workstation_repo(workstation)
         key_file = root / "operator.env"
-        key_file.write_text(f"OPENROUTER_API_KEY={INSTALL_KEY}\n")
+        if keys is None:
+            keys = {"OPENROUTER_API_KEY": INSTALL_KEY, "GEMINI_API_KEY": GEMINI_KEY}
+        key_file.write_text("".join(f"{k}={v}\n" for k, v in keys.items()))
         run_env = dict(
             env, FAIL=fail, HLM_REMOTE_DIR=str(root / "app"), HLM_REMOTE_ENV=str(root / "prod.env")
         )
         result = subprocess.run(
-            ["bash", str(INSTALL), "--state", str(state), "--key-file", str(key_file), *extra],
+            [
+                "bash",
+                str(workstation / "deploy/scripts/install_llm_env.sh"),
+                "--state",
+                str(state),
+                "--key-file",
+                str(key_file),
+                *extra,
+            ],
             env=run_env,
             text=True,
             capture_output=True,
@@ -157,14 +173,23 @@ class ConvergenceTest(d108.D108RollbackTest):
         result, output = self.install(root, env)
         self.assertEqual(0, result.returncode, output)
         self.assertIn("recreating librarian and api with this llm.env (deploy lock held)", output)
-        self.assertIn("RESULT librarian PASS llm.env=present release=r3 manifest=r3", output)
+        # review 79 T5: this checkout's template is the R4 env (its label, never a literal)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
         self.assertIn("switch complete", output)
         disk = (root / "llm.env").read_text()
-        self.assertIn("HLM_ENV_RELEASE=r3\n", disk)
+        self.assertIn("HLM_ENV_RELEASE=r4\n", disk)
+        self.assertIn("HLM_RESEARCH_ENABLED=true\n", disk)
         self.assertEqual(disk, self.running_env(root, "api"))
         self.assertEqual(disk, self.running_env(root, "librarian"))
         self.assertNotIn("env_switch", self.state(root))
         self.assertNotIn(INSTALL_KEY, output)
+        self.assertNotIn(GEMINI_KEY, output)
+        # R4 R-14: the writer probe ran once, in the API container, with the api's writer
+        self.assertIn(
+            "writer probe (api container): exit=0 ok=True profile=google-gemini38-flash-medium", output
+        )
+        self.assertEqual("google-gemini38-flash-medium\n", (root / "events.probe-writer").read_text())
+        self.assertIn("writer=google-gemini38-flash-medium", output)
         # the deploy lock is the SAME lock deploy/rollback take: held by another run, nothing changes
         with open(root / ".deploy.lock", "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -194,6 +219,213 @@ class ConvergenceTest(d108.D108RollbackTest):
         self.assertEqual(disk, self.running_env(root, "librarian"))
         self.assertNotIn("env_switch", self.state(root))
 
+    def host_evaluate(self, root, env, release="r4"):
+        """The RUNBOOK's standalone re-check on the (harness) host: collect in both containers, then
+        evaluate --release rN --writer-probe api against the llm.env on disk."""
+        script = (
+            'cd "$HLM_REMOTE_DIR" && d=$(mktemp -d) && '
+            "bash deploy/scripts/stack.sh exec -T librarian python - collect --service librarian --probe"
+            ' --wait-heartbeat 45 < deploy/scripts/check_librarian.py > "$d/l.json" && '
+            "bash deploy/scripts/stack.sh exec -T api python - collect --service api"
+            ' < deploy/scripts/check_librarian.py > "$d/a.json" && '
+            'python3 deploy/scripts/check_librarian.py evaluate --llm-env present --llm-env-file "$LLM_ENV"'
+            f' --release {release} --writer-probe api --librarian "$d/l.json" --api "$d/a.json"'
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            env=dict(
+                env,
+                HLM_REMOTE_DIR=str(root / "app"),
+                HLM_ENV_FILE=str(root / "prod.env"),
+                LLM_ENV=str(root / "llm.env"),
+            ),
+            text=True,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
+        return result.returncode, result.stdout + result.stderr
+
+    def test_install_fails_when_the_writer_probe_fails_and_never_prints_the_key(self):
+        """R4 R-14: the env switch's check includes probe-writer in the api container; a refused
+        probe fails it (the journal stays, so deploy/rollback refuse until a passing re-run), and the
+        probe's stderr/extra fields (a leaky probe prints the key there) never reach the output."""
+        root, env = self.r3_deployed()
+        result, output = self.install(root, env, fail="probe-writer")
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("the writer probe FAILED in the api container (exit 1, status 401)", output)
+        self.assertNotIn(GEMINI_KEY, output)
+        self.assertNotIn("HTTP 401 for key", output)
+        self.assertIn("env_switch", self.state(root))
+        result, output = self.install(root, env)
+        self.assertEqual(0, result.returncode, output)
+        self.assertNotIn("env_switch", self.state(root))
+
+    def test_wrong_writer_key_in_the_api_only_fails_the_probe(self):
+        """R4 R-14 (consult 89: the librarian-side probe could not see the api's credential): the
+        librarian runs the right Gemini key, the api a wrong but non-empty one. key_set passes for
+        both; the probe in the API container fails, and neither key is printed."""
+        root, env = self.r3_deployed()
+        result, output = self.install(root, env)
+        self.assertEqual(0, result.returncode, output)
+        wrong = "fake-gm-" + "W0" * 16
+        right_env = self.running_env(root, "api")
+        (root / "events.running-env.api").write_text(
+            right_env.replace(f"GEMINI_API_KEY={GEMINI_KEY}", f"GEMINI_API_KEY={wrong}")
+        )
+        env = dict(env, GOOD_GEMINI_KEY=GEMINI_KEY)
+        code, output = self.host_evaluate(root, env)
+        self.assertEqual(1, code, output)
+        self.assertIn("provider google-gemini38-flash-medium https://gemini.invalid/v1: key set", output)
+        self.assertIn("the writer probe FAILED in the api container (exit 1, status 401)", output)
+        self.assertNotIn(wrong, output)
+        self.assertNotIn(GEMINI_KEY, output)
+        (root / "events.running-env.api").write_text(right_env)
+        code, output = self.host_evaluate(root, env)
+        self.assertEqual(0, code, output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4", output)
+
+    # ------------------------------------------------------------------ R-3 env switches R3 <-> R4
+    def caps(self, root):
+        env = r4_fixtures.dotenv((root / "llm.env").read_text())
+        return tuple(env.get(f"HLM_LLM_BUDGET_{w}_USD") for w in ("HOUR", "DAY", "MONTH"))
+
+    def test_r4_env_switch_with_reset_then_behaviour_only_rollback_to_the_r3_template(self):
+        """R4 plan §4.3 and §6.2(a) (R-3), on a deployed host under the deploy lock:
+        1. the R3 template installed on the R4 code (--release-template <R3 ref>): caps 1/2/10;
+        2. the R4 switch WITH --reset-operator-values (the key file holds every key the R4 env
+           needs): the template's caps 3/8/60 replace R3's, the keys are the key file's, r4 PASS;
+        3. the behaviour-only rollback (--release-template <R3 ref>, a key file with ANOTHER
+           OpenRouter value): the R3 caps 1/2/10 explicitly (MONTH 60 would fail the R3 manifest), the
+           INSTALLED key kept, research off, evaluate --release r3 PASS, the env_switch journal empty.
+        """
+        root, env = self.r3_deployed()
+        template = root / "r3-template.env.example"
+        template.write_text(r4_fixtures.R3_TEMPLATE)
+        env = dict(env, RELEASE_TEMPLATE=str(template))
+        r3_ref = "805f4cd"
+        prod_key = "fake-or-" + "PR" * 16
+        # 1. an R3-installed env (the state the R4 switch starts from)
+        result, output = self.install(
+            root, env, "--release-template", r3_ref, keys={"OPENROUTER_API_KEY": prod_key}
+        )
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r3 manifest=r3", output)
+        self.assertEqual(("1", "2", "10"), self.caps(root))
+        # 2. the R4 switch: --reset-operator-values, every key in the key file
+        keys = {"OPENROUTER_API_KEY": prod_key, "GEMINI_API_KEY": GEMINI_KEY}
+        result, output = self.install(root, env, "--reset-operator-values", keys=keys)
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
+        disk = r4_fixtures.dotenv((root / "llm.env").read_text())
+        self.assertEqual(("3", "8", "60"), self.caps(root), "the template's caps replace R3's 1/2/10")
+        self.assertEqual((prod_key, GEMINI_KEY), (disk["OPENROUTER_API_KEY"], disk["GEMINI_API_KEY"]))
+        self.assertNotIn("env_switch", self.state(root))
+        # without the reset, the installed R3 caps would have won (the reason §4.3 uses it)
+        # 3. the behaviour-only rollback to the R3 template, R4 caps (MONTH 60) installed
+        other = "fake-or-" + "XX" * 16
+        result, output = self.install(
+            root, env, "--release-template", r3_ref, keys={"OPENROUTER_API_KEY": other}
+        )
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn(f"release=r3 (template {r3_ref}; its caps, the installed keys kept)", output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r3 manifest=r3", output)
+        self.assertIn("switch complete", output)
+        self.assertNotIn("env_switch", self.state(root))
+        disk_text = (root / "llm.env").read_text()
+        disk = r4_fixtures.dotenv(disk_text)
+        self.assertEqual(("1", "2", "10"), self.caps(root))
+        self.assertEqual("r3", disk["HLM_ENV_RELEASE"])
+        self.assertEqual(prod_key, disk["OPENROUTER_API_KEY"], "the installed key is kept")
+        self.assertIn("kept the operator's OPENROUTER_API_KEY", output)
+        self.assertNotIn("kept the operator's HLM_LLM_BUDGET", output)
+        self.assertFalse(
+            [k for k in disk if k.startswith(("HLM_RESEARCH_", "HLM_MAP_SUMMARY"))], "research off"
+        )
+        self.assertNotIn("GEMINI_API_KEY", disk, "the R3 template has no Gemini key")
+        self.assertEqual(disk_text, self.running_env(root, "api"))
+        self.assertEqual(disk_text, self.running_env(root, "librarian"))
+        for key in (prod_key, other, GEMINI_KEY):
+            self.assertNotIn(key, output)
+
+    def test_r4_env_with_the_luna_writer_probes_the_research_primary(self):
+        """R4 plan §6.2(b) with the decided contract: the R4 template without its writer line,
+        installed with --release-template PATH over the Gemini env. The switch passes the r4
+        manifest; probe-writer still runs in the api container and reports the research primary
+        (HLM_PROFILE), and the installed Gemini key is kept in the file (the template keeps its line)."""
+        root, env = self.r3_deployed()
+        self.assertEqual(0, self.install(root, env, "--reset-operator-values")[0].returncode)
+        workstation = root / "workstation"
+        luna = root / "r4-luna.env.example"
+        luna.write_text(
+            "".join(
+                line
+                for line in (workstation / "deploy/llm.env.example").read_text().splitlines(keepends=True)
+                if not line.startswith("HLM_RESEARCH_WRITER_PROFILE=")
+            )
+        )
+        (root / "events.probe-writer").unlink()
+        result, output = self.install(
+            root, env, "--release-template", str(luna), keys={"OPENROUTER_API_KEY": INSTALL_KEY}
+        )
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("writer: unset (the research primary openrouter-gpt6-luna writes; HLM_PROFILE)", output)
+        self.assertIn("writer probe (api container): exit=0 ok=True profile=openrouter-gpt6-luna", output)
+        self.assertIn("RESULT librarian PASS llm.env=present release=r4 manifest=r4", output)
+        self.assertEqual("openrouter-gpt6-luna\n", (root / "events.probe-writer").read_text())
+        disk = r4_fixtures.dotenv((root / "llm.env").read_text())
+        self.assertNotIn("HLM_RESEARCH_WRITER_PROFILE", disk)
+        self.assertEqual(GEMINI_KEY, disk["GEMINI_API_KEY"], "the installed key is kept")
+        self.assertEqual(("3", "8", "60"), self.caps(root))
+        self.assertNotIn("env_switch", self.state(root))
+        self.assertNotIn(GEMINI_KEY, output)
+        # a refused probe of the primary fails the switch too
+        result, output = self.install(
+            root,
+            env,
+            "--release-template",
+            str(luna),
+            fail="probe-writer",
+            keys={"OPENROUTER_API_KEY": INSTALL_KEY},
+        )
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("the writer probe FAILED in the api container (exit 1, status 401)", output)
+
+    def test_keep_mode_install_of_the_r4_template_keeps_the_installed_r3_caps(self):
+        """Why §4.3 needs --reset-operator-values: a plain (keep) R4 install over the R3 env keeps the
+        installed caps 1/2/10 (they satisfy the R4 manifest, so it passes, but the owner's 3/8/60 are
+        not installed)."""
+        root, env = self.r3_deployed()
+        template = root / "r3-template.env.example"
+        template.write_text(r4_fixtures.R3_TEMPLATE)
+        env = dict(env, RELEASE_TEMPLATE=str(template))
+        self.assertEqual(0, self.install(root, env, "--release-template", "805f4cd")[0].returncode)
+        result, output = self.install(root, env)
+        self.assertEqual(0, result.returncode, output)
+        self.assertEqual(("1", "2", "10"), self.caps(root))
+        self.assertIn("kept the operator's HLM_LLM_BUDGET_MONTH_USD", output)
+
+    def test_release_template_refusals_send_nothing(self):
+        """--release-template: an unknown ref or path, or a template whose caps violate its own
+        release's manifest, stops the install before anything is sent (no journal, no file)."""
+        root, env = self.r3_deployed()
+        before = (root / "llm.env").read_text()
+        result, output = self.install(root, env, "--release-template", "no-such-ref")
+        self.assertEqual(64, result.returncode, output)
+        self.assertIn("not a commit of this checkout", output)
+        bad = root / "r3-bad.env.example"
+        bad.write_text(
+            r4_fixtures.R3_TEMPLATE.replace("HLM_LLM_BUDGET_MONTH_USD=10", "HLM_LLM_BUDGET_MONTH_USD=60")
+        )
+        result, output = self.install(root, env, "--release-template", str(bad))
+        self.assertEqual(65, result.returncode, output)
+        self.assertIn(
+            "the template's spend guard violates the r3 manifest: HLM_LLM_BUDGET_MONTH_USD=60 (at most 10)",
+            output,
+        )
+        self.assertEqual(before, (root / "llm.env").read_text())
+        self.assertNotIn("env_switch", self.state(root))
+
     # ------------------------------------------------------------------ 4 rollback DB restore retry
     def test_killed_rollback_retry_reuses_the_first_safety_dump(self):
         root, env = self.r3_deployed()
@@ -213,6 +445,96 @@ class ConvergenceTest(d108.D108RollbackTest):
         state = self.state(root)
         self.assertNotIn("rollback_safety", state)
         self.assertNotIn("rollback_destructive", state)
+
+    # ------------------------------------------------------------------ R-2 rollback safety dump
+    def killed_destructive_rollback(self):
+        """R3 over R2, the R3 env installed, a rollback killed inside its destructive phase."""
+        root, env = self.r3_deployed()
+        self.install_r3_env(root)
+        killed, output, _ = self.remote(root, dict(env, FAIL="rollback-kill"), "--rollback")
+        self.assertNotEqual(0, killed.returncode, output)
+        state = self.state(root)
+        self.assertTrue(state["rollback_destructive"], "the destructive phase began")
+        safety = Path(state["rollback_safety"])
+        # R-2: outside every rotated tier (daily/weekly/pre-upgrade)
+        self.assertEqual((root / "backups/rollback").resolve(), safety.parent.resolve())
+        return root, env, safety
+
+    def backup_until_unlocked(self, root, env):
+        """The daily backup timer's run (the harness's backup.sh), retried while the killed
+        runner's last child still holds the operation lock."""
+        for _ in range(40):
+            result = subprocess.run(
+                ["bash", str(root / "app/deploy/backup/backup.sh")],
+                env=dict(env, HLM_ENV_FILE=str(root / "prod.env")),
+                text=True,
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=60,
+            )
+            if "Another backup/restore is active" not in result.stderr:
+                return result
+            time.sleep(0.25)
+        self.fail("operation lock never released")
+
+    def test_missing_safety_dump_after_the_destructive_phase_fails_closed(self):
+        """R4 R-2 (review 77 / consult 89 (h)): a rollback_destructive=true journal whose safety dump
+        is gone (an older release's rotation, a manual delete): the retry, with every service
+        healthy, must NOT restore nothing, start the current release and close the journal. It stops
+        FAIL CLOSED: writers stay stopped, nothing restarts, no end-rollback, the journal stays open."""
+        root, env, safety = self.killed_destructive_rollback()
+        safety.unlink()
+        result, output, rows = self.rerun_until_unlocked(root, env)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("FAIL CLOSED: the destructive phase of the rollback to", output)
+        self.assertIn(f"the saved database of {NEXT} ({safety}) is missing", output)
+        self.assertNotIn("rollback aborted", output)
+        self.assertNotIn("Rollback complete", output)
+        self.assertFalse([r for r in rows if "up" in r], "nothing was started")
+        self.assertFalse([r for r in rows if "dropdb" in r[-1]], "no database was touched")
+        state = self.state(root)
+        self.assertEqual(PREVIOUS, state["rollback_in_progress"], "the journal stays open")
+        self.assertEqual(str(safety), state["rollback_safety"])
+        self.assertTrue(state["rollback_destructive"])
+        # and it stays closed on every re-run until the operator recovers by hand
+        result, output, rows = self.rerun_until_unlocked(root, env)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("FAIL CLOSED", output)
+        self.assertFalse([r for r in rows if "up" in r])
+
+    def test_daily_backups_after_a_killed_rollback_keep_its_safety_dump(self):
+        """R4 R-2: the backup timer runs (twice, the same day) after a killed destructive rollback;
+        the safety dump survives (outside rotation), and the retry's recovery restores from it."""
+        root, env, safety = self.killed_destructive_rollback()
+        for _ in range(2):
+            result = self.backup_until_unlocked(root, env)
+            self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(safety.exists())
+        result, output, _ = self.rerun_until_unlocked(root, dict(env, FAIL="rollback-up"))
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn(f"Current release {NEXT} restored (database from {safety})", output)
+        self.assertNotIn("rollback_safety", self.state(root))
+        self.assertTrue(safety.exists(), "kept (deleted by hand once settled)")
+
+    def test_rollback_refuses_while_a_backup_or_restore_holds_the_operation_lock(self):
+        """R4 R-2 (review 77): backup, restore and rollback share $HLM_BACKUP_DIR/.operation.flock;
+        a rollback started while a backup or restore holds it refuses before anything stops, and
+        the backup timer cannot start while a rollback holds it."""
+        root, env = self.r3_deployed()
+        self.install_r3_env(root)
+        (root / "backups").mkdir(exist_ok=True)
+        with open(root / "backups/.operation.flock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result, output, rows = self.remote(root, env, "--rollback")
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("Rollback refused (nothing was stopped): a backup or restore is running", output)
+        self.assertFalse([r for r in rows if "stop" in r])
+        self.assertNotIn("rollback_in_progress", self.state(root))
+        result, output, _ = self.remote(root, env, "--rollback")
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("Rollback complete", output)
+        saved = [line for line in output.splitlines() if line.startswith("Saved the current database")]
+        self.assertTrue(saved and "/backups/rollback/hlmemo-rollback-" in saved[0], saved)
 
     # ------------------------------------------------------------------ 5 accept during rollback
     def test_accept_refuses_during_an_unfinished_rollback(self):

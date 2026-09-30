@@ -1,0 +1,12 @@
+# R4 (R-10) LOCAL SMOKE ONLY: the research primary (plan, rerank, refine, attribute and the writer's
+# fallback) on the same mock, undelayed, so the smoke makes no real provider call. Optional: without
+# it the VM's own research profile (a real key) serves those calls. Select it with
+# HLM_PROFILE=smoke-research (and HLM_FALLBACK_PROFILE__RESEARCH=smoke-research) on the disposable VM.
+HLM_LLM_BASE_URL = "http://127.0.0.1:18765/v1"
+HLM_LLM_MODEL    = "smoke/research"
+HLM_LLM_API_KEY  = "env:SMOKE_MOCK_KEY"
+extra = { response_format = { type = "json_object" } }
+price_in_per_m    = 0.10
+price_out_per_m   = 0.40
+price_valid_until = "2099-12-31"
+supports_json_schema = false

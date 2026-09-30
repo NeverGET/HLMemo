@@ -391,6 +391,15 @@ class LibrarianWorker:
         self._last_sweep = 0.0
         self._last_expire = 0.0
         self._last_release = 0.0
+        # D-136: Memory Map L2 summaries (task map_summary), one background cycle at a time
+        self._last_map = 0.0
+        self._map_task: asyncio.Task[int] | None = None
+        self.map_summarizer: Any = None
+        # only while memory.ask can use them (HLM_RESEARCH_ENABLED): otherwise they are pure spend
+        if getattr(settings, "map_summary_enabled", False) and getattr(settings, "research_enabled", False):
+            from hlmemo.librarian.tasks.map_summary import MapSummarizer
+
+            self.map_summarizer = MapSummarizer(settings, provider=provider, connect=self.connect)
 
     # ------------------------------------------------------------------ state
     @property
@@ -1313,6 +1322,30 @@ class LibrarianWorker:
         log.info("librarian: sweeper released %s pending batch(es)", len(jobs))
         return len(jobs)
 
+    def maybe_map_summaries(self) -> bool:
+        """D-136: start a background Memory Map summary cycle every ``HLM_MAP_SUMMARY_EVERY_S``
+        (never two at once, never while paused); the job loop is never blocked by it. True when a
+        cycle was started."""
+        if self.map_summarizer is None or self.paused:
+            return False
+        if self._map_task is not None and not self._map_task.done():
+            return False
+        if time.monotonic() - self._last_map < float(self.settings.map_summary_every_s):
+            return False
+        self._last_map = time.monotonic()
+        from hlmemo.librarian.tasks.map_summary import run_cycle_safely
+
+        cycle = run_cycle_safely(self.map_summarizer)
+        self._map_task = asyncio.create_task(cycle, name="librarian-map-summary")
+        return True
+
+    async def stop_map_summaries(self) -> None:
+        task, self._map_task = self._map_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
     async def run_forever(self, stop: asyncio.Event) -> None:
         """The service loop: up to ``HLM_LIBRARIAN_CONCURRENCY`` jobs in flight (``run_slots``
         semantics), with the sweep/expiry/heartbeat housekeeping between leases. On stop, no new
@@ -1328,6 +1361,7 @@ class LibrarianWorker:
                     await self.maybe_sweep()
                     await self.maybe_expire()
                     await self.maybe_release()
+                    self.maybe_map_summaries()
                     while len(in_flight) < self.concurrency and not stop.is_set():
                         job = await self.lease_one()
                         if job is None:
@@ -1354,6 +1388,7 @@ class LibrarianWorker:
                 else:
                     in_flight = {t for t in in_flight if not t.done()}
         finally:
+            await self.stop_map_summaries()
             if in_flight:
                 await asyncio.gather(*in_flight, return_exceptions=True)
 

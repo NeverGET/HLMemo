@@ -7,11 +7,12 @@ An ``app_bound`` handler is called as ``handler(conn, auth, args, app=<Starlette
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from hlmemo.core import export_service
-from hlmemo.server.tools import answer, handlers, query, risk, schemas
+from hlmemo.server.tools import answer, ask, handlers, query, risk, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
 
@@ -22,6 +23,11 @@ class ToolSpec:
     input_schema: dict[str, Any]
     handler: Handler
     app_bound: bool = False
+    #: ``listed(settings)``: advertise the tool on tools/list only when true (None: always)
+    listed: Callable[[Any], bool] | None = None
+
+    def advertised(self, settings: Any) -> bool:
+        return self.listed is None or bool(self.listed(settings))
 
 
 TOOLS: tuple[ToolSpec, ...] = (
@@ -56,6 +62,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     *risk.tool_specs(ToolSpec),  # W2d: memory.risk_check, memory.register_lesson
     ToolSpec(answer.NAME, answer.DESCRIPTION, answer.INPUT_SCHEMA, answer.memory_answer),  # W2c
+    ask.tool_spec(ToolSpec),  # D-136: the research librarian (listed while HLM_RESEARCH_ENABLED + LLM)
 )
 
 # Client-protocol tools (W1.5; Sol consult 40 #1): dispatched by tools/call for the `hlm` CLI but
@@ -71,6 +78,13 @@ CLIENT_TOOLS: tuple[ToolSpec, ...] = (
 
 TOOL_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in (*TOOLS, *CLIENT_TOOLS)}
 TOOL_NAMES: tuple[str, ...] = tuple(t.name for t in TOOLS)
+
+
+def advertised_tools(settings: Any) -> tuple[ToolSpec, ...]:
+    """What ``tools/list`` advertises under ``settings`` (a conditional tool only while enabled)."""
+    return tuple(t for t in TOOLS if t.advertised(settings))
+
+
 READ_TOOL_NAMES: frozenset[str] = frozenset({"memory.query", "memory.drilldown", "memory.raw", "hlm.export"})
 
 __all__ = [
@@ -81,4 +95,5 @@ __all__ = [
     "TOOL_NAMES",
     "TOOLS",
     "ToolSpec",
+    "advertised_tools",
 ]

@@ -1,0 +1,18 @@
+# R4 (R-10) LOCAL SMOKE ONLY (deploy/smoke/load_smoke.py): the prose WRITER pointed at the mock
+# provider (deploy/smoke/mock_provider.py), which delays this model's JOB prose by the question's
+# smoke-delay marker (60/90/130/170 s). Never on a production server: the check_librarian R4
+# manifest accepts only the Gemini writers (or unset). Select it with
+# HLM_RESEARCH_WRITER_PROFILE=smoke-writer on the disposable VM, with this file in HLM_PROFILES_DIR.
+# The base URL is where the api container reaches the mock (the mock run inside the api container:
+# its own loopback; otherwise the docker host's address on the api's network).
+HLM_LLM_BASE_URL = "http://127.0.0.1:18765/v1"
+HLM_LLM_MODEL    = "smoke/writer"
+# Any non-empty value (the mock ignores it); never a real key.
+HLM_LLM_API_KEY  = "env:SMOKE_MOCK_KEY"
+extra = { response_format = { type = "json_object" } }
+# Priced (the spend guard refuses unpriced live calls) and cheap: the mock's usage is 1000 in / 200 out.
+price_in_per_m    = 0.10
+price_out_per_m   = 0.40
+price_valid_until = "2099-12-31"
+supports_json_schema = false
+disabled_tasks = ["risk_judge"]

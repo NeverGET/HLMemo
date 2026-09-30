@@ -15,6 +15,7 @@ import os
 import re
 import tomllib
 from collections.abc import Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -197,6 +198,17 @@ class Settings(BaseSettings):
     price_in_per_m: float | None = Field(default=None, ge=0)
     price_out_per_m: float | None = Field(default=None, ge=0)
     supports_json_schema: bool = False
+    # D-178 capability: the endpoint honours JSON mode (response_format). A profile whose endpoints
+    # do not (json_mode = false) gets a plain-text protocol where a task has one (research prose and
+    # expand); default true.
+    json_mode: bool = True
+    # B1/R-8: the endpoint's usage convention (librarian.profiles.LlmProfile.usage_reasoning):
+    # "included" (OpenAI/OpenRouter) or "excluded" (Google OpenAI-compatible: thinking not counted in
+    # completion_tokens). Set in the profile file.
+    usage_reasoning: Literal["included", "excluded"] = "included"
+    # R4 (R-5): the last day (UTC) the profile's prices hold; after it the profile is unusable for
+    # live calls (the provider skips it and falls back). Set in the profile file.
+    price_valid_until: date | None = None
     # Model quirks live only here (D-017): {task: {"system_append": str}}.
     prompt_overrides: dict[str, Any] = Field(default_factory=dict)
 
@@ -239,6 +251,93 @@ class Settings(BaseSettings):
     llm_redact_email: bool = False
     llm_redact_phone: bool = False
 
+    # --- research librarian (D-130/D-136): the read-only tool memory.ask ---
+    # HLM_RESEARCH_ENABLED: advertise and serve memory.ask (it also needs the librarian LLM runtime:
+    # HLM_LIBRARIAN_ENABLED and HLM_LLM_MODE != off). Default OFF (review 79 T5): an env of an
+    # earlier release (R3) on this image never serves it and never spends; the R4 release manifest
+    # (deploy/scripts/check_librarian.py) pins it on in the R4 llm.env.
+    research_enabled: bool = False
+    # The whole memory.ask request (DB phases + at most 4 LLM calls, 6 with research_select, one more
+    # each with research_expand and research_attribution=llm), seconds.
+    research_timeout_s: float = Field(default=25.0, gt=0, le=240)  # R4: le raised to 240 (was 120)
+    # A runaway guard PER QUESTION (addendum 5): actual spend so far + the next call's worst case
+    # (its max_tokens) must stay within these, else the remaining steps are skipped and the answer
+    # so far is returned (meta.flags.budget_stop). The hour/day/month spend guard applies on top.
+    research_max_usd: float = Field(default=0.01, gt=0)
+    research_max_tokens: int = Field(default=100_000, gt=0)
+    # The Memory Map's budget in the planning prompt (o200k tokens, D-136: about 6k).
+    research_map_tokens: int = Field(default=6000, ge=500, le=20000)
+    # D-156: how memory.ask answers. "claims" (default): atomic claims with verbatim quotes plus the
+    # completeness/repair pass (prompt research/v1). "cite" (V14 "write, then cite"): complete prose
+    # sentences citing excerpt handles, each checked deterministically against its cited excerpts'
+    # full text (literals, polarity); no completeness call (prompt research/v2). D-162 "prose" (V16):
+    # free prose plus the sources it draws on; a sentence is dropped only when a hard literal of it (a
+    # digit, a backticked identifier) is in no shown excerpt, every other one is kept and attributed
+    # to its best source lines (HLM_RESEARCH_ATTRIBUTION; D-165: no polarity flag); no completeness
+    # call (prompt research/v3).
+    research_answer_mode: Literal["claims", "cite", "prose"] = "claims"
+    # D-193 (6): the prose mode's prompt revision. "v3.1" (default): research/v3 as revised by D-169.
+    # "v3.2": research/v3.2, the same prompt plus targeted writer rules (answer every part of the
+    # question, check its premise against the newest excerpt, read tables and lists in full, current
+    # value first when excerpts disagree, complete ordered steps for how-to questions, "not stated"
+    # only when no excerpt mentions it, as short as completeness allows). Ignored in the other modes.
+    research_prose_prompt: Literal["v3.1", "v3.2"] = "v3.1"
+    # D-165: how the prose mode attributes each kept sentence to excerpts (shown as its support and
+    # used to rank primary/related). "sources" (default, V16): the model's sources (else every shown
+    # excerpt), literal + word scoring. "wide": every shown excerpt, literals > words > the
+    # multilingual similarity of the server's embedder. "llm": ONE extra provider call (JOB attribute,
+    # research/v3) names the excerpts per sentence; a failed call, or a sentence it gives none, falls
+    # back to "sources". Ignored in the claims and cite modes.
+    research_attribution: Literal["sources", "wide", "llm"] = "sources"
+    # D-170: the prose mode's completeness pass: after an answered prose, ONE call (JOB expand,
+    # research/v3) adds up to 6 new sentences stating facts the excerpts give that the answer lacks;
+    # they are appended and pass the same checks (a hard literal no excerpt states drops one), then
+    # the attribution runs over every sentence. Skipped without ~6 s left; a failure keeps the
+    # answer. Ignored in the claims and cite modes.
+    research_expand: bool = False
+    # D-171: the named profile (profiles/<name>.toml, resolved like HLM_FALLBACK_PROFILE__<TASK>)
+    # that writes the prose answer: ONLY the jobs prose and expand use it, with the research task's
+    # own profile as their fallback; plan, refine and attribute keep the task profile. Empty = the
+    # task profile writes too. Its own prices, breaker, spend guard and ledger rows apply.
+    research_writer_profile: str | None = None
+    # D-172: the attempt timeout (seconds; HTTP and wall clock) of the writer profile's attempts
+    # only. A writer attempt that runs past it fails like a transport failure and the task profile
+    # writes (the writer's fallback, with its normal timeout); the question deadline still binds.
+    research_writer_timeout_s: float = Field(default=12.0, gt=0, le=120)
+    # R4 (B2): max_tokens of the JOB prose (the writer's answer, reasoning tokens included); the JOB
+    # expand keeps its own 1500 (R-17). Default = the former constant.
+    research_prose_max_tokens: int = Field(default=3000, gt=0, le=32000)
+    # R4 (B3): the HTTP timeout of ONE memory.ask provider attempt (the provider's timeout is
+    # min(HLM_LLM_TIMEOUT_S, this)); default = the former constant research.HTTP_TIMEOUT_S.
+    research_http_timeout_s: float = Field(default=20.0, gt=0, le=180)
+    # D-189: a directory for the memory.ask TRACE (one JSON file per request: every step, prompt,
+    # LLM attempt, hit list, drop and verdict). Unset = off. Diagnostics only: it never changes an
+    # answer; it holds the (redacted) prompts and excerpts, so treat the directory as memory data.
+    research_trace_dir: str | None = None
+    # D-193 (5b): "llm" = ONE extra call (task `rerank`, prompts/rerank) in the prose mode's PLAN
+    # retrieval: the question and the top 30 drill candidates ([handle, title, first 300 characters])
+    # -> the 8 most useful handles in order; they are drilled first, then the K4 order fills the cap.
+    # Its own task name (profile qualification, HLM_FALLBACK_PROFILE__RERANK), the spend guard and
+    # the per-question budget apply. A timeout, an error or an invalid answer keeps the K4 order
+    # (meta.flags.rerank). "off" (default): no call. Ignored in the claims and cite modes.
+    research_rerank: Literal["off", "llm"] = "off"
+    # D-193 (5b): the rerank call's whole time (seconds); its attempts are capped by it (a cut there
+    # is tail latency, not a breaker failure, D-173).
+    research_rerank_timeout_s: float = Field(default=6.0, gt=0, le=60)
+    # D-159 "select, then write" (cite mode only; ignored in claims mode): a small JOB select picks
+    # the ≤ 6 retrieved excerpts that state the answer, and the JOB write answers over those only
+    # (the others stay drillable in `related`); an empty or failed select writes over them all.
+    research_select: bool = False
+    # Memory Map L2 summaries (task map_summary, librarian process only): a cycle every
+    # map_summary_every_s refreshes at most map_summary_per_cycle stale source summaries whose
+    # newest change is older than map_summary_debounce_s (debounce during bursts and imports).
+    # Default OFF like memory.ask (review 79 T5); it also needs HLM_RESEARCH_ENABLED (the summaries
+    # serve only memory.ask), so an R3 env never starts it. The R4 manifest pins it on.
+    map_summary_enabled: bool = False
+    map_summary_every_s: float = Field(default=60.0, gt=0)
+    map_summary_debounce_s: float = Field(default=120.0, ge=0)
+    map_summary_per_cycle: int = Field(default=8, ge=1, le=200)
+
     # --- server / auth (§2) ---
     admin_token: SecretStr | None = None
     registration_secret: SecretStr | None = None
@@ -271,6 +370,9 @@ class Settings(BaseSettings):
     request_body_spool_threshold_bytes: int = Field(default=1024 * 1024, gt=0)
     request_spool_dir: Path | None = None  # None uses the system temporary directory.
     request_db_timeout_s: float = Field(default=15.0, gt=0)
+    # R4 (B3): the longest a handler may extend its request after releasing its DB connection
+    # (``detach(hold_s=...)``, memory.ask); default = the former constant middleware.DETACHED_HOLD_MAX_S.
+    detached_hold_max_s: float = Field(default=60.0, ge=0, le=240)
     readiness_timeout_s: float = Field(default=2.0, gt=0)
     readiness_cache_ttl_s: float = Field(default=1.0, gt=0)
     # No implicit trust, including loopback; configure the actual Caddy subnet explicitly.
