@@ -2445,8 +2445,33 @@ def _prose_keep(
                 explain.append(
                     {"unit": "dangling", "text": c.text, "verdict": "dropped", "reason": "dangling"}
                 )
+    _renumber_items(claims)
     raws = [r for c, r in zip(claims, raw_of, strict=True) if c.state == "kept"]
     return claims, reasons, raws
+
+
+_NUM_ITEM = re.compile(r"^([ \t]*)(\d{1,3})([.)])(?=[ \t])")
+
+
+def _renumber_items(claims: list[Claim]) -> None:
+    """D-208: a numbered list (``1.`` / ``1)`` items) that lost items to the literal check stays
+    consecutive: each kept item's number drops by the dropped items before it in the same list (so a
+    list whose item 1 went starts at 1 again). A list ends where an item's number does not increase
+    (a new list). Unnumbered sentences and bullets are left as written."""
+    prev: int | None = None
+    lost = 0
+    for c in claims:
+        m = _NUM_ITEM.match(c.text)
+        if m is None:
+            continue
+        n = int(m.group(2))
+        if prev is not None and n <= prev:
+            lost = 0  # a new list
+        prev = n
+        if c.state != "kept":
+            lost += 1
+        elif lost:
+            c.text = f"{m.group(1)}{max(n - lost, 1)}{m.group(3)}{c.text[m.end():]}"
 
 
 #: D-187: a list item unit (its marker): what a lead-in ending with ":" introduces
