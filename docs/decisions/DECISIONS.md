@@ -1737,3 +1737,21 @@ D-217 | 2026-09-30 | ACCEPTED (preparation; prod import pending owner OK) | **A 
 **Security finding (the raw sources, not HLMemo):**
 - The raw sources hold several credential-like literals; the details and the owner's follow-up are kept privately.
 - Rule-based scanners miss prose-embedded credentials (gitleaks found none, the importer rules flagged only some files), so the curator read stays mandatory (TEMPLATE step 3).
+D-218 | 2026-09-30 | ACCEPTED (owner: "HLMemo only, dry run first") | **B1 session capture is INSTALLED for the HLMemo project only.**
+
+What it does:
+- SessionEnd + PreCompact hooks in `.claude/settings.local.json` (gitignored). The mapping `~/.config/hlm/capture.toml` maps only /Users/cemalkurt/Projects/HLMemo → hlmemo, with min 3 owner messages and worktrees excluded.
+- Pipeline: the hook returns in about 35 ms; a detached worker reduces the transcript, scrubs it (D-213 rules plus emails) before any LLM call, has Haiku 4.5 summarize it, then validates (lessons need verbatim evidence) and writes via memory.call_the_day.
+- Every note is marked "auto-captured, unreviewed" with its source session.
+- Off switch: HLM_CAPTURE=off, `[capture] enabled=false`, or delete the mapping.
+
+Verification:
+- 40 unit tests.
+- Offline eval on 3 sessions: 0 secrets or emails survived.
+- A dry run through the real hook path (3-message throwaway session): payload correct.
+- One real capture into the disposable project hlmemo-e2e (path=direct): session note v1184 and lesson v1185, retrievable by memory.query immediately.
+- Cost about $0.007–0.15 and 10 s–3 min per capture, detached, on the owner's Claude subscription.
+
+Known issues:
+- The summarizer invented a "D-1" label and added a generalization beyond the evidence. Fixed on branch r4.1c (pending merge).
+- Survival of the detached worker across an interactive /exit is unverified: check capture.log after the first real session end.
