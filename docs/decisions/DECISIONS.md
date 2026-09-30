@@ -1625,3 +1625,11 @@ Defects found:
 
 Comparison: `memory.query` with a drilldown returned the right RUNBOOK chunk as the top hit, far faster. `memory.ask` adds synthesis and citations at ~25 s and ~$0.02.
 D-203 | 2026-09-30 | ACCEPTED (owner) | **KEEP: Gemini 3.8 Flash MEDIUM stays the production memory.ask writer (resolves the D-200 OWNER CALL).** Basis: the final test (38/50 correct, 0 fallbacks, $0.0201/q, p95 30.8 s), the paired comparison (luna 32/50 with 21/60 fallbacks, D-201), and the real-use session (D-202). Channel: Google direct stays. OpenRouter lists the same per-token price with no markup, but adds a 5.5% fee on card top-ups ($0.80 minimum; BYOK is fee-free up to $25k/month). Prices were checked 2026-09-30 on the provider pages and in OpenRouter's /models data. Open lever: the **flex tier** at half price ($0.375/$1.875 per M through 2026-12-31) exists on both channels but was not measured (latency and throttling unknown). Prices double on 2027-01-01 on every tier; `price_valid_until` 2026-12-31 fails the profile closed until it is updated.
+D-204 | 2026-09-30 | ACCEPTED (orchestrator, amends D-203's "open lever") | **The Gemini flex tier is NOT usable for memory.ask.** Google's flex docs (ai.google.dev/gemini-api/docs/flex-inference, read 2026-09-30) say:
+- the target latency is 1–15 minutes;
+- best-effort: requests can be preempted or evicted when standard traffic spikes (429/503);
+- there is no server-side fallback to Standard;
+- the client timeout should be ≥ 10 minutes;
+- it is recommended for offline evaluations and background agents only.
+
+memory.ask is interactive (research timeout 170 s, client 180 s), so flex would turn into writer fallbacks, not savings. The Standard tier stays. Flex remains an option for offline evaluation runs (writer/model benches, final-test style replays) and any future Gemini background job.
