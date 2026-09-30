@@ -1,4 +1,4 @@
-"""D-210 (GOAL-PLAN A2 item 4): writer billing/quota failures are classified as ``billing_or_quota``
+"""D-212 (GOAL-PLAN A2 item 4): writer billing/quota failures are classified as ``billing_or_quota``
 (the classifier, ``probe-writer``, the ops status line); no ledger migration (the rows stay http_error)."""
 
 from __future__ import annotations

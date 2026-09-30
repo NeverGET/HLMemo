@@ -1,4 +1,4 @@
-"""D-209 (GOAL-PLAN A2 item 3): ``meta.memory_as_of`` and the "memory ends on <date>" last line of a
+"""D-211 (GOAL-PLAN A2 item 3): ``meta.memory_as_of`` and the "memory ends on <date>" last line of a
 stale answer (freshness line first, truncation marker last)."""
 
 from __future__ import annotations

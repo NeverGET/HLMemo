@@ -1,4 +1,4 @@
-"""D-208 (GOAL-PLAN A2 item 2): when the literal validator drops a numbered-list item the remaining
+"""D-210 (GOAL-PLAN A2 item 2): when the literal validator drops a numbered-list item the remaining
 items are renumbered (the list starts at 1 and stays consecutive); a bullet list is unaffected; a
 lead-in whose items all went is dropped too (D-187)."""
 

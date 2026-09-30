@@ -1,4 +1,4 @@
-"""``llm_calls.outcome`` accepts ``billing_or_quota`` (D-210: a provider refusal for billing or quota).
+"""``llm_calls.outcome`` accepts ``billing_or_quota`` (D-212: a provider refusal for billing or quota).
 
 Revision ID: 0010_billing_outcome
 Revises: 0009_memory_map

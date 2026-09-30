@@ -164,7 +164,7 @@ def read_text(path: Path) -> tuple[str | None, str | None]:
     return text, None
 
 
-#: D-211 (a): an env-style assignment of a secret-named variable with a literal value
+#: D-213 (a): an env-style assignment of a secret-named variable with a literal value
 #: (``MINIO_SECRET_KEY=abc12345``, any casing). The value is checked by ``_is_placeholder``.
 _ENV_ASSIGN_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.-]*(?:secret|password|passwd|token|api[_-]?key)[A-Za-z0-9_]*)"
@@ -179,7 +179,7 @@ _PLACEHOLDER_STARTS = (
 _CALL_RE = re.compile(r"^[\w.]+[(\[]")  # os.environ[...], getenv(...): code, not a literal
 _EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"
 _EMAIL_RE = re.compile(_EMAIL)
-#: D-211 (b): a password assignment, and ``email / secret`` pairs
+#: D-213 (b): a password assignment, and ``email / secret`` pairs
 _PASSWORD_KV_RE = re.compile(
     r"(?i)\b(?:password|passwd|pwd|pass|parola|şifre|sifre)\b[\"']?[ \t]*[:=][ \t]*[\"'`]?([^\s\"'`]+)"
 )
@@ -227,7 +227,7 @@ def _credential_pair(text: str) -> bool:
     return False
 
 
-#: rule id -> detector, after the ``SECRET_PATTERNS`` (D-211: the two gaps found during curation)
+#: rule id -> detector, after the ``SECRET_PATTERNS`` (D-213: the two gaps found during curation)
 SECRET_CHECKS = {"env-secret-assignment": _env_secret, "credential-pair": _credential_pair}
 
 

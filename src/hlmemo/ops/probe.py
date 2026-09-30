@@ -12,7 +12,7 @@ nothing else: ``{"ok": bool, "profile": name, "status": <HTTP status or a reason
 string, a list of parts, or empty/null) and a known ``finish_reason`` (``FINISH_REASONS``). The
 model's own text is not judged: 16 tokens may end in a truncation (``finish_reason`` "length"), and
 that is no credential error. ``status`` is the HTTP status (401 for a wrong key), else a reason:
-``missing_key``, ``price_expired``, ``billing_or_quota`` (D-210: HTTP 402, or a 403/429 whose body
+``missing_key``, ``price_expired``, ``billing_or_quota`` (D-212: HTTP 402, or a 403/429 whose body
 names billing, quota or RESOURCE_EXHAUSTED: check the provider balance), ``timeout``, ``transport``,
 ``unparseable`` (not that protocol, e.g. ``{"choices": [1]}`` or ``{"choices": [{}]}``), ``provider_error``
 (an ``error`` body or ``finish_reason`` "error") or ``config``. Keys, headers, request and response
@@ -127,7 +127,7 @@ async def probe(settings: Any, *, transport: httpx.AsyncBaseTransport | None = N
     out["latency_ms"] = _ms(t0)
     out["status"] = resp.status_code
     if resp.status_code != 200:
-        if is_billing_or_quota(resp.status_code, resp.content):  # D-210: an ops problem, named as such
+        if is_billing_or_quota(resp.status_code, resp.content):  # D-212: an ops problem, named as such
             out["status"] = BILLING_OR_QUOTA
         return out
     try:

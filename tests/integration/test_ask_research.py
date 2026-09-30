@@ -2333,7 +2333,7 @@ async def test_ask_temporal_every_part_link_renders_its_line_newest_first(
 async def test_ask_memory_as_of_and_the_stale_freshness_line(
     connect, world, deps, db_dsn, monkeypatch
 ) -> None:  # noqa: ANN001
-    """D-209: ``meta.memory_as_of`` is the newest recorded_at of the project's current items; a fresh
+    """D-211: ``meta.memory_as_of`` is the newest recorded_at of the project's current items; a fresh
     memory adds no line, a stale one ends the answer with the "records end on" line (the world was
     just written, so staleness is forced by a negative freshness window: bitemporal rows cannot be
     back-dated row by row)."""
@@ -2389,7 +2389,7 @@ async def test_ask_memory_as_of_and_the_stale_freshness_line(
 async def test_ask_writer_billing_or_quota_is_named_and_warned(
     connect, world, deps, db_dsn, tmp_path, monkeypatch, status, body
 ) -> None:  # noqa: ANN001
-    """D-210: a writer that fails for billing or quota falls back (the research primary writes), the
+    """D-212: a writer that fails for billing or quota falls back (the research primary writes), the
     answer's flags name the reason ``billing_or_quota`` and ops status counts it with a WARNING line;
     a plain 503 stays ``unavailable`` and is not counted."""
     from hlmemo.ops import cli as ops_cli

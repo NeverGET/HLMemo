@@ -1,4 +1,4 @@
-"""D-207 (GOAL-PLAN A2 item 1): memory.ask truncation is never silent: ``meta.flags.truncated`` plus a
+"""D-209 (GOAL-PLAN A2 item 1): memory.ask truncation is never silent: ``meta.flags.truncated`` plus a
 visible last marker line inside the token budget; the default response budget is 6000."""
 
 from __future__ import annotations

@@ -174,7 +174,7 @@ from hlmemo.librarian.errors import (
 from hlmemo.librarian.tasks import research as rs
 
 TOOL = "memory.ask"
-#: D-207: the RESPONSE budget (answer + claims + sources in the envelope), not an LLM max_tokens or a
+#: D-209: the RESPONSE budget (answer + claims + sources in the envelope), not an LLM max_tokens or a
 #: cost setting; raised from 3000 because a procedural answer with its claims overflowed it (D-202)
 DEFAULT_BUDGET = 6000
 QUESTION_MAX = 2000
@@ -1989,7 +1989,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             settled,
             ok,
             run.researcher.redactor.text,
-            truncated=v.truncated,  # D-207: carried over the re-check
+            truncated=v.truncated,  # D-209: carried over the re-check
         )
         if v.answered and len(v.kept) == before:
             v.confidence = settled  # its drops already lowered it: nothing new was dropped
@@ -2055,8 +2055,8 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
             ],
         },
     }
-    run.flags["truncated"] = bool(answered and v.truncated)  # D-207 (_pack may also set it)
-    # D-209: the horizon of the project's memory (the newest recorded_at of the view the question was
+    run.flags["truncated"] = bool(answered and v.truncated)  # D-209 (_pack may also set it)
+    # D-211: the horizon of the project's memory (the newest recorded_at of the view the question was
     # answered over: loaded once per request, no extra query); a stale one ends the answer with a line
     as_of = memory_as_of(run.view.values())
     out["meta"]["memory_as_of"] = as_of.isoformat() if as_of is not None else None
@@ -2069,14 +2069,14 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
     return out
 
 
-#: D-209: the memory counts as stale for an answer when its newest record is older than this
+#: D-211: the memory counts as stale for an answer when its newest record is older than this
 FRESH_WITHIN = timedelta(hours=24)
 #: letters that mark Turkish text (ö, ü, ç are shared with German and French)
 _TR_LETTERS = frozenset("ığşİĞŞ")
 
 
 def memory_as_of(items: Iterable[Any]) -> datetime | None:
-    """D-209: the newest ``recorded_at`` among the project's current items (None: none or unknown)."""
+    """D-211: the newest ``recorded_at`` among the project's current items (None: none or unknown)."""
     times = [it.recorded_at for it in items if getattr(it, "recorded_at", None) is not None]
     return max(times) if times else None
 
@@ -2088,7 +2088,7 @@ def _is_turkish(text: str) -> bool:
 
 
 def freshness_line(as_of: datetime | None, now: datetime | None, text: str) -> str:
-    """D-209: ``(Memory records for this project end on <YYYY-MM-DD>.)`` (Turkish: ``(Bu projenin
+    """D-211: ``(Memory records for this project end on <YYYY-MM-DD>.)`` (Turkish: ``(Bu projenin
     bellek kayıtları <YYYY-MM-DD> tarihinde bitiyor.)``, chosen by ``text``'s language, else English)
     when ``as_of`` is older than ``FRESH_WITHIN`` before ``now``; "" otherwise."""
     if as_of is None or now is None or now - as_of <= FRESH_WITHIN:
@@ -2101,7 +2101,7 @@ def freshness_line(as_of: datetime | None, now: datetime | None, text: str) -> s
 
 def _fit(meter: Meter, out: dict[str, Any], budget: int) -> bool:
     """Shrink ``out`` to ``budget`` (see ``_pack``); True when claims or primary sources were dropped
-    (D-207: related sources alone are a trim, not a truncation). Raises E_BUDGET_TOO_SMALL."""
+    (D-209: related sources alone are a trim, not a truncation). Raises E_BUDGET_TOO_SMALL."""
     cut = False
     used = meter.settle(out, budget)
     for key in ("queries", "excerpts_shown"):
@@ -2125,7 +2125,7 @@ def _fit(meter: Meter, out: dict[str, Any], budget: int) -> bool:
 
 
 def truncation_marker(budget: int, budget_cut: bool) -> str:
-    """D-207: the visible last line of an answer that lost content."""
+    """D-209: the visible last line of an answer that lost content."""
     if budget_cut:
         return f"[answer truncated at token_budget={budget}; re-ask with a larger token_budget]"
     return (
@@ -2137,7 +2137,7 @@ def truncation_marker(budget: int, budget_cut: bool) -> str:
 def _pack(meter: Meter, out: dict[str, Any], budget: int) -> dict[str, Any]:
     """Fit ``token_budget``: the query list, then the excerpts_shown list become counts, then related
     sources, claims and primary sources are dropped from the tail (at least one claim and one primary
-    stay); the answer text is never cut (``E_BUDGET_TOO_SMALL`` with ``min`` instead). D-207: when
+    stay); the answer text is never cut (``E_BUDGET_TOO_SMALL`` with ``min`` instead). D-209: when
     claims or primary sources were dropped, or the answer hit its length limit, ``meta.flags.truncated``
     is set and the answer ends with a visible marker line (its tokens counted in the budget)."""
     pristine = copy.deepcopy(out)

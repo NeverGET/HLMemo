@@ -71,7 +71,7 @@ log = logging.getLogger("hlmemo.server")
 
 ADMIN_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_TOKEN not set"
 ADMIN_HTTP_DISABLED_WARNING = "admin device disabled: HLM_ADMIN_HTTP=disabled ignores HLM_ADMIN_TOKEN (D-061)"
-MIGRATION_BRANCH = "main"  # CC-1 / D-061: label on 0005_w0_access; head 0010_billing_outcome (D-210)
+MIGRATION_BRANCH = "main"  # CC-1 / D-061: label on 0005_w0_access; head 0010_billing_outcome (D-212)
 MIGRATION_HEAD_FALLBACK = (
     "0010_billing_outcome"  # used only when alembic/ is not on disk (never in the image)
 )

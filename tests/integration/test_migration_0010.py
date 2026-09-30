@@ -1,4 +1,4 @@
-"""Migration ``0010_billing_outcome`` (D-210) on a fresh database (``<test db>_b``).
+"""Migration ``0010_billing_outcome`` (D-212) on a fresh database (``<test db>_b``).
 
 It only widens the ``llm_calls.outcome`` CHECK by ``billing_or_quota``: before it the value is refused,
 after it accepted, every older outcome is accepted on both sides (so code from before 0010, which never

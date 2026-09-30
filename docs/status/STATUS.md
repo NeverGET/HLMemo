@@ -23,7 +23,7 @@ Updated: 2026-09-30 (GOAL-PLAN A2). The project is ACTIVE again (the D-196 pause
 - D-204: the Gemini flex tier is not usable for `memory.ask` (1-15 min latency, preemption, no fallback); offline evals only.
 - D-205: budget tension parked (about $67/month at 100 asks/day vs the $60 MONTH cap); Google Tier 1 cap and prepay-balance facts recorded; enable auto-reload.
 - D-206: GOAL-PLAN adopted (active, cross-project, proactive memory; "half-learning is worse than not knowing"); hooks only after a measurement; first migrations of a few owner projects.
-- A2 (branch r4.1): D-207 truncation flag + marker + budget default 6000, D-208 list renumbering, D-209 `memory_as_of` freshness line, D-210 `billing_or_quota` classification + ops warning.
+- A2 (branch r4.1): D-209 truncation flag + marker + budget default 6000, D-210 list renumbering, D-211 `memory_as_of` freshness line, D-212 `billing_or_quota` classification + ops warning.
 
 ## GOAL-PLAN phases (docs/decisions/GOAL-PLAN.md)
 - **A foundation:** A1 done (r4-rc merged into main). A2 quick defects done on `r4.1` (this refresh is A2-5): needs the owner's
@@ -36,7 +36,7 @@ Updated: 2026-09-30 (GOAL-PLAN A2). The project is ACTIVE again (the D-196 pause
 - **D quality and maintenance:** not started (librarian promotion, consolidation/decay, answer quality .76 to .80, the budget decision).
 
 ## Resume pointers
-1. `docs/decisions/GOAL-PLAN.md` (the plan and owner decisions), then the end of `docs/decisions/DECISIONS.md` (D-199 ... D-210).
+1. `docs/decisions/GOAL-PLAN.md` (the plan and owner decisions), then the end of `docs/decisions/DECISIONS.md` (D-199 ... D-212).
 2. Before any prod work: `docs/private/r4/RESUME-FINAL-TEST.md` (private; the R4 test and prod state).
 3. Deploy and gates: `deploy/RUNBOOK.md`; R4 plan and rehearsal notes are under `docs/status/` and `docs/private/r4/`.
 4. Workers: Sonnet 5.5 agents; at most 2-3 workstreams; dual review only for one-way doors (D-125).

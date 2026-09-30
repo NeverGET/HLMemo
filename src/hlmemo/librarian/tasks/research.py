@@ -1069,7 +1069,7 @@ class Validated:
     # past the answer's length cap)
     expand_added: int = 0
     expand_dropped: int = 0
-    # D-207: prose mode, sentences were left out because the answer hit ``ANSWER_MAX_CHARS``
+    # D-209: prose mode, sentences were left out because the answer hit ``ANSWER_MAX_CHARS``
     truncated: bool = False
 
     @property
@@ -2382,7 +2382,7 @@ def _prose_keep(
                 )
             reasons["block_lines"] += lines_dropped
             if text is not None and size and size + 1 + len(text) > ANSWER_MAX_CHARS:
-                reasons["capped"] = 1  # D-207: the rest of the answer is cut (validate_prose pops it)
+                reasons["capped"] = 1  # D-209: the rest of the answer is cut (validate_prose pops it)
                 break
             if text is None or not shown:
                 reasons["literal" if shown else "unsupported"] += 1
@@ -2399,7 +2399,7 @@ def _prose_keep(
         if not any(ch.isalnum() for ch in body):
             continue
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
-            reasons["capped"] = 1  # D-207
+            reasons["capped"] = 1  # D-209
             break
         why = None
         lits = hard_literals(body, shown, hay=hay)
@@ -2454,7 +2454,7 @@ _NUM_ITEM = re.compile(r"^([ \t]*)(\d{1,3})([.)])(?=[ \t])")
 
 
 def _renumber_items(claims: list[Claim]) -> None:
-    """D-208: a numbered list (``1.`` / ``1)`` items) that lost items to the literal check stays
+    """D-210: a numbered list (``1.`` / ``1)`` items) that lost items to the literal check stays
     consecutive: each kept item's number drops by the dropped items before it in the same list (so a
     list whose item 1 went starts at 1 again). A list ends where an item's number does not increase
     (a new list). Unnumbered sentences and bullets are left as written."""
@@ -2752,7 +2752,7 @@ def validate_prose(
         question=question,
     )
     kept_added = sum(1 for c in claims if c.added and c.state == "kept")
-    truncated = bool(reasons.pop("capped", 0))  # D-207: the answer hit ANSWER_MAX_CHARS
+    truncated = bool(reasons.pop("capped", 0))  # D-209: the answer hit ANSWER_MAX_CHARS
     return assemble_prose(
         status,
         claims,

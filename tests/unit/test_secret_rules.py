@@ -1,4 +1,4 @@
-"""D-211: the importer's secret filter also catches env-style assignments of secret-named variables with a
+"""D-213: the importer's secret filter also catches env-style assignments of secret-named variables with a
 literal value (``env-secret-assignment``) and email + password credential pairs (``credential-pair``)."""
 
 from __future__ import annotations

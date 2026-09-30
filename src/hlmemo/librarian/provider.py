@@ -119,7 +119,7 @@ log = logging.getLogger("hlmemo.librarian.provider")
 TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529})
 _FENCE = re.compile(r"^\s*```(?:json|JSON)?\s*|\s*```\s*$", re.S)
 
-#: D-210: the reason and the ledger outcome (migration 0010) of a provider failure that means the
+#: D-212: the reason and the ledger outcome (migration 0010) of a provider failure that means the
 #: account is out of credit or quota (an ops problem, not a model problem)
 BILLING_OR_QUOTA = "billing_or_quota"
 _BILLING_WORDS = (
@@ -137,7 +137,7 @@ _BILLING_WORDS = (
 
 
 def is_billing_or_quota(status: int | None, body: bytes | str | dict[str, Any] | None) -> bool:
-    """D-210: does a provider failure (HTTP ``status`` and error ``body``) mean billing or quota
+    """D-212: does a provider failure (HTTP ``status`` and error ``body``) mean billing or quota
     exhaustion? 402 always; 403 and 429 when the error body names it (RESOURCE_EXHAUSTED, a quota,
     billing, prepay/credit or balance message). Nothing else is: a plain 429 rate limit without
     those words, a 401 (wrong key) or a 5xx stays what it was."""
@@ -374,7 +374,7 @@ class _Exhausted(Exception):
         billing: bool = False,
     ) -> None:
         super().__init__(reason)
-        self.billing = billing  # D-210: the provider refused for billing or quota
+        self.billing = billing  # D-212: the provider refused for billing or quota
         self.fatal = fatal
         self.timeout = timeout  # the profile's last attempt timed out (latency policy)
         self.cut = cut  # D-173: ... cut by its profile's per-role cap (not a breaker failure)
@@ -390,7 +390,7 @@ class _Attempt:
     usage: dict[str, Any] | None = None
     latency_ms: int = 0
     finish: str | None = None  # the choice's finish_reason (R-9: "length" = a truncated answer)
-    billing: bool = False  # D-210: a failure that means billing or quota exhaustion
+    billing: bool = False  # D-212: a failure that means billing or quota exhaustion
 
 
 #: D-178: a response parser: content -> (object, None) or (None, why it is not one)
@@ -766,7 +766,7 @@ class Provider:
                 timeouts_only = timeouts_only and exc.timeout
                 why = (
                     BILLING_OR_QUOTA
-                    if exc.billing  # D-210: an ops problem, named before the generic reasons
+                    if exc.billing  # D-212: an ops problem, named before the generic reasons
                     else "cut"
                     if exc.cut
                     else ("timeout" if exc.timeout else "unavailable")
@@ -841,7 +841,7 @@ class Provider:
         key = cassette_key(profile.model_id, task.prompt_version, task.schema_version, messages, params)
         input_digest = _sha(canonical(messages))
         transient = 0
-        billing_seen = False  # D-210
+        billing_seen = False  # D-212
         schema_fails = 0
         while True:
             # the schema retry is a distinct cassette entry (attempt 2); attempt 1 keeps the legacy key
