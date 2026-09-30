@@ -2471,7 +2471,7 @@ def _renumber_items(claims: list[Claim]) -> None:
         if c.state != "kept":
             lost += 1
         elif lost:
-            c.text = f"{m.group(1)}{max(n - lost, 1)}{m.group(3)}{c.text[m.end():]}"
+            c.text = f"{m.group(1)}{max(n - lost, 1)}{m.group(3)}{c.text[m.end() :]}"
 
 
 #: D-187: a list item unit (its marker): what a lead-in ending with ":" introduces

@@ -40,7 +40,9 @@ def test_stale_memory_gets_the_english_line() -> None:
 def test_stale_memory_line_follows_the_turkish_answer() -> None:
     as_of = datetime(2026, 9, 26, 10, 0, tzinfo=UTC)
     tr = "Hedef şimdi 1,2 s; önceden 1,6 s idi. Karar sahibi verdi."
-    assert rsv.freshness_line(as_of, NOW, tr) == "(Bu projenin bellek kayıtları 2026-09-26 tarihinde bitiyor.)"
+    assert (
+        rsv.freshness_line(as_of, NOW, tr) == "(Bu projenin bellek kayıtları 2026-09-26 tarihinde bitiyor.)"
+    )
     de = "Schließen Sie die Prüfung für Größe ab."  # ö/ü/ß are not Turkish markers
     assert rsv.freshness_line(as_of, NOW, de).startswith("(Memory records")
 
@@ -49,7 +51,7 @@ def test_freshness_line_comes_before_the_truncation_marker() -> None:
     line = rsv.freshness_line(datetime(2026, 9, 26, tzinfo=UTC), NOW, "x")
     out = {
         "project": "p",
-        "answer": f"The answer. " * 20 + f"\n{line}",
+        "answer": "The answer. " * 20 + f"\n{line}",
         "abstained": False,
         "confidence": "high",
         "claims": [

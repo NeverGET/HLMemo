@@ -297,6 +297,12 @@ def research_lines(r: dict[str, Any]) -> list[str]:
             f"WARNING     writer {r.get('writer_profile')}: price_valid_until"
             f" {r.get('writer_price_valid_until')} passed: unusable for live calls (update its prices)"
         )
+    billing = int(r.get("writer_billing_quota_24h") or 0)
+    if billing > 0:  # D-210: the account is out of credit or quota (Gemini prepay, D-205)
+        lines.append(
+            f"WARNING     writer billing/quota errors in the last 24 h: {billing}"
+            " (check the provider balance/auto-reload)"
+        )
     share = float(r.get("writer_fallback_share_24h") or 0.0)
     q_share = float(r.get("writer_fallback_question_share_24h") or 0.0)
     if max(share, q_share) > service.WRITER_FALLBACK_WARN:

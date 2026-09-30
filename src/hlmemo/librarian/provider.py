@@ -119,6 +119,45 @@ log = logging.getLogger("hlmemo.librarian.provider")
 TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529})
 _FENCE = re.compile(r"^\s*```(?:json|JSON)?\s*|\s*```\s*$", re.S)
 
+#: D-210: the reason and the ledger marker of a provider failure that means the account is out of
+#: credit or quota (an ops problem, not a model problem). The ``llm_calls`` outcome CHECK (0006) has
+#: no such outcome and no migration is added, so the row stays ``http_error`` and its
+#: ``response_sha256`` carries this prefix (ops counts it); ``LlmResult.fallbacks`` and
+#: ``meta.flags.writer_fallback_reasons`` carry the reason itself
+BILLING_OR_QUOTA = "billing_or_quota"
+_BILLING_WORDS = (
+    "resource_exhausted",
+    "quota",
+    "billing",
+    "prepay",
+    "prepaid",
+    "credit",
+    "insufficient_funds",
+    "insufficient funds",
+    "payment",
+    "balance",
+)
+
+
+def is_billing_or_quota(status: int | None, body: bytes | str | dict[str, Any] | None) -> bool:
+    """D-210: does a provider failure (HTTP ``status`` and error ``body``) mean billing or quota
+    exhaustion? 402 always; 403 and 429 when the error body names it (RESOURCE_EXHAUSTED, a quota,
+    billing, prepay/credit or balance message). Nothing else is: a plain 429 rate limit without
+    those words, a 401 (wrong key) or a 5xx stays what it was."""
+    if status == 402:
+        return True
+    if status not in (403, 429):
+        return False
+    if isinstance(body, dict):
+        text = json.dumps(body, ensure_ascii=False)
+    elif isinstance(body, bytes):
+        text = body.decode("utf-8", errors="replace")
+    else:
+        text = body or ""
+    text = text.lower()
+    return any(w in text for w in _BILLING_WORDS)
+
+
 Validator = Callable[[dict[str, Any]], str | None]
 #: loop lineage of the call being made (per asyncio task; concurrent calls never share it)
 _LINEAGE: contextvars.ContextVar[str | None] = contextvars.ContextVar("hlm_llm_lineage", default=None)
@@ -328,8 +367,17 @@ class LlmResult:
 
 
 class _Exhausted(Exception):
-    def __init__(self, reason: str, *, fatal: bool = False, timeout: bool = False, cut: bool = False) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        fatal: bool = False,
+        timeout: bool = False,
+        cut: bool = False,
+        billing: bool = False,
+    ) -> None:
         super().__init__(reason)
+        self.billing = billing  # D-210: the provider refused for billing or quota
         self.fatal = fatal
         self.timeout = timeout  # the profile's last attempt timed out (latency policy)
         self.cut = cut  # D-173: ... cut by its profile's per-role cap (not a breaker failure)
@@ -345,6 +393,7 @@ class _Attempt:
     usage: dict[str, Any] | None = None
     latency_ms: int = 0
     finish: str | None = None  # the choice's finish_reason (R-9: "length" = a truncated answer)
+    billing: bool = False  # D-210: a failure that means billing or quota exhaustion
 
 
 #: D-178: a response parser: content -> (object, None) or (None, why it is not one)
@@ -718,7 +767,15 @@ class Provider:
                     breaker.failure()  # per PROFILE: a failing primary never closes the fallback's way
                 reasons.append(f"{profile.name}: {exc}")
                 timeouts_only = timeouts_only and exc.timeout
-                why = "cut" if exc.cut else ("timeout" if exc.timeout else "unavailable")
+                why = (
+                    BILLING_OR_QUOTA
+                    if exc.billing  # D-210: an ops problem, named before the generic reasons
+                    else "cut"
+                    if exc.cut
+                    else ("timeout" if exc.timeout else "unavailable")
+                )
+                if exc.billing:
+                    log.warning("profile %s: provider refused for billing or quota", profile.name)
                 fallbacks.append((profile.name, why))
                 continue
             except SchemaFail as exc:
@@ -787,6 +844,7 @@ class Provider:
         key = cassette_key(profile.model_id, task.prompt_version, task.schema_version, messages, params)
         input_digest = _sha(canonical(messages))
         transient = 0
+        billing_seen = False  # D-210
         schema_fails = 0
         while True:
             # the schema retry is a distinct cassette entry (attempt 2); attempt 1 keeps the legacy key
@@ -809,11 +867,12 @@ class Provider:
                 reason = (
                     "cut at the profile's attempt cap" if att.cut else "transient failure (latency policy)"
                 )
-                raise _Exhausted(reason, timeout=att.timeout, cut=att.cut)
+                raise _Exhausted(reason, timeout=att.timeout, cut=att.cut, billing=att.billing)
             if att.kind == "transient":
                 transient += 1
+                billing_seen = billing_seen or att.billing
                 if transient >= MAX_TRANSIENT_ATTEMPTS:
-                    raise _Exhausted(f"{transient} transient failures")
+                    raise _Exhausted(f"{transient} transient failures", billing=billing_seen)
                 backoff = BACKOFF_S[min(transient, len(BACKOFF_S)) - 1]
                 remaining = _remaining_s()
                 if remaining is not None and remaining - backoff < MIN_ATTEMPT_S:
@@ -821,7 +880,7 @@ class Provider:
                 await self.clock.sleep(backoff)
                 continue
             if att.kind == "fatal":
-                raise _Exhausted("non-retryable HTTP error", fatal=True)
+                raise _Exhausted("non-retryable HTTP error", fatal=True, billing=att.billing)
             assert att.row is not None
             obj, err = parse(att.content)
             if obj is not None:
@@ -1079,6 +1138,11 @@ class Provider:
             # an unparseable 200 or a mid-generation provider error may have been billed.
             no_charge = 400 <= resp.status_code < 500
             charged = Decimal(0) if no_charge else worst
+            err_status = resp.status_code
+            if err_status == 200 and isinstance((data or {}).get("error"), dict):
+                code = data["error"].get("code")  # a 200 whose body is the provider's error
+                err_status = code if isinstance(code, int) else err_status
+            billing = is_billing_or_quota(err_status, data if data is not None else raw_bytes)
             await _finalize(self.budget.settle(call_id, charged))
             await self.ledger.record(
                 self._row(
@@ -1088,14 +1152,14 @@ class Provider:
                     "http_error",
                     call_id=call_id,
                     request_sha256=request_sha,
-                    response_sha256=_sha(raw_bytes),
+                    response_sha256=(f"{BILLING_OR_QUOTA}:" if billing else "") + _sha(raw_bytes),
                     reserved_usd=worst,
                     cost_usd=charged,
                     latency_ms=latency,
                 )
             )
             transient = resp.status_code in TRANSIENT_STATUS or resp.status_code == 200
-            return _Attempt("transient" if transient else "fatal")
+            return _Attempt("transient" if transient else "fatal", billing=billing)
 
         if self.mode == "record":
             assert self.cassettes is not None

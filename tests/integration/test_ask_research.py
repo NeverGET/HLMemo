@@ -2367,3 +2367,78 @@ async def test_ask_memory_as_of_and_the_stale_freshness_line(
     assert stale["answer"].splitlines()[-1] == f"(Memory records for this project end on {day}.)"
     assert stale["meta"]["flags"]["truncated"] is False
     assert stale["budget"]["used"] == METER.count(stale) <= stale["budget"]["limit"]
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (
+            429,
+            {
+                "error": {
+                    "code": 429,
+                    "message": "You exceeded your current quota",
+                    "status": "RESOURCE_EXHAUSTED",
+                }
+            },
+        ),
+        (402, {"error": {"code": 402, "message": "Insufficient credits"}}),
+        (403, {"error": {"code": 403, "message": "Prepay balance is zero; billing required"}}),
+    ],
+)
+async def test_ask_writer_billing_or_quota_is_named_and_warned(
+    connect, world, deps, db_dsn, tmp_path, monkeypatch, status, body
+) -> None:  # noqa: ANN001
+    """D-210: a writer that fails for billing or quota falls back (the research primary writes), the
+    answer's flags name the reason ``billing_or_quota`` and ops status counts it with a WARNING line;
+    a plain 503 stays ``unavailable`` and is not counted."""
+    from hlmemo.ops import cli as ops_cli
+    from hlmemo.ops import service
+
+    (tmp_path / "w-gem.toml").write_text(
+        'HLM_LLM_BASE_URL = "http://w-gem.invalid/v1"\nHLM_LLM_MODEL = "stub/w-gem"\n'
+        'HLM_LLM_API_KEY = "test-key-not-secret"\nprice_in_per_m = 0.75\nprice_out_per_m = 3.75\n'
+        'usage_reasoning = "excluded"\nextra = { response_format = { type = "json_object" } }\n'
+    )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    async with await connect() as conn:
+        await conn.execute("DELETE FROM llm_calls")
+        await conn.commit()
+    fake = FakeResearcher(facts=["1.2 s"])
+    llm = ScriptedLLM(default=lambda b: ("http", status, body) if b["model"] == "stub/w-gem" else fake(b))
+    r = make_researcher(db_dsn, llm, research_answer_mode="prose", research_writer_profile="w-gem")
+    try:
+        out = await ask(connect, world, deps, r, "What is the current retrieval p95 target?")
+    finally:
+        await r.aclose()
+    flags = out["meta"]["flags"]
+    assert out["abstained"] is False and flags["writer_used"] == "stub-primary"
+    assert flags["writer_fallback_reasons"] == ["w-gem:billing_or_quota"]
+    settings = ask_settings(db_dsn, research_answer_mode="prose", research_writer_profile="w-gem")
+    async with await connect() as conn:
+        st = await service.research_status(conn, settings)
+        await conn.rollback()
+    assert st["writer_billing_quota_24h"] >= 1
+    assert st["writer_outcomes_24h"]["http_error"] >= 1  # no new outcome: no migration
+    lines = ops_cli.research_lines(st)
+    assert any(
+        ln.startswith("WARNING     writer billing/quota errors in the last 24 h:")
+        and ln.endswith("(check the provider balance/auto-reload)")
+        for ln in lines
+    )
+    # a plain 503 is an outage, not billing
+    async with await connect() as conn:
+        await conn.execute("DELETE FROM llm_calls")
+        await conn.commit()
+    llm2 = ScriptedLLM(default=lambda b: 503 if b["model"] == "stub/w-gem" else fake(b))
+    r2 = make_researcher(db_dsn, llm2, research_answer_mode="prose", research_writer_profile="w-gem")
+    try:
+        out2 = await ask(connect, world, deps, r2, "What is the current retrieval p95 target?")
+    finally:
+        await r2.aclose()
+    assert out2["meta"]["flags"]["writer_fallback_reasons"] == ["w-gem:unavailable"]
+    async with await connect() as conn:
+        st2 = await service.research_status(conn, settings)
+        await conn.rollback()
+    assert st2["writer_billing_quota_24h"] == 0
+    assert not any("billing/quota" in ln for ln in ops_cli.research_lines(st2))

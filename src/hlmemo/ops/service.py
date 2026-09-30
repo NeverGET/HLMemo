@@ -586,6 +586,7 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
     also sees an expand JOB's fallback, whose ledger rows are ``research``)."""
     from hlmemo.config import get_settings
     from hlmemo.librarian.errors import LlmConfigError
+    from hlmemo.librarian.provider import BILLING_OR_QUOTA
     from hlmemo.librarian.tasks import research as rs
 
     settings = settings or get_settings()
@@ -613,6 +614,14 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
         (configured, rs.WRITER_LEDGER_TASK),
     )
     questions, fallback_questions = (int(n) for n in (await cur.fetchone() or (0, 0)))
+    # D-210: the writer JOB's calls the provider refused for billing or quota (no 0006 outcome for it:
+    # the ledger row is an http_error whose response_sha256 carries the marker)
+    cur = await conn.execute(
+        "SELECT count(*) FROM llm_calls WHERE task = %s AND outcome = 'http_error'"
+        f" AND response_sha256 LIKE %s AND created_at > now() - interval '{WRITER_WINDOW}'",
+        (rs.WRITER_LEDGER_TASK, f"{BILLING_OR_QUOTA}:%"),
+    )
+    billing_quota = int((await cur.fetchone() or (0,))[0])
     valid_until, expired = None, None
     try:  # R4 (R-5): the configured writer's price validity (its own profile file)
         from hlmemo.librarian.profiles import named_profile
@@ -635,6 +644,7 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
         "writer_questions_24h": questions,
         "writer_fallback_questions_24h": fallback_questions,
         "writer_fallback_question_share_24h": round(fallback_questions / questions, 4) if questions else 0.0,
+        "writer_billing_quota_24h": billing_quota,
         "writer_price_valid_until": valid_until,
         "writer_price_expired": expired,
     }

@@ -108,6 +108,8 @@ class ScriptedLLM:
             break
         if entry == "connect_error":
             raise httpx.ConnectError("scripted transport failure")
+        if isinstance(entry, tuple) and entry and entry[0] == "http":  # ("http", status, json body)
+            return httpx.Response(entry[1], json=entry[2])
         if isinstance(entry, int):
             return httpx.Response(entry, json={"error": {"code": entry, "message": "scripted"}})
         if isinstance(entry, dict) and "choices" in entry:

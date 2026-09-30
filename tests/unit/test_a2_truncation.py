@@ -74,7 +74,9 @@ def test_answer_length_limit_sets_the_flag_and_a_marker() -> None:
     assert not short.truncated
     packed = rsv._pack(METER, _big_out({"truncated": True}), 8000)
     assert packed["meta"]["flags"]["truncated"] is True
-    assert packed["answer"].splitlines()[-1].startswith("[answer truncated at the 3200-character answer limit")
+    assert (
+        packed["answer"].splitlines()[-1].startswith("[answer truncated at the 3200-character answer limit")
+    )
     assert packed["budget"]["used"] == METER.count(packed) <= 8000
     abstained = {**_big_out({"truncated": True}), "answer": "", "abstained": True}
     assert "[answer truncated" not in rsv._pack(METER, abstained, 8000)["answer"]

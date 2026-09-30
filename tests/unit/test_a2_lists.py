@@ -64,7 +64,5 @@ def test_all_items_dropped_leaves_no_dangling_lead_in() -> None:
 
 def test_renumbering_is_idempotent_for_the_final_recheck() -> None:
     v = _answer(f"Procedure:\n1. {BAD}\n2. Deploy using port 8080.\n3. Verify step three.\n")
-    again, _reasons = rs.prose_check(
-        [(c.text, c.line_end) for c in v.kept], ["v1.0"], SHOWN, "sources"
-    )
+    again, _reasons = rs.prose_check([(c.text, c.line_end) for c in v.kept], ["v1.0"], SHOWN, "sources")
     assert rs.assemble_prose(rs.ANSWERED, again, ["v1.0"], [], "high", SHOWN, lambda s: s).answer == v.answer
