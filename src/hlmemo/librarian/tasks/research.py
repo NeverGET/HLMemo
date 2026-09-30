@@ -1739,10 +1739,21 @@ def is_block(text: str) -> bool:
     return _FENCE_LINE.match(text) is not None
 
 
+def _indent_before(text: str, at: int) -> str:
+    """The indentation (spaces / tabs) that the break regex consumed just before ``text[at]``."""
+    if at <= 0 or text[at - 1] not in " \t":
+        return ""
+    i = at
+    while i > 0 and text[i - 1] in " \t":
+        i -= 1
+    return text[i:at] if i == 0 or text[i - 1] == "\n" else ""
+
+
 def _split_prose(text: str) -> list[tuple[str, bool]]:
     code = [(m.start(), m.end()) for m in _CODE_SPAN.finditer(text)]
-    out: list[tuple[str, bool]] = []
+    out: list[tuple[str, bool, str]] = []
     start = 0
+    at_line = True  # the piece starts a line (the text start, or after a line break)
     for m in _PROSE_BREAK.finditer(text):
         at = m.start()
         if any(a <= at < b for a, b in code):
@@ -1750,10 +1761,19 @@ def _split_prose(text: str) -> list[tuple[str, bool]]:
         head, brk = text[start:at], "\n" in m.group(0)
         if not brk and (_ITEM_ONLY.fullmatch(head) or _ABBREV_END.search(head.casefold())):
             continue
-        out.append((head, brk))
-        start = m.end()
-    out.append((text[start:], False))
-    return [(" ".join(s.split()), brk) for s, brk in out if any(ch.isalnum() for ch in s)]
+        out.append((head, brk, _indent_before(text, start) if at_line else ""))
+        start, at_line = m.end(), brk
+    out.append((text[start:], False, _indent_before(text, start) if at_line else ""))
+    res: list[tuple[str, bool]] = []
+    for s, brk, indent in out:
+        if not any(ch.isalnum() for ch in s):
+            continue
+        collapsed = " ".join(s.split())
+        # (R4.1 review round 2) a numbered item keeps its line indentation: a sub-list is its own block
+        if indent and _NUM_ITEM.match(collapsed) and not _DATE_AFTER_NUM.match(collapsed):
+            collapsed = indent + collapsed
+        res.append((collapsed, brk))
+    return res
 
 
 def _body(sentence: str) -> str:
@@ -2395,6 +2415,7 @@ def _prose_keep(
             raw_of.append(text)
             continue
         text, _inline = split_inline_cites(raw, shown)
+        text = raw[: len(raw) - len(raw.lstrip(" \t"))] + text.lstrip(" \t")  # keep an item's indentation
         body = _body(text)
         if not any(ch.isalnum() for ch in body):
             continue
@@ -2466,8 +2487,14 @@ def _renumber_items(claims: list[Claim]) -> None:
     list whose item 1 went starts at 1 again). A list ends where an item's number does not increase
     (a new list). Unnumbered sentences and bullets are left as written.
     (R4.1 review F-2) A list is one contiguous block: any unit that starts a new line and is not a
-    numbered item ends it (so a later "3. Ekim" is never renumbered), and a date is not an item."""
+    numbered item ends it (so a later "3. Ekim" is never renumbered), and a date is not an item.
+    (R4.1 review round 2 N-2/F-2) A block also has ONE style: the same delimiter (``.`` vs ``)``) and the
+    same indentation. An item with another delimiter or indentation starts a NEW block with its own
+    count (``2. kept`` then ``3) separate`` are two lists; an indented sub-list is its own list). Blank
+    lines are not units: a blank line followed by an item of the SAME style continues the block, like a
+    markdown loose list. Residual: step references in prose ("see step 3") are not rewritten."""
     prev: int | None = None
+    style: tuple[str, str] | None = None
     lost = 0
     line_start = True
     for c in claims:
@@ -2475,12 +2502,13 @@ def _renumber_items(claims: list[Claim]) -> None:
         m = _NUM_ITEM.match(c.text)
         if m is None or _DATE_AFTER_NUM.match(c.text):
             if starts_line:
-                prev, lost = None, 0  # the list block ended
+                prev, style, lost = None, None, 0  # the list block ended
             continue
         n = int(m.group(2))
-        if prev is not None and n <= prev:
-            lost = 0  # a new list
-        prev = n
+        here = (m.group(1), m.group(3))
+        if (prev is not None and n <= prev) or (style is not None and here != style):
+            lost = 0  # a new list (numbering restarts, or another delimiter / indentation)
+        prev, style = n, here
         if c.state != "kept":
             lost += 1
         elif lost:

@@ -218,7 +218,7 @@ GOOD = {
     "lessons": [
         {
             "title": "Dedupe key must include path",
-            "body": "Rule: ...",
+            "body": "Root cause: the old key ignored paths.",
             "tags": ["importer"],
             "evidence": "Root cause: the old key ignored paths.",
         }
@@ -239,7 +239,8 @@ def test_validate_summary_drops_ungrounded_lesson_and_flags_unknown_refs():
     bad["notes"] += " Also see commit deadbeef1 and D-999."
     s = S.validate_summary(bad, "Decided: dedupe (commit abc1234).")
     assert s.lessons == [] and s.dropped["lessons_ungrounded"] == 1
-    assert any("deadbeef1" in u and "D-999" in u for u in s.uncertain)
+    assert any("deadbeef1" in u for u in s.uncertain)
+    assert "D-999" not in s.notes and s.dropped["invented_ids_scrubbed"] == 1  # R4.1 round 2 N-3
 
 
 @pytest.mark.parametrize(

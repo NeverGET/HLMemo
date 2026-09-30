@@ -62,15 +62,18 @@ Non-negotiable rules (a wrong memory is worse than no memory):
    Say what was DECIDED, CHANGED, DONE and what is still OPEN or
    BLOCKED. Every concrete claim should point to evidence: a file path, a commit hash from the
    COMMITS list, a decision id (D-xxx) or a date that appears in the transcript. Never invent a hash,
-   path, id, number or date. Prefer the state at the END of the session; if an early decision was
+   path, id, number or date. Never number or label decisions yourself ("D-1", "Decision (D-1)"): a
+   decision id may appear ONLY if that exact id is written in the transcript; otherwise describe the
+   decision in words without any label. Prefer the state at the END of the session; if an early decision was
    reversed later, report only the final state and say it was reversed.
 3. "decisions": at most 12 one-line statements of decisions that were EXPLICITLY made or approved
    (by the owner, or by the assistant and accepted). Each one self-contained and under 300 chars.
    Not plans, not ideas, not options that were only discussed.
 4. "lessons": ONLY where a mistake, failure, surprise or learning is EXPLICIT in the transcript
    (something went wrong and the cause was identified, or the owner corrected the assistant, or a
-   rule was stated as a lesson). Each: a short title, a body stating the rule, the reason and how to
-   apply it using ONLY what the transcript says (add no advice or details of your own), up to 6
+   rule was stated as a lesson). Each: a short title, a body that restates ONLY what its verbatim
+   evidence supports (the rule, the reason, how to apply it, as the evidence says it; no added
+   generalisations, advice, scope or details of your own; keep it to one or two sentences), up to 6
    lowercase tags, and "evidence": a VERBATIM quote (under 200 chars) copied from the
    transcript that supports it. Zero lessons is the normal, expected outcome for most sessions.
 5. "uncertain": things a reader must not treat as settled (unverified claims, open questions,
@@ -199,7 +202,12 @@ class Summary:
 
 
 _HASH_RE = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
-_DID_RE = re.compile(r"\bD-\d{3,4}\b")
+_DID_RE = re.compile(r"\bD-\d{1,4}\b")  # (R4.1 review round 2) also the invented short labels "D-1"
+_DID_PAREN_RE = re.compile(r"[ \t]*[(\[]\s*(D-\d{1,4})\s*[)\]]")
+_WORD_RE = re.compile(r"[^\W_]+")
+#: a lesson body is capped to its evidence plus this many characters of supported restatement
+LESSON_BODY_EXTRA = 240
+LESSON_SUPPORT = 0.75
 
 
 def ungrounded_refs(text: str, transcript: str) -> list[str]:
@@ -211,10 +219,61 @@ def ungrounded_refs(text: str, transcript: str) -> list[str]:
         x = m.group(0)
         if x not in hay and not any(h.startswith(x) or x.startswith(h) for h in known):
             bad.append(x)
+    known_ids = {x.lower() for x in _DID_RE.findall(transcript)}
     for m in _DID_RE.finditer(text):
-        if m.group(0).lower() not in hay:
+        if m.group(0).lower() not in known_ids:
             bad.append(m.group(0))
     return sorted(set(bad))
+
+
+def scrub_invented_ids(text: str, transcript: str) -> tuple[str, int]:
+    """(R4.1 review round 2 N-3) remove ``D-<n>`` tokens that do not occur verbatim in the transcript
+    (the summarizer must not label decisions itself): ``Decision (D-1): x`` -> ``Decision: x``."""
+    known = {x.lower() for x in _DID_RE.findall(transcript)}  # whole ids: "D-2" is not in "D-217"
+    n = 0
+
+    def gone(m: re.Match[str]) -> str:
+        nonlocal n
+        if m.group(1).lower() in known:
+            return m.group(0)
+        n += 1
+        return ""
+
+    text = _DID_PAREN_RE.sub(gone, text)
+
+    def bare(m: re.Match[str]) -> str:
+        nonlocal n
+        if m.group(0).lower() in known:
+            return m.group(0)
+        n += 1
+        return ""
+
+    return re.sub(r"[ \t]{2,}", " ", _DID_RE.sub(bare, text)), n
+
+
+def _tokens(s: str) -> set[str]:
+    return {w for w in _WORD_RE.findall(s.lower()) if len(w) >= 4 or any(c.isdigit() for c in w)}
+
+
+def trim_lesson_body(title: str, body: str, evidence: str) -> tuple[str, bool]:
+    """(R4.1 review round 2 N-3) a lesson body restates only what its verbatim evidence supports: a
+    sentence is kept when (nearly) all of its content words occur in the evidence or the title and every
+    number/identifier in it does; the rest is dropped. Nothing left -> the evidence quote itself. The
+    result is capped to the evidence length plus ``LESSON_BODY_EXTRA`` characters."""
+    known = _tokens(evidence) | _tokens(title)
+    kept: list[str] = []
+    for sent in re.split(r"(?<=[.!?])\s+|\n+", body):
+        toks = _tokens(sent)
+        if not toks:
+            continue
+        ids_ok = all(t in known for t in toks if any(c.isdigit() for c in t))
+        if ids_ok and len(toks & known) / len(toks) >= LESSON_SUPPORT:
+            kept.append(sent.strip())
+    out = " ".join(kept) if kept else evidence
+    cap = len(evidence) + LESSON_BODY_EXTRA
+    if len(out) > cap:
+        out = out[: cap - 1].rstrip() + "…"
+    return out, out != body
 
 
 def validate_summary(obj: Any, transcript: str) -> Summary:
@@ -262,6 +321,9 @@ def validate_summary(obj: Any, transcript: str) -> Summary:
         if len(ev) < 12 or _norm_ws(ev).strip(".…") not in hay:
             dropped["lessons_ungrounded"] = dropped.get("lessons_ungrounded", 0) + 1
             continue
+        body, changed = trim_lesson_body(title, body, ev)
+        if changed:
+            dropped["lessons_body_trimmed"] = dropped.get("lessons_body_trimmed", 0) + 1
         lessons.append(
             {
                 "title": title[:MAX_TITLE],
@@ -271,6 +333,22 @@ def validate_summary(obj: Any, transcript: str) -> Summary:
             }
         )
     lessons = lessons[:MAX_LESSONS]
+    scrubbed = 0
+    notes, k = scrub_invented_ids(notes, transcript)
+    scrubbed += k
+    fixed: list[str] = []
+    for d in decisions:
+        d, k = scrub_invented_ids(d, transcript)
+        scrubbed += k
+        if d.strip():
+            fixed.append(d.strip())
+    decisions = fixed
+    for x in lessons:
+        for key in ("title", "body"):
+            x[key], k = scrub_invented_ids(x[key], transcript)
+            scrubbed += k
+    if scrubbed:
+        dropped["invented_ids_scrubbed"] = scrubbed
     allt = "\n".join([notes, *decisions, *(f"{x['title']} {x['body']}" for x in lessons)])
     bad = ungrounded_refs(allt, transcript)
     if bad:

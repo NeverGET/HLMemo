@@ -47,3 +47,27 @@ def test_a_contiguous_list_is_still_renumbered() -> None:
 def test_a_month_date_right_after_a_list_is_left_alone() -> None:
     v = _answer(f"1. {BAD}\n2. Deploy using port 8080.\n3. Ekim")
     assert v.answer.endswith("3. Ekim")
+
+
+# R4.1 review round 2 (Astra F-2 / Sol F-3 partial): a block has one delimiter style and one indentation
+
+
+def test_another_delimiter_starts_a_new_block() -> None:
+    v = _answer(f"1. {BAD}\n2. Deploy using port 8080.\n3) Verify step three.")
+    assert v.answer == "1. Deploy using port 8080.\n3) Verify step three."
+
+
+def test_an_indented_sub_list_is_untouched() -> None:
+    v = _answer(f"1. {BAD}\n2. Deploy using port 8080.\n   3. Verify step three.")
+    assert v.answer == "1. Deploy using port 8080.\n   3. Verify step three."
+
+
+def test_a_blank_line_loose_list_with_the_same_style_is_renumbered() -> None:
+    v = _answer(f"1. {BAD}\n\n2. Deploy using port 8080.\n\n3. Verify step three.")
+    assert "1. Deploy using port 8080." in v.answer and "2. Verify step three." in v.answer
+    assert "3. Verify" not in v.answer
+
+
+def test_a_blank_line_then_another_delimiter_is_a_new_block() -> None:
+    v = _answer(f"1. {BAD}\n2. Deploy using port 8080.\n\n3) Verify step three.")
+    assert "1. Deploy using port 8080." in v.answer and "3) Verify step three." in v.answer
