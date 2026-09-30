@@ -22,9 +22,10 @@ OUTCOMES = (
     "timeout",
     "budget_deferred",
     "breaker_open",
+    "billing_or_quota",  # 0010 (D-212): the provider refused for billing or quota
 )
 #: outcomes that consumed a network attempt (count toward the per-job ceiling)
-NETWORK_OUTCOMES = ("ok", "schema_retry_ok", "schema_fail", "http_error", "timeout")
+NETWORK_OUTCOMES = ("ok", "schema_retry_ok", "schema_fail", "http_error", "timeout", "billing_or_quota")
 
 
 @dataclass(slots=True)

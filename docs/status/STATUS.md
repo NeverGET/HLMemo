@@ -1,4 +1,48 @@
 # STATUS — HLMemo (read this first when resuming)
+Updated: 2026-09-30 (GOAL-PLAN A2). The project is ACTIVE again (the D-196 pause ended with R4).
+
+## Where we are (2026-09-30)
+- **Prod runs R4 (5025db5).** `memory.ask` answers with the Gemini 3.8 Flash MEDIUM writer (D-203 KEEP): final test 38/50
+  correct (.76), 3/50 contradictions, $0.020/q, p95 31 s. Curated supersession links are applied on prod (252 explicit + 119
+  backfill). The owner's Mac reaches `mcp.hlmemo.com` over IPv6 through the new AAAA record: IPv4 from the Mac was broken on
+  2026-09-30 (the server exposes the same ports 80/443/22 on both).
+- **Git:** `main` carries the prod code line again (r4-rc merged, a4e488b). Branch `r4.1` (A2 quick defects) is on top of
+  9b645ec, not pushed, not deployed.
+- **Memory content:** one project (`hlmemo`, 554 items, migrated ad hoc). Nothing has been written to prod memory since
+  2026-09-26, so answers about R4 are stale (the "as of" line of A2-3 makes that visible). The project card is still the
+  D-015 skeleton, and the librarian has 178 open questions. The librarian runs as observer only.
+- **Not in prod:** write-time supersession (D-118, branch `wf-write-updates`), consolidation/decay (W3b/W3c), cross-project
+  read (W4a stub), the migration runner (W5a), and any capture or recall hook.
+
+## Decisions since the pause (D-199 ... D-206)
+- D-199: R4 review closed after 2 rounds; the owner accepts the residual risk; final-test rule v2.1; Lima rehearsal + pre-push gate before prod.
+- D-200: R4 final test on a prod replica: 38/50 correct, 3 contradictions, 1/10 fabricated, $.0201/q, p95 30.8 s (owner call).
+- D-201: luna as the writer is 32/50 with 21/60 fallbacks (REVERT under the rule); prod links applied.
+- D-202: prod smoke PASS and a real-use session (11 questions): accurate and cited; defects = silent truncation, dropped first list item, no freshness horizon, empty card.
+- D-203: the owner KEEPs Gemini 3.8 Flash medium (Google direct; OpenRouter adds a top-up fee; prices double 2027-01-01, profile fails closed after 2026-12-31).
+- D-204: the Gemini flex tier is not usable for `memory.ask` (1-15 min latency, preemption, no fallback); offline evals only.
+- D-205: budget tension parked (about $67/month at 100 asks/day vs the $60 MONTH cap); Google Tier 1 cap and prepay-balance facts recorded; enable auto-reload.
+- D-206: GOAL-PLAN adopted (active, cross-project, proactive memory; "half-learning is worse than not knowing"); hooks only after a measurement; first migrations of a few owner projects.
+- A2 (branch r4.1): D-209 truncation flag + marker + budget default 6000, D-210 list renumbering, D-211 `memory_as_of` freshness line, D-212 `billing_or_quota` classification + ops warning.
+
+## GOAL-PLAN phases (docs/decisions/GOAL-PLAN.md)
+- **A foundation:** A1 done (r4-rc merged into main). A2 quick defects done on `r4.1` (this refresh is A2-5): needs the owner's
+  merge and a deploy (R4.1). A3 not started: write the R4 story (D-192...D-205) into prod `hlmemo` via `memory.call_the_day`,
+  fill the project card.
+- **B the memory comes to the agent:** not started. B1 capture hook, B2 proactive recall (UserPromptSubmit + PreToolUse
+  risk_check), B3 port D-118. Owner: measure first (offline ceiling study), this project only.
+- **C cross-project knowledge:** not started. C1 migration runner + template, C2 first projects (listed privately),
+  C3 importers, C4 cross-project read.
+- **D quality and maintenance:** not started (librarian promotion, consolidation/decay, answer quality .76 to .80, the budget decision).
+
+## Resume pointers
+1. `docs/decisions/GOAL-PLAN.md` (the plan and owner decisions), then the end of `docs/decisions/DECISIONS.md` (D-199 ... D-212).
+2. Before any prod work: `docs/private/r4/RESUME-FINAL-TEST.md` (private; the R4 test and prod state).
+3. Deploy and gates: `deploy/RUNBOOK.md`; R4 plan and rehearsal notes are under `docs/status/` and `docs/private/r4/`.
+4. Workers: Sonnet 5.5 agents; at most 2-3 workstreams; dual review only for one-way doors (D-125).
+5. Test footguns: run Python with `PYTHONPATH=$PWD/src` in a worktree; integration tests need their own `hlm_test_*` database; tests rewrite `HARDWARE.md`.
+
+# History (older status, kept as written)
 Updated: 2026-09-27 — PROJECT PAUSED by the owner (D-196). memory.ask candidate wf-memory-ask 8d36f74: adjudicated correct .63, contradiction ~.06; gate (.80) not passed. RESUME: read docs/private/realdata-hlmemo/RESUME-2026-09-27.md (private). Prod unchanged: R3 805f4cd live (D-129).
 
 ## Where we are

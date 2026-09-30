@@ -1069,6 +1069,8 @@ class Validated:
     # past the answer's length cap)
     expand_added: int = 0
     expand_dropped: int = 0
+    # D-209: prose mode, sentences were left out because the answer hit ``ANSWER_MAX_CHARS``
+    truncated: bool = False
 
     @property
     def answered(self) -> bool:
@@ -2380,6 +2382,7 @@ def _prose_keep(
                 )
             reasons["block_lines"] += lines_dropped
             if text is not None and size and size + 1 + len(text) > ANSWER_MAX_CHARS:
+                reasons["capped"] = 1  # D-209: the rest of the answer is cut (validate_prose pops it)
                 break
             if text is None or not shown:
                 reasons["literal" if shown else "unsupported"] += 1
@@ -2396,6 +2399,7 @@ def _prose_keep(
         if not any(ch.isalnum() for ch in body):
             continue
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
+            reasons["capped"] = 1  # D-209
             break
         why = None
         lits = hard_literals(body, shown, hay=hay)
@@ -2441,8 +2445,33 @@ def _prose_keep(
                 explain.append(
                     {"unit": "dangling", "text": c.text, "verdict": "dropped", "reason": "dangling"}
                 )
+    _renumber_items(claims)
     raws = [r for c, r in zip(claims, raw_of, strict=True) if c.state == "kept"]
     return claims, reasons, raws
+
+
+_NUM_ITEM = re.compile(r"^([ \t]*)(\d{1,3})([.)])(?=[ \t])")
+
+
+def _renumber_items(claims: list[Claim]) -> None:
+    """D-210: a numbered list (``1.`` / ``1)`` items) that lost items to the literal check stays
+    consecutive: each kept item's number drops by the dropped items before it in the same list (so a
+    list whose item 1 went starts at 1 again). A list ends where an item's number does not increase
+    (a new list). Unnumbered sentences and bullets are left as written."""
+    prev: int | None = None
+    lost = 0
+    for c in claims:
+        m = _NUM_ITEM.match(c.text)
+        if m is None:
+            continue
+        n = int(m.group(2))
+        if prev is not None and n <= prev:
+            lost = 0  # a new list
+        prev = n
+        if c.state != "kept":
+            lost += 1
+        elif lost:
+            c.text = f"{m.group(1)}{max(n - lost, 1)}{m.group(3)}{c.text[m.end() :]}"
 
 
 #: D-187: a list item unit (its marker): what a lead-in ending with ":" introduces
@@ -2723,6 +2752,7 @@ def validate_prose(
         question=question,
     )
     kept_added = sum(1 for c in claims if c.added and c.state == "kept")
+    truncated = bool(reasons.pop("capped", 0))  # D-209: the answer hit ANSWER_MAX_CHARS
     return assemble_prose(
         status,
         claims,
@@ -2736,6 +2766,7 @@ def validate_prose(
         drop_reasons=reasons,
         expand_added=kept_added,
         expand_dropped=len(sentences) - start - kept_added,
+        truncated=truncated,
     )
 
 
