@@ -1677,3 +1677,16 @@ Reasons:
 Limits: small n; the prompts all come from one session and are mostly about post-memory work. Re-measure with the same protocol once capture keeps memory current.
 
 Data: docs/private/goal-b/recall-ceiling/.
+D-208 | 2026-09-30 | ACCEPTED (preparation; prod import pending owner OK) | **Phase C prep: the migration template, a local pilot, cleanup and export plans. The secret scanners have a gap.**
+
+Template and prod path:
+- docs/migration/TEMPLATE.md: the 8-step protocol plus a chronological-import step.
+- Rollback: ungrant, then close items via an empty-directory import with `--confirm-close`. Tested on a scratch project.
+- Prod import path (per D-132): the owner's Mac hlm.toml, a device with a write grant, the project and grants created over SSH with hlm_ops.sh. The prod write runs from the main session with the owner's OK.
+
+Pilot (local DB only): curated, dated items and a sealed truth set; the open questions went to the owner. Project-specific details (sources, findings, export plans) are kept privately.
+
+**Scanner gap (security):** gitleaks and the importer's secret filter both MISS:
+- a `*_SECRET_KEY=<value>` line (found by manual review in a dropped pilot file);
+- email/password pairs.
+Until the importer rules are extended, TEMPLATE step 3 requires a manual grep plus a curator read. TODO: extend the importer secret rules (`*_SECRET_KEY` / `*_PASSWORD` assignments, email-plus-password pairs) with tests.
