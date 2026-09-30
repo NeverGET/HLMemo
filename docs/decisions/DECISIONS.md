@@ -1708,3 +1708,18 @@ D-214 | 2026-09-30 | ACCEPTED (preparation; prod import pending owner OK) | **Ph
 - Project-specific details are kept privately.
 
 Incident: a curation agent ran `git fetch` in one of the owner's repos (FETCH_HEAD plus one pack written, then removed; fsck clean; no ref or working-tree change). Briefs now forbid any write or network git operation in owner repos.
+D-215 | 2026-09-30 | ACCEPTED (owner-approved prod data change) | **Phase C first migration is LIVE in production: curated, chronologically batched items in new per-project slugs.**
+
+Run by the orchestrator from the main session (D-132) per the private prod-import runbook:
+- A pre-import database dump first, retained until an explicit prune.
+- Per project: create, grant to the owner's device, then per batch (oldest first) a dry run, the apply, and a drain.
+
+Results:
+- Every batch was new-only, with 0 changed/closed/skipped/rejected/failed. Every project verifies as all-unchanged on a re-run (idempotent).
+- The librarian (observer) processed all writes with 0 failures.
+
+Dates:
+- Items without an explicit date get an estimated date (git last commit, or mtime), marked "date estimated" with a date-estimated tag; the later of git and mtime is used when uncommitted edits exist.
+- Corrections are ordered after the statements they supersede.
+
+Next: the blind truth-set check (TEMPLATE step 7; bar >= .80 correct, 0 superseded-as-current, negatives abstain), then the private AUDIT sign-off.
