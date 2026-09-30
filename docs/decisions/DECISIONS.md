@@ -1723,3 +1723,9 @@ Dates:
 - Corrections are ordered after the statements they supersede.
 
 Next: the blind truth-set check (TEMPLATE step 7; bar >= .80 correct, 0 superseded-as-current, negatives abstain), then the private AUDIT sign-off.
+D-216 | 2026-09-30 | ACCEPTED (measurement; migration signed off) | **The Phase C first migration passes the blind check on every project: correct >= .80, 0 superseded-as-current, every negative abstained.**
+- Method: 10 sealed questions per project, asked once each through prod memory.ask via a code-saved `claude -p` relay (no model retyping), graded by 2 blind graders; on a split the stricter grade counts.
+- The few misses are partial answers.
+- The score beats hlmemo's own .76 (D-200); curated, dated items are the likely reason, and the hypothesis to test on the next migrations.
+- Lesson: never let an agent transcribe tool output by hand. Save raw tool results by code (the stream-json parse). A hand-retyping agent was stopped by an API safeguard false positive (`reasoning_extraction`).
+- Scores and the sign-off are kept privately.
