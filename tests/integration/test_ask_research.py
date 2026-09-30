@@ -2419,7 +2419,7 @@ async def test_ask_writer_billing_or_quota_is_named_and_warned(
         st = await service.research_status(conn, settings)
         await conn.rollback()
     assert st["writer_billing_quota_24h"] >= 1
-    assert st["writer_outcomes_24h"]["http_error"] >= 1  # no new outcome: no migration
+    assert st["writer_outcomes_24h"]["billing_or_quota"] >= 1  # the ledger outcome (0010)
     lines = ops_cli.research_lines(st)
     assert any(
         ln.startswith("WARNING     writer billing/quota errors in the last 24 h:")

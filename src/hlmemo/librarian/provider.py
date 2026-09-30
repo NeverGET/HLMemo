@@ -119,11 +119,8 @@ log = logging.getLogger("hlmemo.librarian.provider")
 TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529})
 _FENCE = re.compile(r"^\s*```(?:json|JSON)?\s*|\s*```\s*$", re.S)
 
-#: D-210: the reason and the ledger marker of a provider failure that means the account is out of
-#: credit or quota (an ops problem, not a model problem). The ``llm_calls`` outcome CHECK (0006) has
-#: no such outcome and no migration is added, so the row stays ``http_error`` and its
-#: ``response_sha256`` carries this prefix (ops counts it); ``LlmResult.fallbacks`` and
-#: ``meta.flags.writer_fallback_reasons`` carry the reason itself
+#: D-210: the reason and the ledger outcome (migration 0010) of a provider failure that means the
+#: account is out of credit or quota (an ops problem, not a model problem)
 BILLING_OR_QUOTA = "billing_or_quota"
 _BILLING_WORDS = (
     "resource_exhausted",
@@ -1149,10 +1146,10 @@ class Provider:
                     profile,
                     task,
                     job_id,
-                    "http_error",
+                    BILLING_OR_QUOTA if billing else "http_error",
                     call_id=call_id,
                     request_sha256=request_sha,
-                    response_sha256=(f"{BILLING_OR_QUOTA}:" if billing else "") + _sha(raw_bytes),
+                    response_sha256=_sha(raw_bytes),
                     reserved_usd=worst,
                     cost_usd=charged,
                     latency_ms=latency,
