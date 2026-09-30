@@ -7,10 +7,14 @@ names), or, when that is unset, the research primary (the profile that writes th
 One POST ``/chat/completions`` with ``max_tokens`` 16 and the profile's own request options (JSON mode,
 reasoning): a synthetic prompt, no retry, no fallback, a short timeout. It prints ONE JSON line and
 nothing else: ``{"ok": bool, "profile": name, "status": <HTTP status or a reason>, "latency_ms": n}``.
-``ok`` means HTTP 200 with a parseable chat-completions body (a ``choices`` list). The model's own
-text is not judged: 16 tokens may end in a truncation, and that is no credential error. ``status`` is
-the HTTP status (401 for a wrong key), else a reason: ``missing_key``, ``price_expired``, ``timeout``,
-``transport``, ``unparseable`` or ``config``. Keys, headers, request and response bodies are never
+``ok`` means HTTP 200 with a chat-completions body the writer can use (Astra 90 N-4,
+``protocol_status``): ``choices[0]`` is an object with a ``message`` object (its ``content`` a
+string, a list of parts, or empty/null) and a known ``finish_reason`` (``FINISH_REASONS``). The
+model's own text is not judged: 16 tokens may end in a truncation (``finish_reason`` "length"), and
+that is no credential error. ``status`` is the HTTP status (401 for a wrong key), else a reason:
+``missing_key``, ``price_expired``, ``timeout``, ``transport``, ``unparseable`` (not that protocol,
+e.g. ``{"choices": [1]}`` or ``{"choices": [{}]}``), ``provider_error`` (an ``error`` body or
+``finish_reason`` "error") or ``config``. Keys, headers, request and response bodies are never
 printed or logged. The probe is not ledgered (a 16-token call; the spend-guard windows are unchanged).
 """
 
@@ -27,8 +31,34 @@ PROBE_SYSTEM = 'Reply with the JSON object {"ok": true} and nothing else.'
 PROBE_USER = "ping"
 
 
+#: the ``finish_reason`` values of a finished chat-completions choice (the OpenAI-compatible
+#: protocol every profile speaks); "length" is the probe's usual ending (16 tokens)
+FINISH_REASONS = frozenset({"stop", "length", "tool_calls", "function_call", "content_filter"})
+
 #: a test seam: the HTTP transport of the probe's client (None: the network)
 TRANSPORT: httpx.AsyncBaseTransport | None = None
+
+
+def protocol_status(data: Any) -> str | None:
+    """Astra 90 N-4: None when ``data`` (a parsed 200 body) is a chat-completions reply the writer
+    can use, else the failure status (``unparseable`` or ``provider_error``)."""
+    if not isinstance(data, dict):
+        return "unparseable"
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return "provider_error" if data.get("error") else "unparseable"
+    choice = choices[0]
+    if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+        return "unparseable"
+    content = choice["message"].get("content")
+    if content is not None and not isinstance(content, str | list):
+        return "unparseable"
+    finish = choice.get("finish_reason")
+    if finish == "error":
+        return "provider_error"
+    if finish not in FINISH_REASONS:
+        return "unparseable"
+    return None
 
 
 def writer_profile(settings: Any) -> Any:
@@ -99,8 +129,9 @@ async def probe(settings: Any, *, transport: httpx.AsyncBaseTransport | None = N
         data = resp.json()
     except ValueError:
         data = None
-    if not isinstance(data, dict) or not isinstance(data.get("choices"), list) or not data["choices"]:
-        out["status"] = "unparseable"
+    failure = protocol_status(data)
+    if failure is not None:
+        out["status"] = failure
         return out
     out["ok"] = True
     return out
@@ -110,4 +141,4 @@ def _ms(t0: float) -> int:
     return int((time.perf_counter() - t0) * 1000)
 
 
-__all__ = ["PROBE_MAX_TOKENS", "probe", "writer_profile"]
+__all__ = ["FINISH_REASONS", "PROBE_MAX_TOKENS", "probe", "protocol_status", "writer_profile"]

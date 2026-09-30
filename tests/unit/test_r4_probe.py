@@ -103,3 +103,32 @@ def test_unset_writer_probes_the_research_primary(writer_env, monkeypatch, capsy
     monkeypatch.setenv("HLM_PROFILE", "w-gem")  # this process's primary profile
     rc, out, seen = _run(monkeypatch, capsys, _ok)
     assert rc == 0 and out["profile"] == "w-gem" and len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    ("body", "status"),
+    [
+        ({"choices": [1]}, "unparseable"),  # Astra 90 N-4
+        ({"choices": [{}]}, "unparseable"),  # Astra 90 N-4
+        ({"choices": [{"message": "hi", "finish_reason": "stop"}]}, "unparseable"),
+        ({"choices": [{"message": {"content": "x"}}]}, "unparseable"),  # no finish_reason
+        ({"choices": [{"message": {"content": "x"}, "finish_reason": "banana"}]}, "unparseable"),
+        ({"choices": [{"message": {"content": 7}, "finish_reason": "stop"}]}, "unparseable"),
+        ({"choices": [{"message": {"content": ""}, "finish_reason": "error"}]}, "provider_error"),
+        ({"error": {"message": "overloaded"}}, "provider_error"),
+    ],
+)
+def test_a_reply_outside_the_protocol_fails(writer_env, monkeypatch, capsys, body, status) -> None:  # noqa: ANN001
+    """Astra 90 N-4: HTTP 200 is not enough; ``choices[0]`` must be a message object with a known
+    ``finish_reason``. Exit 1, ok false."""
+    rc, out, seen = _run(monkeypatch, capsys, lambda _r: httpx.Response(200, json=body))
+    assert rc == 1 and out["ok"] is False and out["status"] == status and len(seen) == 1
+
+
+@pytest.mark.parametrize("content", [None, "", [{"type": "text", "text": "{"}]])
+def test_an_empty_or_parted_message_still_passes(writer_env, monkeypatch, capsys, content) -> None:  # noqa: ANN001
+    """The model's text is not judged: empty/null content (or content parts) with a real
+    ``finish_reason`` is a working writer."""
+    body = {"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "length"}]}
+    rc, out, _seen = _run(monkeypatch, capsys, lambda _r: httpx.Response(200, json=body))
+    assert rc == 0 and out["ok"] is True and out["status"] == 200
