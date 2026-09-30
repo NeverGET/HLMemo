@@ -3,10 +3,21 @@
 Revision ID: 0010_billing_outcome
 Revises: 0009_memory_map
 
-Drops and re-adds the ``outcome`` CHECK with one more value; no data changes. Backward compatible:
-code from before this revision never writes the new value, so it runs unchanged on the migrated
-schema. The downgrade turns any ``billing_or_quota`` row back into ``http_error`` (what it was
-before) and restores the old CHECK.
+Widens the ``outcome`` CHECK by one value; no data changes. Backward compatible: code from before this
+revision never writes the new value, so it runs unchanged on the migrated schema. The downgrade turns
+any ``billing_or_quota`` row back into ``http_error`` (what it was before) and restores the old CHECK.
+
+Why in steps (R4.1 review Sol F-2): ``ADD CONSTRAINT ... CHECK`` validates every existing row while it
+holds ``ACCESS EXCLUSIVE`` on ``llm_calls``, and ``lock_timeout`` only bounds the WAIT for that lock,
+not the scan. On a large ledger that is an unbounded outage. So the swap runs as separate autocommit
+steps, each short under ``lock_timeout``:
+
+  1. add the replacement ``llm_calls_outcome_check_v2`` as ``NOT VALID`` (catalog only, no scan);
+  2. ``VALIDATE CONSTRAINT`` it (the scan runs under ``SHARE UPDATE EXCLUSIVE``: reads and writes go on);
+  3. in ONE short transaction: drop the old ``llm_calls_outcome_check`` and rename ``_v2`` to it.
+
+Every step is re-runnable (a failed or interrupted run leaves at most the ``_v2`` constraint, which the
+next run drops and re-adds), and the final constraint name is ``llm_calls_outcome_check`` either way.
 """
 
 from __future__ import annotations
@@ -19,25 +30,39 @@ branch_labels = None
 depends_on = None
 
 LOCK_TIMEOUT = "3s"
+CHECK = "llm_calls_outcome_check"
+STAGED = "llm_calls_outcome_check_v2"
 OLD = "'ok','schema_retry_ok','schema_fail','http_error','timeout','budget_deferred','breaker_open'"
 NEW = OLD + ",'billing_or_quota'"
 
 
-def _swap(values: str) -> str:
-    return (
-        "ALTER TABLE llm_calls DROP CONSTRAINT IF EXISTS llm_calls_outcome_check;\n"
-        f"ALTER TABLE llm_calls ADD CONSTRAINT llm_calls_outcome_check CHECK (outcome IN ({values}));"
-    )
+def _swap(values: str) -> None:
+    """Replace the ``outcome`` CHECK by one over ``values`` without a long ``ACCESS EXCLUSIVE`` lock."""
+    with op.get_context().autocommit_block():  # every step below is its own short transaction
+        bind = op.get_bind()
+        bind.exec_driver_sql(f"SET lock_timeout = '{LOCK_TIMEOUT}'")
+        try:
+            bind.exec_driver_sql(f"ALTER TABLE llm_calls DROP CONSTRAINT IF EXISTS {STAGED}")
+            bind.exec_driver_sql(
+                f"ALTER TABLE llm_calls ADD CONSTRAINT {STAGED} CHECK (outcome IN ({values})) NOT VALID"
+            )
+            bind.exec_driver_sql(f"ALTER TABLE llm_calls VALIDATE CONSTRAINT {STAGED}")
+            # one simple-query string = one implicit transaction: drop and rename land together
+            bind.exec_driver_sql(
+                f"ALTER TABLE llm_calls DROP CONSTRAINT IF EXISTS {CHECK};\n"
+                f"ALTER TABLE llm_calls RENAME CONSTRAINT {STAGED} TO {CHECK};"
+            )
+        finally:
+            bind.exec_driver_sql("RESET lock_timeout")
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    bind.exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
-    bind.exec_driver_sql(_swap(NEW))
+    _swap(NEW)
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    bind.exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
-    bind.exec_driver_sql("UPDATE llm_calls SET outcome = 'http_error' WHERE outcome = 'billing_or_quota'")
-    bind.exec_driver_sql(_swap(OLD))
+    with op.get_context().autocommit_block():
+        op.get_bind().exec_driver_sql(
+            "UPDATE llm_calls SET outcome = 'http_error' WHERE outcome = 'billing_or_quota'"
+        )
+    _swap(OLD)
