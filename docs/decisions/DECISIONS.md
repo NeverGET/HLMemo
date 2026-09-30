@@ -1649,3 +1649,12 @@ Google billing (ai.google.dev/gemini-api/docs/billing, read 2026-09-30):
 Recommended to the owner:
 - enable Prepay auto-reload;
 - optionally, an ops warning on Gemini balance/quota errors.
+D-206 | 2026-09-30 | ACCEPTED (owner) | **Goal plan adopted (docs/decisions/GOAL-PLAN.md): make HLMemo an active, cross-project, proactive memory.**
+Guiding principle: learning something halfway is worse than not knowing it, so every item carries provenance, supersession is built in, not-knowing is explicit, and nothing counts unverified.
+
+Owner decisions:
+- Phase B hooks go live only after an offline measurement ("measure first"), starting with this project only.
+- Phase C first migrations: a first set of the owner's projects (listed privately), each owner-reviewed before its prod write.
+- Workers run on Sonnet 5.5 agents (owner tip).
+
+A1 done: r4-rc merged into main (a4e488b), no conflicts, unit 851 passed.

@@ -8,6 +8,13 @@ HLMemo gives coding agents a long-term memory that:
 
 The agent then focuses on "what to do", not on re-reading "what it did", and does not overflow its context. The cost may run higher than planned; a fully working memory saves far more time and money than it costs.
 
+## Guiding principle (owner, 2026-09-30): "Bir şeyi yarım öğrenmek, hiç bilmemekten beterdir"
+Learning something halfway is worse than not knowing it: partial or wrong learning builds reflexes that must later be unlearned. Unlike a human, an agent's memory is controllable, so HLMemo must do better than human memory on exactly this:
+1. **Provenance on every item:** where it came from and when it was true, so wrong knowledge can be traced.
+2. **Unlearning is built in:** new facts supersede old ones without deleting them (bi-temporal store, D-118 write-time supersession, curated links).
+3. **Not knowing is explicit:** abstain rather than guess, and say "as of" when the memory may be out of date.
+4. **Nothing is trusted unverified:** migrated knowledge is curated, dry-run, scanned, owner-reviewed and blind-checked before it counts.
+
 ## Where we are (audit of 2026-09-30, evidence in D-ids)
 - **Live in prod (R1–R4):**
   - the Phase 0 core (bi-temporal store, hybrid retrieval, MCP tools);
@@ -77,7 +84,11 @@ The agent then focuses on "what to do", not on re-reading "what it did", and doe
 - Curation by Sonnet agents runs on the Claude subscription.
 - Gemini credit is spent only on `memory.ask` questions.
 
-## Owner decisions this plan needs
+## Owner decisions (2026-09-30)
+- B hooks: **measure first** (the offline ceiling study), then decide; start with this project only.
+- C first projects: a first set of the owner's projects (listed privately). Each project gets the owner's review before its prod write.
+
+## Owner decisions this plan needs (original list)
 1. Installing hooks in the owner's Claude Code settings: capture (B1) and recall (B2). They change how every session behaves.
 2. Moving projects from "NotebookLM-first" (global CLAUDE.md) to "HLMemo-first", project by project, as each is migrated.
 3. The review and OK per migrated project before its prod write (C1 step 5).
