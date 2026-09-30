@@ -2657,14 +2657,17 @@ def prose_check(
     return claims, reasons
 
 
-def _join_prose(kept: list[Claim], redact: Callable[[str], str]) -> str:
-    """The kept sentences in order, a line break where the answer had one."""
+def _join_prose(kept: list[Claim], redact: Callable[[str], str]) -> tuple[str, bool]:
+    """``(text, cut)``: the kept sentences in order, a line break where the answer had one, at most
+    ``ANSWER_MAX_CHARS``; ``cut`` when that limit really removed text (R4.1 review F-5: also when the
+    FIRST sentence or block alone is longer than the limit)."""
     parts: list[str] = []
     for i, c in enumerate(kept):
         if i:
             parts.append("\n" if kept[i - 1].line_end else " ")
         parts.append(c.text)
-    return redact("".join(parts))[:ANSWER_MAX_CHARS]
+    full = redact("".join(parts))
+    return full[:ANSWER_MAX_CHARS], len(full) > ANSWER_MAX_CHARS
 
 
 def assemble_prose(
@@ -2684,7 +2687,7 @@ def assemble_prose(
     closest ≤ 3: its sources, then its related)."""
     kept = [c for c in claims if c.state == "kept"]
     dropped = len(claims) - len(kept)
-    text = _join_prose(kept, redact) if status == ANSWERED else ""
+    text, cut = _join_prose(kept, redact) if status == ANSWERED else ("", False)
     if status != ANSWERED or not text.strip():
         hint = [*sources, *related_hint] if status == ANSWERED else related_hint
         closest = [h for h in dict.fromkeys(hint) if h in shown][:3]
@@ -2699,6 +2702,8 @@ def assemble_prose(
         for h in dict.fromkeys([*related_hint, *sources, *ranked[MAX_PRIMARY:], *shown])
         if h in shown and h not in primary
     ][:MAX_RELATED]
+    if cut:
+        extra["truncated"] = True  # (R4.1 review F-5)
     return Validated(
         ANSWERED, status, text, claims, primary, related, _lower(conf) if dropped else conf,
         dropped_sentences=dropped, sources=list(sources), **extra,

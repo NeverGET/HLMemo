@@ -5,7 +5,11 @@ from __future__ import annotations
 from hlmemo.librarian.tasks import research as rs
 
 EXCERPT = rs.Excerpt(
-    "v1.0", 1, "Deploy", "docs/deploy.md", "2026-09-26",
+    "v1.0",
+    1,
+    "Deploy",
+    "docs/deploy.md",
+    "2026-09-26",
     "Deploy with step one using port 8080. Then run step two. Finally verify step three. 3. Ekim 2026.",
 )
 SHOWN = {"v1.0": EXCERPT}

@@ -166,9 +166,7 @@ def read_text(path: Path) -> tuple[str | None, str | None]:
 
 #: D-213 (a): an env-style assignment of a secret-named variable with a literal value
 #: (``MINIO_SECRET_KEY=abc12345``, any casing). The value is checked by ``_is_placeholder``.
-_ENV_ASSIGN_RE = re.compile(
-    r"(?<![A-Za-z0-9])([A-Za-z0-9_.-]+)[ \t]*=(?!=)[ \t]*[\"']?([^\s\"'`]{8,})"
-)
+_ENV_ASSIGN_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9_.-]+)[ \t]*=(?!=)[ \t]*[\"']?([^\s\"'`]{8,})")
 #: (R4.1 review F-3, Sol F-5, Sol F-1) a name is a secret name by its COMPONENTS (split on ``_ . -`` and
 #: camelCase), never by a substring: ``MINIO_SECRET_KEY``, ``apiToken`` and ``HMAC_KEY`` are secret
 #: names; ``TOKENIZER_MODEL``, ``MAX_TOKENS``, ``TOKEN_BUDGET`` and ``KEYBOARD_LAYOUT`` are not.
@@ -193,7 +191,6 @@ def _secret_name(name: str) -> bool:
         if p == "token" and (i == len(parts) - 1 or parts[i + 1] in _TOKEN_TAIL):
             return True
     return bool(parts) and parts[-1] == "key" and not _NOT_KEY_COMPONENTS.intersection(parts)
-
 
 
 _PLACEHOLDER_STARTS = (

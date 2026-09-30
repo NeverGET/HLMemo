@@ -19,10 +19,21 @@ def _run(conn, view):
     return NS(
         db=db,
         fresh_ctx=AsyncMock(return_value=NS(has=lambda p, _: p == 1)),
-        project_id=1, sent={1}, excluded=set(), view=view,
+        project_id=1,
+        sent={1},
+        excluded=set(),
+        view=view,
         researcher=NS(answer_mode="claims", writer_profile="w", redactor=NS(text=lambda s: s)),
-        question="q", slug="p", queries=[], calls=0, steps=[], map_tokens=0,
-        flags={"budget_stop": False}, excerpts_shown=["v1.0"], cite=False, prose=False,
+        question="q",
+        slug="p",
+        queries=[],
+        calls=0,
+        steps=[],
+        map_tokens=0,
+        flags={"budget_stop": False},
+        excerpts_shown=["v1.0"],
+        cite=False,
+        prose=False,
         claims_mode=True,
     )
 
@@ -39,8 +50,13 @@ async def _finish(monkeypatch, rows, view):
     run = _run(NS(execute=AsyncMock()), view)
     excerpt = rs.Excerpt("v1.0", 1, "old", "old.md", "2026-09-20", "old fact")
     validated = rs.Validated(
-        rs.ANSWERED, rs.ANSWERED, "old fact",
-        [rs.Claim("old fact", [("v1.0", "old fact")], "kept")], ["v1.0"], [], "high",
+        rs.ANSWERED,
+        rs.ANSWERED,
+        "old fact",
+        [rs.Claim("old fact", [("v1.0", "old fact")], "kept")],
+        ["v1.0"],
+        [],
+        "high",
     )
     return await rsv._finish(run, validated, [excerpt], datetime(2026, 9, 30, 12, tzinfo=UTC))
 
