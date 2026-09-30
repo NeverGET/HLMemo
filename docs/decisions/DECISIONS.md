@@ -1633,3 +1633,19 @@ D-204 | 2026-09-30 | ACCEPTED (orchestrator, amends D-203's "open lever") | **Th
 - it is recommended for offline evaluations and background agents only.
 
 memory.ask is interactive (research timeout 170 s, client 180 s), so flex would turn into writer fallbacks, not savings. The Standard tier stays. Flex remains an option for offline evaluation runs (writer/model benches, final-test style replays) and any future Gemini background job.
+D-205 | 2026-09-30 | ACCEPTED (owner: parked) | **Budget tension parked; Gemini stays; Google billing facts recorded.**
+
+Budget:
+- At the "normal" assumption (100 asks, 50 writes, 30 risk_checks per day), Gemini medium costs about $66.81/month of LLM spend. That exceeds the prod MONTH cap of $60: memory.ask would stop around day 27. About 90 asks/day fits.
+- In 2027 the same volume costs about $124/month.
+- The owner parked this: later, either raise the cap, choose an alternative, or accept it. For now, Gemini as decided (D-203).
+- The measured cost per question in the final test (ledger, 60 q) was about 35.7k input and 2.4k output tokens, $0.0201. The writer is 86% of that (14.0k in, 1.8k out including thinking, $0.0172).
+
+Google billing (ai.google.dev/gemini-api/docs/billing, read 2026-09-30):
+- "Paid 1 – Billing Account Tier Cap" is the Tier 1 monthly spend cap of $250 per billing account (the owner's page shows TRY 12,033). When reached, the Gemini API pauses for all linked projects until the 1st of the next month.
+- The "credit" (TRY 733 ≈ $15) is the Prepay balance. Usage is deducted in near real time, and at 0 all API keys on the account stop. For HLMemo that means the writer falls back to luna (R-9), with luna's reliability issues (D-201).
+- The Cloud $300 welcome credit cannot pay for Gemini API usage on accounts opened after 2026-03-02.
+
+Recommended to the owner:
+- enable Prepay auto-reload;
+- optionally, an ops warning on Gemini balance/quota errors.
