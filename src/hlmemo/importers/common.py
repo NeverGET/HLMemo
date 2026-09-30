@@ -164,9 +164,79 @@ def read_text(path: Path) -> tuple[str | None, str | None]:
     return text, None
 
 
+#: D-211 (a): an env-style assignment of a secret-named variable with a literal value
+#: (``MINIO_SECRET_KEY=abc12345``, any casing). The value is checked by ``_is_placeholder``.
+_ENV_ASSIGN_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.-]*(?:secret|password|passwd|token|api[_-]?key)[A-Za-z0-9_]*)"
+    r"[ \t]*=(?!=)[ \t]*[\"']?([^\s\"'`]{8,})"
+)
+#: variable names that hold a location or an id, not the secret (``HLM_TOKEN_FILE=/run/secrets/t``)
+_NOT_SECRET_NAME_RE = re.compile(r"(?i)_(?:file|path|dir|name|env|url|ttl|header|id)$")
+_PLACEHOLDER_STARTS = (
+    "<", "${", "$", "{", "*", "%", "env:", "changeme", "change-me", "change_me", "xxx", "your", "example",
+    "placeholder", "redacted", "dummy", "todo", "none", "null", "false", "true", "secret-here", "..."
+)  # fmt: skip
+_CALL_RE = re.compile(r"^[\w.]+[(\[]")  # os.environ[...], getenv(...): code, not a literal
+_EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"
+_EMAIL_RE = re.compile(_EMAIL)
+#: D-211 (b): a password assignment, and ``email / secret`` pairs
+_PASSWORD_KV_RE = re.compile(
+    r"(?i)\b(?:password|passwd|pwd|pass|parola|şifre|sifre)\b[\"']?[ \t]*[:=][ \t]*[\"'`]?([^\s\"'`]+)"
+)
+_EMAIL_SLASH_RE = re.compile(_EMAIL + r"[ \t]*[/|][ \t]*[\"'`]?([^\s\"'`]+)")
+
+
+def _is_placeholder(value: str) -> bool:
+    v = value.lower()
+    return v.startswith(_PLACEHOLDER_STARTS) or len(set(v)) <= 2 or _CALL_RE.match(v) is not None
+
+
+def _strong_password(value: str) -> bool:
+    """A literal that looks like a password: not a placeholder, >= 6 characters, a letter and a digit
+    or symbol (so ``password: required`` and ``password: optional`` are prose, not credentials)."""
+    return (
+        len(value) >= 6
+        and not _is_placeholder(value)
+        and any(c.isalpha() for c in value)
+        and any(not c.isalpha() for c in value)
+    )
+
+
+def _env_secret(text: str) -> bool:
+    for m in _ENV_ASSIGN_RE.finditer(text):
+        name, value = m.group(1), m.group(2)
+        if not _NOT_SECRET_NAME_RE.search(name) and not _is_placeholder(value):
+            return True
+    return False
+
+
+def _credential_pair(text: str) -> bool:
+    """An email address and a password on the same line or on adjacent lines."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        window = line if i + 1 >= len(lines) else f"{line}\n{lines[i + 1]}"
+        if not _EMAIL_RE.search(window):
+            continue
+        if any(_strong_password(m.group(1)) for m in _PASSWORD_KV_RE.finditer(window)):
+            return True
+        if any(
+            _strong_password(m.group(1)) and len(m.group(1)) >= 8 and not m.group(1).endswith((":", "="))
+            for m in _EMAIL_SLASH_RE.finditer(window)
+        ):
+            return True
+    return False
+
+
+#: rule id -> detector, after the ``SECRET_PATTERNS`` (D-211: the two gaps found during curation)
+SECRET_CHECKS = {"env-secret-assignment": _env_secret, "credential-pair": _credential_pair}
+
+
 def secret_hit(text: str) -> str | None:
     for name, rx in SECRET_PATTERNS.items():
         if rx.search(text):
+            return name
+    for name, check in SECRET_CHECKS.items():
+        if check(text):
             return name
     return None
 
