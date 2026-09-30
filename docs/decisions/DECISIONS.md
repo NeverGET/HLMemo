@@ -1755,3 +1755,23 @@ Verification:
 Known issues:
 - The summarizer invented a "D-1" label and added a generalization beyond the evidence. Fixed on branch r4.1c (pending merge).
 - Survival of the detached worker across an interactive /exit is unverified: check capture.log after the first real session end.
+D-219 | 2026-09-30 | ACCEPTED (owner) | **R4.1 released after 2 review rounds: the owner accepts the residual risk and approves the prod deploy.**
+
+Review history:
+- Consult 91 (Astra-low + gpt-5.6-sol xhigh): both NO-GO.
+  - Astra: F-1 CRITICAL, a recency leak after a grant change.
+  - Sol: F-1 CRITICAL, a generic *_KEY false negative.
+  - Plus MEDIUMs: list renumbering, a secret false positive, rate-limit vs billing, the truncated flag, and the migration lock.
+- Fixed on r4.1b (2cad563).
+- Consult 92 round 2: both NO-GO on N-1 (a secret-rule regression introduced by the fix), list partials, and N-2 (downgrade atomicity).
+- Fixed on r4.1c (228b7a8): 1043 unit tests pass; the migration/ask/import integration tests pass.
+
+Local rehearsal on Lima: upgrade with migration 0010 in 0.8 s and rows unchanged; the freshness line is visible; rollback to R4 in 20 s with a matching data checksum; roll-forward in 29 s.
+
+Accepted residual risk:
+- prose step references ("see step 3") are not rewritten after a renumber;
+- the downgrade has a NOT VALID window;
+- the capture lesson trim is lexical;
+- invented hashes are only flagged;
+- the secret rule leans to false positives, in the safe direction;
+- the deploy depends on Docker Hub, and fails before any writer stops.
