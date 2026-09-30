@@ -1658,3 +1658,22 @@ Owner decisions:
 - Workers run on Sonnet 5.5 agents (owner tip).
 
 A1 done: r4-rc merged into main (a4e488b), no conflicts, unit 851 passed.
+D-207 | 2026-09-30 | ACCEPTED (measurement; owner "measure first") | **Proactive recall ceiling: naive per-prompt injection of raw memory.query hits is REJECTED; B2 is redesigned (capture first, then a SessionStart brief + PreToolUse risk_check + gated injection with superseded items excluded).**
+
+Test:
+- 25 genuine owner prompts from 2026-09-27..30; prod memory ends 2026-09-26.
+- memory.query top-5 per prompt (budget 1,500).
+- 2 blind Sonnet judges.
+
+Results:
+- Judge 1: useful 1, neutral 7, noise 17, harmful 0. Judge 2: useful 0, neutral 8, noise 15, harmful 2 (D-019's deepseek default shown as current; D-066 superseded it).
+- Latency is not the problem: prod WAN memory.query p95 is about 0.2 s (R4 gates).
+
+Reasons:
+- (1) The memory lags the work (no capture loop).
+- (2) memory.query hits carry no superseded status, so injecting them risks half-learned facts, the owner's principle.
+- (3) Most prompts are short follow-ups that need no memory.
+
+Limits: small n; the prompts all come from one session and are mostly about post-memory work. Re-measure with the same protocol once capture keeps memory current.
+
+Data: docs/private/goal-b/recall-ceiling/.

@@ -53,7 +53,14 @@ Learning something halfway is worse than not knowing it: partial or wrong learni
 
 ### Phase B: the memory comes to the agent (the core of the goal)
 - **B1 capture:** a Claude Code session-end hook. It turns the session into a short session note plus candidate lessons and decisions (a cheap summarizer; Sonnet via `claude -p` or luna), and writes them through `memory.call_the_day` / `register_lesson`. Duplicates and noise are left to the librarian.
-- **B2 proactive recall:**
+- **B2 measured first (D-207):** naive per-prompt injection of raw `memory.query` hits was rejected. On 25 real prompts (2 blind judges): useful 0–1, noise 15–17, harmful 0–2 (a superseded decision shown as current). Redesigned B2:
+  1. capture (B1) comes FIRST, because recall is only as good as the memory is fresh;
+  2. a SessionStart brief: the project card, the last session notes and open lessons, in a small budget;
+  3. PreToolUse `risk_check` before risky commands (lessons/experiences only);
+  4. any per-prompt injection must be gated: score threshold, kinds lesson/decision, superseded items excluded or labelled, and skipped for short follow-ups;
+  5. `memory.query` must mark superseded items in its hits (a new defect);
+  6. re-measure with the same judge protocol once memory is current.
+- **B2 proactive recall (original design):**
   - a UserPromptSubmit hook runs a fast `memory.query` (across the granted projects plus `hlm-global`) on the prompt and injects the top clues within a small budget (about 1–2k tokens);
   - a PreToolUse hook runs `memory.risk_check` before risky commands (deploy, push, rm, migrations);
   - `memory.ask` stays the deliberate deep-dive tool.
