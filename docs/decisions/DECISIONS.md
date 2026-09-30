@@ -1729,3 +1729,11 @@ D-216 | 2026-09-30 | ACCEPTED (measurement; migration signed off) | **The Phase 
 - The score beats hlmemo's own .76 (D-200); curated, dated items are the likely reason, and the hypothesis to test on the next migrations.
 - Lesson: never let an agent transcribe tool output by hand. Save raw tool results by code (the stream-json parse). A hand-retyping agent was stopped by an API safeguard false positive (`reasoning_extraction`).
 - Scores and the sign-off are kept privately.
+D-217 | 2026-09-30 | ACCEPTED (preparation; prod import pending owner OK) | **A further project's migration prepared (local only). Its raw sources held credential-like literals (details kept privately).**
+- A product spread over several repos gets one slug; the curated files are flat with per-component prefixes, to avoid importer key collisions.
+- Chronological batches; items without explicit dates carry estimated, marked dates.
+- The curated set is clean: gitleaks 0, importer rules (D-213) 0, manual scan 0. The local import is new-only and idempotent. A sealed truth set.
+
+**Security finding (the raw sources, not HLMemo):**
+- The raw sources hold several credential-like literals; the details and the owner's follow-up are kept privately.
+- Rule-based scanners miss prose-embedded credentials (gitleaks found none, the importer rules flagged only some files), so the curator read stays mandatory (TEMPLATE step 3).
