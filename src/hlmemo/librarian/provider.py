@@ -122,25 +122,34 @@ _FENCE = re.compile(r"^\s*```(?:json|JSON)?\s*|\s*```\s*$", re.S)
 #: D-212: the reason and the ledger outcome (migration 0010) of a provider failure that means the
 #: account is out of credit or quota (an ops problem, not a model problem)
 BILLING_OR_QUOTA = "billing_or_quota"
-_BILLING_WORDS = (
-    "resource_exhausted",
-    "quota",
-    "billing",
-    "prepay",
-    "prepaid",
-    "credit",
-    "insufficient_funds",
-    "insufficient funds",
-    "payment",
-    "balance",
+#: (R4.1 review F-4) words match as WHOLE words (``balancer`` is not ``balance``).
+#: HARD: the account is out of money or of a daily/monthly allowance; decisive even when a rate-limit
+#: word is also present. ``insufficient_quota`` is OpenAI's code for an exhausted plan.
+_HARD_BILLING = re.compile(
+    r"(?<![a-z0-9])(?:prepa(?:y|id|yment)\w*|credits?|insufficient[_ ](?:funds|quota|credits?)"
+    r"|payment|balance|(?:daily|monthly)\s+(?:quota|limit|allowance|budget)"
+    r"|quota\w*\s+(?:per\s+)?(?:day|month))(?![a-z0-9])"
+    r"|per[\s_-]?(?:day|month)"  # also inside a quota id: ...PerDayPerProjectPerModel
 )
+#: a normal rate limit: a per-minute/second quota (RPM/TPM), "rate limit", "slow down", "try again in"
+_RATE_LIMIT = re.compile(
+    r"per[\s_-]?(?:minute|second)"  # also inside a quota id: ...PerMinutePerProjectPerModel
+    r"|(?<![a-z0-9])(?:rpm|tpm|rate[\s_-]?limit\w*|too many requests|slow down"
+    r"|requests per (?:minute|second)|try again in|retry[\s_-]?(?:after|in))(?![a-z0-9])"
+)
+#: WEAK: a billing/quota word that is billing only when nothing says it is a rate limit
+_WEAK_BILLING = re.compile(r"(?<![a-z0-9])(?:resource_exhausted|quota|billing)(?![a-z0-9])")
 
 
-def is_billing_or_quota(status: int | None, body: bytes | str | dict[str, Any] | None) -> bool:
+def is_billing_or_quota(
+    status: int | None, body: bytes | str | dict[str, Any] | None, retry_after: str | None = None
+) -> bool:
     """D-212: does a provider failure (HTTP ``status`` and error ``body``) mean billing or quota
-    exhaustion? 402 always; 403 and 429 when the error body names it (RESOURCE_EXHAUSTED, a quota,
-    billing, prepay/credit or balance message). Nothing else is: a plain 429 rate limit without
-    those words, a 401 (wrong key) or a 5xx stays what it was."""
+    exhaustion? 402 always; 403 and 429 when the error body names it. (R4.1 review F-4) Only
+    billing, prepay/credit or balance exhaustion and a daily/monthly allowance are billing (whole
+    words); a per-minute/RPM quota, a ``Retry-After`` header, "rate limit" and similar are a normal
+    rate limit unless a hard billing word is also there. A quota / RESOURCE_EXHAUSTED / billing word
+    alone (no rate-limit hint) still counts. A 401, a 5xx and everything else stay what they were."""
     if status == 402:
         return True
     if status not in (403, 429):
@@ -152,7 +161,11 @@ def is_billing_or_quota(status: int | None, body: bytes | str | dict[str, Any] |
     else:
         text = body or ""
     text = text.lower()
-    return any(w in text for w in _BILLING_WORDS)
+    if _HARD_BILLING.search(text):
+        return True
+    if retry_after or _RATE_LIMIT.search(text):
+        return False
+    return _WEAK_BILLING.search(text) is not None
 
 
 Validator = Callable[[dict[str, Any]], str | None]
@@ -1139,7 +1152,11 @@ class Provider:
             if err_status == 200 and isinstance((data or {}).get("error"), dict):
                 code = data["error"].get("code")  # a 200 whose body is the provider's error
                 err_status = code if isinstance(code, int) else err_status
-            billing = is_billing_or_quota(err_status, data if data is not None else raw_bytes)
+            billing = is_billing_or_quota(
+                err_status,
+                data if data is not None else raw_bytes,
+                resp.headers.get("retry-after"),
+            )
             await _finalize(self.budget.settle(call_id, charged))
             await self.ledger.record(
                 self._row(
