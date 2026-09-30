@@ -69,7 +69,11 @@ Learning something halfway is worse than not knowing it: partial or wrong learni
   5. owner review;
   6. apply;
   7. a small sealed truth set (10–20 questions) with a blind check.
-- **C2 first projects:** a first set of the owner's projects; projects with secret hits come only after a cleanup pass.
+- **C2 first projects (owner, D-206):** a first set of the owner's projects, each after a cleanup pass where needed; projects whose memory lives in NotebookLM follow later as a group. The list is kept privately.
+- **Chronological, gradual import (owner):**
+  - each project is imported in date-ordered batches, oldest first, never mixed, so that supersession and the librarian see the history in order;
+  - `valid_from` comes only from explicit dates (D-072), while mtime and git dates only order items and are kept as provenance;
+  - undated items form a separate batch that the owner reviews.
 - **C3 importers:** a NotebookLM export (markdown) path; a codex memory path later.
 - **C4 cross-project read:** let `query`/`ask` span the granted projects plus `hlm-global`, and promote project lessons to `hlm-global` (W4a).
 
