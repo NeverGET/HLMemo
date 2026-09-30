@@ -1069,6 +1069,8 @@ class Validated:
     # past the answer's length cap)
     expand_added: int = 0
     expand_dropped: int = 0
+    # D-207: prose mode, sentences were left out because the answer hit ``ANSWER_MAX_CHARS``
+    truncated: bool = False
 
     @property
     def answered(self) -> bool:
@@ -2380,6 +2382,7 @@ def _prose_keep(
                 )
             reasons["block_lines"] += lines_dropped
             if text is not None and size and size + 1 + len(text) > ANSWER_MAX_CHARS:
+                reasons["capped"] = 1  # D-207: the rest of the answer is cut (validate_prose pops it)
                 break
             if text is None or not shown:
                 reasons["literal" if shown else "unsupported"] += 1
@@ -2396,6 +2399,7 @@ def _prose_keep(
         if not any(ch.isalnum() for ch in body):
             continue
         if size and size + 1 + len(text) > ANSWER_MAX_CHARS:
+            reasons["capped"] = 1  # D-207
             break
         why = None
         lits = hard_literals(body, shown, hay=hay)
@@ -2723,6 +2727,7 @@ def validate_prose(
         question=question,
     )
     kept_added = sum(1 for c in claims if c.added and c.state == "kept")
+    truncated = bool(reasons.pop("capped", 0))  # D-207: the answer hit ANSWER_MAX_CHARS
     return assemble_prose(
         status,
         claims,
@@ -2736,6 +2741,7 @@ def validate_prose(
         drop_reasons=reasons,
         expand_added=kept_added,
         expand_dropped=len(sentences) - start - kept_added,
+        truncated=truncated,
     )
 
 
