@@ -1586,3 +1586,16 @@ Follow-ups:
 - empty-text abstentions (give the closest leads);
 - the literal validator dropping a lead sentence (H013/H024 start mid-thought);
 - the rerank deadline (7/63 timeouts).
+D-201 | 2026-09-30 | ACCEPTED (measurement) | **Paired comparison on the same 60 sealed questions and the same prod replica: luna as the writer (the R4 revert setup) scores 32/50 correct vs Gemini medium 38/50, with the same 3 contradictions and 1 fabricated each. Luna needed the fallback writer on 21/60 questions (6 timeouts, then the breaker), so under the §5.1 rule it would be REVERT. Prod links applied; prod now equals the tested configuration.**
+
+Paired comparison:
+- Answerable, per question: 28 both right, 10 Gemini only, 4 luna only, 8 neither. Exact McNemar p = .18: the direction favors Gemini but is not significant at n = 50.
+- By category, luna vs Gemini: multihop 5/12 vs 8/12, recent 9/13 vs 10/13, temporal 8/13 vs 10/13, procedure 10/12 vs 10/12.
+- Contradictions: luna H031, H044, H048; Gemini H015, H031, H034. H031 (the superseded 0.930 given as current) fails in both.
+- Luna ops: p95 26.2 s, $0.0073/q (ledger window $0.43829), writer_used luna 39 / fallback profile "openrouter" 21.
+- Readers: 3 fresh blind readers, new packet codes, the writer not revealed; unanimous on 59/60.
+
+Prod:
+- §4.6 applied over IPv6 SSH: 252 explicit links (event 2334) + 119 backfill links (event 2335), with the librarian stopped. Prod's link set equals the replica's.
+- An AAAA record for mcp.hlmemo.com was added with the owner's OK. This Mac's IPv4 route is broken; IPv6 exposes the same ports (80/443/22).
+- The owner's KEEP/REVERT decision is pending a real-use session via MCP.
