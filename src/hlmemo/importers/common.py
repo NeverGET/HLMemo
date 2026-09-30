@@ -170,7 +170,11 @@ _ENV_ASSIGN_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9_.-]+)[ \t]*=(?!=)[ \t]
 #: (R4.1 review F-3, Sol F-5, Sol F-1) a name is a secret name by its COMPONENTS (split on ``_ . -`` and
 #: camelCase), never by a substring: ``MINIO_SECRET_KEY``, ``apiToken`` and ``HMAC_KEY`` are secret
 #: names; ``TOKENIZER_MODEL``, ``MAX_TOKENS``, ``TOKEN_BUDGET`` and ``KEYBOARD_LAYOUT`` are not.
-_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+#: (R4.1 review round 2 N-1) acronym-aware: ``APIToken`` -> api, token; ``JWTToken`` -> jwt, token; ``apiKey`` -> api, key
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+#: (R4.1 review round 2 N-1) an explicit credential component pair wins over any non-secret exclusion
+#: (``PRIMARY_API_KEY``, ``CACHE_API_KEY`` are credentials although ``PRIMARY_KEY`` / ``CACHE_KEY`` are not)
+_EXPLICIT_PAIRS = frozenset({("api", "key"), ("api", "token"), ("jwt", "token"), ("auth", "token"), ("access", "token"), ("refresh", "token")})
 _NAME_SPLIT_RE = re.compile(r"[_.-]+")
 _SECRET_COMPONENTS = frozenset({"secret", "secrets", "password", "passwords", "passwd", "apikey"})
 #: ``token`` is a secret as the name's last component or before ``key/secret/value/string``
@@ -186,6 +190,8 @@ _NOT_SECRET_NAME_RE = re.compile(
 def _secret_name(name: str) -> bool:
     parts = [p for p in _NAME_SPLIT_RE.split(_CAMEL_RE.sub("_", name).lower()) if p]
     if any(p in _SECRET_COMPONENTS for p in parts):
+        return True
+    if any(pair in _EXPLICIT_PAIRS for pair in zip(parts, parts[1:])):
         return True
     for i, p in enumerate(parts):
         if p == "token" and (i == len(parts) - 1 or parts[i + 1] in _TOKEN_TAIL):
