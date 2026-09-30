@@ -153,6 +153,7 @@ Code commits, each with tests; no behaviour change when the new settings are at 
    5. A grep of tracked content for key prefixes returns 0 matches: `git grep -nP '\b(AIza[0-9A-Za-z_-]{30,}|sk-or-[0-9A-Za-z-]{20,}|sk-[0-9A-Za-z_-]{20,}|ghp_[0-9A-Za-z]{30,})' main r4-rc` (exit 1 = no match). The length suffixes keep words like "risk-" out.
    6. A manual read of the new public docs (DECISIONS D-192…D-198, consults 80+, the RUNBOOK) for private memory content (item bodies, personal data). Anything found is removed before the push.
    7. Push only after 1–6 pass: `git push origin main r4-rc`.
+   - Checks 1, 2, 4 and 5 are automated by `deploy/scripts/prepush_check.sh --base origin/main main r4-rc` (r4-rc; exit 0 = PASS). `--base` limits the two HISTORY checks to commits origin does not have yet, because content already public cannot be unpublished by blocking the push. gitleaks stays full-history. (v2.1: a dry run on 2026-09-30 flagged only already-public items: `deploy/.env.prod.example`, a template, and a 14.7 MB synthetic fixture, `tests/fixtures/g3/items.jsonl`, both on origin since 2026-09-22. With `--base origin/main` all four checks PASS.) Check 6 (the manual read) stays manual.
 
 ## 3. Prod data preparation (read-only first)
 1. **Export** the current prod items of project hlmemo ONLY (filtered by project membership in the query; v2, R-1) (memory_versions current + titles/bodies/valid_from) via SSH → `stack.sh exec -T db psql … COPY … TO STDOUT` → a local file under docs/private (0600). Read-only.
