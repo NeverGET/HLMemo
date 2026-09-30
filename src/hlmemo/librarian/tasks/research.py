@@ -2451,18 +2451,31 @@ def _prose_keep(
 
 
 _NUM_ITEM = re.compile(r"^([ \t]*)(\d{1,3})([.)])(?=[ \t])")
+#: (R4.1 review F-2) "3. Ekim" / "1. März" / "2. May" is a date, not a list item
+_DATE_AFTER_NUM = re.compile(
+    r"^[ \t]*\d{1,3}\.[ \t]+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık"
+    r"|januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
+    r"|january|february|march|may|june|july|october|december)\b",
+    re.IGNORECASE,
+)
 
 
 def _renumber_items(claims: list[Claim]) -> None:
     """D-210: a numbered list (``1.`` / ``1)`` items) that lost items to the literal check stays
     consecutive: each kept item's number drops by the dropped items before it in the same list (so a
     list whose item 1 went starts at 1 again). A list ends where an item's number does not increase
-    (a new list). Unnumbered sentences and bullets are left as written."""
+    (a new list). Unnumbered sentences and bullets are left as written.
+    (R4.1 review F-2) A list is one contiguous block: any unit that starts a new line and is not a
+    numbered item ends it (so a later "3. Ekim" is never renumbered), and a date is not an item."""
     prev: int | None = None
     lost = 0
+    line_start = True
     for c in claims:
+        starts_line, line_start = line_start, c.line_end
         m = _NUM_ITEM.match(c.text)
-        if m is None:
+        if m is None or _DATE_AFTER_NUM.match(c.text):
+            if starts_line:
+                prev, lost = None, 0  # the list block ended
             continue
         n = int(m.group(2))
         if prev is not None and n <= prev:
