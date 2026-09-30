@@ -159,6 +159,34 @@ def test_a_blob_over_5_mb_in_the_history_fails(repo: Path) -> None:
     assert _line(exactly.stdout, "large-blobs").startswith("PASS")
 
 
+def test_an_env_template_ending_in_example_is_not_private(repo: Path) -> None:
+    _commit(repo, {"deploy/.env.prod.example": "HLM_DOMAIN=memory.example.org\n"}, "prod env template")
+    res = _run(repo, "main", "r4-rc")
+    assert _line(res.stdout, "private-paths").startswith("PASS"), res.stdout
+    _commit(repo, {"deploy/.env.prod": "HLM_DOMAIN=x\n"}, "the real one")  # not a template
+    assert "main:deploy/.env.prod" in _run(repo, "main").stdout
+
+
+def test_base_skips_history_already_published_and_still_flags_new_history(repo: Path) -> None:
+    _commit(repo, {"data/big.bin": b"\0" * (5 * 1024 * 1024 + 1)}, "big, published")
+    _commit(repo, {"docs/private/old.md": "x\n"}, "private, published")
+    _commit(repo, {"docs/private/old.md": None}, "removed, published")
+    _git(repo, "branch", "published")  # stands in for origin/main
+    res = _run(repo, "--base", "published", "main", "r4-rc")
+    assert _line(res.stdout, "large-blobs").startswith("PASS"), res.stdout
+    assert _line(res.stdout, "private-paths").startswith("PASS"), res.stdout
+    assert "not in published" in res.stdout
+    without = _run(repo, "main", "r4-rc")  # the full history still sees both
+    assert _line(without.stdout, "large-blobs").startswith("FAIL")
+    assert "history:docs/private/old.md" in without.stdout
+    _commit(repo, {"data/new.bin": b"\1" * (5 * 1024 * 1024 + 2)}, "big, new")
+    _commit(repo, {"docs/private/new.md": "y\n"}, "private, new")
+    res = _run(repo, "--base", "published", "main")
+    assert "5242882 bytes  data/new.bin" in res.stdout and "data/big.bin" not in res.stdout
+    assert "main:docs/private/new.md" in res.stdout and "old.md" not in res.stdout
+    assert _run(repo, "--base", "no-such-ref", "main").returncode == 64
+
+
 def test_usage_errors(repo: Path, tmp_path: Path) -> None:
     assert _run(repo).returncode == 64  # no ref
     assert _run(repo, "no-such-ref").returncode == 64

@@ -6,32 +6,42 @@
 #                  `gitleaks detect --log-opts` on an older gitleaks; detected at run time), default
 #                  rules: no .gitleaks.toml/.gitleaksignore, no GITLEAKS_CONFIG*, gitleaks:allow
 #                  comments ignored. Findings are listed as rule/file/line/commit, never the secret.
-#   private-paths  no docs/private/, deploy/.local/ or .env / .env.* path (.env.example excepted) in
-#                  `git ls-tree -r` of each ref, nor anywhere in the refs' history.
+#   private-paths  no docs/private/, deploy/.local/ or .env / .env.* path (templates ending in .example
+#                  excepted: .env.example, .env.prod.example) in `git ls-tree -r` of each ref, nor anywhere
+#                  in the refs' history.
 #   large-blobs    no blob larger than 5 MB in the refs' history.
+# --base REF (e.g. origin/main): the two HISTORY checks (private-paths history, large-blobs) skip what
+# REF already contains: it is public already, and blocking the push cannot unpublish it. The tree
+# checks, key-grep and gitleaks (full history) are unaffected.
 #   key-grep       a grep of every tracked file of each ref for key-shaped strings (Google AIza…,
 #                  OpenRouter sk-or-…, Anthropic sk-ant-…, GitHub ghp_…, a PEM private key); it lists
 #                  ref:path only, never the match.
 # Prints PASS/FAIL per check and a RESULT line. Exit 0 = every check PASS, 1 = a FAIL, 64 = usage.
-# Usage: prepush_check.sh [--repo DIR] <ref>...        e.g. prepush_check.sh main r4-rc
+# Usage: prepush_check.sh [--repo DIR] [--base REF] <ref>...   e.g. prepush_check.sh --base origin/main main r4-rc
 set -uo pipefail
 
 MAX_BLOB_BYTES=5242880
 KEY_PATTERN='AIza[0-9A-Za-z_-]{30,}|sk-or-[0-9A-Za-z-]{20,}|sk-ant-[0-9A-Za-z_-]{20,}|ghp_[0-9A-Za-z]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY'
 PRIVATE_PATH='^(docs/private/|deploy/\.local/)|(^|/)\.env(\.[^/]*)?$'
-ENV_EXAMPLE='(^|/)\.env\.example$'
+ENV_EXAMPLE='(^|/)\.env(\.[^/]*)?\.example$'
 
 usage() {
-    echo "usage: prepush_check.sh [--repo DIR] <ref>..." >&2
+    echo "usage: prepush_check.sh [--repo DIR] [--base REF] <ref>..." >&2
     exit 64
 }
 
 repo=.
+base=
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo)
             [ $# -ge 2 ] || usage
             repo=$2
+            shift 2
+            ;;
+        --base)
+            [ $# -ge 2 ] || usage
+            base=$2
             shift 2
             ;;
         -h | --help) usage ;;
@@ -53,6 +63,14 @@ git rev-parse --git-dir >/dev/null 2>&1 || {
     exit 64
 }
 refs=("$@")
+exclude=()
+if [ -n "$base" ]; then
+    git rev-parse --verify -q "${base}^{commit}" >/dev/null || {
+        echo "error: unknown base: $base" >&2
+        exit 64
+    }
+    exclude=("^$base")
+fi
 for ref in "${refs[@]}"; do
     git rev-parse --verify -q "${ref}^{commit}" >/dev/null || {
         echo "error: unknown ref: $ref" >&2
@@ -115,7 +133,7 @@ check_private_paths() {
         git ls-tree -r --name-only "$ref" | grep -E "$PRIVATE_PATH" | grep -vE "$ENV_EXAMPLE" |
             sed -e "s|^|$ref:|" >>"$tmp/private"
     done
-    git log --format= --name-only "${refs[@]}" | grep -E "$PRIVATE_PATH" | grep -vE "$ENV_EXAMPLE" |
+    git log --format= --name-only "${refs[@]}" "${exclude[@]}" | grep -E "$PRIVATE_PATH" | grep -vE "$ENV_EXAMPLE" |
         sort -u | sed -e 's|^|history:|' >>"$tmp/private"
     hits=$(wc -l <"$tmp/private" | tr -d ' ')
     if [ "$hits" -eq 0 ]; then
@@ -127,7 +145,7 @@ check_private_paths() {
 }
 
 check_large_blobs() {
-    git rev-list --objects "${refs[@]}" |
+    git rev-list --objects "${refs[@]}" "${exclude[@]}" |
         git cat-file --batch-check='%(objecttype) %(objectname) %(objectsize) %(rest)' |
         awk -v max="$MAX_BLOB_BYTES" '$1 == "blob" && $3 > max { print $3 " bytes  " substr($0, index($0, $4)) }' \
             >"$tmp/large"
@@ -157,7 +175,7 @@ check_key_grep() {
     fi
 }
 
-echo "pre-push checks for: ${refs[*]}"
+echo "pre-push checks for: ${refs[*]}${base:+ (history checks: not in $base)}"
 check_gitleaks
 check_private_paths
 check_large_blobs
