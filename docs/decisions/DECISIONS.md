@@ -1528,3 +1528,25 @@ Measurement (same system as D-197, Google API direct, reasoning_effort high, PRO
 - Price/performance ranking (private report 04): in the production view, luna low > Gemini medium > Gemini high > DeepSeek max. Latency ignored: Gemini medium first. No writer reaches .80 correct (oracle ceiling .78, D-193).
 - Monthly budget incl. VPS at 20 / 100 / 300 asks per day, Gemini medium: $24 / $77 / $208 (2026) → $35 / $134 / $380 (2027). With luna: $13 / $23 / $49.
 - Consequence for R4: Gemini fails both C6 gates (p95 ≤ 20 s, ≤ $0.01/q). The prod final test therefore measures quality on prod data; it cannot self-certify Production Ready. R4 plan v2 pre-registers what the result means (Astra R-16). The OpenRouter prod key keeps its own $50/month provider-side limit as the outer guard.
+D-199 | 2026-09-30 | ACCEPTED | **R4 review closed after 2 rounds (D-125). Owner ACCEPTS the residual risk. Final-test rule v2.1: 60 questions, REVERT on contradiction > .08. A local Lima VM rehearsal and the pre-push gate are mandatory before prod.**
+
+Review:
+- Round 1 (consult 89, Astra-high): GO-WITH-FIXES, R-1…R-17.
+- Round 2 (consult 90, Astra-high + gpt-5.6-sol xhigh, D-085): both GO-WITH-FIXES, no new CRITICAL/HIGH. Open: R-1 partial, cycle check blind to intermediate live links, lock-before-check race, probe accepted malformed replies, per-call fallback share, RUNBOOK `--preview`, R-10 real-time path, R-15 push checks, R-16 measurement definitions.
+- All were fixed on r4-rc (08506d5) with regression tests, not accepted as risk. The orchestrator re-ran the targeted regressions (54 + 12 subtests) and unit (850). The implementer reports deploy 240, integration 600 / 2 known environment-only failures.
+
+Residual risk accepted by the owner:
+- (a) The endpoint locks do not serialize a concurrent link between two non-endpoint items on a longer chain. Mitigation: the librarian is stopped during the one-time prod link apply.
+- (b) A proposal whose reverse link is already live is skipped, not rejected. Nothing wrong is written.
+- (c) Review-77 residuals #1/#4/#5/#8/#9 stay open, and #2/#10 are partial, each with a RUNBOOK mitigation.
+- (d) The real 170 s path and the public-push hygiene are proven only by steps not yet run: the Lima VM load smoke and `prepush_check.sh`. Both are mandatory gates; a FAIL stops the release.
+
+Final-test rule v2.1 (orchestrator, fixed before any question exists; plan §5.1):
+- 50 answerable + 10 negative questions.
+- KEEP: ≥ 35 correct, ≤ 2 contradictions, ≤ 1 fabricated negative, ≤ 6/60 fallback, $/q ≤ .03, p95 ≤ 60 s.
+- REVERT: ≤ 31 correct, ≥ 5 contradictions, ≥ 16/60 fallback, or a HIGH incident.
+- Why: v2's REVERT at > .06 on 32 questions fires on 2 contradictions. That happens with P ≈ .25 for a writer at .03 (exact binomial), and it would revert to luna (.06).
+
+Owner approvals:
+- a disposable Lima VM on the owner's Mac for the rehearsal (deleted afterwards);
+- `MCP_TOOL_TIMEOUT=180000` added to the owner's Claude Code settings by the orchestrator (effective after a restart).
