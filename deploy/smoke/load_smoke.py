@@ -22,12 +22,14 @@ a private address, or a ``.local``/``.internal``/``.test``/``.localhost`` name) 
 names its host explicitly.
 
 Setup on the disposable VM (the orchestrator's step; nothing here touches a server by itself):
-1. the smoke profiles ``deploy/smoke/profiles/*.toml`` in the api's HLM_PROFILES_DIR, and in llm.env
+1. the smoke profiles ``deploy/smoke/profiles/*.toml`` in the api's HLM_PROFILES_DIR (the api's root file
+   system is read-only: e.g. a VM-local Compose override that mounts deploy/smoke read-only and sets
+   HLM_PROFILES_DIR to its profiles/; /app/profiles stays searched after it), and in llm.env
    ``HLM_RESEARCH_WRITER_PROFILE=smoke-writer`` (optionally ``HLM_PROFILE=smoke-research`` and
    ``HLM_FALLBACK_PROFILE__RESEARCH=smoke-research``: no real provider call), ``SMOKE_MOCK_KEY=x``;
    the R4 timeouts stay (writer 120 s, research 170 s);
-2. the mock where the api reaches ``http://127.0.0.1:8765/v1`` (e.g. inside the api container):
-   ``python3 mock_provider.py --port 8765``;
+2. the mock where the api reaches ``http://127.0.0.1:18765/v1`` (e.g. inside the api container, whose
+   8765 is uvicorn's own port): ``python3 mock_provider.py --port 18765``;
 3. ``HLM_SMOKE_TOKEN=<token> python3 deploy/smoke/load_smoke.py --url https://<local host:port>
    --project <slug> --insecure`` (``--insecure`` for Caddy's internal CA).
 """

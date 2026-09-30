@@ -2,7 +2,7 @@
 # fallback) on the same mock, undelayed, so the smoke makes no real provider call. Optional: without
 # it the VM's own research profile (a real key) serves those calls. Select it with
 # HLM_PROFILE=smoke-research (and HLM_FALLBACK_PROFILE__RESEARCH=smoke-research) on the disposable VM.
-HLM_LLM_BASE_URL = "http://127.0.0.1:8765/v1"
+HLM_LLM_BASE_URL = "http://127.0.0.1:18765/v1"
 HLM_LLM_MODEL    = "smoke/research"
 HLM_LLM_API_KEY  = "env:SMOKE_MOCK_KEY"
 extra = { response_format = { type = "json_object" } }

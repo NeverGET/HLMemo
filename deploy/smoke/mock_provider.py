@@ -21,8 +21,8 @@ Every other request answers at once. ``GET /_smoke/state`` returns ``{"waiting":
 delay); request bodies are never printed.
 
 Run it where the api container can reach it, e.g. inside the api container itself (the smoke
-profiles point at ``http://127.0.0.1:8765/v1``):
-    python3 mock_provider.py --host 127.0.0.1 --port 8765
+profiles point at ``http://127.0.0.1:18765/v1``; NOT 8765, the api's own uvicorn port there):
+    python3 mock_provider.py --host 127.0.0.1 --port 18765
 """
 
 from __future__ import annotations
@@ -38,6 +38,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 MARKER = re.compile(r"smoke-delay=(\d+(?:\.\d+)?)")
+# The smoke profiles' port (profiles/*.toml). Inside the api container 8765 is uvicorn's (HLM_API_PORT):
+# binding it there fails with EADDRINUSE (local rehearsal 2026-09-30).
+DEFAULT_PORT = 18765
 SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 ABSTAIN = {"status": "insufficient_evidence", "answer": "", "sources": [], "related": [], "confidence": "low"}
@@ -204,7 +207,7 @@ def make_handler(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="R4 R-10 smoke: an OpenAI-compatible mock provider")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--delay-model", default="smoke/writer", help="the model id whose requests are delayed")
     ap.add_argument("--delay-jobs", default="prose,prose_text", help="comma-separated JOBs to delay")
     ap.add_argument("--default-delay", type=float, default=0.0, help="seconds, when no smoke-delay marker")

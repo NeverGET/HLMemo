@@ -5,7 +5,7 @@
 # HLM_RESEARCH_WRITER_PROFILE=smoke-writer on the disposable VM, with this file in HLM_PROFILES_DIR.
 # The base URL is where the api container reaches the mock (the mock run inside the api container:
 # its own loopback; otherwise the docker host's address on the api's network).
-HLM_LLM_BASE_URL = "http://127.0.0.1:8765/v1"
+HLM_LLM_BASE_URL = "http://127.0.0.1:18765/v1"
 HLM_LLM_MODEL    = "smoke/writer"
 # Any non-empty value (the mock ignores it); never a real key.
 HLM_LLM_API_KEY  = "env:SMOKE_MOCK_KEY"

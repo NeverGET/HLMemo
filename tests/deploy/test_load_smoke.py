@@ -184,3 +184,28 @@ def test_main_prints_one_verdict_line_and_the_exit_code(
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 2 and [json.loads(ln)["pass"] for ln in lines] == [True, False]
     assert all("sentinel-smoke-token-not-real" not in ln for ln in lines)
+
+
+def test_the_mock_never_takes_the_api_port() -> None:
+    """The mock runs inside the api container (the setup notes), where uvicorn holds HLM_API_PORT:
+    the smoke profiles and the mock's default port must be another loopback port (local rehearsal
+    2026-09-30: both said 8765, and binding it in the api container failed with EADDRINUSE)."""
+    import re
+    import tomllib
+    from urllib.parse import urlsplit
+
+    compose = (ROOT / "deploy" / "compose.prod.yaml").read_text()
+    match = re.search(r'HLM_API_PORT:\s*"(\d+)"', compose)
+    assert match
+    api_port = int(match.group(1))
+    mock_path = ROOT / "deploy" / "smoke" / "mock_provider.py"
+    spec = importlib.util.spec_from_file_location("mock_provider", mock_path)
+    assert spec and spec.loader
+    mock = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mock)
+    assert mock.DEFAULT_PORT != api_port
+    profiles = sorted((ROOT / "deploy" / "smoke" / "profiles").glob("*.toml"))
+    assert len(profiles) == 2
+    for path in profiles:
+        url = urlsplit(tomllib.loads(path.read_text())["HLM_LLM_BASE_URL"])
+        assert (url.hostname, url.port) == ("127.0.0.1", mock.DEFAULT_PORT), path.name
