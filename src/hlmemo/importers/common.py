@@ -167,9 +167,12 @@ def read_text(path: Path) -> tuple[str | None, str | None]:
 #: D-213 (a): an env-style assignment of a secret-named variable with a literal value
 #: (``MINIO_SECRET_KEY=abc12345``, any casing). The value is checked by ``_is_placeholder``.
 _ENV_ASSIGN_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.-]*(?:secret|password|passwd|token|api[_-]?key)[A-Za-z0-9_]*)"
-    r"[ \t]*=(?!=)[ \t]*[\"']?([^\s\"'`]{8,})"
+    r"(?<![A-Za-z0-9])([A-Za-z0-9_.-]+)[ \t]*=(?!=)[ \t]*[\"']?([^\s\"'`]{8,})"
 )
+#: (R4.1 review F-3) the name must contain a secret word as a whole component (split on ``_ . -`` and
+#: camelCase): ``MINIO_SECRET_KEY`` and ``apiToken`` are secret names, ``TOKENIZER_MODEL`` is not
+_SECRET_WORD_RE = re.compile(r"(?i)(?:^|[_.-])(?:secrets?|passwords?|passwd|tokens?|api[_-]?key)(?:$|[_.-])")
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 #: variable names that hold a location or an id, not the secret (``HLM_TOKEN_FILE=/run/secrets/t``)
 _NOT_SECRET_NAME_RE = re.compile(r"(?i)_(?:file|path|dir|name|env|url|ttl|header|id)$")
 _PLACEHOLDER_STARTS = (
@@ -205,6 +208,8 @@ def _strong_password(value: str) -> bool:
 def _env_secret(text: str) -> bool:
     for m in _ENV_ASSIGN_RE.finditer(text):
         name, value = m.group(1), m.group(2)
+        if not _SECRET_WORD_RE.search(_CAMEL_RE.sub("_", name)):
+            continue
         if not _NOT_SECRET_NAME_RE.search(name) and not _is_placeholder(value):
             return True
     return False
