@@ -14,6 +14,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -2327,3 +2328,42 @@ async def test_ask_temporal_every_part_link_renders_its_line_newest_first(
     assert w.status_vids == (d004,) and w.status == (
         f"superseded by v{d004} (docs/decisions/DECISIONS.md#D-004): «D-004 replaces D-001»"
     )
+
+
+async def test_ask_memory_as_of_and_the_stale_freshness_line(
+    connect, world, deps, db_dsn, monkeypatch
+) -> None:  # noqa: ANN001
+    """D-209: ``meta.memory_as_of`` is the newest recorded_at of the project's current items; a fresh
+    memory adds no line, a stale one ends the answer with the "records end on" line (the world was
+    just written, so staleness is forced by a negative freshness window: bitemporal rows cannot be
+    back-dated row by row)."""
+    from datetime import timedelta
+
+    question = "What is the current retrieval p95 target and what was it before?"
+
+    async def one() -> dict[str, Any]:
+        fake = FakeResearcher(facts=["1.2 s"])
+        r = make_researcher(db_dsn, ScriptedLLM(default=fake), research_answer_mode="prose")
+        try:
+            return await ask(connect, world, deps, r, question)
+        finally:
+            await r.aclose()
+
+    fresh = await one()
+    assert fresh["meta"]["memory_as_of"] and "Memory records for this project end" not in fresh["answer"]
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT max(recorded_at) FROM memory_versions WHERE %s = ANY(project_ids)"
+            " AND superseded_at = 'infinity' AND valid_to = 'infinity' AND status = 'active'"
+            " AND kind <> 'project_card'",
+            (world.projects[MAIN],),
+        )
+        newest = (await cur.fetchone())[0]
+        await conn.rollback()
+    assert fresh["meta"]["memory_as_of"][:19] == newest.astimezone(UTC).isoformat()[:19]
+    monkeypatch.setattr(rsv, "FRESH_WITHIN", timedelta(seconds=-1))
+    stale = await one()
+    day = stale["meta"]["memory_as_of"][:10]
+    assert stale["answer"].splitlines()[-1] == f"(Memory records for this project end on {day}.)"
+    assert stale["meta"]["flags"]["truncated"] is False
+    assert stale["budget"]["used"] == METER.count(stale) <= stale["budget"]["limit"]

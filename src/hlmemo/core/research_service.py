@@ -130,10 +130,10 @@ import copy
 import re
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -2056,9 +2056,47 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
         },
     }
     run.flags["truncated"] = bool(answered and v.truncated)  # D-207 (_pack may also set it)
+    # D-209: the horizon of the project's memory (the newest recorded_at of the view the question was
+    # answered over: loaded once per request, no extra query); a stale one ends the answer with a line
+    as_of = memory_as_of(run.view.values())
+    out["meta"]["memory_as_of"] = as_of.isoformat() if as_of is not None else None
+    if answered:
+        line = freshness_line(as_of, t_start, f"{run.question}\n{out['answer']}")
+        if line:
+            out["answer"] = f"{out['answer']}\n{line}"
     if not answered:
         out["meta"]["abstain_reason"] = abstain_reason
     return out
+
+
+#: D-209: the memory counts as stale for an answer when its newest record is older than this
+FRESH_WITHIN = timedelta(hours=24)
+#: letters that mark Turkish text (ö, ü, ç are shared with German and French)
+_TR_LETTERS = frozenset("ığşİĞŞ")
+
+
+def memory_as_of(items: Iterable[Any]) -> datetime | None:
+    """D-209: the newest ``recorded_at`` among the project's current items (None: none or unknown)."""
+    times = [it.recorded_at for it in items if getattr(it, "recorded_at", None) is not None]
+    return max(times) if times else None
+
+
+def _is_turkish(text: str) -> bool:
+    """At least 2% of the letters are Turkish-only ones (a quoted Turkish term in English stays English)."""
+    letters = sum(ch.isalpha() for ch in text)
+    return letters > 0 and sum(ch in _TR_LETTERS for ch in text) * 50 >= letters
+
+
+def freshness_line(as_of: datetime | None, now: datetime | None, text: str) -> str:
+    """D-209: ``(Memory records for this project end on <YYYY-MM-DD>.)`` (Turkish: ``(Bu projenin
+    bellek kayıtları <YYYY-MM-DD> tarihinde bitiyor.)``, chosen by ``text``'s language, else English)
+    when ``as_of`` is older than ``FRESH_WITHIN`` before ``now``; "" otherwise."""
+    if as_of is None or now is None or now - as_of <= FRESH_WITHIN:
+        return ""
+    day = as_of.astimezone(UTC).date().isoformat()
+    if _is_turkish(text):
+        return f"(Bu projenin bellek kayıtları {day} tarihinde bitiyor.)"
+    return f"(Memory records for this project end on {day}.)"
 
 
 def _fit(meter: Meter, out: dict[str, Any], budget: int) -> bool:
