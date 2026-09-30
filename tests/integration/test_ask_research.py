@@ -790,6 +790,7 @@ async def test_ask_r4_ops_status_shows_the_writer_fallback(
     flags = out["meta"]["flags"]
     assert out["abstained"] is False and flags["writer_used"] == "stub-primary"
     assert flags["writer_fallbacks"] == 1 and flags["writer_fallback_reasons"] == ["w-gem:unavailable"]
+    assert flags["writer_fallback"] is True  # Astra 90 N-1: the per-question flag
     settings = ask_settings(db_dsn, research_answer_mode="prose", research_writer_profile="w-gem")
     async with await connect() as conn:
         st = await service.research_status(conn, settings)
@@ -797,16 +798,72 @@ async def test_ask_r4_ops_status_shows_the_writer_fallback(
     assert st["writer_profile"] == "w-gem" and st["writer_configured"] == "w-gem"
     assert st["writer_used_24h"] == {"stub-primary": 1} and st["writer_fallback_24h"] == 1
     assert st["writer_outcomes_24h"] == {"http_error": 1, "ok": 1} and st["writer_fallback_share_24h"] == 1.0
+    # one memory.ask = one lineage on its ledger rows: ONE question, and it fell back
+    assert st["writer_questions_24h"] == 1 and st["writer_fallback_questions_24h"] == 1
     lines = ops_cli.research_lines(st)
     assert lines[0].startswith("research    enabled=True mode=prose writer=w-gem")
-    assert lines[1].startswith("WARNING     writer fallback 100%")
-    # the writer unset: the research primary is the configured writer (the luna-revert state)
+    assert lines[1].startswith("WARNING     writer fallback 100% of the questions (1 of 1)")
+    # the writer unset: the research primary is the configured writer (the luna-revert state); the
+    # w-gem row belongs to the other configuration
+    async with await connect() as conn:
+        await conn.execute("DELETE FROM llm_calls WHERE profile = 'w-gem'")
+        await conn.commit()
     unset = ask_settings(db_dsn, research_answer_mode="prose", profile="stub-primary")
     async with await connect() as conn:
         st2 = await service.research_status(conn, unset)
         await conn.rollback()
     assert st2["writer_profile"] == "stub-primary" and st2["writer_configured"] is None
     assert st2["writer_fallback_24h"] == 0 and len(ops_cli.research_lines(st2)) == 1
+    assert st2["writer_questions_24h"] == 1 and st2["writer_fallback_questions_24h"] == 0
+
+
+async def test_ask_r4_ops_status_counts_questions_not_calls(connect, db_dsn, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """Astra 90 N-1: the ledger rows of the 40-question fixture, one lineage per question (11: the
+    writer fails on the first prose, the research primary writes a valid abstention, the writer
+    writes after the refine; 29: the writer directly). ops status reports the per-question share
+    11/40 next to the per-call share 11/51, and warns."""
+    from hlmemo.ops import cli as ops_cli
+    from hlmemo.ops import service
+
+    (tmp_path / "w-gem.toml").write_text(
+        'HLM_LLM_BASE_URL = "http://w-gem.invalid/v1"\nHLM_LLM_MODEL = "stub/w-gem"\n'
+        'HLM_LLM_API_KEY = "test-key-not-secret"\nprice_in_per_m = 0.75\nprice_out_per_m = 3.75\n'
+    )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    prose = rs.WRITER_LEDGER_TASK
+    rows: list[tuple[uuid.UUID, str, str, str]] = []
+    for i in range(40):
+        lineage = uuid.uuid4()
+        rows.append((lineage, "research", "stub-primary", "ok"))  # plan
+        if i < 11:
+            rows += [
+                (lineage, prose, "w-gem", "http_error"),
+                (lineage, prose, "stub-primary", "ok"),  # the fallback's valid abstention
+                (lineage, "research", "stub-primary", "ok"),  # refine
+                (lineage, prose, "w-gem", "ok"),
+            ]
+        else:
+            rows.append((lineage, prose, "w-gem", "ok"))
+    settings = ask_settings(db_dsn, research_answer_mode="prose", research_writer_profile="w-gem")
+    async with await connect() as conn:
+        await conn.execute("DELETE FROM llm_calls")
+        for lineage, task, profile, outcome in rows:
+            await conn.execute(
+                "INSERT INTO llm_calls (call_id, lineage, task, profile, model_id, prompt_version,"
+                " schema_version, mode, outcome) VALUES (%s, %s, %s, %s, %s, 'v', 'v', 'live', %s)",
+                (uuid.uuid4(), lineage, task, profile, f"stub/{profile}", outcome),
+            )
+        await conn.commit()
+        try:
+            st = await service.research_status(conn, settings)
+        finally:
+            await conn.execute("DELETE FROM llm_calls")
+            await conn.commit()
+    assert st["writer_used_24h"] == {"w-gem": 40, "stub-primary": 11} and st["writer_fallback_24h"] == 11
+    assert st["writer_fallback_share_24h"] == round(11 / 51, 4)  # per call: 21.6 %
+    assert st["writer_questions_24h"] == 40 and st["writer_fallback_questions_24h"] == 11
+    assert st["writer_fallback_question_share_24h"] == 0.275  # per question: 27.5 %
+    assert "(11 of 40) and 22% of the prose answers (11 of 51)" in ops_cli.research_lines(st)[1]
 
 
 async def test_ask_r4_an_expired_writer_price_falls_back_counted(

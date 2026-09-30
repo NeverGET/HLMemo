@@ -2540,6 +2540,77 @@ async def test_d172_no_writer_profile_keeps_the_task_timeout(writer_profiles) ->
     assert seen[0][0] == "stub/t-task" and rsv.ANSWER_CAP_S - 1.0 < seen[0][1] <= rsv.ANSWER_CAP_S
 
 
+# --------------------------------------------------------------------------- R4: per-question fallback
+_ABSTAIN = {"status": "insufficient_evidence", "answer": "", "sources": [], "confidence": "low"}
+
+
+def _fallback_handler(state: dict[str, bool]):  # noqa: ANN202
+    """The writer answers 503 while ``state["writer_down"]``; the task profile writes a valid
+    abstention for the JOB prose (and the usual output for the other JOBs)."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        job = _job_of(body)
+        if body["model"] == "stub/w-writer":
+            if state["writer_down"] or state.get("all_down"):
+                return httpx.Response(503, json={"error": {"message": "overloaded"}})
+            return httpx.Response(200, json=_chat(_JOB_OUT[job]))
+        if state.get("all_down"):
+            return httpx.Response(503, json={"error": {"message": "overloaded"}})
+        return httpx.Response(200, json=_chat(_ABSTAIN if job == "prose" else _JOB_OUT[job]))
+
+    return handler
+
+
+async def test_r4_writer_fallback_is_per_question_astra_fixture(writer_profiles) -> None:  # noqa: ANN001
+    """Astra 90 N-1 fixture: 40 questions. In 11, the FIRST prose call falls back (the writer 503s,
+    the task profile writes a valid abstention) and the prose after the refine is the writer's; 29
+    are the writer's directly. ``meta.flags.writer_fallback`` is per question: 11/40 = 27.5 %, while
+    the per-CALL share of the answered prose calls is 11/51 = 21.6 %."""
+    state = {"writer_down": False}
+    r = _writer_researcher(_fallback_handler(state))
+    flags: list[bool] = []
+    try:
+        for i in range(40):
+            run = _real_run(r)
+            if i < 11:
+                state["writer_down"] = True
+                first = await run.answer(list(EXS))
+                assert not first.answered and run.flags["writer_used"] == "t-task"
+                state["writer_down"] = False
+                second = await run.answer(list(EXS))  # the prose after the refine
+                assert second.answered and run.flags["writer_used"] == "w-writer"
+            else:
+                v = await run.answer(list(EXS))
+                assert v.answered and run.flags["writer_used"] == "w-writer"
+            flags.append(run.flags["writer_fallback"])
+        rows = [(row.task, row.profile, row.outcome) for row in r.provider.ledger.inner.rows]
+    finally:
+        await r.aclose()
+    assert flags == [True] * 11 + [False] * 29
+    assert sum(flags) / len(flags) == 11 / 40 == 0.275  # the per-question share (above the .25 REVERT)
+    answered = [p for t, p, o in rows if t == rs.WRITER_LEDGER_TASK and o in ("ok", "schema_retry_ok")]
+    assert len(answered) == 51 and answered.count("t-task") == 11  # the per-call share: 11/51
+
+
+async def test_r4_a_failed_writer_fallback_still_flags_the_question(writer_profiles) -> None:  # noqa: ANN001
+    """The flag is set whether the fallback answered or failed: the writer AND the task profile 503
+    (the call fails): True; a question the writer answers: False (the default)."""
+    state = {"writer_down": True, "all_down": True}
+    r = _writer_researcher(_fallback_handler(state))
+    try:
+        run = _real_run(r)
+        with pytest.raises(rs.ResearchUnavailable):
+            await run.answer(list(EXS))
+        assert run.flags["writer_fallback"] is True and run.flags["writer_used"] is None
+        state.update(writer_down=False, all_down=False)
+        ok = _real_run(r)
+        assert (await ok.answer(list(EXS))).answered and ok.flags["writer_fallback"] is False
+    finally:
+        await r.aclose()
+
+
 # --------------------------------------------------------------------------- D-173 cuts vs breaker
 class _ManualClock:
     """The provider's clock with a hand-moved monotonic time (the breaker and the cut valve)."""

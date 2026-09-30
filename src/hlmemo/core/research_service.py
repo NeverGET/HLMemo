@@ -72,7 +72,12 @@ fallback: the research profile; ``research.Researcher.chain_for_job``), the othe
 ``meta.writer_profile`` names the profile that writes. D-172: a writer attempt ends after
 ``HLM_RESEARCH_WRITER_TIMEOUT_S`` and the task profile writes instead (the writer jobs' call cap
 grows by that timeout so the fallback keeps its own; the question deadline still binds);
-``meta.flags.writer_timeout`` / ``writer_used`` say what happened.
+``meta.flags.writer_timeout`` / ``writer_used`` say what happened. R4 (Astra 90 N-1, R-6): every
+answer carries ``meta.flags.writer_fallback`` (bool, False by default; an ``E_UNAVAILABLE`` after
+the loop started carries it in ``details``): True when ANY writer JOB call of the question (the
+first prose, its retries, the prose after a refine, the expand) moved past the configured writer
+(``Researcher.writer_profile``), whether that fallback answered or failed (``_Run.note_writer``). It
+is the PER-QUESTION fallback signal; ``ops status`` counts calls and ledger lineages.
 
 D-184 (prose mode, the temporal layer; links are only READ): each excerpt the answer step is shown
 carries a ``status`` when a live ``supersedes`` link (valid at the question's time) targets its item
@@ -455,6 +460,8 @@ class _Run:
             "main_dropped": False,
             "budget_stop": False,
             "rewrites_asked": 0,
+            # R4 (Astra 90 N-1): a writer JOB call of this question moved past the configured writer
+            "writer_fallback": False,
         }
     )
 
@@ -1067,7 +1074,33 @@ class _Run:
     async def call(
         self, job: str, build: Callable[[], tuple[str, list[int]]], cap_s: float
     ) -> dict[str, Any] | None:
-        """One logical LLM call (``_call``); D-189: with a trace, recorded with every attempt."""
+        """One logical LLM call (``_call``); D-189: with a trace, recorded with every attempt. R4
+        (Astra 90 N-1): a writer JOB's call, answered or failed, updates ``flags.writer_fallback``."""
+        if job not in rs.WRITER_JOBS:
+            return await self._traced(job, build, cap_s)
+        since = len(self.researcher.attempts(self.lineage))
+        before = self.last_result
+        try:
+            return await self._traced(job, build, cap_s)
+        finally:
+            self.note_writer(since, None if self.last_result is before else self.last_result)
+
+    def note_writer(self, since: int, res: Any) -> None:
+        """R4 (Astra 90 N-1, R-6): ``flags.writer_fallback`` becomes True (for the whole question)
+        when the writer JOB call that made the attempts after the first ``since`` of the lineage
+        moved past the configured writer (``Researcher.writer_profile``): it was answered by another
+        profile or gave the writer up (``res``: its ``LlmResult``, None when it failed or was not
+        made), or any of its attempts (``Researcher.attempts``: ok, schema_fail, http_error,
+        timeout, breaker_open) was another profile's, whether that fallback answered or failed."""
+        configured = self.researcher.writer_profile
+        other = any(p != configured for p, _o in self.researcher.attempts(self.lineage)[since:])
+        if other or (res is not None and (res.profile != configured or getattr(res, "fallbacks", None))):
+            self.flags["writer_fallback"] = True
+
+    async def _traced(
+        self, job: str, build: Callable[[], tuple[str, list[int]]], cap_s: float
+    ) -> dict[str, Any] | None:
+        """``_call``; D-189: with a trace, recorded with every attempt."""
         if self.trace is None:
             return await self._call(job, build, cap_s)
         last: dict[str, Any] = {}
@@ -1759,10 +1792,14 @@ async def _ask(
                 "E_UNAVAILABLE",
                 "access to an item changed during the request; ask again",
                 reason="authority_changed",
+                writer_fallback=bool(run.flags["writer_fallback"]),
             ) from None
         except rs.ResearchUnavailable as exc:
             raise ToolError(
-                "E_UNAVAILABLE", f"memory.ask could not answer: {exc.reason}", reason=exc.reason
+                "E_UNAVAILABLE",
+                f"memory.ask could not answer: {exc.reason}",
+                reason=exc.reason,
+                writer_fallback=bool(run.flags["writer_fallback"]),  # R4 (N-1): per question
             ) from None
         finally:
             attempts, cost = researcher.tally(run.lineage)

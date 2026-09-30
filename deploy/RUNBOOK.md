@@ -759,7 +759,10 @@ bash deploy/scripts/remote_gates.sh --url https://mcp.hlmemo.com --state "$STATE
 bash deploy/scripts/hlm_ops.sh --state "$STATE" status
 bash deploy/scripts/hlm_ops.sh --state "$STATE" status --json | python3 -c 'import json,sys
 r = json.load(sys.stdin)["research"]
-print({k: r.get(k) for k in ("writer_used_24h", "writer_fallback_24h", "writer_outcomes_24h")})'
+print({k: r.get(k) for k in ("writer_used_24h", "writer_fallback_24h", "writer_outcomes_24h",
+                             "writer_questions_24h", "writer_fallback_questions_24h")})'
+#    (the 24 h numbers are operational: per call AND per question, one ledger lineage per ask; the
+#    final test's fallback share comes from the answers' meta.flags.writer_fallback, plan §5.1)
 #    Resume the backup timer (admin): sudo systemctl start hlmemo-backup.timer
 ```
 

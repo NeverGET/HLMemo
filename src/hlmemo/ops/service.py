@@ -573,7 +573,18 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
     primary); ``writer_used_24h``: ``{profile: answered calls}``; ``writer_fallback_24h``: answered
     calls whose writer is NOT the configured one; ``writer_outcomes_24h``: ``{outcome: rows}`` (every
     attempt: ok, schema_fail, http_error, timeout, breaker_open, ...); ``writer_fallback_share_24h``:
-    the fallback share of the answered calls (``ops status`` warns above 10%)."""
+    the fallback share of the answered calls.
+
+    Astra 90 N-1: the call share is NOT the question share (a question whose first prose fell back
+    and whose prose after the refine the writer wrote has two answered calls, one of them a
+    fallback). Every ledger row carries its question's ``lineage`` (one per memory.ask), so the
+    PER-QUESTION counts come from the same rows: ``writer_questions_24h`` (lineages with a
+    research.prose row), ``writer_fallback_questions_24h`` (those with a research.prose row, of any
+    outcome, of another profile than the configured writer) and ``writer_fallback_question_share_24h``.
+    ``ops status`` warns when either share is above 10%. These 24 h numbers are operational only: a
+    release decision counts the answers' own ``meta.flags.writer_fallback`` over its questions (it
+    also sees an expand JOB's fallback, whose ledger rows are ``research``, and a writer skipped
+    for an expired price, which writes no row)."""
     from hlmemo.config import get_settings
     from hlmemo.librarian.errors import LlmConfigError
     from hlmemo.librarian.tasks import research as rs
@@ -596,6 +607,13 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
             used[str(profile)] = used.get(str(profile), 0) + int(n)
     answered = sum(used.values())
     fallback = sum(n for p, n in used.items() if p != configured)
+    cur = await conn.execute(
+        "SELECT count(DISTINCT lineage), count(DISTINCT lineage) FILTER (WHERE profile <> %s)"
+        " FROM llm_calls WHERE task = %s AND lineage IS NOT NULL"
+        f" AND created_at > now() - interval '{WRITER_WINDOW}'",
+        (configured, rs.WRITER_LEDGER_TASK),
+    )
+    questions, fallback_questions = (int(n) for n in (await cur.fetchone() or (0, 0)))
     valid_until, expired = None, None
     try:  # R4 (R-5): the configured writer's price validity (its own profile file)
         from hlmemo.librarian.profiles import named_profile
@@ -615,6 +633,9 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
         "writer_fallback_24h": fallback,
         "writer_outcomes_24h": outcomes,
         "writer_fallback_share_24h": round(fallback / answered, 4) if answered else 0.0,
+        "writer_questions_24h": questions,
+        "writer_fallback_questions_24h": fallback_questions,
+        "writer_fallback_question_share_24h": round(fallback_questions / questions, 4) if questions else 0.0,
         "writer_price_valid_until": valid_until,
         "writer_price_expired": expired,
     }
