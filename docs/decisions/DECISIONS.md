@@ -1702,3 +1702,9 @@ D-213 | 2026-09-30 | ACCEPTED (r4.1) | **The importer's secret filter now catche
 - Rule `credential-pair`: an email address with a password on the same or an adjacent line (password ≥ 6 chars with a letter and a non-letter).
 - A match skips the whole file, as before. 34 unit tests (tests/unit/test_secret_rules.py).
 - The migration protocol still requires the curator's manual read (TEMPLATE step 3).
+D-214 | 2026-09-30 | ACCEPTED (preparation; prod import pending owner OK) | **Phase C round 2 (local only): the pilot finalized; a second group of projects curated.**
+- Items are dated from explicit evidence; a statement that was later corrected is marked superseded by its correction.
+- The manual scan found credential-like and personal literals that gitleaks and the pre-D-213 importer missed. They were redacted in the curated copies; the owner's follow-up is tracked privately.
+- Project-specific details are kept privately.
+
+Incident: a curation agent ran `git fetch` in one of the owner's repos (FETCH_HEAD plus one pack written, then removed; fsck clean; no ref or working-tree change). Briefs now forbid any write or network git operation in owner repos.
