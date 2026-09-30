@@ -783,11 +783,25 @@ bash deploy/scripts/hlm_ops.sh --state "$STATE" probe-writer   # {"ok","profile"
 **Curated links** (prod data change, plan §4.6; `--proposals` must name a file INSIDE the api
 container, and `docker compose cp` cannot write into its `/tmp` tmpfs, so the file is streamed in):
 
+The preview is `--dry-run` (it runs every check under the locks, then rolls back; `applied` stays 0
+in its output). A stale or foreign record anywhere in the file rejects the whole apply: exit 65,
+`{"rejected": true, "stale": [...], "foreign": [...]}`, nothing written. `counts` prints
+`<events>|<links>|<live backfill links of hlmemo>` (read-only).
+
 ```sh
+counts() {
+  ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T db sh -s' <<'SQL'
+psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT (SELECT count(*) FROM events), (SELECT count(*) FROM links), (SELECT count(*) FROM links l JOIN projects p ON p.project_id = ANY (l.project_ids) WHERE p.slug = 'hlmemo' AND l.rel = 'supersedes' AND l.props->>'by' = 'backfill' AND l.superseded_at = 'infinity')"
+SQL
+}
 P=docs/private/<the approved proposals file>.jsonl
+APPROVED=<the approved count of the review>   # = the file's "proposed" records for hlmemo
 ssh -F "$STATE/ssh_config" hlm-deploy "cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api sh -c 'umask 077 && cat > /tmp/r4-links.jsonl'" < "$P"
-# preview (rolls back): applied = the approved count, 0 stale, 0 project mismatch
-ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --apply --proposals /tmp/r4-links.jsonl --preview' </dev/null
+# preview (rolls back). PASS: exit 0, len(links) == $APPROVED, and the counts unchanged
+before=$(counts)
+ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --apply --proposals /tmp/r4-links.jsonl --dry-run --json' </dev/null > "$STATE/r4-links-preview.json"
+python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); n = len(d["links"]); ok = d["preview"] and n == int(sys.argv[2]); print("preview", "PASS" if ok else "FAIL", n, "of", sys.argv[2]); sys.exit(not ok)' "$STATE/r4-links-preview.json" "$APPROVED"
+test "$(counts)" = "$before" && echo "counts unchanged: $before"
 # apply: ONE librarian event; record its id
 ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --apply --proposals /tmp/r4-links.jsonl' </dev/null
 ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api rm -f /tmp/r4-links.jsonl' </dev/null
@@ -797,9 +811,13 @@ ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/h
 
 1. **Links only.** Project-WIDE: it closes EVERY live `by=backfill` link of hlmemo in ONE
    `link_supersede` event, not only the links of one apply event. `--project` is required (without
-   it the command exits 64 and the links stay live). Preview first:
+   it the command exits 64 and the links stay live). Preview first (`counts` above). PASS: exit 0,
+   len(links) == the live backfill link count (the third `counts` field), counts unchanged:
    ```sh
-   ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --revert --preview' </dev/null
+   before=$(counts)
+   ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --revert --dry-run --json' </dev/null > "$STATE/r4-revert-preview.json"
+   python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); n = len(d["links"]); ok = d["preview"] and n == int(sys.argv[2]); print("preview", "PASS" if ok else "FAIL", n, "of", sys.argv[2]); sys.exit(not ok)' "$STATE/r4-revert-preview.json" "${before##*|}"
+   test "$(counts)" = "$before" && echo "counts unchanged: $before"
    ssh -F "$STATE/ssh_config" hlm-deploy 'cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api hlm links backfill --project hlmemo --revert' </dev/null
    ```
 2. **Behaviour only** (the R4 code stays; the 0009 cache table stays and affects neither option).

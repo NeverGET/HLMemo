@@ -18,6 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -407,3 +411,95 @@ async def test_a_concurrent_reverse_link_is_seen_under_the_locks(connect, world:
     )
     assert live == [(b.logical_id, a.logical_id)]  # no 2-cycle, no duplicate
     assert await _counts(connect) == (before[0] + 1, before[1] + 1)  # the holder's link and event only
+
+
+# ------------------------------------------------------------------ the RUNBOOK's preview commands
+RUNBOOK = Path(__file__).resolve().parents[2] / "deploy" / "RUNBOOK.md"
+
+
+def _runbook_hlm(marker: str) -> list[str]:
+    """The ``hlm links backfill ...`` argv (without ``hlm``) of the RUNBOOK line holding ``marker``,
+    exactly as documented (the ssh/docker wrapper stripped)."""
+    (line,) = [ln for ln in RUNBOOK.read_text().splitlines() if marker in ln]
+    cmd = re.search(r"exec -T api (hlm links backfill [^']*)'", line)
+    assert cmd, line
+    return shlex.split(cmd.group(1))[1:]
+
+
+def _runbook_python(json_name: str) -> str:
+    """The documented ``python3 -c`` PASS predicate of the preview whose JSON is ``json_name``."""
+    (line,) = [ln for ln in RUNBOOK.read_text().splitlines() if "python3 -c" in ln and json_name in ln]
+    return shlex.split(line.strip())[2]
+
+
+def _runbook_counts_sql() -> str:
+    (line,) = [ln for ln in RUNBOOK.read_text().splitlines() if ln.startswith("psql ") and "--command=" in ln]
+    return shlex.split(line)[-1].removeprefix("--command=")
+
+
+async def test_the_runbook_preview_commands_run_as_documented(  # noqa: ANN001
+    db_dsn: str, connect, world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Astra 90 N-2 / Sol 90 N-1: the RUNBOOK's apply and revert previews, taken from the RUNBOOK
+    text (the real ``--dry-run`` flag; no ``--preview`` anywhere), run through the CLI with the DSN
+    from HLM_DB_DSN as in the api container: exit 0, the documented PASS predicate holds
+    (len(links) == the approved count / the live backfill link count of the ``counts`` query) and
+    the event and link counts are unchanged."""
+    from hlmemo.cli.hlm import app
+
+    text = RUNBOOK.read_text()
+    assert "--preview" not in text and "--dry-run --json" in text
+    v = await _seed(connect, world)
+    records = [
+        _proposal(v["D-020"], v["D-010"], SPAN, QUOTE),
+        _proposal(v["D-021"], v["D-011"], "The restore drill runs yearly", "now runs monthly"),
+    ]
+    approved = len(bf.candidates(records, MAIN))
+    proposals = tmp_path / "r4-links.jsonl"
+    proposals.write_text("".join(json.dumps(r) + "\n" for r in records))
+    sql = _runbook_counts_sql().replace("'hlmemo'", f"'{MAIN}'")
+
+    def argv(marker: str) -> list[str]:
+        subst = {"hlmemo": MAIN, "/tmp/r4-links.jsonl": str(proposals)}
+        return [subst.get(a, a) for a in _runbook_hlm(marker)]
+
+    async def counts() -> tuple[int, ...]:
+        ((events, links, backfill),) = await _rows(connect, sql)
+        return int(events), int(links), int(backfill)
+
+    monkeypatch.setenv("HLM_DB_DSN", db_dsn)
+    runner = CliRunner()
+
+    async def run(args: list[str], save_as: str | None = None) -> dict[str, Any]:
+        res = await asyncio.to_thread(runner.invoke, app, args)
+        assert res.exit_code == 0, res.output
+        if save_as is not None:  # the RUNBOOK saves the preview JSON for its predicate
+            await asyncio.to_thread((tmp_path / save_as).write_text, res.stdout)
+        return json.loads(res.stdout) if "--json" in args else {}
+
+    def predicate(json_name: str, expected: int) -> None:
+        proc = subprocess.run(
+            [sys.executable, "-c", _runbook_python(json_name), str(tmp_path / json_name), str(expected)],
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0 and proc.stdout.startswith("preview PASS"), proc.stdout + proc.stderr
+
+    apply_preview = argv("--apply --proposals /tmp/r4-links.jsonl --dry-run --json")
+    assert apply_preview[-2:] == ["--dry-run", "--json"] and "--apply" in apply_preview
+    before = await counts()
+    out = await run(apply_preview, "r4-links-preview.json")
+    assert out["preview"] is True and out["applied"] == 0 and len(out["links"]) == approved == 2
+    predicate("r4-links-preview.json", approved)
+    assert await counts() == before and before[2] == 0
+
+    await run(argv("--apply --proposals /tmp/r4-links.jsonl' "))  # the documented apply
+    live = await counts()
+    assert live[2] == approved and live[1] == before[1] + approved
+
+    revert_preview = argv("--revert --dry-run --json")
+    assert revert_preview[-3:] == ["--revert", "--dry-run", "--json"]
+    out = await run(revert_preview, "r4-revert-preview.json")
+    assert out["preview"] is True and out["reverted"] == 0 and len(out["links"]) == live[2]
+    predicate("r4-revert-preview.json", live[2])
+    assert await counts() == live  # nothing written by the revert preview
