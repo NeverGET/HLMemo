@@ -583,8 +583,7 @@ async def research_status(conn: AsyncConnection, settings: Any = None) -> dict[s
     outcome, of another profile than the configured writer) and ``writer_fallback_question_share_24h``.
     ``ops status`` warns when either share is above 10%. These 24 h numbers are operational only: a
     release decision counts the answers' own ``meta.flags.writer_fallback`` over its questions (it
-    also sees an expand JOB's fallback, whose ledger rows are ``research``, and a writer skipped
-    for an expired price, which writes no row)."""
+    also sees an expand JOB's fallback, whose ledger rows are ``research``)."""
     from hlmemo.config import get_settings
     from hlmemo.librarian.errors import LlmConfigError
     from hlmemo.librarian.tasks import research as rs
