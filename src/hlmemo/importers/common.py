@@ -166,12 +166,33 @@ def read_text(path: Path) -> tuple[str | None, str | None]:
 
 #: D-213 (a): an env-style assignment of a secret-named variable with a literal value
 #: (``MINIO_SECRET_KEY=abc12345``, any casing). The value is checked by ``_is_placeholder``.
-_ENV_ASSIGN_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.-]*(?:secret|password|passwd|token|api[_-]?key)[A-Za-z0-9_]*)"
-    r"[ \t]*=(?!=)[ \t]*[\"']?([^\s\"'`]{8,})"
+_ENV_ASSIGN_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9_.-]+)[ \t]*=(?!=)[ \t]*[\"']?([^\s\"'`]{8,})")
+#: (R4.1 review F-3, Sol F-5, Sol F-1) a name is a secret name by its COMPONENTS (split on ``_ . -`` and
+#: camelCase), never by a substring: ``MINIO_SECRET_KEY``, ``apiToken`` and ``HMAC_KEY`` are secret
+#: names; ``TOKENIZER_MODEL``, ``MAX_TOKENS``, ``TOKEN_BUDGET`` and ``KEYBOARD_LAYOUT`` are not.
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_NAME_SPLIT_RE = re.compile(r"[_.-]+")
+_SECRET_COMPONENTS = frozenset({"secret", "secrets", "password", "passwords", "passwd", "apikey"})
+#: ``token`` is a secret as the name's last component or before ``key/secret/value/string``
+_TOKEN_TAIL = frozenset({"key", "secret", "value", "string"})
+#: components that make a ``*_KEY`` name a non-credential (``PUBLIC_KEY``, ``SORT_KEY``)
+_NOT_KEY_COMPONENTS = frozenset({"public", "sort", "primary", "foreign", "partition", "cache", "routing"})
+#: variable names that hold a location, an id or a setting, not the secret (``HLM_TOKEN_FILE=/run/secrets/t``)
+_NOT_SECRET_NAME_RE = re.compile(
+    r"(?i)[_.-](?:file|path|dir|name|env|url|ttl|header|id|budget|limit|count|length|size|policy|mode|type)$"
 )
-#: variable names that hold a location or an id, not the secret (``HLM_TOKEN_FILE=/run/secrets/t``)
-_NOT_SECRET_NAME_RE = re.compile(r"(?i)_(?:file|path|dir|name|env|url|ttl|header|id)$")
+
+
+def _secret_name(name: str) -> bool:
+    parts = [p for p in _NAME_SPLIT_RE.split(_CAMEL_RE.sub("_", name).lower()) if p]
+    if any(p in _SECRET_COMPONENTS for p in parts):
+        return True
+    for i, p in enumerate(parts):
+        if p == "token" and (i == len(parts) - 1 or parts[i + 1] in _TOKEN_TAIL):
+            return True
+    return bool(parts) and parts[-1] == "key" and not _NOT_KEY_COMPONENTS.intersection(parts)
+
+
 _PLACEHOLDER_STARTS = (
     "<", "${", "$", "{", "*", "%", "env:", "changeme", "change-me", "change_me", "xxx", "your", "example",
     "placeholder", "redacted", "dummy", "todo", "none", "null", "false", "true", "secret-here", "..."
@@ -205,6 +226,8 @@ def _strong_password(value: str) -> bool:
 def _env_secret(text: str) -> bool:
     for m in _ENV_ASSIGN_RE.finditer(text):
         name, value = m.group(1), m.group(2)
+        if not _secret_name(name):
+            continue
         if not _NOT_SECRET_NAME_RE.search(name) and not _is_placeholder(value):
             return True
     return False

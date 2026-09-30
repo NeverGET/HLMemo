@@ -2451,18 +2451,31 @@ def _prose_keep(
 
 
 _NUM_ITEM = re.compile(r"^([ \t]*)(\d{1,3})([.)])(?=[ \t])")
+#: (R4.1 review F-2) "3. Ekim" / "1. März" / "2. May" is a date, not a list item
+_DATE_AFTER_NUM = re.compile(
+    r"^[ \t]*\d{1,3}\.[ \t]+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık"
+    r"|januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
+    r"|january|february|march|may|june|july|october|december)\b",
+    re.IGNORECASE,
+)
 
 
 def _renumber_items(claims: list[Claim]) -> None:
     """D-210: a numbered list (``1.`` / ``1)`` items) that lost items to the literal check stays
     consecutive: each kept item's number drops by the dropped items before it in the same list (so a
     list whose item 1 went starts at 1 again). A list ends where an item's number does not increase
-    (a new list). Unnumbered sentences and bullets are left as written."""
+    (a new list). Unnumbered sentences and bullets are left as written.
+    (R4.1 review F-2) A list is one contiguous block: any unit that starts a new line and is not a
+    numbered item ends it (so a later "3. Ekim" is never renumbered), and a date is not an item."""
     prev: int | None = None
     lost = 0
+    line_start = True
     for c in claims:
+        starts_line, line_start = line_start, c.line_end
         m = _NUM_ITEM.match(c.text)
-        if m is None:
+        if m is None or _DATE_AFTER_NUM.match(c.text):
+            if starts_line:
+                prev, lost = None, 0  # the list block ended
             continue
         n = int(m.group(2))
         if prev is not None and n <= prev:
@@ -2644,14 +2657,17 @@ def prose_check(
     return claims, reasons
 
 
-def _join_prose(kept: list[Claim], redact: Callable[[str], str]) -> str:
-    """The kept sentences in order, a line break where the answer had one."""
+def _join_prose(kept: list[Claim], redact: Callable[[str], str]) -> tuple[str, bool]:
+    """``(text, cut)``: the kept sentences in order, a line break where the answer had one, at most
+    ``ANSWER_MAX_CHARS``; ``cut`` when that limit really removed text (R4.1 review F-5: also when the
+    FIRST sentence or block alone is longer than the limit)."""
     parts: list[str] = []
     for i, c in enumerate(kept):
         if i:
             parts.append("\n" if kept[i - 1].line_end else " ")
         parts.append(c.text)
-    return redact("".join(parts))[:ANSWER_MAX_CHARS]
+    full = redact("".join(parts))
+    return full[:ANSWER_MAX_CHARS], len(full) > ANSWER_MAX_CHARS
 
 
 def assemble_prose(
@@ -2671,7 +2687,7 @@ def assemble_prose(
     closest ≤ 3: its sources, then its related)."""
     kept = [c for c in claims if c.state == "kept"]
     dropped = len(claims) - len(kept)
-    text = _join_prose(kept, redact) if status == ANSWERED else ""
+    text, cut = _join_prose(kept, redact) if status == ANSWERED else ("", False)
     if status != ANSWERED or not text.strip():
         hint = [*sources, *related_hint] if status == ANSWERED else related_hint
         closest = [h for h in dict.fromkeys(hint) if h in shown][:3]
@@ -2686,6 +2702,8 @@ def assemble_prose(
         for h in dict.fromkeys([*related_hint, *sources, *ranked[MAX_PRIMARY:], *shown])
         if h in shown and h not in primary
     ][:MAX_RELATED]
+    if cut:
+        extra["truncated"] = True  # (R4.1 review F-5)
     return Validated(
         ANSWERED, status, text, claims, primary, related, _lower(conf) if dropped else conf,
         dropped_sentences=dropped, sources=list(sources), **extra,

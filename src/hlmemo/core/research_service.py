@@ -1894,7 +1894,8 @@ async def _loop(run: _Run, t_start: Any, first: list[list[dict[str, Any]]]) -> d
 async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_start: Any) -> dict[str, Any]:
     shown = {e.handle: e for e in excerpts}
     handles = [*v.primary, *v.related, *(h for c in v.kept for h, _q in c.support)]
-    vids = sorted(run.sent | {shown[h].version_id for h in handles if h in shown})
+    # (R4.1 review F-1) the whole view is re-checked too: memory_as_of is computed from it
+    vids = sorted(run.sent | set(run.view) | {shown[h].version_id for h in handles if h in shown})
     returned = sorted({shown[h].version_id for h in handles if h in shown})
     async with run.db() as c:
         fresh = await run.fresh_ctx(c)  # E_AUTH / E_FORBIDDEN_PROJECT
@@ -2058,7 +2059,8 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
     run.flags["truncated"] = bool(answered and v.truncated)  # D-209 (_pack may also set it)
     # D-211: the horizon of the project's memory (the newest recorded_at of the view the question was
     # answered over: loaded once per request, no extra query); a stale one ends the answer with a line
-    as_of = memory_as_of(run.view.values())
+    # (R4.1 review F-1) only items still readable, active and current under the final grants
+    as_of = memory_as_of(it for vid, it in run.view.items() if vid in citable)
     out["meta"]["memory_as_of"] = as_of.isoformat() if as_of is not None else None
     if answered:
         line = freshness_line(as_of, t_start, f"{run.question}\n{out['answer']}")

@@ -70,3 +70,41 @@ def test_migration_0010_widens_the_outcome_check_and_round_trips(fresh_dsn: str)
         with pytest.raises(psycopg.errors.CheckViolation), conn.transaction():
             _insert(conn, "billing_or_quota")
     _alembic(fresh_dsn, "upgrade", "main@head")
+
+
+CHECK_SQL = (
+    "SELECT conname, convalidated, pg_get_constraintdef(oid) FROM pg_constraint"
+    " WHERE conrelid = 'llm_calls'::regclass AND contype = 'c' AND conname LIKE 'llm_calls_outcome_check%%'"
+    " ORDER BY conname"
+)
+
+
+def test_migration_0010_final_constraint_name_and_rerun_after_a_leftover(
+    fresh_dsn: str,  # noqa: F811
+) -> None:
+    """(R4.1 review Sol F-2) the staged swap ends with one validated ``llm_calls_outcome_check`` that
+    accepts the new value and has no ``_v2`` left; a leftover staged constraint (an interrupted run)
+    is replaced by the next run; downgrade is symmetric."""
+    _alembic(fresh_dsn, "upgrade", "0009_memory_map")
+    with psycopg.connect(fresh_dsn) as conn:
+        for o in OLD_OUTCOMES * 3:  # pre-existing rows the validation scan must pass over
+            _insert(conn, o)
+        # an interrupted earlier run: the staged constraint exists, NOT VALID, with a wrong value list
+        conn.execute(
+            "ALTER TABLE llm_calls ADD CONSTRAINT llm_calls_outcome_check_v2 CHECK (outcome = 'ok') NOT VALID"
+        )
+        conn.commit()
+    _alembic(fresh_dsn, "upgrade", "main@head")
+    with psycopg.connect(fresh_dsn) as conn:
+        rows = conn.execute(CHECK_SQL).fetchall()
+        assert [(r[0], r[1]) for r in rows] == [("llm_calls_outcome_check", True)]
+        assert "billing_or_quota" in rows[0][2]
+        _insert(conn, "billing_or_quota")  # the new value is accepted
+        assert conn.execute("SELECT count(*) FROM llm_calls").fetchone()[0] == len(OLD_OUTCOMES) * 3 + 1
+        conn.commit()
+    _alembic(fresh_dsn, "downgrade", "0009_memory_map")
+    with psycopg.connect(fresh_dsn) as conn:
+        rows = conn.execute(CHECK_SQL).fetchall()
+        assert [(r[0], r[1]) for r in rows] == [("llm_calls_outcome_check", True)]
+        assert "billing_or_quota" not in rows[0][2]
+        assert conn.execute("SELECT count(*) FROM llm_calls").fetchone()[0] == len(OLD_OUTCOMES) * 3 + 1

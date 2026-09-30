@@ -127,7 +127,9 @@ async def probe(settings: Any, *, transport: httpx.AsyncBaseTransport | None = N
     out["latency_ms"] = _ms(t0)
     out["status"] = resp.status_code
     if resp.status_code != 200:
-        if is_billing_or_quota(resp.status_code, resp.content):  # D-212: an ops problem, named as such
+        if is_billing_or_quota(
+            resp.status_code, resp.content, resp.headers.get("retry-after")
+        ):  # D-212: an ops problem, named as such
             out["status"] = BILLING_OR_QUOTA
         return out
     try:
