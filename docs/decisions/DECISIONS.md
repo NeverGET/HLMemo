@@ -1599,3 +1599,28 @@ Prod:
 - §4.6 applied over IPv6 SSH: 252 explicit links (event 2334) + 119 backfill links (event 2335), with the librarian stopped. Prod's link set equals the replica's.
 - An AAAA record for mcp.hlmemo.com was added with the owner's OK. This Mac's IPv4 route is broken; IPv6 exposes the same ports (80/443/22).
 - The owner's KEEP/REVERT decision is pending a real-use session via MCP.
+D-202 | 2026-09-30 | ACCEPTED (measurement) | **Prod smoke PASS and a first-hand real-use session: the orchestrator used HLMemo's `memory.ask` directly from Claude Code (prod, via the new AAAA/IPv6 path) for 11 genuine working questions. The answers are accurate, deep and verbatim-cited, and they handle supersession well. Four concrete defects surfaced.**
+
+Smoke and ops:
+- 11/11 answered by google-gemini38-flash-medium, 0 writer fallbacks.
+- Latency 18–33 s typical, one 63 s outlier; $0.017–0.029 typical, one $0.071 outlier (the refine loop on a question the memory could not answer).
+- Rerank timed out on 2 of the first 3 questions (luna slow at the provider).
+
+Quality (checked against the repo/RUNBOOK by the orchestrator; spot drilldowns match verbatim):
+- **Correct and useful:**
+  - embeddings (D-008, and D-040 reversed by D-042);
+  - the risk_check schema and judges (D-066/071/094);
+  - the deploy + gates procedure;
+  - rollback, with a larger budget;
+  - why Postgres/pgvector (D-006);
+  - the query rewrite shelved (D-116);
+  - the SLA question: a clean "not in memory".
+- **Borderline:** the librarian retry count, where "4 defer events" was read as "4 retries".
+
+Defects found:
+1. **Silent truncation.** At the default token_budget 3000 a procedural answer (deploy → rollback) was cut after the "3. How to Roll Back" heading, with no marker; the budget used was 2992/3000. Fix: a truncation flag/marker, and/or a larger default budget for memory.ask.
+2. **The first list item gets dropped.** The literal validator removes the first item of a numbered list, so the answer starts at "2.". Reproduced 3× (final-test H013; the rollback answer; the query-rewrite answer), with `dropped_literal: 1`. Fix: renumber or keep a lead-in when a claim is dropped.
+3. **Freshness gap (dogfooding).** Prod memory stops at D-131 (2026-09-26); nothing was written since the migration. Answers about R4 or the current writer are stale (e.g. "memory.ask is not in production") and carry no "as of" horizon. Fix: resume the D-125 dogfooding writes (memory.write / call_the_day each session), plus an "as of <latest recorded_at>" line on status-type answers.
+4. **Project hygiene.** The hlmemo project card is still the D-015 skeleton ("no summary yet"), and the librarian has 178 pending questions.
+
+Comparison: `memory.query` with a drilldown returned the right RUNBOOK chunk as the top hit, far faster. `memory.ask` adds synthesis and citations at ~25 s and ~$0.02.
