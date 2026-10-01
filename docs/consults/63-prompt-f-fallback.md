@@ -1,6 +1,6 @@
 # Consult 63 — routine check (D-085, astra-low): workstream F, per-task fallback profiles
 
-Your cwd is a clean export of ed88f80 (no .git, no secrets). `F.patch` is the diff from main to ed88f80. Spec: the D-093/D-094 rows in docs/decisions/DECISIONS.md, plus D-017, D-071 and D-084. Read-only.
+Your cwd is a clean export of e7413d7 (no .git, no secrets). `F.patch` is the diff from main to e7413d7. Spec: the D-093/D-094 rows in docs/decisions/DECISIONS.md, plus D-017, D-071 and D-084. Read-only.
 
 ## Claims to verify
 - **Config:** `HLM_FALLBACK_PROFILE` is the default. Per-task overrides come from `HLM_FALLBACK_PROFILE__<TASK>` (env) or `[hlm] fallback_profile__<task>`, are resolved by `profile_chain`, and are swapped in per call by `Provider.chain_for`. There is no hard-coded task list, and no model id appears outside profiles/ (D-017).

@@ -24,7 +24,7 @@ Sol F-5 | CLOSED | `src/hlmemo/importers/common.py:169-193`; negative regression
 
 ### N-1 — CRITICAL — T2 — `src/hlmemo/importers/common.py:173-193`
 
-**Scenario:** The component-based fix suppresses genuine credential names. Files containing `PRIMARY_API_KEY=Abcd1234!`, `CACHE_API_KEY=...`, `ACCESS_TOKEN_PROD=...`, `APIToken=...`, or `JWTToken=...` pass `secret_hit`, can be imported into memory, and can later reach a provider. These cases were caught at `0821f98`; they return `None` at `2cad563`.
+**Scenario:** The component-based fix suppresses genuine credential names. Files containing `PRIMARY_API_KEY=Abcd1234!`, `CACHE_API_KEY=...`, `ACCESS_TOKEN_PROD=...`, `APIToken=...`, or `JWTToken=...` pass `secret_hit`, can be imported into memory, and can later reach a provider. These cases were caught at `14cba80`; they return `None` at `a77abee`.
 
 > `_NOT_KEY_COMPONENTS = frozenset({"public", "sort", "primary", "foreign", "partition", "cache", "routing"})`  
 > `return bool(parts) and parts[-1] == "key" and not _NOT_KEY_COMPONENTS.intersection(parts)`
@@ -62,7 +62,7 @@ A temporary PostgreSQL reproducer produced `CheckViolation` with both `http_erro
 - **Upgrade death/re-run: PASS by inspection and staged-leftover test.** Death after add or validate leaves the old constraint plus `_v2`; rerun drops and recreates `_v2`. Death after the final swap but before Alembic stamps 0010 leaves version 0009 with the new canonical constraint; rerun remains idempotent.
 - **Final swap atomicity: PASS.** A live PostgreSQL fault test made the rename fail after the drop statement; the old constraint remained, proving the two-command string rolled back atomically.
 - **Downgrade symmetry: PARTIAL.** The constraint swap itself is symmetric and rerunnable, but the separately committed data update creates N-2. With writers quiesced, rerunning reaches the intended state.
-- **R4 rollback to `5025db5`: PASS for the documented path.** `deploy.sh --rollback` stops writers, selects the previous code/image, and restores the recorded pre-upgrade dump before starting R4 (`deploy/RUNBOOK.md:968-989`). This restores schema 0009 and pre-upgrade rows. A code-only checkout is not an equivalent rollback.
+- **R4 rollback to `a11f8cf`: PASS for the documented path.** `deploy.sh --rollback` stops writers, selects the previous code/image, and restores the recorded pre-upgrade dump before starting R4 (`deploy/RUNBOOK.md:968-989`). This restores schema 0009 and pre-upgrade rows. A code-only checkout is not an equivalent rollback.
 - **Verification:** 166 related unit tests passed; both live PostgreSQL 0010 integration tests passed; affected-file Ruff checks passed. No production rollback or kill-at-every-boundary drill was performed.
 
 ## Residual risks
@@ -73,7 +73,7 @@ R-2 | ACCEPT / REJECT | An interrupted/manual downgrade can leave version 0010 w
 
 R-3 | ACCEPT / REJECT | `VALIDATE` and the downgrade normalization update have no total-duration timeout; maintenance time can grow with the ledger.
 
-R-4 | ACCEPT / REJECT | Full rollback to `5025db5` intentionally discards writes made after the pre-upgrade dump.
+R-4 | ACCEPT / REJECT | Full rollback to `a11f8cf` intentionally discards writes made after the pre-upgrade dump.
 
 R-5 | ACCEPT / REJECT | Crash recovery was inspected and partially fault-tested, but no OS-level kill was injected at every migration boundary.
 

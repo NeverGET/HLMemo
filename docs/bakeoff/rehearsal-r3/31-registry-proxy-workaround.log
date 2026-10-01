@@ -10,5 +10,5 @@ hlmemo-prod-db-1 Up 4 seconds (health: starting)
 docker.io/pgvector/pgvector:0.8.6-pg17
 docker.io/library/caddy:2.11.2-alpine
 registry-ok
-checkout 6902f91e7a79; api image revision 6902f91e7a79; llm.env=present; release marker: none
+checkout 25bd4654a67c; api image revision 25bd4654a67c; llm.env=present; release marker: none
 RESULT librarian PASS llm.env=present enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna

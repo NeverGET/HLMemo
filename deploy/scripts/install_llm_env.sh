@@ -24,7 +24,7 @@
 # R4 R-3: --release-template REF|PATH installs ANOTHER release's template (the behaviour-only rollback:
 # the R3 template on the R4 code, research OFF): PATH, an existing file, is used as it is; otherwise
 # REF is a commit of THIS checkout and the template is REF:deploy/llm.env.example (git show; e.g. the
-# R3 commit 805f4cd). The release marker (its HLM_ENV_RELEASE, checked with evaluate --release rN),
+# R3 commit c98ec0a). The release marker (its HLM_ENV_RELEASE, checked with evaluate --release rN),
 # the default fallback, the writer and the CAPS come from that template: its caps are installed
 # explicitly (never the installed ones, which may be another release's: R4's MONTH 60 would fail the
 # R3 manifest's MONTH <= 10 and leave the env_switch journal open); the installed keys are kept
@@ -80,7 +80,7 @@ if [[ -n $release_template ]]; then
     (cd "$REPO_ROOT" && git show "$release_template:deploy/llm.env.example") > "$template" 2>/dev/null </dev/null ||
       die "--release-template $release_template: no such file, and not a commit of this checkout with deploy/llm.env.example"
   else
-    die "--release-template needs a commit of this checkout (e.g. the R3 release 805f4cd) or a template file"
+    die "--release-template needs a commit of this checkout (e.g. the R3 release c98ec0a) or a template file"
   fi
   # R-3: that template's caps, explicitly; the installed keys are kept (unless reset)
   [[ $operator == reset ]] || operator=keys

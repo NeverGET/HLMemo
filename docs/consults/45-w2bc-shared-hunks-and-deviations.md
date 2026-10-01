@@ -5,7 +5,7 @@
 > references and `test_solNN_*` names in W2b code were renumbered the same way. Commit messages
 > on the W2b branch keep the old numbers ("Sol 41 fixes" = consult 44, "Sol 43" = 46, "Sol 44" = 47).
 
-Branch `worktree-agent-a06aaf3159b7fb21f` (from main a77179a). Owned paths: `librarian/tasks/{write_review,
+Branch `worktree-agent-a06aaf3159b7fb21f` (from main 291b5fb). Owned paths: `librarian/tasks/{write_review,
 apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py`, `db/librarian_queries.py`,
 `server/tools/answer.py`, `ops/librarian.py`, prompts `place|relate|relate_verify/v1`, `alembic/versions/0008_librarian_tasks.py`,
 `eval/live/run_w2b.py`, `eval/realdata/run_librarian_eval.py`, tests `test_w2b_*`, `test_w2c_*`, `test_gp1_*`,
@@ -53,7 +53,7 @@ apply_batch,pair_check}.py`, `librarian/{guards,candidates,trigger,questions}.py
 4. High-impact (contradicts+supersedes, cross-project dup/refine → widen) needs an independent verifier call (decomposed same_subject/conflict/current, other profile) to agree before anything is raised; disagreement downgrades or drops, both calls audited.
 5. Abstention is the prompts' default ("none" when unsure), counted in the audit and scored in G-LIVE-B.
 
-## Consult 44 (gpt-6-sol, verdict NO) — resolution (commit 78b25d5 + 6d2c247)
+## Consult 44 (gpt-6-sol, verdict NO) — resolution (commit 2dcc4d2 + 1d4cc6b)
 | # | Finding | Resolution |
 |---|---|---|
 | 1 | answer note leaks into global working memory | rule text is template-only; note only in `answer` + the re-plan job; `readable_rules` filters rules by ref readability (`test_sol44_rules_with_unreadable_refs_are_not_loaded`, `test_gq1_*`) |

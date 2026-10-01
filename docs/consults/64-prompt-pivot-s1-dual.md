@@ -1,6 +1,6 @@
 # Consult 64 — CRITICAL dual review (D-085): pivot-s1-r3 = slice 1 of the English pivot (query rewrite + source cap) on current main
 
-Your cwd is a clean export of c91ee72 (no .git, no secrets). `PIVOT-S1.patch` is the diff from main f8c13d8 to c91ee72; COMMITS.txt lists the commits. Read the rows D-081, D-082, D-088, D-090, D-087 and D-083 in docs/decisions/DECISIONS.md. The earlier reviews are docs/consults/58-*-review-l-pivot.md; they covered slice 1 and slice 2 together, and only slice 1 ships here.
+Your cwd is a clean export of c91ee72 (no .git, no secrets). `PIVOT-S1.patch` is the diff from main 37624ff to c91ee72; COMMITS.txt lists the commits. Read the rows D-081, D-082, D-088, D-090, D-087 and D-083 in docs/decisions/DECISIONS.md. The earlier reviews are docs/consults/58-*-review-l-pivot.md; they covered slice 1 and slice 2 together, and only slice 1 ships here.
 
 This ships in release R3 with **HLM_QUERY_REWRITE ON** in production, and HLM_RETRIEVAL_SOURCE_CAP OFF. Read-only; do not modify files.
 
@@ -24,7 +24,7 @@ This ships in release R3 with **HLM_QUERY_REWRITE ON** in production, and HLM_RE
   - Does the English rewrite branch respect exactly the same scope/visibility filters as the original query?
 - **Correctness:**
   - Does the rewrite guard (after B1) still protect every real identifier/path/command/flag? Try to construct a rewrite that changes one and is accepted.
-  - Is the flag-off byte-identity true, including the D-087 demotion order change when the cap is off? Is the D-087 guarantee (rank_new ≤ max(baseline, 6a96ba1)) preserved when the cap is on?
+  - Is the flag-off byte-identity true, including the D-087 demotion order change when the cap is off? Is the D-087 guarantee (rank_new ≤ max(baseline, c0e3138)) preserved when the cap is on?
 - **Availability:**
   - Can a slow or failing provider, or a flood of distinct non-English queries, block queries, grow memory without bound, or exhaust the spend guard for the librarian? Check the cache bounds, the number of concurrent tasks and the deadline.
   - Is `pending` handled without blocking?

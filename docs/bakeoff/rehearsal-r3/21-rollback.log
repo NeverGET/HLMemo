@@ -1,7 +1,7 @@
 # 2026-09-25T17:01:59Z §8.1 drill (a): PATH=$S/bin:$PATH deploy.sh --rollback hlm-deploy   (NO manual env change; env before: HLM_FALLBACK_PROFILE=openrouter-glm53-flash HLM_ENV_RELEASE=r3 )
 rollback start epoch 1790355719.065228000
 Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.pCjBGiC0/log (final exit code: /opt/hlmemo/.deploy-runs/run.pCjBGiC0/status)
-Rollback validated: 805f4cd2955b -> 6902f91e7a79 (image hlmemo:6902f91e7a79 = sha256:4e3eb71981bae2d420177d9fad04d6baf746, dump /var/backups/hlmemo/pre-upgrade/6902f91e7a79-2026-09-25T134404Z-mOXc1s.dump)
+Rollback validated: c98ec0aeed33 -> 25bd4654a67c (image hlmemo:25bd4654a67c = sha256:4e3eb71981bae2d420177d9fad04d6baf746, dump /var/backups/hlmemo/pre-upgrade/25bd4654a67c-2026-09-25T134404Z-mOXc1s.dump)
  Container hlmemo-prod-caddy-1 Stopping 
  Container hlmemo-prod-worker-1 Stopping 
  Container hlmemo-prod-caddy-1 Stopped 
@@ -14,19 +14,19 @@ Saved the current database before replacing it: /var/backups/hlmemo/daily/hlmemo
 Warning: you are leaving 147 commits behind, not connected to
 any of your branches:
 
-  805f4cd D-123: owner accepts R3 behind VPS snapshot; T gates R4
-  dc2687a Merge r3-tooling: env-aware release state, manifest cutover check, crash journals, prod budget 10/2/1 (reviews 75/77; residual per D-122)
-  faf1593 D-122 (PROPOSED): tooling crash-safety deeper than one round; R3 behind a VPS-snapshot safety net
-  404c0da consult 77 prompt: release-gating review of r3-tooling fixes
+  c98ec0a D-123: owner accepts R3 behind VPS snapshot; T gates R4
+  523171a Merge r3-tooling: env-aware release state, manifest cutover check, crash journals, prod budget 10/2/1 (reviews 75/77; residual per D-122)
+  191f261 D-122 (PROPOSED): tooling crash-safety deeper than one round; R3 behind a VPS-snapshot safety net
+  37e2ee4 consult 77 prompt: release-gating review of r3-tooling fixes
  ... and 143 more.
 
 If you want to keep them by creating a new branch, this may be a good time
 to do so with:
 
- git branch <new-branch-name> 805f4cd
+ git branch <new-branch-name> c98ec0a
 
-HEAD is now at 6902f91 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
-llm.env: restored /etc/hlmemo/llm.env from llm.env.release-6902f91e7a79
+HEAD is now at 25bd465 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
+llm.env: restored /etc/hlmemo/llm.env from llm.env.release-25bd4654a67c
  Container hlmemo-prod-db-1 Running 
  Container hlmemo-prod-db-1 Waiting 
  Container hlmemo-prod-db-1 Healthy 
@@ -63,9 +63,9 @@ llm.env: restored /etc/hlmemo/llm.env from llm.env.release-6902f91e7a79
  Container hlmemo-prod-worker-1 Healthy 
  Container hlmemo-prod-librarian-1 Healthy 
  Container hlmemo-prod-caddy-1 Healthy 
-deleted llm.env.release-6902f91e7a79 (journalled secret-bearing copy)
-deleted llm.env.release-805f4cd2955b (journalled secret-bearing copy)
-Rollback complete: 6902f91e7a79 is running again (image sha256:4e3eb71981bae2d420177d9fad04d6baf746). Saved database of 805f4cd2955b: /var/backups/hlmemo/daily/hlmemo-2026-09-25T170201Z-xqLYAI.dump
+deleted llm.env.release-25bd4654a67c (journalled secret-bearing copy)
+deleted llm.env.release-c98ec0aeed33 (journalled secret-bearing copy)
+Rollback complete: 25bd4654a67c is running again (image sha256:4e3eb71981bae2d420177d9fad04d6baf746). Saved database of c98ec0aeed33: /var/backups/hlmemo/daily/hlmemo-2026-09-25T170201Z-xqLYAI.dump
 
 rc=0
 rollback end epoch 1790355737.407496000

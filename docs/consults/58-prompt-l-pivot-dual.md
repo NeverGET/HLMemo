@@ -1,6 +1,6 @@
 # Consult 58 — CRITICAL dual review (D-085): English retrieval pivot, branch L
 
-You are reviewing branch `worktree-agent-a143819e825766fb8` (your cwd is its worktree). The diff range is `8b692b2..d3ce0ac`, two commits:
+You are reviewing branch `worktree-agent-a143819e825766fb8` (your cwd is its worktree). The diff range is `417033c..d3ce0ac`, two commits:
 - `d5c8209`: slice 1 — per-source top-5 cap + guarded English query rewrite, behind flags.
 - `d3ce0ac`: slice 2 — English index renditions, migration `0009_language_pivot` with down_revision `0008_librarian_tasks`, behind a flag.
 

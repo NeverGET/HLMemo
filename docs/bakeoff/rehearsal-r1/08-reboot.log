@@ -7,9 +7,9 @@ NOTE: guest SSH host key changed across limactl stop/start (lima regenerates key
 scan=SHA256:rMItzKj+VYZ6GVWBRJFXD5Tfzt9k7oC0o15WgjEYv7A guestfile=SHA256:rMItzKj+VYZ6GVWBRJFXD5Tfzt9k7oC0o15WgjEYv7A
 re-pinned
 boot: 2026-09-23 18:39:31
-hlmemo-prod-worker-1 hlmemo:fa24ca5a0d87 Up 7 minutes (healthy)
-hlmemo-prod-librarian-1 hlmemo:fa24ca5a0d87 Up 7 minutes (healthy)
-hlmemo-prod-api-1 hlmemo:fa24ca5a0d87 Up 7 minutes (healthy)
+hlmemo-prod-worker-1 hlmemo:6cb48a9b39fd Up 7 minutes (healthy)
+hlmemo-prod-librarian-1 hlmemo:6cb48a9b39fd Up 7 minutes (healthy)
+hlmemo-prod-api-1 hlmemo:6cb48a9b39fd Up 7 minutes (healthy)
 hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 7 minutes (healthy)
 hlmemo-prod-migrate-1 hlmemo:912f2d39247a Exited (0) 11 minutes ago
 hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 7 minutes (healthy)

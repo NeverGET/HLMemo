@@ -1,7 +1,7 @@
 # HLMemo — First E2E Production Test Report (R2)
 
 Date: 2026-09-24 (overnight run 01:07–08:00 +03). Author: orchestrator (Claude Opus 5.5), with Claude subagents as implementers, codex gpt-6-sol as adversarial reviewer, and neutral verifiers.
-Status: **R2 is LIVE** at https://mcp.hlmemo.com (commit 6902f91, D-079). The librarian runs **ON in the OBSERVER role** (it proposes, never mutates). HLMemo's own memory was imported as a **TEST** into the separate project `hlmemo-e2e`, which is wiped before the final release.
+Status: **R2 is LIVE** at https://mcp.hlmemo.com (commit 25bd465, D-079). The librarian runs **ON in the OBSERVER role** (it proposes, never mutates). HLMemo's own memory was imported as a **TEST** into the separate project `hlmemo-e2e`, which is wiped before the final release.
 
 ---
 
@@ -55,8 +55,8 @@ Every branch had its own worktree and DB, a Sol review, and at least one fix rou
 
 ## 4. Release path
 
-1. VM rehearsal of R2 (ref 3535bcc) on the 2 vCPU / 8 GiB Ubuntu 26.04 VM: ALL PASS. Cutover 81 s (downtime 12 s); G-L3 as above; a 50-file import burst (207 items, query p95 217 ms over 6,973 queries, 0 errors; the 207 priority-6 jobs drained in 35 min without starving priority-3 jobs; +$0.27); observer safety: 829 proposals, 0 applied, 0 links/closes; kill switch ~3 s; reboot recovery. Evidence: docs/bakeoff/rehearsal-r2/.
-2. The final ref (6902f91) added only app-level fixes (W2e + Sol 49/51/52 + the ledger deadline). The deploy path and compose (sha256 99fecbf4…) were unchanged, so there was no second VM pass; the full local suite gated it.
+1. VM rehearsal of R2 (ref 1de5890) on the 2 vCPU / 8 GiB Ubuntu 26.04 VM: ALL PASS. Cutover 81 s (downtime 12 s); G-L3 as above; a 50-file import burst (207 items, query p95 217 ms over 6,973 queries, 0 errors; the 207 priority-6 jobs drained in 35 min without starving priority-3 jobs; +$0.27); observer safety: 829 proposals, 0 applied, 0 links/closes; kill switch ~3 s; reboot recovery. Evidence: docs/bakeoff/rehearsal-r2/.
+2. The final ref (25bd465) added only app-level fixes (W2e + Sol 49/51/52 + the ledger deadline). The deploy path and compose (sha256 99fecbf4…) were unchanged, so there was no second VM pass; the full local suite gated it.
 3. Production: `install_llm_env.sh` (0600, observer, luna) → `deploy.sh --accept-compose-change` EXIT 0 (0006 → 0007 → 0008; in-deploy and public route checks PASS; librarian check PASS, heartbeat 6.7 s) → `remote_gates --librarian` 10/10 PASS (risk-check judged=true; a librarian job in 8 s, observer, 0 mutations; WAN p50 134 / p95 161 ms).
 
 ## 5. E2E production test (HLMemo self-import, TEST)

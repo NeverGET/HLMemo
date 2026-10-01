@@ -1,9 +1,9 @@
 # 2026-09-25T13:41:37Z §0.1 preconditions
 state dir targets the VM only (127.0.0.1:2223)
-HEAD 52e652c585b7edf807c60e353d287bcfdef96879
-805f4cd2955b83c258678cf901a32a605ea88f9c D-123: owner accepts R3 behind VPS snapshot; T gates R4
+HEAD 04ec0cbf82492be0c5e82ee57442a0c467243787
+c98ec0aeed33330c54644687d940278d4b2a90d6 D-123: owner accepts R3 behind VPS snapshot; T gates R4
 on origin: origin/HEAD->origin/main origin/main 
--- code-only check vs R2 6902f91 (alembic, compose, Dockerfile, pyproject, uv.lock, models.lock, deploy.sh) [empty = unchanged]:
+-- code-only check vs R2 25bd465 (alembic, compose, Dockerfile, pyproject, uv.lock, models.lock, deploy.sh) [empty = unchanged]:
 compose sha256 99fecbf403cf64031f339986b5bf1289d4da2a32a47ddfad3af43dc11a710a7a; alembic head alembic/versions/0008_librarian_tasks.py
 -- release tooling diff vs R2:
  deploy/RUNBOOK.md                        |  67 +++++++-

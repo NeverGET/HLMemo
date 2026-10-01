@@ -16,8 +16,8 @@ Owner directions (2026-09-29):
 - curated supersession links are placed on the prod memory before the test.
 Gates relaxed or waived by the owner are listed in §9.
 
-## 0. Current state (facts, file:line on wf-memory-ask 8d36f74 = "W", unless marked)
-- **Prod:** R3 = 805f4cd on Hostinger VM 2002259 (the ONLY VM we may touch; 4 other VPSs, including a mail server, are off-limits).
+## 0. Current state (facts, file:line on wf-memory-ask 372abdd = "W", unless marked)
+- **Prod:** R3 = c98ec0a on Hostinger VM 2002259 (the ONLY VM we may touch; 4 other VPSs, including a mail server, are off-limits).
   - URL https://mcp.hlmemo.com; alembic head 0008.
   - Caps HOUR 1 / DAY 2 / MONTH 10 USD; OpenRouter prod key limit $50/month.
   - llm.env at /etc/hlmemo/llm.env, with env_file on api + librarian only.
@@ -47,10 +47,10 @@ Gates relaxed or waived by the owner are listed in §9.
   - **B9:** Hostinger keeps ONE snapshot per VM, and a new snapshot overwrites the old one. The R3 snapshot 377499 has expired.
   - **B10:** a rollback (`deploy.sh --rollback`) restores the previous commit, image, llm.env snapshot AND the quiesced DB dump. Writes after the deploy (including the prod links) are lost; there is no PITR.
 
-## 1. Scope of R4 (release candidate = branch `r4-rc`: W 8d36f74 + the merges of `r4-code` and `r4-deploy`)
+## 1. Scope of R4 (release candidate = branch `r4-rc`: W 372abdd + the merges of `r4-code` and `r4-deploy`)
 Code commits, each with tests; no behaviour change when the new settings are at their defaults.
 
-**Implementation split (v2, in progress).** Both branches start from W 8d36f74. Each is merged into `r4-rc` only after its own gate passes (§2.1).
+**Implementation split (v2, in progress).** Both branches start from W 372abdd. Each is merged into `r4-rc` only after its own gate passes (§2.1).
 - **`r4-code`** (src, profiles, tests) owns: §1.1 cost normalization (B1/R-8); §1.2 configurable limits (B2/B3) with expand kept at 1500 (R-17); §1.3 the two Gemini profiles with `price_valid_until` (R-5); §1.8 the writer retry budget and schema-fail fallback to luna (R-9); §1.9 the writer counters in ops status (R-6); the `python -m hlmemo.ops probe-writer` command of §1.4 (R-14); §1.6 the backfill CLI port with project checks under lock (R-1/R-12); the R-10 load-gate integration test (§2.1).
 - **`r4-deploy`** (deploy, RUNBOOK) owns: §1.4 installer and template (B5), FINGERPRINT_KEYS (R-4) and the check_librarian r4 manifest with the trace-dir FAIL (R-11), probe-writer in evaluate (R-14) and the price-date FAIL/WARN (R-5); §1.5 the R4 template values and `_BUDGETS_R4`; §1.10 the behaviour-only rollback via `install_llm_env.sh --release-template` with R3-compatible caps (R-3), the protection of the rollback safety dump with fail-closed recovery (R-2), and the review-77 residuals list; §1.7 the RUNBOOK R4 section.
 
@@ -136,7 +136,7 @@ Code commits, each with tests; no behaviour change when the new settings are at 
    | Step | Action | Pass predicate |
    |---|---|---|
    | 0. Target is local | Inspect the state dir before anything else | `ssh -G -F deploy/.local/local-r4/ssh_config hlm-deploy \| grep '^hostname '` is a loopback or private local address; no file under `deploy/.local/local-r4/` contains `153.92.1.166` or `mcp.hlmemo.com`; the state dir is not `deploy/.local/153.92.1.166` |
-   | 1. Stack | On the VM: deploy R3 805f4cd; restore a prod-shaped export (the replica copy; the §3.1 export once it exists) with `deploy/backup/restore.sh DUMP --yes`; deploy the `r4-rc` merge commit with `deploy.sh <local target> <r4-rc full SHA> <local repository URL>` (the optional REPOSITORY_URL argument, so nothing is pushed before §2.3); apply the curated links with the §4.6 commands | /ready 200; the running commit = `git rev-parse r4-rc`; alembic head 0009; live `by=backfill` links in hlmemo = the approved proposal count |
+   | 1. Stack | On the VM: deploy R3 c98ec0a; restore a prod-shaped export (the replica copy; the §3.1 export once it exists) with `deploy/backup/restore.sh DUMP --yes`; deploy the `r4-rc` merge commit with `deploy.sh <local target> <r4-rc full SHA> <local repository URL>` (the optional REPOSITORY_URL argument, so nothing is pushed before §2.3); apply the curated links with the §4.6 commands | /ready 200; the running commit = `git rev-parse r4-rc`; alembic head 0009; live `by=backfill` links in hlmemo = the approved proposal count |
    | 2. Env | `install_llm_env.sh --state deploy/.local/local-r4 --key-file <temp 0600 file> --reset-operator-values` from the r4-rc checkout (R4 template) | exit 0; llm.env mode 0600; only key names printed; the sha256 prefix of the installed GEMINI_API_KEY equals the key file's |
    | 3. Evaluate | `check_librarian evaluate --release r4` | PASS, including probe-writer PASS (one real Google call, ≈ $0.0001), trace dir empty, price date valid, fingerprint reported by api and librarian |
    | 4. Gates | `remote_gates.sh --url https://<local host:port> --state deploy/.local/local-r4 --insecure --librarian` (Caddy internal CA; drill ON, the data is disposable), plus `postgres-closed` | every gate PASS (SKIP only where the release has no subcommand) |
@@ -144,7 +144,7 @@ Code commits, each with tests; no behaviour change when the new settings are at 
    | 6. Status | `hlm_ops.sh --state deploy/.local/local-r4 status` | `writer_used_24h` ≥ 5 for google-gemini38-flash-medium; `writer_fallback_24h` = 0; `writer_outcomes_24h` present |
    | 7. Links revert rehearsal (R-7) | The exact §6.1 command on the VM, first with `--dry-run --json` (the RUNBOOK's revert preview and its PASS one-liner); then the same command without `--project`; then re-apply (step 1) | the revert exits 0, writes one `link_supersede` event, leaves 0 live `by=backfill` links in hlmemo; without `--project` it exits 64; the re-apply restores the count |
    | 8. Behaviour-only rollback rehearsal | §6.2(a): the R3 template on the R4 code via `install_llm_env.sh --release-template` | `check_librarian evaluate --release r3` PASS; memory.ask off; caps ≤ 1 / 2 / 10; keys preserved (sha256 prefix); env_switch journal empty. Then reinstall R4 (step 2) and re-run step 3: PASS |
-   | 9. Full rollback rehearsal | `deploy.sh --rollback <local target>` | the VM runs 805f4cd with the R3 image and the R3 llm.env; the pre-R4 dump is restored (alembic head 0008, 0 backfill links); /ready 200; `check_librarian evaluate --release r3` PASS; the rollback journal is closed |
+   | 9. Full rollback rehearsal | `deploy.sh --rollback <local target>` | the VM runs c98ec0a with the R3 image and the R3 llm.env; the pre-R4 dump is restored (alembic head 0008, 0 backfill links); /ready 200; `check_librarian evaluate --release r3` PASS; the rollback journal is closed |
 3. **Pre-push checks (v2, R-15).** (corrected v2: v1 scanned main + r4-rc only as a secret scan; a public push publishes every blob in the pushed history, including deleted or now-ignored files.) Before pushing `main` and `r4-rc` to the PUBLIC origin, all of these pass:
    1. `gitleaks detect --source . --redact --log-opts="--full-history main r4-rc"` over the FULL history of both refs, not just the diff: exit 0. There is no `.gitleaks.toml` at the repo root, so the default rules apply with no allowlist.
    2. `git ls-files docs/private deploy/.local` prints nothing, and `git log --format=%H main r4-rc -- docs/private deploy/.local` prints nothing (no private path in the history either).
@@ -320,7 +320,7 @@ Checklist items answered NO or PARTIAL in consult 89:
 - Reviewer: codex gpt-6-astra, reasoning high, as in round 1. The threat model (§7) and the severity rubric (§8) stay fixed.
 - Scope, and ONLY this:
   1. the §10 dispositions: does each fix close its finding, and does the named test or check prove it;
-  2. the branch diffs `git diff 8d36f74..r4-code` and `git diff 8d36f74..r4-deploy`, and the `r4-rc` merge result.
+  2. the branch diffs `git diff 372abdd..r4-code` and `git diff 372abdd..r4-deploy`, and the `r4-rc` merge result.
 - Out of scope: the owner's recorded decisions (§9), the writer choice, and new features.
 - A HIGH finding needs a test that reproduces it.
 - Max 2 rounds in total (D-125): round 2 is the last one. After round 2 the owner accepts or rejects the residual risk explicitly, recorded in DECISIONS. No §4 prod step starts before that decision.

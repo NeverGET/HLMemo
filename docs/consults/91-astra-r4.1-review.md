@@ -9,7 +9,7 @@
 | **C5** | **PARTIAL.** Normal hata yanlış sınıflandırılabilir (**F-4**), ancak retry/fallback/breaker davranışı değişmez; yeni log ve ops çıktısı sağlayıcı gövdesini yazmaz (`src/hlmemo/librarian/provider.py:155`, `:778`, `:1158`; `src/hlmemo/ops/cli.py:300`). |
 | **C6** | **PARTIAL.** `.env`/`export` atamaları yakalanır; bağımsız YAML `password:` ve boşluklu bazı parolalar kaçabilir—bunlar mevcut açıklar. Yeni yanlış pozitif tüm dosyayı atlatır (**F-3**); `secret-pattern:<rule>` nedeni döndürülür, CLI gösterimi izinli diff’ten doğrulanamıyor (`src/hlmemo/importers/common.py:161`, `:169`, `:213`). |
 
-`main=0821f98` doğrulandı. `deploy/` ve `profiles/` değişmedi; fingerprint/manifest mekanizması ve env şablonu korunuyor. RUNBOOK, disk/API/librarian fingerprint eşleşmesini şart koşuyor (`deploy/RUNBOOK.md:891`); canlı `llm.env` okunmadı ve dağıtım yapılmadı.
+`main=14cba80` doğrulandı. `deploy/` ve `profiles/` değişmedi; fingerprint/manifest mekanizması ve env şablonu korunuyor. RUNBOOK, disk/API/librarian fingerprint eşleşmesini şart koşuyor (`deploy/RUNBOOK.md:891`); canlı `llm.env` okunmadı ve dağıtım yapılmadı.
 
 İzole yeniden üreticiler çalıştırıldı; F-1 gerçek `_finish` fonksiyonuyla, bağımlılık mock’ları kullanılarak doğrulandı. PostgreSQL migration/rollback provası ve tam pytest çalışması tamamlanmadı.
 

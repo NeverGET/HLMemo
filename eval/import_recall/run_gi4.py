@@ -101,7 +101,7 @@ def cli(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--dsn", required=True, help="a disposable database (never hlm/hlm_verify/hlm_retr/hlm_test)"
     )
-    ap.add_argument("--commit", default="82200ae", help="pinned tree (corpus-B pin, 2026-09-23)")
+    ap.add_argument("--commit", default="3727e81", help="pinned tree (corpus-B pin, 2026-09-23)")
     ap.add_argument("--questions", type=Path, default=Path(__file__).with_name("questions.jsonl"))
     ap.add_argument("--project", default="gi4-hlmemo")
     ap.add_argument("--budget", type=int, default=3000)

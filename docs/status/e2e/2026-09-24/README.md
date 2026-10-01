@@ -1,7 +1,7 @@
 # E2E production test, 2026-09-24 (R2, project `hlmemo-e2e`)
 
 Raw, public-safe results of the first end-to-end production test: HLMemo's own memory imported as a
-TEST into the separate project `hlmemo-e2e` on https://mcp.hlmemo.com (R2 = 6902f91, D-079; the
+TEST into the separate project `hlmemo-e2e` on https://mcp.hlmemo.com (R2 = 25bd465, D-079; the
 librarian in the OBSERVER role). The test project is wiped before the final release. All numbers are
 in `e2e-results.json`. It holds aggregates only: no corpus-B question text, gold facts or per-question
 ids, no tokens and no host addresses. Per-question outputs are private
@@ -17,7 +17,7 @@ ids, no tokens and no host addresses. Per-question outputs are private
   server is stateless (no `Mcp-Session-Id`). That is 3 HTTPS round trips and about 950 ms per tool
   call. The e2e clients patched this: keep-alive and one initialize per client. All latencies are
   measured on the client from the owner's Mac and include about 95 ms of WAN round-trip time.
-- Corpus-B dev (80 questions, spans pinned at 82200ae). The import is the newer 9ea3cad tree:
+- Corpus-B dev (80 questions, spans pinned at 3727e81). The import is the newer 9522699 tree:
   section-level `hlm import` items (363) instead of the baseline's 91 whole-file items. `hlm import`
   titles (`<heading> · <path>`) were mapped to the path for source matching, because run_eval.py
   splits titles only on ` § `. The 5 `git:` spans cannot be reached, because the git log was not

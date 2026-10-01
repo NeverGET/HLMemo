@@ -3,19 +3,19 @@ dockerd https proxy: http://host.lima.internal:3128
 /ready 200 (R2) after dockerd restart
 # deploy R3 (Order B: R2 env installed; the image is rebuilt, the snapshot predates it)
 deploy rc=1 in 503 s
-llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f91e7a79
- Image hlmemo:805f4cd2955b Building 
- Image hlmemo:805f4cd2955b Building 
- Image hlmemo:805f4cd2955b Building 
+llm.env of 25bd4654a67c recorded for rollback: /etc/hlmemo/llm.env.release-25bd4654a67c
+ Image hlmemo:c98ec0aeed33 Building 
+ Image hlmemo:c98ec0aeed33 Building 
+ Image hlmemo:c98ec0aeed33 Building 
 488.9 RuntimeError: Task error: File reconstruction error: CAS Client Error: Request middleware error: error sending request for url (https://cas-server.xethub.hf.co/v2/reconstructions/cdcc2007f06a6d9d22da75bcd7e7f294c6ea)
 target worker: failed to solve: process "/bin/sh -c set -eu\nmkdir -p /app/models\nif [ \"$BAKE_MODELS\" = \"1\" ]; then\n  /app/.venv/bin/python - <<'PY'\nfrom pathlib import Path\nfrom hlmemo.core.embedder import download_model, model_hashes\nd = download_model(\"/app/models/multilingual-e5-small\")\nlock = {\n    line.split(\":\", 1)[0].strip(): line.split(\"sha256:\", 1)[1].split()[0]\n    for line in Path(\"models.lock\").read_text().splitlines()\n    if \": sha256:\" in line\n}\nbad = {k: v for k, v in model_hashes(d).items() if lock.get(k) != v}\nif bad:\n    raise SystemExit(f\"baked model differs from models.lock: {bad}\")\nprint(f\"baked {d}: hashes match models.lock\")\nPY\n  rm -rf /app/models/*/.cache\nfi\n" did not complete successfully: exit code: 1
 Deployment failed before writers stopped; previous stack remains running.
 # install the R3 env under the lock
 install_llm_env (remote): the deployed release predates R3; deploy R3 first, then install its llm.env (D-108 Order B); nothing changed
 install rc=3
-checkout 6902f91e7a79; api image revision 6902f91e7a79; llm.env=present; release marker: none
-{'current_ref': '6902f91e7a79', 'previous_ref': '3535bcc9bf66', 'previous_llm_env': None, 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': ['/etc/hlmemo/llm.env.release-6902f91e7a79']}
-# remote gates after the FAILED final deploy: the VM still runs R2 (6902f91), so these gates (drill ON) ran against R2
+checkout 25bd4654a67c; api image revision 25bd4654a67c; llm.env=present; release marker: none
+{'current_ref': '25bd4654a67c', 'previous_ref': '1de5890851b8', 'previous_llm_env': None, 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': ['/etc/hlmemo/llm.env.release-25bd4654a67c']}
+# remote gates after the FAILED final deploy: the VM still runs R2 (25bd465), so these gates (drill ON) ran against R2
 GATE                   RESULT DETAIL
 health-ready           PASS  /health=200 /ready=200
 unknown-path-404       PASS  status=404

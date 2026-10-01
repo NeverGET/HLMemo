@@ -22,12 +22,12 @@ History (append-only):
 
 | corpus | # | date | label | commit | config | score | $/query | decision | merge | complete |
 |---|---|---|---|---|---|---|---|---|---|---|
-| corpus_a | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.793 | 0.0 | - | False | True |
-| corpus_a | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.793 | 0.0 | - | False | True |
-| corpus_a | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.783 | 0.001368 | - | False | True |
-| corpus_a | 4 | 2026-09-24 | J@a65a8f5 (librarian judgement v2 branch), no librarian: the before on the same eval copy | a65a8f5 | f34647b3f244 | 0.793 | 0.0 | - | False | True |
-| corpus_a | 5 | 2026-09-24 | Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy) | a65a8f5 | 0652a76c53a8 | 0.761 | 0.002622 | - | False | True |
-| corpus_a | 6 | 2026-09-24 | Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy) | a65a8f5 | 6a9428d10322 | 0.739 | 0.001374 | - | False | True |
+| corpus_a | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 2837d93 | 30f79015c14e | 0.793 | 0.0 | - | False | True |
+| corpus_a | 2 | 2026-09-24 | main@080b8f3 re-measure, no librarian (W-E eval copy, 0008) | 080b8f3 | e4b32a157711 | 0.793 | 0.0 | - | False | True |
+| corpus_a | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 080b8f3 | b818796e0272 | 0.783 | 0.001368 | - | False | True |
+| corpus_a | 4 | 2026-09-24 | J@7cbecc8 (librarian judgement v2 branch), no librarian: the before on the same eval copy | 7cbecc8 | f34647b3f244 | 0.793 | 0.0 | - | False | True |
+| corpus_a | 5 | 2026-09-24 | Librarian judgement v2 (J@7cbecc8), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy) | 7cbecc8 | 0652a76c53a8 | 0.761 | 0.002622 | - | False | True |
+| corpus_a | 6 | 2026-09-24 | Librarian judgement v2 (J@7cbecc8), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy) | 7cbecc8 | 6a9428d10322 | 0.739 | 0.001374 | - | False | True |
 | corpus_a | 7 | 2026-09-24 | L@d3ce0ac pivot flags off (prod-rule import, source populated) | d3ce0ac | 4f1c79a64af4 | 0.793 | 0.0 | - | False | True |
 | corpus_a | 8 | 2026-09-24 | L@d3ce0ac per-source top-5 cap (HLM_RETRIEVAL_SOURCE_CAP) | d3ce0ac | a2bc92b87343 | 0.793 | 0.0 | - | False | True |
 | corpus_a | 9 | 2026-09-24 | L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE) | d3ce0ac | 016c33e768f0 | 0.859 | 3.94e-05 | - | False | True |
@@ -53,12 +53,12 @@ History (append-only):
 | corpus_a | 29 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.7, paced prewarm | 63bc041 | 7c5255420f64 | 0.804 | 8.41e-05 | - | False | True |
 | corpus_a | 30 | 2026-09-25 | R3 final 63bc041 query rewrite ON, branch weight 0.5, paced prewarm | 63bc041 | 0491a1718a03 | 0.783 | 8.41e-05 | - | False | True |
 | corpus_a | 31 | 2026-09-25 | D-110 B-real: librarian v3 C2 + REVISE_SPAN (D-113 kinds), assistant, approve-all x1 — 2 revisions applied (A), 0 on labelled stale pairs | ed8deda | 2345691b507f | 0.793 | 0.002501 | - | False | True |
-| corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 16abaf7 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
-| corpus_b_dev | 2 | 2026-09-24 | main@1e57e08 re-measure, no librarian (W-E eval copy, 0008) | 1e57e08 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
-| corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 1e57e08 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
-| corpus_b_dev | 4 | 2026-09-24 | J@a65a8f5 (librarian judgement v2 branch), no librarian: the before on the same eval copy | a65a8f5 | f34647b3f244 | 0.451 | 0.0 | - | False | True |
-| corpus_b_dev | 5 | 2026-09-24 | Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy) | a65a8f5 | 0652a76c53a8 | 0.431 | 0.002622 | - | False | True |
-| corpus_b_dev | 6 | 2026-09-24 | Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy) | a65a8f5 | 6a9428d10322 | 0.410 | 0.001374 | - | False | True |
+| corpus_b_dev | 1 | 2026-09-23 | Phase 0 baseline (D-057) | 2837d93 | 30f79015c14e | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 2 | 2026-09-24 | main@080b8f3 re-measure, no librarian (W-E eval copy, 0008) | 080b8f3 | e4b32a157711 | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 3 | 2026-09-24 | W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy) | 080b8f3 | b818796e0272 | 0.438 | 0.001368 | - | False | True |
+| corpus_b_dev | 4 | 2026-09-24 | J@7cbecc8 (librarian judgement v2 branch), no librarian: the before on the same eval copy | 7cbecc8 | f34647b3f244 | 0.451 | 0.0 | - | False | True |
+| corpus_b_dev | 5 | 2026-09-24 | Librarian judgement v2 (J@7cbecc8), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy) | 7cbecc8 | 0652a76c53a8 | 0.431 | 0.002622 | - | False | True |
+| corpus_b_dev | 6 | 2026-09-24 | Librarian judgement v2 (J@7cbecc8), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy) | 7cbecc8 | 6a9428d10322 | 0.410 | 0.001374 | - | False | True |
 | corpus_b_dev | 7 | 2026-09-24 | L@d3ce0ac pivot flags off (prod-rule import, source populated) | d3ce0ac | 4f1c79a64af4 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 8 | 2026-09-24 | L@d3ce0ac per-source top-5 cap (HLM_RETRIEVAL_SOURCE_CAP) | d3ce0ac | a2bc92b87343 | 0.451 | 0.0 | - | False | True |
 | corpus_b_dev | 9 | 2026-09-24 | L@d3ce0ac guarded English query rewrite, prewarmed (HLM_QUERY_REWRITE) | d3ce0ac | 016c33e768f0 | 0.556 | 3.94e-05 | - | False | True |
@@ -93,12 +93,12 @@ Per-task error rate = share of calls scoring < 0.8 (D-067), next to $/correct. R
 
 | model | run | reps | score | correct | err T5 | err T6 | err T7 | err T8 | err T9 | err T10 | err T11 | err T12 | JSON fail | $/correct | $/month | p50/p95 ms | commit | config | prompt |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| openai/gpt-6-sol | calibration | 1 | 95.8 | 94.5 | 0.0 | 0.0 | 13.3 | 3.3 | 16.0 | 6.7 | 0.0 | 10.0 | 0/200 | 0.006284 | 10.69 | 3859/8594 | 83fcc37 | 43581f1db920 | bench-v2-p1 |
-| openai/gpt-6-luna-pro | final | 3 | 95.1 | 93.8 | 0.8 | 7.5 | 23.3 | 1.1 | 5.3 | 0.0 | 0.0 | 3.3 | 0/600 | 0.000616 | 1.04 | 5345/10994 | 83fcc37 | cd9cddf52a09 | bench-v2-p1 |
-| openai/gpt-6-luna | calibration | 1 | 94.7 | 90.5 | 0.0 | 10.0 | 33.3 | 10.0 | 8.0 | 0.0 | 0.0 | 0.0 | 0/200 | 0.000328 | 0.53 | 3312/7839 | 83fcc37 | 93e1cbf715aa | bench-v2-p1 |
-| openai/gpt-6-luna | final | 3 | 94.2 | 92.0 | 1.7 | 9.2 | 27.8 | 3.3 | 5.3 | 0.0 | 0.0 | 10.0 | 1/600 | 0.000154 | 0.26 | 3866/7781 | 83fcc37 | 93e1cbf715aa | bench-v2-p1 |
-| openai/gpt-6-luna | hlm-bench port check | 1 | 93.8 | 89.5 | 0.0 | 12.5 | 40.0 | 3.3 | 8.0 | 0.0 | 0.0 | 10.0 | 1/200 | 0.000313 | 0.50 | 2912/7596 | bb03629 | None | bench-v2-p1 (sha256 be426d40e385) |
-| deepseek/deepseek-v4.1-flash | final | 3 | 89.3 | 83.8 | 5.0 | 10.0 | 15.6 | 0.0 | 74.7 | 0.0 | 3.3 | 26.7 | 0/600 | 0.000240 | 0.36 | 1840/8683 | 83fcc37 | 0e122edf389b | bench-v2-p1 |
+| openai/gpt-6-sol | calibration | 1 | 95.8 | 94.5 | 0.0 | 0.0 | 13.3 | 3.3 | 16.0 | 6.7 | 0.0 | 10.0 | 0/200 | 0.006284 | 10.69 | 3859/8594 | ec23e70 | 43581f1db920 | bench-v2-p1 |
+| openai/gpt-6-luna-pro | final | 3 | 95.1 | 93.8 | 0.8 | 7.5 | 23.3 | 1.1 | 5.3 | 0.0 | 0.0 | 3.3 | 0/600 | 0.000616 | 1.04 | 5345/10994 | ec23e70 | cd9cddf52a09 | bench-v2-p1 |
+| openai/gpt-6-luna | calibration | 1 | 94.7 | 90.5 | 0.0 | 10.0 | 33.3 | 10.0 | 8.0 | 0.0 | 0.0 | 0.0 | 0/200 | 0.000328 | 0.53 | 3312/7839 | ec23e70 | 93e1cbf715aa | bench-v2-p1 |
+| openai/gpt-6-luna | final | 3 | 94.2 | 92.0 | 1.7 | 9.2 | 27.8 | 3.3 | 5.3 | 0.0 | 0.0 | 10.0 | 1/600 | 0.000154 | 0.26 | 3866/7781 | ec23e70 | 93e1cbf715aa | bench-v2-p1 |
+| openai/gpt-6-luna | hlm-bench port check | 1 | 93.8 | 89.5 | 0.0 | 12.5 | 40.0 | 3.3 | 8.0 | 0.0 | 0.0 | 10.0 | 1/200 | 0.000313 | 0.50 | 2912/7596 | d5cdf14 | None | bench-v2-p1 (sha256 be426d40e385) |
+| deepseek/deepseek-v4.1-flash | final | 3 | 89.3 | 83.8 | 5.0 | 10.0 | 15.6 | 0.0 | 74.7 | 0.0 | 3.3 | 26.7 | 0/600 | 0.000240 | 0.36 | 1840/8683 | ec23e70 | 0e122edf389b | bench-v2-p1 |
 
 Best (raw): `openai/gpt-6-sol` (calibration) 95.8.
 
@@ -110,12 +110,12 @@ Not ranked (incomplete):
 
 | model | run | reps | score | correct | err T5 | err T6 | err T7 | err T8 | err T9 | err T10 | err T11 | err T12 | JSON fail | $/correct | $/month | p50/p95 ms | commit | config | prompt |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| openai/gpt-6-sol | calibration | 1 | 96.6 | 97.5 | 0.0 | 0.0 | 0.0 | 0.0 | 16.0 | 6.7 | 0.0 | 0.0 | 0/200 | 0.006091 | 10.69 | 3859/8594 | 83fcc37 | 43581f1db920 | bench-v2-p1 |
-| openai/gpt-6-luna-pro | final | 3 | 95.6 | 95.2 | 0.8 | 7.5 | 14.4 | 1.1 | 5.3 | 0.0 | 0.0 | 3.3 | 0/600 | 0.000607 | 1.04 | 5345/10994 | 83fcc37 | cd9cddf52a09 | bench-v2-p1 |
-| openai/gpt-6-luna | calibration | 1 | 95.4 | 92.5 | 0.0 | 10.0 | 20.0 | 10.0 | 8.0 | 0.0 | 0.0 | 0.0 | 0/200 | 0.000321 | 0.53 | 3312/7839 | 83fcc37 | 93e1cbf715aa | bench-v2-p1 |
-| openai/gpt-6-luna | final | 3 | 94.9 | 94.2 | 1.7 | 9.2 | 16.7 | 2.2 | 5.3 | 0.0 | 0.0 | 3.3 | 1/600 | 0.000151 | 0.26 | 3866/7781 | 83fcc37 | 93e1cbf715aa | bench-v2-p1 |
-| openai/gpt-6-luna | hlm-bench port check | 1 | 94.4 | 91.5 | 0.0 | 12.5 | 26.7 | 3.3 | 8.0 | 0.0 | 0.0 | 10.0 | 1/200 | 0.000307 | 0.50 | 2912/7596 | bb03629 | None | bench-v2-p1 (sha256 be426d40e385) |
-| deepseek/deepseek-v4.1-flash | final | 3 | 89.8 | 85.8 | 5.0 | 10.0 | 6.7 | 0.0 | 74.7 | 0.0 | 3.3 | 13.3 | 0/600 | 0.000235 | 0.36 | 1840/8683 | 83fcc37 | 0e122edf389b | bench-v2-p1 |
+| openai/gpt-6-sol | calibration | 1 | 96.6 | 97.5 | 0.0 | 0.0 | 0.0 | 0.0 | 16.0 | 6.7 | 0.0 | 0.0 | 0/200 | 0.006091 | 10.69 | 3859/8594 | ec23e70 | 43581f1db920 | bench-v2-p1 |
+| openai/gpt-6-luna-pro | final | 3 | 95.6 | 95.2 | 0.8 | 7.5 | 14.4 | 1.1 | 5.3 | 0.0 | 0.0 | 3.3 | 0/600 | 0.000607 | 1.04 | 5345/10994 | ec23e70 | cd9cddf52a09 | bench-v2-p1 |
+| openai/gpt-6-luna | calibration | 1 | 95.4 | 92.5 | 0.0 | 10.0 | 20.0 | 10.0 | 8.0 | 0.0 | 0.0 | 0.0 | 0/200 | 0.000321 | 0.53 | 3312/7839 | ec23e70 | 93e1cbf715aa | bench-v2-p1 |
+| openai/gpt-6-luna | final | 3 | 94.9 | 94.2 | 1.7 | 9.2 | 16.7 | 2.2 | 5.3 | 0.0 | 0.0 | 3.3 | 1/600 | 0.000151 | 0.26 | 3866/7781 | ec23e70 | 93e1cbf715aa | bench-v2-p1 |
+| openai/gpt-6-luna | hlm-bench port check | 1 | 94.4 | 91.5 | 0.0 | 12.5 | 26.7 | 3.3 | 8.0 | 0.0 | 0.0 | 10.0 | 1/200 | 0.000307 | 0.50 | 2912/7596 | d5cdf14 | None | bench-v2-p1 (sha256 be426d40e385) |
+| deepseek/deepseek-v4.1-flash | final | 3 | 89.8 | 85.8 | 5.0 | 10.0 | 6.7 | 0.0 | 74.7 | 0.0 | 3.3 | 13.3 | 0/600 | 0.000235 | 0.36 | 1840/8683 | ec23e70 | 0e122edf389b | bench-v2-p1 |
 
 Best (adj-2+4c0651b4): `openai/gpt-6-sol` (calibration) 96.6.
 

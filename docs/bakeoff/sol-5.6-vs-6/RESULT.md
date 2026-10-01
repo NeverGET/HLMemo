@@ -1,5 +1,5 @@
 # gpt-5.6-sol vs gpt-6-sol (codex, reasoning xhigh) — blind review bake-off, 2026-09-24
-Task: adversarial merge review of W2e @ e2f30d8 (diff vs ad7ccc2) in a clean export (no .git, consults only up to 43). Neutral prompt (no hints). The answer key was written before reading the outputs (6 known defects K1–K6 from Sol 51, fixed in f64b65a).
+Task: adversarial merge review of W2e @ 0966720 (diff vs d8a9646) in a clean export (no .git, consults only up to 43). Neutral prompt (no hints). The answer key was written before reading the outputs (6 known defects K1–K6 from Sol 51, fixed in a526263).
 | Key | gpt-5.6-sol | gpt-6-sol |
 |---|---|---|
 | K1 post-call filter keeps a sentence citing a now-unreadable item (critical) | 1 | 0 |

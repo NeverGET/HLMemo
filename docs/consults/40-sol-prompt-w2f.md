@@ -1,4 +1,4 @@
-You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Review workstream W2f (`hlm bench`), the bench-v2 gold adjudication and the leaderboard: branch `worktree-agent-afe2f6c25e6597b28` (worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-afe2f6c25e6597b28), commits bb03629 and a158edf on top of a77179a. Diff: `git -C <wt> diff a77179a HEAD`.
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Review workstream W2f (`hlm bench`), the bench-v2 gold adjudication and the leaderboard: branch `worktree-agent-afe2f6c25e6597b28` (worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-afe2f6c25e6597b28), commits d5cdf14 and f02ec08 on top of 291b5fb. Diff: `git -C <wt> diff 291b5fb HEAD`.
 Spec: docs/decisions/PHASE2-4-ROADMAP.md, W2f and W-E (leaderboard rules); DECISIONS D-017, D-062, D-066, D-067. Read the implementer's bench/v2/ADJUDICATION.md.
 STATIC REVIEW ONLY (read, git diff/show, rg; no tests, no edits).
 Judge:

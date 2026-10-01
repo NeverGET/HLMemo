@@ -1,6 +1,6 @@
 # Jev hakkındaki görüşüm: TESTLERDEN SONRA (2026-09-28)
 
-Testlerden önceki görüşüm `03b-MY-VIEW-BEFORE-TESTS.md` dosyasında (commit 5554494, 19:18). Aşağıda o görüşleri tek tek sonuçlarla karşılaştırıyorum.
+Testlerden önceki görüşüm `03b-MY-VIEW-BEFORE-TESTS.md` dosyasında (commit bf64c49, 19:18). Aşağıda o görüşleri tek tek sonuçlarla karşılaştırıyorum.
 
 Kaynaklar:
 - `05-TEST-RESULTS-general.md` (T1–T7 ve "Fairness re-runs" bölümü)

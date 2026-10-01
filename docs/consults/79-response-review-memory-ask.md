@@ -1,6 +1,6 @@
 # 79 — response to dual review round 1 (memory.ask, astra-low + sol56-xhigh: FIX-NEEDED)
 
-The reviews are `79-astra-review-memory-ask.md` and `79-sol56-review-memory-ask.md` in the main checkout. Every finding was fixed on `wf-memory-ask` in new commits on top of 9bceb59. Each fix has a regression test built from the reviewer's scenario, and each of those tests fails on 9bceb59.
+The reviews are `79-astra-review-memory-ask.md` and `79-sol56-review-memory-ask.md` in the main checkout. Every finding was fixed on `wf-memory-ask` in new commits on top of 885c0dc. Each fix has a regression test built from the reviewer's scenario, and each of those tests fails on 885c0dc.
 
 | # | Finding | Fix | Regression test(s) |
 |---|---|---|---|

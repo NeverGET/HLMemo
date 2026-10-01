@@ -1,6 +1,6 @@
 # 2026-09-25T13:41:51Z §0.2 clock: host 13:41:51.582 vm 13:41:51.948; caffeinate -dimsu running
 # §0.3 VM state
-{'current_ref': '6902f91e7a79aab3ff4791ae443d7371b7cca5d7', 'previous_ref': '3535bcc9bf661e05e40b27a9784a3f789231ceee', 'accepted': False}
+{'current_ref': '25bd4654a67c7e421dca6b769625886293adc66c', 'previous_ref': '1de5890851b807bd7419169e5f15a307b70ceb5f', 'accepted': False}
 0
 migration   0008_librarian_tasks
 worker      ready=0 oldest_ready_age_s=None last_done_at=2026-09-25T01:56:21.714104+00:00 expired_leases=0

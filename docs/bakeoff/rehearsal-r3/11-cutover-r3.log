@@ -1,18 +1,18 @@
-# 2026-09-25T13:43:02Z §1.2 PATH=$S/bin:$PATH deploy.sh hlm-deploy 805f4cd2955b  (Order B: R2 env installed, no --accept-compose-change)
+# 2026-09-25T13:43:02Z §1.2 PATH=$S/bin:$PATH deploy.sh hlm-deploy c98ec0aeed33  (Order B: R2 env installed, no --accept-compose-change)
 deploy start epoch 1790343782.759869000
 Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.iXXnTu61/log (final exit code: /opt/hlmemo/.deploy-runs/run.iXXnTu61/status)
 From https://github.com/NeverGET/HLMemo
- * branch            805f4cd2955b -> FETCH_HEAD
-Previous HEAD position was 6902f91 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
-HEAD is now at 805f4cd D-123: owner accepts R3 behind VPS snapshot; T gates R4
-llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f91e7a79
+ * branch            c98ec0aeed33 -> FETCH_HEAD
+Previous HEAD position was 25bd465 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
+HEAD is now at c98ec0a D-123: owner accepts R3 behind VPS snapshot; T gates R4
+llm.env of 25bd4654a67c recorded for rollback: /etc/hlmemo/llm.env.release-25bd4654a67c
  Image pgvector/pgvector:0.8.6-pg17 Pulling 
  Image caddy:2.11.2-alpine Pulling 
  Image caddy:2.11.2-alpine Pulled 
  Image pgvector/pgvector:0.8.6-pg17 Pulled 
- Image hlmemo:805f4cd2955b Building 
- Image hlmemo:805f4cd2955b Building 
- Image hlmemo:805f4cd2955b Building 
+ Image hlmemo:c98ec0aeed33 Building 
+ Image hlmemo:c98ec0aeed33 Building 
+ Image hlmemo:c98ec0aeed33 Building 
 #1 [internal] load local bake definitions
 #1 reading from stdin 1.94kB done
 #1 DONE 0.0s
@@ -236,8 +236,8 @@ llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f
 #57 exporting config sha256:b85188c4ba802f07f41170d8ffbceb28b135 0.0s done
 #57 exporting attestation manifest sha256:3f3f11a31f73a5b4b57adcf807e2ce36ac03 0.0s done
 #57 exporting manifest list sha256:04825dfdd89b99e025ba26b1a3873689eb02 0.0s done
-#57 naming to docker.io/library/hlmemo:805f4cd2955b done
-#57 unpacking to docker.io/library/hlmemo:805f4cd2955b
+#57 naming to docker.io/library/hlmemo:c98ec0aeed33 done
+#57 unpacking to docker.io/library/hlmemo:c98ec0aeed33
 #57 ...
 
 #56 [api] exporting to image
@@ -246,8 +246,8 @@ llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f
 #56 exporting config sha256:312d01538f830d783b09afc4854d70652547 0.0s done
 #56 exporting attestation manifest sha256:9f3f995ee8362716a94d9eba38dc5fb411e4 0.0s done
 #56 exporting manifest list sha256:2ff027f22d6c80d753192b93cc6936ebb363 0.0s done
-#56 naming to docker.io/library/hlmemo:805f4cd2955b done
-#56 unpacking to docker.io/library/hlmemo:805f4cd2955b 6.9s done
+#56 naming to docker.io/library/hlmemo:c98ec0aeed33 done
+#56 unpacking to docker.io/library/hlmemo:c98ec0aeed33 6.9s done
 #56 DONE 18.3s
 
 #55 [worker] exporting to image
@@ -256,8 +256,8 @@ llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f
 #55 exporting config sha256:66d4ecdec6f91de53947ad4fa2e5cc5f2c27 0.0s done
 #55 exporting attestation manifest sha256:8102f1202afac77a0a2f1f8abf81e9d0fce0 0.0s done
 #55 exporting manifest list sha256:ed3ffc63a0ff929d80a39fd938a35bc3e96e 0.0s done
-#55 naming to docker.io/library/hlmemo:805f4cd2955b done
-#55 unpacking to docker.io/library/hlmemo:805f4cd2955b 6.9s done
+#55 naming to docker.io/library/hlmemo:c98ec0aeed33 done
+#55 unpacking to docker.io/library/hlmemo:c98ec0aeed33 6.9s done
 #55 DONE 18.3s
 
 #58 [api] resolving provenance for metadata file
@@ -267,15 +267,15 @@ llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f
 #59 DONE 0.0s
 
 #57 [migrate] exporting to image
-#57 unpacking to docker.io/library/hlmemo:805f4cd2955b 7.0s done
+#57 unpacking to docker.io/library/hlmemo:c98ec0aeed33 7.0s done
 #57 DONE 18.4s
 
 #60 [migrate] resolving provenance for metadata file
 #60 DONE 0.0s
- Image hlmemo:805f4cd2955b Built 
- Image hlmemo:805f4cd2955b Built 
- Image hlmemo:805f4cd2955b Built 
-Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/6902f91e7a79-2026-09-25T134402Z-mxFFKL.dump (retained until explicit prune)
+ Image hlmemo:c98ec0aeed33 Built 
+ Image hlmemo:c98ec0aeed33 Built 
+ Image hlmemo:c98ec0aeed33 Built 
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/25bd4654a67c-2026-09-25T134402Z-mxFFKL.dump (retained until explicit prune)
 migrate_env_w0: prod.env: already migrated (no retired keys)
 migrate_env_w0: app.env: already migrated (no retired keys)
 migrate_env_w0: api.env: already migrated (no retired keys)
@@ -288,8 +288,8 @@ migrate_env_w0: done (0 file(s) changed)
  Container hlmemo-prod-librarian-1 Stopped 
  Container hlmemo-prod-worker-1 Stopped 
  Container hlmemo-prod-api-1 Stopped 
-Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/6902f91e7a79-2026-09-25T134404Z-mOXc1s.dump (retained until explicit prune)
-Quiesced pre-upgrade dump: /var/backups/hlmemo/pre-upgrade/6902f91e7a79-2026-09-25T134404Z-mOXc1s.dump
+Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/25bd4654a67c-2026-09-25T134404Z-mOXc1s.dump (retained until explicit prune)
+Quiesced pre-upgrade dump: /var/backups/hlmemo/pre-upgrade/25bd4654a67c-2026-09-25T134404Z-mOXc1s.dump
  Container hlmemo-prod-db-1 Running 
  Container hlmemo-prod-db-1 Waiting 
  Container hlmemo-prod-db-1 Healthy 
@@ -394,7 +394,7 @@ PASS routes revoked      GET    /devices/whoami                -> 401
 RESULT routes PASS base=http://127.0.0.1:8765 failures=0
 deleted deploy-attempt-model.json (journalled secret-bearing copy)
 {"status":"ready"}
-{"grants":[],"minted":{"class":"ci","expired":false,"expires_at":"2026-09-25T13:54:20.357281+00:00","id":37,"last_seen_at":null,"name":"deploy-routes-805f4cd2955b-6932","notes":null,"registered_at":"2026-09-25T13:44:20.356760+00:00","reserved":false,"revoked_at":null,"status":"trusted","token_generation":1}}
+{"grants":[],"minted":{"class":"ci","expired":false,"expires_at":"2026-09-25T13:54:20.357281+00:00","id":37,"last_seen_at":null,"name":"deploy-routes-c98ec0aeed33-6932","notes":null,"registered_at":"2026-09-25T13:44:20.356760+00:00","reserved":false,"revoked_at":null,"status":"trusted","token_generation":1}}
 PASS routes anonymous    GET    /health                        -> 200
 PASS routes anonymous    GET    /ready                         -> 200
 PASS routes trusted      GET    /health                        -> 200
@@ -467,16 +467,16 @@ Device inventory after cutover (python -m hlmemo.ops device list):
    7  seed-pending-laptop          personal  pending  expires=- last_seen=- grants=-
    8  librarian                    server    trusted  expires=- last_seen=- grants=-
    9  routes-check-56ffa3d5        ci        revoked  expires=2026-09-23T18:46:24.517606+00:00 last_seen=2026-09-23T18:36:24.550205+00:00 grants=-
-  10  deploy-routes-fa24ca5a0d87-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
+  10  deploy-routes-6cb48a9b39fd-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
   11  gates-probe-20260923t183640z ci        revoked  expires=2026-09-23T19:06:42.628038+00:00 last_seen=2026-09-23T18:36:42.841876+00:00 grants=-
   12  gates-routes-20260923t183640z ci        revoked  expires=2026-09-23T18:46:43.814204+00:00 last_seen=2026-09-23T18:36:43.932779+00:00 grants=-
   13  gates-cli-30966              ci        revoked  expires=2026-09-23T19:06:46.565281+00:00 last_seen=2026-09-23T18:36:46.589456+00:00 grants=-
   14  rehearsal-mac                personal  trusted  expires=- last_seen=2026-09-23T18:47:10.381328+00:00 grants=r1-seed:write
   15  routes-check-b13c5d81        ci        revoked  expires=2026-09-24T01:41:21.465302+00:00 last_seen=2026-09-24T01:31:21.502087+00:00 grants=-
-  16  deploy-routes-ee6ce9c9f1d6-23116 ci        revoked  expires=2026-09-24T01:41:21.995065+00:00 last_seen=2026-09-24T01:31:22.067436+00:00 grants=-
+  16  deploy-routes-62ae2b3c7aa5-23116 ci        revoked  expires=2026-09-24T01:41:21.995065+00:00 last_seen=2026-09-24T01:31:22.067436+00:00 grants=-
   17  r2-seed-mac                  personal  trusted  expires=- last_seen=2026-09-24T03:00:04.463569+00:00 grants=r2-seed:write
   18  routes-check-6066fab3        ci        revoked  expires=2026-09-24T01:45:01.753593+00:00 last_seen=2026-09-24T01:35:01.794955+00:00 grants=-
-  19  deploy-routes-3535bcc9bf66-20275 ci        revoked  expires=2026-09-24T01:45:02.347847+00:00 last_seen=2026-09-24T01:35:02.438937+00:00 grants=-
+  19  deploy-routes-1de5890851b8-20275 ci        revoked  expires=2026-09-24T01:45:02.347847+00:00 last_seen=2026-09-24T01:35:02.438937+00:00 grants=-
   20  gates-probe-20260924t013540z ci        revoked  expires=2026-09-24T02:05:41.843919+00:00 last_seen=2026-09-24T01:35:42.089586+00:00 grants=-
   21  gates-routes-20260924t013540z ci        revoked  expires=2026-09-24T01:45:43.389600+00:00 last_seen=2026-09-24T01:35:43.518243+00:00 grants=-
   22  gates-cli-21572              ci        revoked  expires=2026-09-24T02:05:46.071563+00:00 last_seen=2026-09-24T01:35:46.099162+00:00 grants=-
@@ -488,13 +488,13 @@ Device inventory after cutover (python -m hlmemo.ops device list):
   28  gates-routes-20260924t030512z ci        revoked  expires=2026-09-24T03:15:15.228031+00:00 last_seen=2026-09-24T03:05:15.346514+00:00 grants=-
   29  gates-cli-10566              ci        revoked  expires=2026-09-24T03:35:17.697987+00:00 last_seen=2026-09-24T03:05:17.721663+00:00 grants=-
   30  routes-check-2b8fed50        ci        revoked  expires=2026-09-25T00:58:33.323635+00:00 last_seen=2026-09-25T00:48:33.359681+00:00 grants=-
-  31  deploy-routes-6902f91e7a79-32327 ci        revoked  expires=2026-09-25T00:58:33.865786+00:00 last_seen=2026-09-25T00:48:33.950636+00:00 grants=-
+  31  deploy-routes-25bd4654a67c-32327 ci        revoked  expires=2026-09-25T00:58:33.865786+00:00 last_seen=2026-09-25T00:48:33.950636+00:00 grants=-
   32  r3-base-mac                  personal  trusted  expires=- last_seen=2026-09-25T00:49:49.748828+00:00 grants=r3-base:write
   33  r3-load-mac                  personal  trusted  expires=- last_seen=2026-09-25T01:01:22.405991+00:00 grants=r3-base:read,r3-load:write
   34  rk-loader                    personal  trusted  expires=- last_seen=2026-09-25T00:56:40.941007+00:00 grants=hlm-global:write,rk-main:write,rk-secret:write,rk-shell:write
   35  rk-reader                    personal  trusted  expires=- last_seen=2026-09-25T00:56:41.640442+00:00 grants=hlm-global:read,rk-main:write,rk-shell:read
   36  routes-check-da2aba16        ci        revoked  expires=2026-09-25T13:54:19.860375+00:00 last_seen=2026-09-25T13:44:19.893900+00:00 grants=-
-  37  deploy-routes-805f4cd2955b-6932 ci        revoked  expires=2026-09-25T13:54:20.357281+00:00 last_seen=2026-09-25T13:44:20.425635+00:00 grants=-
+  37  deploy-routes-c98ec0aeed33-6932 ci        revoked  expires=2026-09-25T13:54:20.357281+00:00 last_seen=2026-09-25T13:44:20.425635+00:00 grants=-
 librarian: llm.env=present enabled=true role=observer mode=live profile=openrouter-gpt6-luna fallback=openrouter
 librarian heartbeat: enabled=True role=observer breaker_state=closed age_s=3.6 ready=0 (max age 30s, waited 0.0s)
 librarian spend: spend_hour_usd=0.0 spend_today_usd=0.549186 reserved_usd=0.0
@@ -504,7 +504,7 @@ provider openrouter-gpt6-luna https://openrouter.ai/api/v1: key set, reachable (
 provider openrouter https://openrouter.ai/api/v1: key set, reachable (HTTP 404)
 RESULT librarian PASS llm.env=present release=r2-env (D-108 interim: install the R3 llm.env, recreate librarian api, then evaluate --release r3) enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna
 Pre-upgrade prune completed: removed 1; keeping latest 5
-Deployment ready: 805f4cd2955b (localhost)
+Deployment ready: c98ec0aeed33 (localhost)
 
 rc=0
 deploy end epoch 1790343863.783695000

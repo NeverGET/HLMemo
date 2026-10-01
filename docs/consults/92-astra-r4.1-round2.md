@@ -1,6 +1,6 @@
 ## Round-1 closure
 
-İnceleme hedefi `2cad563`; fix aralığı `0821f98..2cad563`. **60 ilgili unit test geçti**; geçici dosya gerektiren iki test çalıştırılmadı. PostgreSQL migration/rollback provası yapılmadı. Yasaklanan dosyalar okunmadı.
+İnceleme hedefi `a77abee`; fix aralığı `14cba80..a77abee`. **60 ilgili unit test geçti**; geçici dosya gerektiren iki test çalıştırılmadı. PostgreSQL migration/rollback provası yapılmadı. Yasaklanan dosyalar okunmadı.
 
 | ID | Durum | Kanıt | Kalan somut senaryo |
 |---|---|---|---|
@@ -32,7 +32,7 @@ return bool(parts) and parts[-1] == "key" and not _NOT_KEY_COMPONENTS.intersecti
 
 **Doğrulama:** Her iki sürümün gerçek `secret_hit()` fonksiyonu bellekte çalıştırıldı:
 
-| İsim | `0821f98` | `2cad563` |
+| İsim | `14cba80` | `a77abee` |
 |---|---|---|
 | `PRIMARY_API_KEY` | `env-secret-assignment` | `None` |
 | `CACHE_API_KEY` | `env-secret-assignment` | `None` |
@@ -54,7 +54,7 @@ def test_existing_credential_detection_is_preserved(name):
 - **Son swap atomik:** `DROP` ve `RENAME`, tek çok-komutlu SQL çağrısında aynı implicit transaction’a giriyor (`:51–54`). Session `lock_timeout=3s` bütün swap adımlarında etkin; sonunda sıfırlanıyor. Bu süre taramanın toplam süresini sınırlamıyor.
 - **Kesinti sonrası tekrar:** ADD/VALIDATE öncesi veya sonrası ölümde eski constraint ve muhtemel `_v2` kalır; yeniden çalıştırma `_v2`’yi kaldırıp yeniden kurar. DROP/RENAME arasında kısmi commit oluşmaz. Swap tamamlanıp Alembic revision kaydı güncellenmeden ölüm de yeniden çalıştırılabilir.
 - **Downgrade:** `billing_or_quota → http_error` dönüşümü ayrı commit edilir (`:63–67`); ardından aynı staged swap `OLD` değerleriyle çalışır. DDL simetriktir; billing sınıflandırmasının kaybı downgrade’in bilinçli davranışıdır. Writer’lar açıkken UPDATE ile eski constraint’in eklenmesi arasında yeni billing satırı girerse validation başarısız olabilir.
-- **R4 rollback:** [rollback.sh:288](/Users/cemalkurt/Projects/HLMemo/deploy/scripts/rollback.sh:288) önceki ref ve pre-upgrade dump’ı geri getirir; 0010 downgrade’ini kullanmaz. Dolayısıyla `5025db5`, kendi 0009 şemasına döner. Yalnızca kodu geri alıp 0010’u bırakmak readiness açısından eşdeğer değildir.
+- **R4 rollback:** [rollback.sh:288](/Users/cemalkurt/Projects/HLMemo/deploy/scripts/rollback.sh:288) önceki ref ve pre-upgrade dump’ı geri getirir; 0010 downgrade’ini kullanmaz. Dolayısıyla `a11f8cf`, kendi 0009 şemasına döner. Yalnızca kodu geri alıp 0010’u bırakmak readiness açısından eşdeğer değildir.
 
 `test_migration_0010_final_constraint_name_and_rerun_after_a_leftover` leftover constraint ve downgrade sonucunu kapsıyor. Her transaction sınırında gerçek process-kill ve concurrent DML testi içermiyor; bu incelemede DB testleri çalıştırılmadı.
 

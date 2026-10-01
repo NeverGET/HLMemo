@@ -1,10 +1,10 @@
-# 2026-09-23T18:36:06Z PATH=deploy/.local/127.0.0.1-2223/bin:$PATH deploy.sh --accept-compose-change=2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 hlm-deploy fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a
+# 2026-09-23T18:36:06Z PATH=deploy/.local/127.0.0.1-2223/bin:$PATH deploy.sh --accept-compose-change=2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 hlm-deploy 6cb48a9b39fd827bc65f1f2b52589800f432776f
 Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.V614s2nw/log (final exit code: /opt/hlmemo/.deploy-runs/run.V614s2nw/status)
 From https://github.com/NeverGET/HLMemo
- * branch            fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a -> FETCH_HEAD
+ * branch            6cb48a9b39fd827bc65f1f2b52589800f432776f -> FETCH_HEAD
 Compose model change accepted: sha256 2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 (changed=1)
 Previous HEAD position was 912f2d3 Ubuntu 26.04 support + two-command deploy (first_deploy.sh, remote_gates.sh)
-HEAD is now at fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
+HEAD is now at 6cb48a9 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
  Image caddy:2.11.2-alpine Pulling 
  Image pgvector/pgvector:0.8.6-pg17 Pulling 
  Image pgvector/pgvector:0.8.6-pg17 Pulled 
@@ -129,7 +129,7 @@ PASS routes trusted      POST   /devices/revoke                -> 200
 PASS routes revoked      GET    /devices/whoami                -> 401
 RESULT routes PASS base=http://127.0.0.1:8765 failures=0
 {"status":"ready"}
-{"grants":[],"minted":{"class":"ci","expired":false,"expires_at":"2026-09-23T18:46:25.007002+00:00","id":10,"last_seen_at":null,"name":"deploy-routes-fa24ca5a0d87-15789","notes":null,"registered_at":"2026-09-23T18:36:25.006502+00:00","reserved":false,"revoked_at":null,"status":"trusted","token_generation":1}}
+{"grants":[],"minted":{"class":"ci","expired":false,"expires_at":"2026-09-23T18:46:25.007002+00:00","id":10,"last_seen_at":null,"name":"deploy-routes-6cb48a9b39fd-15789","notes":null,"registered_at":"2026-09-23T18:36:25.006502+00:00","reserved":false,"revoked_at":null,"status":"trusted","token_generation":1}}
 PASS routes anonymous    GET    /health                        -> 200
 PASS routes anonymous    GET    /ready                         -> 200
 PASS routes trusted      GET    /health                        -> 200
@@ -202,9 +202,9 @@ Device inventory after cutover (python -m hlmemo.ops device list):
    7  seed-pending-laptop          personal  pending  expires=- last_seen=- grants=-
    8  librarian                    server    trusted  expires=- last_seen=- grants=-
    9  routes-check-56ffa3d5        ci        revoked  expires=2026-09-23T18:46:24.517606+00:00 last_seen=2026-09-23T18:36:24.550205+00:00 grants=-
-  10  deploy-routes-fa24ca5a0d87-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
+  10  deploy-routes-6cb48a9b39fd-15789 ci        revoked  expires=2026-09-23T18:46:25.007002+00:00 last_seen=2026-09-23T18:36:25.071718+00:00 grants=-
 Pre-upgrade prune completed: removed 0; keeping latest 5
-Deployment ready: fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a (localhost)
+Deployment ready: 6cb48a9b39fd827bc65f1f2b52589800f432776f (localhost)
 
 PATH="$PWD/$S/bin:$PATH" bash deploy/scripts/deploy.sh  hlm-deploy $FULL  0.76s user 0.32s system 5% cpu 19.729 total
 rc=0

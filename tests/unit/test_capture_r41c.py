@@ -9,7 +9,7 @@ from hlmemo.capture import summarize as sm
 
 TRANSCRIPT = (
     "owner: the migration failed because the lock timeout was 3s and a reader held the table. "
-    "assistant: we decided per D-217 to stage the constraint first. commit 6ac9b18 pushed."
+    "assistant: we decided per D-217 to stage the constraint first. commit ce9b63c pushed."
 )
 EVIDENCE = "the migration failed because the lock timeout was 3s and a reader held the table"
 

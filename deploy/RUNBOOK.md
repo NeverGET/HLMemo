@@ -716,7 +716,7 @@ of the R2/R3 checks):
 ```sh
 STATE=deploy/.local/153.92.1.166
 REF=$(git rev-parse r4-rc)        # the FULL 40-character SHA, pushed to origin (the host fetches it)
-R3=$(git rev-parse 805f4cd)       # the R3 release (behaviour-only rollback template)
+R3=$(git rev-parse c98ec0a)       # the R3 release (behaviour-only rollback template)
 
 # 0. Snapshot VM 2002259 ONLY (Hostinger VPS_createSnapshotV1), wait for it, record its id. Hostinger
 #    keeps ONE snapshot per VM and a new one overwrites the old: take it now, before step 2, and never
@@ -920,7 +920,7 @@ kill anywhere converges on a re-run of the same command:
   idempotently.
 
 **Spend of an R3 env (D-121).** The owner's production target is at most $10/month: the R3 template
-(805f4cd) sets `HLM_LLM_BUDGET_MONTH_USD=10`, `DAY=2`, `HOUR=1`, the guard on. The R3 manifest requires every cap
+(c98ec0a) sets `HLM_LLM_BUDGET_MONTH_USD=10`, `DAY=2`, `HOUR=1`, the guard on. The R3 manifest requires every cap
 present, `HLM_LLM_BUDGET_DISABLED=false`, month at most 10 and day/hour at most month; the operator
 may edit the caps and the key in `/etc/hlmemo/llm.env` by hand (then re-run `install_llm_env.sh`,
 which keeps them and recreates both services).

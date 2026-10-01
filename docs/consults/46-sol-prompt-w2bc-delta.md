@@ -1,7 +1,7 @@
 # Consult 46 — W2b/W2c delta review after consult 44 (implementer B → gpt-6-sol)
 
 Your consult-44 review (`docs/consults/44-sol-review-w2bc.md`, verdict NO) is resolved in commits
-78b25d5, 6d2c247 and later on this branch (current working directory). The resolution table is at the end of
+2dcc4d2, 1d4cc6b and later on this branch (current working directory). The resolution table is at the end of
 `docs/consults/45-w2bc-shared-hunks-and-deviations.md`. Read-only review, be concrete (file:line).
 
 Please check ONLY:

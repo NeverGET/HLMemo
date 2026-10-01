@@ -1,7 +1,7 @@
 # Overnight 2026-09-26: research librarian (D-130 → D-149)
 
 ## Outcome
-The research librarian (`memory.ask`) is built on the server: branch wf-memory-ask @ 9bceb59, not merged, not released.
+The research librarian (`memory.ask`) is built on the server: branch wf-memory-ask @ 885c0dc, not merged, not released.
 
 It improved a lot under a strict judge, but the D-130 Production-Ready gate is **not** reached yet. Per the owner's rule the release does not self-certify, so nothing was released tonight. Production still runs R3, whose memory holds the migrated HLMemo knowledge (552 items).
 

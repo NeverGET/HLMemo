@@ -1,6 +1,6 @@
-# Consult 75 — CRITICAL dual review (D-085), RELEASE-GATING for R3: env-aware release tooling (r3-tooling @ 3b2ce64)
+# Consult 75 — CRITICAL dual review (D-085), RELEASE-GATING for R3: env-aware release tooling (r3-tooling @ aed884f)
 
-Your cwd is a clean export of 3b2ce64. `TOOLING.patch` is the whole diff against main; it touches only deploy/ and tests/deploy. Read the rows D-065, D-094, D-098, D-099, D-108, D-111 and D-116 in docs/decisions/DECISIONS.md, plus deploy/RUNBOOK.md ("R3 release"). Read-only.
+Your cwd is a clean export of aed884f. `TOOLING.patch` is the whole diff against main; it touches only deploy/ and tests/deploy. Read the rows D-065, D-094, D-098, D-099, D-108, D-111 and D-116 in docs/decisions/DECISIONS.md, plus deploy/RUNBOOK.md ("R3 release"). Read-only.
 
 ## What R3 is
 Main = J + F; the query rewrite is shelved and is NOT in R3. It is a code-only upgrade from R2 (no alembic, compose or Dockerfile change). The R3 llm.env adds the D-094 per-task fallback profiles, which the R2 image CANNOT load. That is why:

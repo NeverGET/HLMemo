@@ -1,6 +1,6 @@
 # Consult 79 — `memory.ask` (research librarian, D-136) design check (routine, astra-low)
 
-You are reviewing a DESIGN before/while it is implemented on branch `wf-memory-ask` (from main 733f07a) of
+You are reviewing a DESIGN before/while it is implemented on branch `wf-memory-ask` (from main adb6134) of
 HLMemo (Python 3.12, Postgres 17 + pgvector, MCP server). Read-only. Answer in ≤ 600 words: a verdict
 (OK / FIX-NEEDED) and numbered findings with severity (HIGH = scope/privacy leak or data mutation,
 MED = wrong behaviour / gate risk, LOW = polish). Read the code you need: `src/hlmemo/core/synthesis_service.py`

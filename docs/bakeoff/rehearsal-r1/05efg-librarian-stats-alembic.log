@@ -1,5 +1,5 @@
 == (e) librarian
-hlmemo-prod-librarian-1 hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Up About a minute (healthy)
+hlmemo-prod-librarian-1 hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f Up About a minute (healthy)
 HLM_LIBRARIAN_ENABLED=false
 provider-env-vars=0
 llm.env: ls: cannot access '/etc/hlmemo/llm.env': No such file or directory

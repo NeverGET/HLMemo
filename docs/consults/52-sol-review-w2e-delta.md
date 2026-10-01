@@ -1,6 +1,6 @@
 ## Verdict
 
-**NO-MERGE.** Yalnızca `e2f30d8..f64b65a` diff’ini statik olarak inceledim; test çalıştırmadım.
+**NO-MERGE.** Yalnızca `0966720..a526263` diff’ini statik olarak inceledim; test çalıştırmadım.
 
 ## Per-finding
 

@@ -1,6 +1,6 @@
-# Consult 79 — dual review (D-085/D-125: read-path scope/privacy + migration), memory.ask @ 9bceb59
+# Consult 79 — dual review (D-085/D-125: read-path scope/privacy + migration), memory.ask @ 885c0dc
 
-Your cwd is a clean export of 9bceb59. `ASK.patch` = main...9bceb59 (src, alembic, tests). Spec: the rows D-130, D-136 and D-140 to D-146 in docs/decisions/DECISIONS.md. Read-only. **At most 2 rounds (D-125). A HIGH finding must come with a concrete reproducing scenario (inputs → leaked or wrong state).**
+Your cwd is a clean export of 885c0dc. `ASK.patch` = main...885c0dc (src, alembic, tests). Spec: the rows D-130, D-136 and D-140 to D-146 in docs/decisions/DECISIONS.md. Read-only. **At most 2 rounds (D-125). A HIGH finding must come with a concrete reproducing scenario (inputs → leaked or wrong state).**
 
 ## Threat model (write findings only against these)
 - T1 **Scope leak:** content from another project, a device-scoped item, an excluded project (D-083) or a hidden class reaches the Memory Map, any provider prompt, the answer, primary/related handles or the map summaries.

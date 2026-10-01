@@ -6,7 +6,7 @@ G-LIVE-D run).
 
 ## Corpus
 
-HLMemo's own public `docs/` at the pinned commit **`ad7ccc2`** (main at the W2e fork; `git archive`,
+HLMemo's own public `docs/` at the pinned commit **`d8a9646`** (main at the W2e fork; `git archive`,
 `docs/private` is untracked and refused defensively), imported into project `syn-docs` through the
 `hlm import markdown` code path (`--section-chars 8000`, the G-I4 granularity): **316 items / 926
 chunks** (decision rows, consults, research incl. the Turkish deep-research report, bake-off

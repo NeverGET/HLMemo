@@ -1,18 +1,18 @@
-# 2026-09-23T18:33:06Z deploy.sh --accept-compose-change=2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 hlm-deploy fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a
+# 2026-09-23T18:33:06Z deploy.sh --accept-compose-change=2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 hlm-deploy 6cb48a9b39fd827bc65f1f2b52589800f432776f
 # fault: HLM_TESTING=1 HLM_MIGRATION_FAULT=0006:flush appended to /etc/hlmemo/app.env (migrate's env_file)
 Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.nQaURrpX/log (final exit code: /opt/hlmemo/.deploy-runs/run.nQaURrpX/status)
 From https://github.com/NeverGET/HLMemo
- * branch            fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a -> FETCH_HEAD
+ * branch            6cb48a9b39fd827bc65f1f2b52589800f432776f -> FETCH_HEAD
 Compose model change accepted: sha256 2cca62f6ab1beaa7d014e716d9955fd3330e4ecd5eab3e84c26a93424961f078 (changed=1)
 Previous HEAD position was 912f2d3 Ubuntu 26.04 support + two-command deploy (first_deploy.sh, remote_gates.sh)
-HEAD is now at fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
+HEAD is now at 6cb48a9 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
  Image pgvector/pgvector:0.8.6-pg17 Pulling 
  Image caddy:2.11.2-alpine Pulling 
  Image caddy:2.11.2-alpine Pulled 
  Image pgvector/pgvector:0.8.6-pg17 Pulled 
- Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Building 
- Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Building 
- Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Building 
+ Image hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f Building 
+ Image hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f Building 
+ Image hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f Building 
 #1 [internal] load local bake definitions
 #1 reading from stdin 1.94kB done
 #1 DONE 0.0s
@@ -289,8 +289,8 @@ HEAD is now at fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallba
 #50 exporting config sha256:7e8b930d812d674dddc65052009b439505b732a026cfe38df3f80f73e9777f71 0.0s done
 #50 exporting attestation manifest sha256:7421b2c4b9aec5b4d6169e4d6a484d0139cdf53c8c4b9e69a3d8fbfc03bc272c done
 #50 exporting manifest list sha256:c47c5d0ed36384020559321eb0ce65c236bbd735e1d533d14fef8c2cacc34164 0.0s done
-#50 naming to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a done
-#50 unpacking to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a
+#50 naming to docker.io/library/hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f done
+#50 unpacking to docker.io/library/hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f
 #50 ...
 
 #49 [api] exporting to image
@@ -299,8 +299,8 @@ HEAD is now at fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallba
 #49 exporting config sha256:a4b1efd11320f408035659d823e00b5978e52b78418fd7cc21983653888e50c2 0.0s done
 #49 exporting attestation manifest sha256:1ef02952d8fb5788b6fbce02348cccb0f84e279e295457a3eebd0c1f9a591c43 0.0s done
 #49 exporting manifest list sha256:4fd204c901d170a254a081f51ed4930f13bdf4243828ef082807d2cd33aac549 0.0s done
-#49 naming to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a done
-#49 unpacking to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a 7.5s done
+#49 naming to docker.io/library/hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f done
+#49 unpacking to docker.io/library/hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f 7.5s done
 #49 DONE 19.3s
 
 #48 [worker] exporting to image
@@ -309,15 +309,15 @@ HEAD is now at fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallba
 #48 exporting config sha256:14c693ef977cc706abb22c13fa97ed086305627f4e6e5e541c29618ec7a4a0ff 0.0s done
 #48 exporting attestation manifest sha256:c4a6ff63bec250d24caadc87191b2545da8c64a6b47defc6f41167229718bba7 0.0s done
 #48 exporting manifest list sha256:890c174a69dfbda0c10608d283ec9df11ff58a2d8a557b24028f58c9450410a7 0.0s done
-#48 naming to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a done
+#48 naming to docker.io/library/hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f done
 #48 ...
 
 #50 [migrate] exporting to image
-#50 unpacking to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a 7.9s done
+#50 unpacking to docker.io/library/hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f 7.9s done
 #50 DONE 19.7s
 
 #48 [worker] exporting to image
-#48 unpacking to docker.io/library/hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a 7.9s done
+#48 unpacking to docker.io/library/hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f 7.9s done
 #48 DONE 19.7s
 
 #51 [api] resolving provenance for metadata file
@@ -328,9 +328,9 @@ HEAD is now at fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallba
 
 #53 [worker] resolving provenance for metadata file
 #53 DONE 0.0s
- Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Built 
- Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Built 
- Image hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a Built 
+ Image hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f Built 
+ Image hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f Built 
+ Image hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f Built 
 Pre-upgrade backup completed: /var/backups/hlmemo/pre-upgrade/912f2d39247a9e445222756f8ce11fa24c70fae9-2026-09-23T183409Z-8xuCi7.dump (retained until explicit prune)
 migrate_env_w0: prod.env: already migrated (no retired keys)
 migrate_env_w0: app.env: already migrated (no retired keys)
@@ -414,16 +414,16 @@ No stopped containers
 Warning: you are leaving 53 commits behind, not connected to
 any of your branches:
 
-  fa24ca5 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
-  93d4d0e Merge W2a librarian foundation (integrated on W0a: 0006→0005 relink, main@head, librarian lifecycle in deploy; librarian disabled in R1) — D-062..D-064
-  7e16e4b D-066: librarian tiers — gpt-6-luna default, deepseek fallback, gemini excluded; two-tier luna/luna-pro + non-OpenAI pro fallback noted for Phase 5
-  f7c112e Merge W2a librarian into main (W0a): 0006 after 0005, main@head = 0006_librarian, librarian in the deploy lifecycle (D-062..D-065)
+  6cb48a9 D-066 profile switch (gpt-6-luna default, deepseek fallback) + D-067: ceiling model also fails → engineered LLM robustness requirements
+  0ce367b Merge W2a librarian foundation (integrated on W0a: 0006→0005 relink, main@head, librarian lifecycle in deploy; librarian disabled in R1) — D-062..D-064
+  773be71 D-066: librarian tiers — gpt-6-luna default, deepseek fallback, gemini excluded; two-tier luna/luna-pro + non-OpenAI pro fallback noted for Phase 5
+  75776ee Merge W2a librarian into main (W0a): 0006 after 0005, main@head = 0006_librarian, librarian in the deploy lifecycle (D-062..D-065)
  ... and 49 more.
 
 If you want to keep them by creating a new branch, this may be a good time
 to do so with:
 
- git branch <new-branch-name> fa24ca5
+ git branch <new-branch-name> 6cb48a9
 
 HEAD is now at 912f2d3 Ubuntu 26.04 support + two-command deploy (first_deploy.sh, remote_gates.sh)
 Rollback image verified: sha256:b93f93f26ed34611ac69aae2e1cd0b12c88b76b8df8a70da08d0f5bd8543ed4b (hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9)

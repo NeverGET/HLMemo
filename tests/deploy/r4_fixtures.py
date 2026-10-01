@@ -52,10 +52,10 @@ def workstation_repo(dest: Path) -> Path:
     return dest
 
 
-#: the R3 template's settings (805f4cd deploy/llm.env.example, comments dropped): the behaviour-only
+#: the R3 template's settings (c98ec0a deploy/llm.env.example, comments dropped): the behaviour-only
 #: rollback (`install_llm_env.sh --release-template`) installs it on the R4 code
 R3_TEMPLATE = (
-    "# R3 llm.env template (test copy of 805f4cd deploy/llm.env.example, settings only)\n"
+    "# R3 llm.env template (test copy of c98ec0a deploy/llm.env.example, settings only)\n"
     "HLM_LIBRARIAN_ENABLED=false\n"
     "HLM_LIBRARIAN_ROLE=observer\n"
     "HLM_LIBRARIAN_CONCURRENCY=3\n"

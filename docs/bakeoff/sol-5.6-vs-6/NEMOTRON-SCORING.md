@@ -13,7 +13,7 @@ Same task, prompt (`PROMPT.md`, sha1 e16aad98…), tree and key (`ANSWER-KEY.md`
 | ref | gpt-6-astra low | 2 | 1 | 0 | 2 | 1 | 2 | 8 | DO-NOT-MERGE | 166 | 66,702 total | 0 |
 
 \*Clear FP = a factual claim the code contradicts. "Non-defect" = right fact, but by design / style / opinion / self-refuted.
-The change is a known DO-NOT-MERGE (Sol 51; fixed in f64b65a); all four Nemotron runs said MERGE-WITH-FIXES.
+The change is a known DO-NOT-MERGE (Sol 51; fixed in a526263); all four Nemotron runs said MERGE-WITH-FIXES.
 
 ## Per-key evidence (≤ 1 line quoted from the output)
 
@@ -25,7 +25,7 @@ The change is a known DO-NOT-MERGE (Sol 51; fixed in f64b65a); all four Nemotron
 
 **B-2** — K1 0: none. K2 0 (contradicted): "`_recheck` uses `ctx` from before the call (captures old grants/token_generation)" — `_recheck` re-reads device + grants (synthesis_service.py:119-135). K3 0: none. K4 0: none. K5 0 (direction reversed): "Client waits 8s, server kills at 6s → client sees timeout". K6 0: "TAU_S … calibrated in test fixture … Keep as is".
 
-## Extra findings, checked against the code (e2f30d8)
+## Extra findings, checked against the code (0966720)
 
 **A-1**
 1. Prompt "at most 4 short sentences" vs schema `maxItems: 6` / `MAX_SENTENCES = 6` — **valid, trivial** (v1.md:10 vs v1.schema.json:9, synthesis.py:75). "CRITICAL" is unjustified: `render()` caps text at 400 tokens (synthesis_service.py:146-160).
@@ -58,7 +58,7 @@ No run found the extra real defects other models found (llm.env not mounted into
 
 ## Method
 
-- **Tree**: `git archive e2f30d8` (no .git; consults end at 43 in that commit) + `git diff ad7ccc2 e2f30d8 > W2E-CHANGE.patch`. The tree hash (sha256 over sorted file hashes) was `c3708de0e92fad1b` for every run, identical before and after each Mode A run. The export is in the session scratch dir.
+- **Tree**: `git archive 0966720` (no .git; consults end at 43 in that commit) + `git diff d8a9646 0966720 > W2E-CHANGE.patch`. The tree hash (sha256 over sorted file hashes) was `c3708de0e92fad1b` for every run, identical before and after each Mode A run. The export is in the session scratch dir.
 - **Secret gate before sending**: `gitleaks dir` over the export (no leaks), the repo's pre-commit regex plus nvapi/hf patterns (0 hits), a check that no `.env` secret value occurs anywhere in the export (0), and the same three checks over the final Mode B bundle (clean). No `docs/private/`, `.env` or `deploy/.local/` in the export.
 - **Mode A (worked)**: codex-cli 0.155.1, a temp `CODEX_HOME` (no MCP servers, plugins, hooks, AGENTS.md or memories). The key reached only the codex process via `env_key`; `shell_environment_policy.inherit="core"` plus excludes keep it out of the model's shell. Provider:
   `model_provider="openrouter"`, `[model_providers.openrouter] base_url="https://openrouter.ai/api/v1", env_key="OPENROUTER_API_KEY", wire_api="responses"` (codex 0.155 rejects `wire_api="chat"`), `request_max_retries=stream_max_retries=20`, `stream_idle_timeout_ms=600000`, `model_context_window=1000000`, `web_search="disabled"`, `approval_policy="never"`.
@@ -71,7 +71,7 @@ No run found the extra real defects other models found (llm.env not mounted into
 - n = 2 per mode, on one task. A-1 and A-2 overlapped for about 12 minutes (A-2's wall time may include contention). B-2 hit OpenRouter's prompt cache (777,600 cached tokens; time to first token 6.4 s vs 45.5 s), so its 51 s is not a cold-start number.
 - Rate limits and availability: no HTTP 429s. The free endpoint returned NVIDIA 503 "Service temporarily overloaded" often: the first A-1 attempt aborted after codex's default 6 retries (24 s, not scored; retries raised to 20), A-1 had 7 reconnects, A-2 had 15, and the calibration request had 1. About 160 requests were used out of the 1,000/day limit.
 - Reasoning effort "high" produced only 286–341 reasoning tokens in Mode B, so the single-shot runs barely reasoned over the 784k-token context.
-- ToS: the NVIDIA trial terms allow NVIDIA to log and train on inputs. Only the public e2f30d8 export was sent. Mode A cannot hard-enforce a read-only view limited to the export (/tmp stays readable), so the command audit is the control.
+- ToS: the NVIDIA trial terms allow NVIDIA to log and train on inputs. Only the public 0966720 export was sent. Mode A cannot hard-enforce a read-only view limited to the export (/tmp stays readable), so the command audit is the control.
 
 ## Verdict
 

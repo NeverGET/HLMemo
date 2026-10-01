@@ -1,5 +1,5 @@
-# Answer key (written BEFORE reading either model's output) — W2e @ e2f30d8 vs ad7ccc2
-Confirmed defects (from the Sol-51 review, all fixed and test-proven in f64b65a):
+# Answer key (written BEFORE reading either model's output) — W2e @ 0966720 vs d8a9646
+Confirmed defects (from the Sol-51 review, all fixed and test-proven in a526263):
 K1 (critical) Post-LLM recheck removes only the unreadable citation and KEEPS a sentence that still has another citation -> content from a now-unreadable item can leak; returned hits/card are not re-filtered after the call.  [synthesis_service.py post-call filter]
 K2 (high) The post-call recheck does not verify all co-owned project grants (a single-project match is enough) and/or the pre-provider privacy gate does not pin the token generation (a rotated token is not detected).
 K3 (high) The citation validator checks only that a cited id exists; a sentence can contradict its cited text (no support/grounding check).

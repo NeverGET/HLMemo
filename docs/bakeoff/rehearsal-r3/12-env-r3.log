@@ -1,4 +1,4 @@
-# 2026-09-25T13:44:54Z §2.1 bash deploy/scripts/install_llm_env.sh --state $S   (local main = 805f4cd tooling; key and the owner caps are kept)
+# 2026-09-25T13:44:54Z §2.1 bash deploy/scripts/install_llm_env.sh --state $S   (local main = c98ec0a tooling; key and the owner caps are kept)
 install_llm_env: /etc/hlmemo/llm.env on hlm-deploy (/Users/cemalkurt/Projects/HLMemo/deploy/.local/127.0.0.1-2223/ssh_config): profile=openrouter-gpt6-luna fallback=openrouter-glm53-flash role=observer enabled=true
 backup /etc/hlmemo/llm.env.bak-20260925T134454Z (0600)
 installed /etc/hlmemo/llm.env (0600 hlmdeploy)
@@ -50,7 +50,7 @@ install_llm_env (remote): switch complete (both services run this llm.env, the c
 Done. On a deployed R3 host the switch (both services recreated + the --release r3 check) ran under the deploy lock; re-run this command if it was interrupted (RUNBOOK "R3 release").
 rc=0
 # §2.2 independent re-check with --release r3
-checkout 805f4cd2955b; api image revision 805f4cd2955b; llm.env=present; release marker: HLM_ENV_RELEASE=r3
+checkout c98ec0aeed33; api image revision c98ec0aeed33; llm.env=present; release marker: HLM_ENV_RELEASE=r3
 librarian: llm.env=present enabled=true role=observer mode=live profile=openrouter-gpt6-luna fallback=openrouter-glm53-flash
 per-task fallbacks: query_rewrite=openrouter risk_judge=openrouter-qwen38-27b-fast synthesis=openrouter
 librarian heartbeat: enabled=True role=observer breaker_state=closed age_s=0.9 ready=0 (max age 30s, waited 0.0s)
@@ -68,7 +68,7 @@ librarian query_rewrite (no field) source_cap (no field) observer concurrency 3 
 release-state env_switch: None pending_cleanup: []
 -rw-------   1 hlmdeploy hlmdeploy 4773 Sep 25 13:44 llm.env
 -rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:44 llm.env.bak-20260925T134454Z
--rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:43 llm.env.release-6902f91e7a79
+-rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:43 llm.env.release-25bd4654a67c
 librarian   ready=0 in_flight=0 role=observer breaker=closed (ledger, 0 calls/15m) failed_24h=0 spend_today_usd=0.549186 spend_hour_usd=0.0 reserved_usd=0.0
 fallback    default=openrouter-glm53-flash
 chain       contradiction  primary=openrouter-gpt6-luna fallback=openrouter-glm53-flash

@@ -19,7 +19,7 @@ A deterministic diagnosis was run on the pinned v2 run: no LLM calls, candidate 
   - Reordering a pair (newer above older) fixes 0 cases.
   - Only CLOSING the stale item, or PULLING the current item up next to or above the stale one, can move the gate.
   - Upper bound with a perfect judge: A 8 → 4 by closing, or 8 → 3 by closing plus pull-up.
-- **Read side:** the read side ignores contradicts-only links. The shipping read side (J, 6a96ba1-style, statement-aware) is neutral, and v2's partial links gave zero net effect. Rule 3 as of a65a8f5 (move a partly superseded item behind its superseder) cost −2.7/−4.8 points and will not ship.
+- **Read side:** the read side ignores contradicts-only links. The shipping read side (J, c0e3138-style, statement-aware) is neutral, and v2's partial links gave zero net effect. Rule 3 as of 7cbecc8 (move a partly superseded item behind its superseder) cost −2.7/−4.8 points and will not ship.
 - **Precision:** v2's strict precision is .48 (pooled .54). Partial supersedes score .68; contradicts-only scores .12, and most of those are real updates whose supersede was dropped.
 
 ## Constraints

@@ -350,7 +350,7 @@ def test_review61_an_ambiguous_span_occurrence_is_never_demoted() -> None:
 
 
 def _rule_6a96ba1(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
-    """A frozen copy of the read-side rule of 6a96ba1 (measured neutral on the hold-out, D-087)."""
+    """A frozen copy of the read-side rule of c0e3138 (measured neutral on the hold-out, D-087)."""
     import re
 
     from hlmemo.core.normalize import extract_terms, normalize
@@ -376,8 +376,8 @@ def _rule_6a96ba1(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
 
 
 def test_d087_rule3_never_demotes_more_than_the_neutral_6a96ba1_rule() -> None:
-    """D-087: the shipped rule demotes only a subset of what 6a96ba1 demoted (its read side was
-    exactly baseline on the hold-out); the a65a8f5 rule (demote wherever the item ranks) is gone."""
+    """D-087: the shipped rule demotes only a subset of what c0e3138 demoted (its read side was
+    exactly baseline on the hold-out); the 7cbecc8 rule (demote wherever the item ranks) is gone."""
     import itertools
 
     from hlmemo.core.supersession import matched_in_span
@@ -445,7 +445,7 @@ def test_partial_demotion_resolves_chains_in_one_stable_order() -> None:
 
 
 def test_review60_cycle_never_loses_a_hit_under_a_tight_budget() -> None:
-    """Sol 60: hits [3, unrelated 9, 1] with mutual partial links. 6a96ba1 gave [9, 3, 1] and the
+    """Sol 60: hits [3, unrelated 9, 1] with mutual partial links. c0e3138 gave [9, 3, 1] and the
     review-57 rule [9, 1, 3]; with a budget of two hits, 3 must stay in (the original order)."""
     from hlmemo.core.supersession import order_6a96ba1
 
@@ -463,7 +463,7 @@ def test_review60_cycle_never_loses_a_hit_under_a_tight_budget() -> None:
 def test_review60_no_hit_ranks_worse_than_baseline_or_6a96ba1() -> None:
     """D-087 ordering guarantee (review 60 #4), over >= 1,000 generated head orders: for every hit,
     rank_new <= max(rank_baseline, rank_6a96ba1), where rank_6a96ba1 comes from a FROZEN copy of the
-    whole 6a96ba1 procedure (its predicate, smallest-rank Kahn, cycle members appended)."""
+    whole c0e3138 procedure (its predicate, smallest-rank Kahn, cycle members appended)."""
     import heapq
     import random
 

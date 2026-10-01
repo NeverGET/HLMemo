@@ -1,6 +1,6 @@
 ## Verdict
 
-**FIX-NEEDED.** Static review of `git diff af7daa6 e0a785e` and D-072/D-073 only; no tests run.
+**FIX-NEEDED.** Static review of `git diff d53aff5 03fe92d` and D-072/D-073 only; no tests run.
 
 ## Per-finding status
 

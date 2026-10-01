@@ -1,4 +1,4 @@
-# Import burst (4d) on the VM, R2 3535bcc9bf66, librarian live (observer). 2026-09-24
+# Import burst (4d) on the VM, R2 1de5890851b8, librarian live (observer). 2026-09-24
 # hlm import markdown <50 tracked HLMemo docs files> --project r2-import --base <repo> (device r2-import-mac, ops mint | login).
 # Concurrently (burst_load.py): 3 query callers timed for 300 s against r2-import (the project being imported),
 # plus 10 ~6 kB writes in r2-load every 20 s from t+30 s (priority-3 librarian jobs) while the priority-6 import jobs queue.

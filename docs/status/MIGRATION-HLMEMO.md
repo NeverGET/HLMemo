@@ -1,6 +1,6 @@
 # HLMemo self-migration into prod project `hlmemo` (W-A, D-130 → D-131/D-132)
 
-Date: 2026-09-25/26 (UTC 22:0x–22:2x). Target: https://mcp.hlmemo.com (R3, 805f4cd), project `hlmemo`
+Date: 2026-09-25/26 (UTC 22:0x–22:2x). Target: https://mcp.hlmemo.com (R3, c98ec0a), project `hlmemo`
 (id 10), device 21 (`cemals-mb-pro-3`, `hlmemo:write`). Tool: the W1.5 `hlm import` CLI from the
 owner's Mac (`hlm.toml` → prod). This is the REAL data on which the D-130 Production-Ready gate is
 measured. `hlmemo-e2e` (the TEST project) was not modified apart from the isolation policy below.
@@ -34,7 +34,7 @@ only). Result by kind in `hlmemo` after the import: 253 fact, 192 episode, 74 do
 1 project_card = **554 items (2 before + 552)**.
 
 Dry run vs apply: the dry run planned 551. The one extra item is `DECISIONS.md#D-131`, committed
-(fef6f19, 22:05:59Z) between the dry run and the apply. No other item's content hash changed
+(1a71e17, 22:05:59Z) between the dry run and the apply. No other item's content hash changed
 (per-key sha256 comparison of the dry-run and apply reports); D-132's note that STATUS also gained
 a section is not borne out by the reports.
 

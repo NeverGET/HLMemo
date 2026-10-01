@@ -1,4 +1,4 @@
-You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Your consult 37 (docs/consults/37-sol-review-w2a-delta.md) said DO-NOT-MERGE. The implementer added commit 3e19c15 on branch `worktree-agent-a21f9ce923d827a45` (worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a21f9ce923d827a45). Review `git -C <wt> diff 9047471 3e19c15`. Also read D-064 in docs/decisions/DECISIONS.md, which clarifies the DF staleness rule.
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Your consult 37 (docs/consults/37-sol-review-w2a-delta.md) said DO-NOT-MERGE. The implementer added commit cc21d24 on branch `worktree-agent-a21f9ce923d827a45` (worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a21f9ce923d827a45). Review `git -C <wt> diff 0a8211a cc21d24`. Also read D-064 in docs/decisions/DECISIONS.md, which clarifies the DF staleness rule.
 Claims:
 - a privacy check before every provider attempt (retry and fallback); working-memory rules only when librarian-authored, rule-shaped and redacted;
 - every cassette content shape normalized and redacted before persisting;

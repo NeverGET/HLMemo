@@ -1,6 +1,6 @@
 ## Verdict: DO-NOT-MERGE
 
-W0a is **not yet safe to merge for a VM rehearsal before production**. Fix the rollback safety gaps, then rehearse the corrected flow on an isolated VM. This was a static review of `6ddd2c8..2862d39`; I ran no tests.
+W0a is **not yet safe to merge for a VM rehearsal before production**. Fix the rollback safety gaps, then rehearse the corrected flow on an isolated VM. This was a static review of `36d967a..9daa56a`; I ran no tests.
 
 ## H/M1/M2 status
 

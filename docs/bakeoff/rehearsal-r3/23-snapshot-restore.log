@@ -6,12 +6,12 @@ re-pinned SHA256:uGVxTqfruFFZW4MklVZR+dMDU/YxA7c86zDWUSuopDw (keyscan == guest k
 /ready 200; stop -> ready 13 s; clock host 17:20:26 vm 17:20:26
 {
     "accepted": false,
-    "current_ref": "6902f91e7a79",
+    "current_ref": "25bd4654a67c",
     "env_backups": {},
-    "previous_dump": "/var/backups/hlmemo/pre-upgrade/3535bcc9bf66-2026-09-25T004818Z-HGUfCm.dump",
-    "previous_image": "hlmemo:3535bcc9bf66",
+    "previous_dump": "/var/backups/hlmemo/pre-upgrade/1de5890851b8-2026-09-25T004818Z-HGUfCm.dump",
+    "previous_image": "hlmemo:1de5890851b8",
     "previous_image_id": "sha256:e1f22c62e1d4a246464e88c962feba10fe93",
-    "previous_ref": "3535bcc9bf66",
+    "previous_ref": "1de5890851b8",
     "retired_backups": []
 }
 -rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:41 llm.env
@@ -20,13 +20,13 @@ HLM_LLM_BUDGET_HOUR_USD=1
 HLM_LLM_BUDGET_DAY_USD=2
 HLM_LLM_BUDGET_MONTH_USD=10
 no dockerd drop-in (as before the workaround)
-hlmemo-prod-api-1 hlmemo:6902f91e7a79 Up 21 seconds (healthy)
-hlmemo-prod-librarian-1 hlmemo:6902f91e7a79 Up 21 seconds (healthy)
-hlmemo-prod-worker-1 hlmemo:6902f91e7a79 Up 21 seconds (healthy)
+hlmemo-prod-api-1 hlmemo:25bd4654a67c Up 21 seconds (healthy)
+hlmemo-prod-librarian-1 hlmemo:25bd4654a67c Up 21 seconds (healthy)
+hlmemo-prod-worker-1 hlmemo:25bd4654a67c Up 21 seconds (healthy)
 hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 21 seconds (healthy)
 hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 21 seconds (healthy)
 0
-checkout 6902f91e7a79; api image revision 6902f91e7a79; llm.env=present; release marker: none
+checkout 25bd4654a67c; api image revision 25bd4654a67c; llm.env=present; release marker: none
 RESULT librarian PASS llm.env=present enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna
    slug    | count 
 -----------+-------

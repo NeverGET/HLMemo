@@ -10,7 +10,7 @@ The rulings are machine-applied by the gold overlay `src/hlmemo/bench/adjudicati
 `adj-2`, content hash in every report: `adj-2+4c0651b4`). `hlm bench` scores with the adjusted gold by default;
 `--gold raw` reproduces the D-066 numbers exactly. The pack files themselves are unchanged (version 1).
 
-**History.** adj-1 (commit bb03629) credited three cases to the gold: it dropped T10-07 and accepted extra
+**History.** adj-1 (commit d5cdf14) credited three cases to the gold: it dropped T10-07 and accepted extra
 lesson sets for T9-01 and T9-03. Sol's review (`docs/consults/40-sol-review-w2f.md`, DO-NOT-MERGE) and the
 orchestrator ruled all three **strictly**. adj-2 applies that ruling. A lesson counts only when the task text
 explicitly supports it, and the `answer = null` contract is binding.

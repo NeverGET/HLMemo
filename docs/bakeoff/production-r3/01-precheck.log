@@ -2,21 +2,21 @@
 public /ready: {"status":"ready"} 200
 {
     "accepted": false,
-    "current_ref": "6902f91e7a79",
+    "current_ref": "25bd4654a67c",
     "env_backups": {},
-    "previous_dump": "/var/backups/hlmemo/pre-upgrade/ee6ce9c9f1d6-2026-09-24T033915Z-Dqip8r.dump",
-    "previous_image": "hlmemo:ee6ce9c9f1d6",
+    "previous_dump": "/var/backups/hlmemo/pre-upgrade/62ae2b3c7aa5-2026-09-24T033915Z-Dqip8r.dump",
+    "previous_image": "hlmemo:62ae2b3c7aa5",
     "previous_image_id": "sha256:414e7af1b9bf16ff3aa4664912251e01c1a4",
-    "previous_ref": "ee6ce9c9f1d6",
+    "previous_ref": "62ae2b3c7aa5",
     "retired_backups": [
         "/etc/hlmemo/api.env.pre-w0-20260923T191722Z"
     ]
 }
-6902f91e7a79
-6902f91e7a79
-hlmemo-prod-api-1 hlmemo:6902f91e7a79 Up 3 minutes (healthy)
-hlmemo-prod-librarian-1 hlmemo:6902f91e7a79 Up 3 minutes (healthy)
-hlmemo-prod-worker-1 hlmemo:6902f91e7a79 Up 42 hours (healthy)
+25bd4654a67c
+25bd4654a67c
+hlmemo-prod-api-1 hlmemo:25bd4654a67c Up 3 minutes (healthy)
+hlmemo-prod-librarian-1 hlmemo:25bd4654a67c Up 3 minutes (healthy)
+hlmemo-prod-worker-1 hlmemo:25bd4654a67c Up 42 hours (healthy)
 hlmemo-prod-caddy-1 caddy:2.11.2-alpine Up 42 hours (healthy)
 hlmemo-prod-db-1 pgvector/pgvector:0.8.6-pg17 Up 2 days (healthy)
 total  48

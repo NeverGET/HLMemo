@@ -1,6 +1,6 @@
 ## Verdict
 
-**FIX-NEEDED.** Yalnızca `4169ea6..547d7d7` farkı statik olarak incelendi; test çalıştırılmadı.
+**FIX-NEEDED.** Yalnızca `e712565..9423b4e` farkı statik olarak incelendi; test çalıştırılmadı.
 
 ## Per-finding
 

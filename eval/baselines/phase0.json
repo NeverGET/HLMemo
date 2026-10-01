@@ -2,8 +2,8 @@
  "schema": 1,
  "date": "2026-09-23",
  "system": "Phase 0 fast path + D-055 retrieval fixes (no librarian)",
- "commit": "16abaf7",
- "commit_note": "main head at measurement; src/ and alembic/ identical to 82200ae (corpus-B pin)",
+ "commit": "2837d93",
+ "commit_note": "main head at measurement; src/ and alembic/ identical to 3727e81 (corpus-B pin)",
  "embedder": {
   "id": "intfloat/multilingual-e5-small",
   "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3"
@@ -12,7 +12,7 @@
   "corpus_a_questions_sha256": "7a24ad29d981d42717e08886e06be81198e24b145283f69eb0d15289f2692d26",
   "corpus_b_dev_sha256": "5825dedbb6931a20d599cfbddcba544e2e84708458670d4b5d6f6cca132635ad",
   "corpus_b_sealed_sha256": "b08a49dfc67ec048f79ac916f9745e5805ef047e006ae3dc8a152f12cef9e419",
-  "corpus_b_pinned_commit": "82200ae"
+  "corpus_b_pinned_commit": "3727e81"
  },
  "corpus_a": {
   "source": "results-d055 (D-057 re-measure)",
@@ -851,7 +851,7 @@
  },
  "corpus_b_dev": {
   "import": {
-   "git_rev": "82200ae",
+   "git_rev": "3727e81",
    "selected_files": 78,
    "items": 91,
    "chars": 695281,

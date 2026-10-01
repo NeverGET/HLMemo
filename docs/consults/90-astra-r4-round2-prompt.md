@@ -5,14 +5,14 @@ In round 1 (`docs/consults/89-astra-r4-plan-review.md`) you returned GO-WITH-FIX
 ## What you may read
 - `docs/decisions/R4-RELEASE-PLAN.md` (v2): §10 maps every R-id to its fix and proof; §5.1 pre-registers what the final-test result means; §11 is the scope of this round.
 - Your round-1 review: `docs/consults/89-astra-r4-plan-review.md`.
-- The candidate code on branch `r4-rc` @ c307ff2, checked out in the worktree `.claude/worktrees/agent-ab919c6d103d1b46b` (relative to the repo root). It is a merge of `r4-code` (src) and `r4-deploy` (deploy) on top of 8d36f74. Diff it with `git -C .claude/worktrees/agent-ab919c6d103d1b46b diff 8d36f74..c307ff2`, and read any file in that worktree.
+- The candidate code on branch `r4-rc` @ f02c39d, checked out in the worktree `.claude/worktrees/agent-ab919c6d103d1b46b` (relative to the repo root). It is a merge of `r4-code` (src) and `r4-deploy` (deploy) on top of 372abdd. Diff it with `git -C .claude/worktrees/agent-ab919c6d103d1b46b diff 372abdd..f02c39d`, and read any file in that worktree.
 - `docs/decisions/DECISIONS.md` D-196…D-198, `CLAUDE.md`, and `deploy/RUNBOOK.md` (in the worktree, the "R4 release" section).
 - Do NOT read anything under `docs/private/`, and do not read `.env` or any key file.
 
 ## Rules (follow exactly)
 1. **Scope:** ONLY
    - (a) whether each round-1 finding R-1…R-17 is closed;
-   - (b) defects INTRODUCED by the diff 8d36f74..r4-rc;
+   - (b) defects INTRODUCED by the diff 372abdd..r4-rc;
    - (c) the pre-registered final-test rule (plan §5.1).
    No findings about unchanged code, style or refactors. Do not re-litigate owner decisions (medium writer, caps 3/8/60, no D-130 self-certification) unless they create a concrete safety defect.
 2. **Per finding R-1…R-17, give one line:** `R-n | CLOSED / PARTIAL / OPEN | evidence (file:line or test name) | if not CLOSED: the concrete remaining scenario`. A CLOSED verdict must cite the code or test that closes it. Do not accept the plan's claim alone: open the file.
@@ -52,7 +52,7 @@ In round 1 (`docs/consults/89-astra-r4-plan-review.md`) you returned GO-WITH-FIX
 4. `## Residual risks for the owner`: one line each.
 5. `## Verdict`.
 
-## Gate results already measured on c307ff2 (verify the claims in the code, not by re-running)
+## Gate results already measured on f02c39d (verify the claims in the code, not by re-running)
 - Unit: 837 passed, 1 skipped.
 - Integration: 593 passed, 13 skipped, 2 failed. Both failures are environment-only and were proven by toggling:
   - the g8 gitignore check fails only because of an untracked `models` symlink in the worktree;

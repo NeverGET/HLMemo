@@ -45,7 +45,7 @@ from hlmemo.worker.main import drain
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "synthesis"
-CORPUS_COMMIT = "ad7ccc2"  # main at the W2e fork (2026-09-24); docs/ only
+CORPUS_COMMIT = "d8a9646"  # main at the W2e fork (2026-09-24); docs/ only
 PROJECT = "syn-docs"
 SECTION_CHARS = 8000  # the G-I4 import granularity (D-072)
 IMPORT_NOW = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)

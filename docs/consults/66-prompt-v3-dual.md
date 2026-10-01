@@ -1,6 +1,6 @@
 # Consult 66 — CRITICAL dual review (D-085): librarian v3 (wf-librarian-v3 @ 0757c4b)
 
-Your cwd is a clean export of 0757c4b (no .git, no secrets). `V3.patch` is the diff from main c52291c to 0757c4b, excluding cassettes, eval/live and the large G-P1 golden JSON. Spec: read the rows D-089, D-100 and D-101 in docs/decisions/DECISIONS.md, plus D-074, D-083, D-086, D-087 and D-095 (contracts that v3 must keep). The design consult is docs/consults/59-*. An earlier routine review is docs/consults/65-*. Read-only.
+Your cwd is a clean export of 0757c4b (no .git, no secrets). `V3.patch` is the diff from main e0f4ba0 to 0757c4b, excluding cassettes, eval/live and the large G-P1 golden JSON. Spec: read the rows D-089, D-100 and D-101 in docs/decisions/DECISIONS.md, plus D-074, D-083, D-086, D-087 and D-095 (contracts that v3 must keep). The design consult is docs/consults/59-*. An earlier routine review is docs/consults/65-*. Read-only.
 
 ## What v3 adds (all default OFF except instrumentation)
 1. **Instrumentation (always on):** a per-pair audit (candidate source/rank/score, primary raw output, guards before/after, verifier, terminal outcome, hashes), stored in the event's audit request with no migration. Export: `python -m hlmemo.ops librarian export`.

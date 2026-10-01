@@ -3,7 +3,7 @@
 This protocol is frozen BEFORE the run (D-158a item 6). There is one run with no best-of-N. A change after a failed final needs a new hold-out.
 
 ## Candidate under test
-- Code: branch `wf-memory-ask` @ **fd83f95**. It contains the temporal layer (da41a94 + the explicit-links merge dd07588) and the luna-med profile, which this run does not use.
+- Code: branch `wf-memory-ask` @ **c800f4b**. It contains the temporal layer (11b7565 + the explicit-links merge 7a96902) and the luna-med profile, which this run does not use.
 - Configuration (env, on top of `deploy/llm.env.example`):
   | Setting | Value |
   |---|---|
@@ -22,7 +22,7 @@ This protocol is frozen BEFORE the run (D-158a item 6). There is one run with no
 ## Memory under test
 | Set | DB | Project | Contents |
 |---|---|---|---|
-| **sealed B** | `hlm_research_b_tl` | `hb-eval` | corpus B @82200ae (91 items) plus 4 explicit supersedes links (event 13243, `hlm links explicit`) |
+| **sealed B** | `hlm_research_b_tl` | `hb-eval` | corpus B @3727e81 (91 items) plus 4 explicit supersedes links (event 13243, `hlm links explicit`) |
 | **PR set** | `hlm_research_cur_tl` | `hlmemo` | a copy of `hlm_research_cur` (the current-tree replica) with `hlm links explicit` applied; its dry-run proposal list is recorded before the apply |
 
 ## Question sets (hashes; contents stay sealed)
@@ -58,7 +58,7 @@ Every question stays in the denominator.
 | C4 abstain (adjudicated, premise corrections included) | ≥ .90 |
 | C5 source recall | ≥ .85 |
 | C6 | p95 ≤ 20 s; error/timeout ≤ .02; ≤ $0.01/q (reported: p99, response tokens median/p95) |
-| C7 zero scope leakage | review-79 T1 isolation tests green at fd83f95, plus a cross-project probe on the R4 rehearsal |
+| C7 zero scope leakage | review-79 T1 isolation tests green at c800f4b, plus a cross-project probe on the R4 rehearsal |
 
 Paired bootstrap CIs are reported for the reference comparisons; the point estimate gates.
 

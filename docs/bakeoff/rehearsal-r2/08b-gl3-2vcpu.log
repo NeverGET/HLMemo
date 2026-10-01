@@ -1,4 +1,4 @@
-# G-L3 on the 2 vCPU / 8 GiB VM (hlm-2604), R2 3535bcc9bf66 with the librarian LIVE (observer, gpt-6-luna), 2026-09-24
+# G-L3 on the 2 vCPU / 8 GiB VM (hlm-2604), R2 1de5890851b8 with the librarian LIVE (observer, gpt-6-luna), 2026-09-24
 # From the Mac through Caddy (https://localhost:19443, CA-verified): warm-up 20 queries, quiet reference 60 queries (3 callers, no writes),
 # then 3 query callers timed DURING 100 sequential acknowledged memory.write calls (~6 kB bodies; each enqueues a librarian_write job, priority 3).
 # Project r2-load pre-seeded with 160 items (4 x 40, drained before). Script: gl3_vm.py (scratch); VM sampler every ~3 s: /proc/stat, loadavg, docker stats, job backlog.

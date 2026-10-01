@@ -2,7 +2,7 @@
  "version": 1,
  "description": "W2e synthesis fixture: questions over HLMemo's public docs/ at the pinned corpus commit. keys are verbatim answer strings (any one answers); negatives have no answer in the corpus.",
  "corpus": {
-  "commit": "ad7ccc2",
+  "commit": "d8a9646",
   "root": "docs",
   "importer": "markdown",
   "section_chars": 8000,

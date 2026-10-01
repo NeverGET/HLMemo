@@ -14,18 +14,18 @@ Two deterministic rules, applied after RRF fusion and the §4.9 dedupe:
    a live ``supersedes`` link with ``props.scope = part`` says that ONE statement of the older item
    (the link's quoted span) is outdated while its other statements stay valid, so the item is never
    hidden. An ordering constraint "after the item that replaced the statement" exists ONLY when
-   (i) the 6a96ba1 statement rule holds (the matched chunk contains the span and its statement(s)
+   (i) the c0e3138 statement rule holds (the matched chunk contains the span and its statement(s)
    sharing the most query terms overlap it; no shared term at all: only if the span is most of the
    chunk) AND (ii) the span occurs exactly once, on term boundaries, and every query term found in
    the chunk occurs inside it and NOT anywhere outside it, the whole chunk scanned (a term that
    also matches the valid part — "port" in "API uses port 8080 and backups use port 9090" — or a
    second copy of the span means no demotion; review 61). Constraints inside a cyclic component
    are all ignored (the original interleaving stays). The hits are then placed so that every
-   constraint holds and EVERY hit ranks no worse than max(its baseline rank, its 6a96ba1 rank)
+   constraint holds and EVERY hit ranks no worse than max(its baseline rank, its c0e3138 rank)
    (D-087: never worse than the
    measured-neutral read side): each hit gets that deadline and Lawler's backward rule (place last,
    among the hits whose constraints allow it, the one with the latest deadline; ties: the later
-   baseline rank) meets every deadline, because the 6a96ba1 order itself does. Runs on the fetched
+   baseline rank) meets every deadline, because the c0e3138 order itself does. Runs on the fetched
    head only (after ``n_fetch``). A demoted hit's displayed score is capped at its predecessor's.
    Without such links (every database before the librarian applies one) the order is unchanged.
 """
@@ -86,7 +86,7 @@ def _statements(text: str) -> list[str]:
 
 
 def _statement_rule(chunk_text: str, span: str, chunk: str, query_terms: set[str]) -> bool:
-    """The 6a96ba1 rule (measured neutral on the hold-out, D-087), unchanged."""
+    """The c0e3138 rule (measured neutral on the hold-out, D-087), unchanged."""
     scored = [(len(set(extract_terms(st)) & query_terms), _flat(st)) for st in _statements(chunk_text)]
     best = max(score for score, _st in scored)
     if best == 0:  # a semantic match with no shared term: only when the span is most of the chunk
@@ -95,7 +95,7 @@ def _statement_rule(chunk_text: str, span: str, chunk: str, query_terms: set[str
 
 
 def _old_rule(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
-    """The complete 6a96ba1 predicate (measured neutral on the hold-out, D-087)."""
+    """The complete c0e3138 predicate (measured neutral on the hold-out, D-087)."""
     span = _flat(quote)
     chunk = _flat(chunk_text)
     if len(span.split()) < 2 or span not in chunk:
@@ -115,7 +115,7 @@ def _span_starts(chunk: str, span: str) -> list[int]:
 
 def matched_in_span(chunk_text: str, quote: str, query_terms: set[str]) -> bool:
     """Did the query match the OUTDATED span (``quote``) of this chunk, and nothing else of it?
-    Rule 3 (i) AND (ii), so it never demotes a hit the 6a96ba1 rule would keep. ``query_terms``:
+    Rule 3 (i) AND (ii), so it never demotes a hit the c0e3138 rule would keep. ``query_terms``:
     the query's normalized terms (``extract_terms``).
 
     (ii) is occurrence-aware and scans the WHOLE rest of the chunk (review 61): the span must
@@ -177,7 +177,7 @@ def _kahn(n: int, edges: list[tuple[int, int]]) -> tuple[list[int], set[int]]:
 
 
 def order_6a96ba1(hits: list[Any], links: list[tuple[int, int, str]], terms: set[str]) -> list[int]:
-    """The hit order the 6a96ba1 read side produced (hit indexes): its predicate, smallest-rank
+    """The hit order the c0e3138 read side produced (hit indexes): its predicate, smallest-rank
     Kahn, the members of a cycle appended in their original order. The deadline source of rule 3."""
     order, left = _kahn(len(hits), _edges(hits, links, terms, _old_rule))
     return order + sorted(left)
@@ -239,7 +239,7 @@ def demote_partially_superseded(
     old = order_6a96ba1(hits, links, terms)
     old_rank = {i: r for r, i in enumerate(old)}
     _order, old_left = _kahn(n, _edges(hits, links, terms, _old_rule))
-    edges = [(u, v) for u, v in edges if not (u in old_left and v in old_left)]  # keeps 6a96ba1 feasible
+    edges = [(u, v) for u, v in edges if not (u in old_left and v in old_left)]  # keeps c0e3138 feasible
     if not edges:
         return list(hits)
     deadline = [max(i, old_rank[i]) for i in range(n)]

@@ -1,11 +1,11 @@
 # 2026-09-25T17:02:36Z §8.2 R2 health after the script rollback
 {
     "accepted": true,
-    "current_ref": "6902f91e7a79",
+    "current_ref": "25bd4654a67c",
     "env_backups": {},
     "pending_cleanup": [],
     "retired_backups": [],
-    "rolled_back_from": "805f4cd2955b"
+    "rolled_back_from": "c98ec0aeed33"
 }
 -rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 17:02 llm.env
 -rw-------   1 hlmdeploy hlmdeploy 2664 Sep 25 13:44 llm.env.bak-20260925T134454Z

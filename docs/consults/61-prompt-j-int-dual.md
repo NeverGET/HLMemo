@@ -1,22 +1,22 @@
-# Consult 61 — CRITICAL dual review (D-085): J review-60 fixes + integration with main (int-r3-j @ 3cdeb61)
+# Consult 61 — CRITICAL dual review (D-085): J review-60 fixes + integration with main (int-r3-j @ d15833e)
 
-Your cwd is a CLEAN EXPORT of 3cdeb61 (no .git, no secrets). Stay inside it and do not modify files.
+Your cwd is a CLEAN EXPORT of d15833e (no .git, no secrets). Stay inside it and do not modify files.
 The files to review:
-- `REVIEW60-FIXES.patch`: b243014..d3282ab, the fixes for review 60. COMMITS.txt lists the commits.
-- `MERGE-RESOLUTION.patch`: the combined diff (`git show --cc`) of merge 206f21b (main 625d72e into J b243014), restricted to the two files that conflicted, `src/hlmemo/db/librarian_queries.py` and `src/hlmemo/librarian/worker.py`.
+- `REVIEW60-FIXES.patch`: 4333b0e..411fd52, the fixes for review 60. COMMITS.txt lists the commits.
+- `MERGE-RESOLUTION.patch`: the combined diff (`git show --cc`) of merge 91eea72 (main f9a78a3 into J 4333b0e), restricted to the two files that conflicted, `src/hlmemo/db/librarian_queries.py` and `src/hlmemo/librarian/worker.py`.
 The previous reviews are docs/consults/60-astra-review-j-final.md and 60-sol56-review-j-final.md. Read the rows D-083, D-084, D-086 and D-087 in docs/decisions/DECISIONS.md.
 
 ## Implementer's claims (verify, don't trust)
 1. **Legacy `proposal.mutation`:** the widen exclusion moved from SQL into `proposal_actions()`. Legacy non-widen answers are picked by promotion, release and the sweeper; legacy widen answers are never queued. No other `proposal->'actions'` SQL filter exists.
 2. **Cycles:** edges inside a cyclic SCC are ignored and the original order is kept. There is a tight-budget test.
 3. **Out-of-span terms:** a query term that also appears outside the quoted span blocks demotion.
-4. **D-087 ordering:** rank_new(h) ≤ max(rank_baseline(h), rank_6a96ba1(h)) holds by construction. A property test over 3,000 cases runs against a frozen 6a96ba1.
+4. **D-087 ordering:** rank_new(h) ≤ max(rank_baseline(h), rank_6a96ba1(h)) holds by construction. A property test over 3,000 cases runs against a frozen c0e3138.
 5. **Replay-dump mask:** only systemic hand-backs (and their replayed NULL counterpart) are masked; consumed back-offs are compared raw. Residual: a back-off followed by a hand-back would be flagged.
 6. **Merge resolution:**
    - `librarian_queries.py`: main's D-083 policy helpers (FOR SHARE) are kept, followed by J's `supersession_among`.
    - `worker._apply_approved`: main's `policy_blocked` recheck runs first, then J's staleness check and in-batch rebase. Both run AFTER the item locks and BEFORE event-id allocation.
    - The D-084 `provider.py` comes from main only.
-7. **Gates on 3cdeb61:** lint; unit 575; integration 494/0 failed; the Q exclude tests (15) and fallback-budget tests (15) pass; gate-release G3 0.980, G4 p95 256 ms, G-L3 386/377 ms at N=3.
+7. **Gates on d15833e:** lint; unit 575; integration 494/0 failed; the Q exclude tests (15) and fallback-budget tests (15) pass; gate-release G3 0.980, G4 p95 256 ms, G-L3 386/377 ms at N=3.
 
 ## Focus
 - Is each of claims 1–5 truly closed? For claim 4, try to construct a counterexample.

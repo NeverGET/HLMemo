@@ -1,4 +1,4 @@
-# 2026-09-25T17:09:04Z §5.2 HLM_TEST_DSN=<own clone hlm_r3reh_gate of hlm_r3reh_world> make gate-release   (805f4cd code; flags off = the R3 config)
+# 2026-09-25T17:09:04Z §5.2 HLM_TEST_DSN=<own clone hlm_r3reh_gate of hlm_r3reh_world> make gate-release   (c98ec0a code; flags off = the R3 config)
 ## host before: 20:09  up 33 days,  4:32, 4 users, load averages: 2.52 3.05 3.26
  %CPU COMM
  59.2 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine

@@ -1,7 +1,7 @@
-# Consult 77 — CRITICAL dual review (D-085), RELEASE-GATING for R3: the review-75 fixes on r3-tooling @ f9f5037
+# Consult 77 — CRITICAL dual review (D-085), RELEASE-GATING for R3: the review-75 fixes on r3-tooling @ d17c276
 
-Your cwd is a clean export of f9f5037.
-- `FIX75.patch`: 3b2ce64..f9f5037.
+Your cwd is a clean export of d17c276.
+- `FIX75.patch`: aed884f..d17c276.
 - `FULL-VS-MAIN.patch`: everything R3 adds (deploy/ and tests/deploy only).
 - `RULES.txt`: D-108/D-119/D-121.
 - Review 75: docs/consults/75-*review*.md.

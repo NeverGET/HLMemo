@@ -1,6 +1,6 @@
 ## Verdict: DO-NOT-MERGE
 
-Otomatik W0a cutover ve iç hata recovery yolu büyük ölçüde düzelmiş. Ancak başarılı cutover sonrasındaki **belgelenmiş manuel rollback**, eski sürümü kayıt sırrını geri yüklemeden başlatıyor; eski sürümde sır yoksa kayıt herkese açılıyor. İnceleme yalnızca `ce64e79..6ddd2c8` deltası üzerinde statikti; test, Docker ve SSH çalıştırmadım.
+Otomatik W0a cutover ve iç hata recovery yolu büyük ölçüde düzelmiş. Ancak başarılı cutover sonrasındaki **belgelenmiş manuel rollback**, eski sürümü kayıt sırrını geri yüklemeden başlatıyor; eski sürümde sır yoksa kayıt herkese açılıyor. İnceleme yalnızca `bb60e9f..36d967a` deltası üzerinde statikti; test, Docker ve SSH çalıştırmadım.
 
 ## Per-finding status
 

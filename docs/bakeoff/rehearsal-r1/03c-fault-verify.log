@@ -3,7 +3,7 @@ hlmemo-prod-caddy-1 834468128c76 Up 22 seconds (healthy)
 hlmemo-prod-worker-1 b93f93f26ed3 Up 27 seconds (healthy)
 hlmemo-prod-api-1 b93f93f26ed3 Up 27 seconds (healthy)
 hlmemo-prod-db-1 cf134a767f47 Up 34 seconds (healthy)
-== any container on the fa24ca5 image:
+== any container on the 6cb48a9 image:
 0
 0
 == api revision label
@@ -33,7 +33,7 @@ api.env == its pre-w0 backup (byte-identical)
 REGISTRATION_SECRET=set
 ADMIN_TOKEN=set
 == images
-hlmemo:fa24ca5a0d8723c5c44c8f9d9fa65effb485d95a 4fd204c901d1
+hlmemo:6cb48a9b39fd827bc65f1f2b52589800f432776f 4fd204c901d1
 hlmemo:93569eb6ced7e54e691be29c8cbe82dac325226b 676a96f4412e
 hlmemo:912f2d39247a9e445222756f8ce11fa24c70fae9 b93f93f26ed3
 == data

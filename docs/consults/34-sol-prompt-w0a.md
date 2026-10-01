@@ -1,4 +1,4 @@
-You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Review workstream W0a: branch `worktree-agent-a142ee2b9b4948da6`, worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a142ee2b9b4948da6, commits 86a705c, 1b2aafd and ce64e79 on top of 82200ae. Diff with `git -C <worktree> diff 82200ae HEAD`.
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Review workstream W0a: branch `worktree-agent-a142ee2b9b4948da6`, worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a142ee2b9b4948da6, commits 81a0079, 95aea33 and bb60e9f on top of 3727e81. Diff with `git -C <worktree> diff 3727e81 HEAD`.
 Spec: docs/decisions/PHASE2-4-ROADMAP.md §1 W0a (this is also your own answer (b) and fixes #1/#2 from consult 32). Owner intent (D-052): device tokens are minted ONLY on the server via a script over SSH; unauthorized clients must not even be able to create pending state.
 A neutral verifier is re-running the tests. Your job is what the tests do NOT catch. This is a STATIC review: read files, git diff/show, rg. Do not run tests, docker or ssh, and do not edit files.
 

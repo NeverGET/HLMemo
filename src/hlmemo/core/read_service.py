@@ -262,7 +262,7 @@ async def query_parts(
             f.row = rows[f.chunk_id]
         head = newer_first_on_ties(head)  # D-057: exact RRF tie, same title -> newer first
         if partial:  # D-076 fact-level supersession, only for a query that matched the outdated span
-            head = demote_partially_superseded(head, partial, terms.terms)  # the 6a96ba1 term set
+            head = demote_partially_superseded(head, partial, terms.terms)  # the c0e3138 term set
         if explain is not None:  # D-189: diagnostics only (copies of numbers)
             explain.update(
                 candidates={

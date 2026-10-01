@@ -1,6 +1,6 @@
 # Consult 80 — `memory.ask` read-path scope/privacy review (DUAL: astra-low + sol xhigh; D-130)
 
-You review a clean export of branch `wf-memory-ask` @ 85abf82 (HLMemo: Python 3.12, Postgres 17,
+You review a clean export of branch `wf-memory-ask` @ fe63fed (HLMemo: Python 3.12, Postgres 17,
 MCP server). STATIC review, read-only; do not run tests, docker or network. Never open docs/private/.
 
 ## What changed (read these)

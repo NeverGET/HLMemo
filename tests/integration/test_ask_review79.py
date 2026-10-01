@@ -1,5 +1,5 @@
 """Dual review 79 (round 1) regressions for ``memory.ask`` (D-136), each built from the reviewer's
-exact scenario and failing on 9bceb59:
+exact scenario and failing on 885c0dc:
 
 * T1 — D-083 isolation: projects A (``ask-main``) and T (``ask-iso``, ``librarian_cross_project =
   exclude``), the caller reads both, an item ``[A, T]`` holds ``T-ONLY-SECRET``: ``memory.ask(A)``

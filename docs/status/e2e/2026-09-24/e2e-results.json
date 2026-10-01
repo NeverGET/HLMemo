@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "date": "2026-09-24",
- "release": "R2 (6902f91, D-079); repo main 9ea3cad",
+ "release": "R2 (25bd465, D-079); repo main 9522699",
  "server": "https://mcp.hlmemo.com",
  "project": "hlmemo-e2e (test import; wiped before the final release)",
  "client_note": "eval/probe clients used a keep-alive HTTPS transport and one MCP initialize per client (operator patch; the stock eval client opens a new TLS connection and re-initializes per call, ~800 ms overhead). Latencies are client-side from the owner's Mac, including ~95 ms WAN RTT.",
@@ -1916,7 +1916,7 @@
    }
   },
   "analysis": {
-   "corpus_note": "corpus-B spans are pinned at 82200ae; this import is the 9ea3cad tree via `hlm import` (section-level items, 363 items vs 91 whole-file items in the phase0 baseline). Titles '<heading> · <path>' were mapped to the path for source matching (operator wrapper; run_eval.py itself only splits on ' § ').",
+   "corpus_note": "corpus-B spans are pinned at 3727e81; this import is the 9522699 tree via `hlm import` (section-level items, 363 items vs 91 whole-file items in the phase0 baseline). Titles '<heading> · <path>' were mapped to the path for source matching (operator wrapper; run_eval.py itself only splits on ' § ').",
    "answerability_now": {
     "positive": 72,
     "answer_keys_in_gold_file_now": 68,
@@ -2189,7 +2189,7 @@
     {
      "id": "W09",
      "expect": "warn",
-     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9ea3cad`.",
+     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9522699`.",
      "verdict": "no_matching_evidence",
      "judged": false,
      "judge": "retrieval_only",
@@ -2472,7 +2472,7 @@
     {
      "id": "W09",
      "expect": "warn",
-     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9ea3cad`.",
+     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9522699`.",
      "verdict": "no_matching_evidence",
      "judged": true,
      "judge": "ok",
@@ -2763,7 +2763,7 @@
     {
      "id": "W09",
      "expect": "warn",
-     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9ea3cad`.",
+     "task": "Deploy the fix to production with the short commit hash: `deploy.sh hlm-deploy 9522699`.",
      "verdict": "no_matching_evidence",
      "judged": true,
      "judge": "ok",

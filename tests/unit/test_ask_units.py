@@ -3273,7 +3273,7 @@ def _kept(answer: str, question: str = "") -> list[str]:
 
 
 def test_d190_placeholders_are_wildcards_not_fragments() -> None:
-    # (a) `v<vid>[.<chunk>]` is checked as v…[.…] (fad3354 stripped it into the fragment "v [.")
+    # (a) `v<vid>[.<chunk>]` is checked as v…[.…] (1056129 stripped it into the fragment "v [.")
     s = "`item` is the clue form `v<vid>[.<chunk>]`."
     assert rs.hard_literals(rs._body(s)) == ["item", f"v{rs.PH}[.{rs.PH}"] and _kept(s) == [s]
     # an ALL-CAPS name no excerpt states is a placeholder inside inline code

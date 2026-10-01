@@ -16,7 +16,7 @@
      "id": 1,
      "label": "Phase 0 baseline (D-057)",
      "date": "2026-09-23",
-     "commit": "16abaf7",
+     "commit": "2837d93",
      "config": {
       "system": "Phase 0 fast path + D-055 retrieval fixes (no librarian)",
       "drill_top": 5,
@@ -48,9 +48,9 @@
     {
      "id": 2,
      "corpus": "corpus_a",
-     "label": "main@1e57e08 re-measure, no librarian (W-E eval copy, 0008)",
+     "label": "main@080b8f3 re-measure, no librarian (W-E eval copy, 0008)",
      "date": "2026-09-24",
-     "commit": "1e57e08",
+     "commit": "080b8f3",
      "config": {
       "system": "main fast path (D-055 + W1.5 skeleton card + query/2 read-side supersession), no librarian",
       "drill_top": 5,
@@ -83,14 +83,14 @@
      "merge": false,
      "confirmation": false,
      "complete": true,
-     "source": "cand-main-1e57e08-nolib.json"
+     "source": "cand-main-080b8f3-nolib.json"
     },
     {
      "id": 3,
      "corpus": "corpus_a",
      "label": "W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy)",
      "date": "2026-09-24",
-     "commit": "1e57e08",
+     "commit": "080b8f3",
      "config": {
       "system": "main fast path + W2b/W2c librarian (write_review backfill of all write events; approve-all by the eval harness)",
       "drill_top": 5,
@@ -160,13 +160,13 @@
     {
      "id": 4,
      "corpus": "corpus_a",
-     "label": "J@a65a8f5 (librarian judgement v2 branch), no librarian: the before on the same eval copy",
+     "label": "J@7cbecc8 (librarian judgement v2 branch), no librarian: the before on the same eval copy",
      "date": "2026-09-24",
-     "commit": "a65a8f5",
+     "commit": "7cbecc8",
      "config": {
       "drill_top": 5,
       "budget": 3000,
-      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned 7cbecc8 tree",
       "system": "J branch fast path (query/2 read-side supersession incl. rule 3), no librarian",
       "librarian": null
      },
@@ -195,18 +195,18 @@
      "merge": false,
      "confirmation": false,
      "complete": true,
-     "source": "cand-j-a65a8f5-nolib.json"
+     "source": "cand-j-7cbecc8-nolib.json"
     },
     {
      "id": 5,
      "corpus": "corpus_a",
-     "label": "Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy)",
+     "label": "Librarian judgement v2 (J@7cbecc8), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy)",
      "date": "2026-09-24",
-     "commit": "a65a8f5",
+     "commit": "7cbecc8",
      "config": {
       "drill_top": 5,
       "budget": 3000,
-      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned 7cbecc8 tree",
       "system": "J fast path + W2b/W2c librarian judgement v2 (fact-level supersession, strict action tier, refine direction, doc_chunk contradictions); write_review backfill of all write events; approve-all by the eval harness",
       "librarian": {
        "role": "assistant",
@@ -292,13 +292,13 @@
     {
      "id": 6,
      "corpus": "corpus_a",
-     "label": "Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy)",
+     "label": "Librarian judgement v2 (J@7cbecc8), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy)",
      "date": "2026-09-24",
-     "commit": "a65a8f5",
+     "commit": "7cbecc8",
      "config": {
       "drill_top": 5,
       "budget": 3000,
-      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned 7cbecc8 tree",
       "system": "J fast path + W2b/W2c librarian judgement v2 (fact-level supersession, strict action tier, refine direction, doc_chunk contradictions); write_review backfill of all write events; approve-all by the eval harness",
       "librarian": {
        "role": "assistant",
@@ -1733,7 +1733,7 @@
      "id": 1,
      "label": "Phase 0 baseline (D-057)",
      "date": "2026-09-23",
-     "commit": "16abaf7",
+     "commit": "2837d93",
      "config": {
       "system": "Phase 0 fast path + D-055 retrieval fixes (no librarian)",
       "drill_top": 5,
@@ -1764,9 +1764,9 @@
     {
      "id": 2,
      "corpus": "corpus_b_dev",
-     "label": "main@1e57e08 re-measure, no librarian (W-E eval copy, 0008)",
+     "label": "main@080b8f3 re-measure, no librarian (W-E eval copy, 0008)",
      "date": "2026-09-24",
-     "commit": "1e57e08",
+     "commit": "080b8f3",
      "config": {
       "system": "main fast path (D-055 + W1.5 skeleton card + query/2 read-side supersession), no librarian",
       "drill_top": 5,
@@ -1795,14 +1795,14 @@
      "merge": false,
      "confirmation": false,
      "complete": true,
-     "source": "cand-main-1e57e08-nolib.json"
+     "source": "cand-main-080b8f3-nolib.json"
     },
     {
      "id": 3,
      "corpus": "corpus_b_dev",
      "label": "W2b librarian, role assistant, approve-all (G-E-TEMP/G-E-W2b eval copy)",
      "date": "2026-09-24",
-     "commit": "1e57e08",
+     "commit": "080b8f3",
      "config": {
       "system": "main fast path + W2b/W2c librarian (write_review backfill of all write events; approve-all by the eval harness)",
       "drill_top": 5,
@@ -1861,13 +1861,13 @@
     {
      "id": 4,
      "corpus": "corpus_b_dev",
-     "label": "J@a65a8f5 (librarian judgement v2 branch), no librarian: the before on the same eval copy",
+     "label": "J@7cbecc8 (librarian judgement v2 branch), no librarian: the before on the same eval copy",
      "date": "2026-09-24",
-     "commit": "a65a8f5",
+     "commit": "7cbecc8",
      "config": {
       "drill_top": 5,
       "budget": 3000,
-      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned 7cbecc8 tree",
       "system": "J branch fast path (query/2 read-side supersession incl. rule 3), no librarian",
       "librarian": null
      },
@@ -1893,18 +1893,18 @@
      "merge": false,
      "confirmation": false,
      "complete": true,
-     "source": "cand-j-a65a8f5-nolib.json"
+     "source": "cand-j-7cbecc8-nolib.json"
     },
     {
      "id": 5,
      "corpus": "corpus_b_dev",
-     "label": "Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy)",
+     "label": "Librarian judgement v2 (J@7cbecc8), role assistant, approve-all, --approve-rounds 1 (G-E-TEMP/G-E-W2b eval copy)",
      "date": "2026-09-24",
-     "commit": "a65a8f5",
+     "commit": "7cbecc8",
      "config": {
       "drill_top": 5,
       "budget": 3000,
-      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned 7cbecc8 tree",
       "system": "J fast path + W2b/W2c librarian judgement v2 (fact-level supersession, strict action tier, refine direction, doc_chunk contradictions); write_review backfill of all write events; approve-all by the eval harness",
       "librarian": {
        "role": "assistant",
@@ -1963,13 +1963,13 @@
     {
      "id": 6,
      "corpus": "corpus_b_dev",
-     "label": "Librarian judgement v2 (J@a65a8f5), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy)",
+     "label": "Librarian judgement v2 (J@7cbecc8), role assistant, approve-all, --approve-rounds 2 (G-E-TEMP/G-E-W2b eval copy)",
      "date": "2026-09-24",
-     "commit": "a65a8f5",
+     "commit": "7cbecc8",
      "config": {
       "drill_top": 5,
       "budget": 3000,
-      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned a65a8f5 tree",
+      "db": "disposable copy of dev DB hlm (pg_dump -Fc) migrated 0004->0008 with the pinned 7cbecc8 tree",
       "system": "J fast path + W2b/W2c librarian judgement v2 (fact-level supersession, strict action tier, refine direction, doc_chunk contradictions); write_review backfill of all write events; approve-all by the eval harness",
       "librarian": {
        "role": "assistant",
@@ -3429,7 +3429,7 @@
      "usd_per_month": 10.69,
      "latency_p50_ms": 3859,
      "latency_p95_ms": 8594,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "43581f1db920",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -3512,7 +3512,7 @@
      "usd_per_month": 10.69,
      "latency_p50_ms": 3859,
      "latency_p95_ms": 8594,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "43581f1db920",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -3595,7 +3595,7 @@
      "usd_per_month": 0.53,
      "latency_p50_ms": 3312,
      "latency_p95_ms": 7839,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "93e1cbf715aa",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -3678,7 +3678,7 @@
      "usd_per_month": 0.53,
      "latency_p50_ms": 3312,
      "latency_p95_ms": 7839,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "93e1cbf715aa",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -3761,7 +3761,7 @@
      "usd_per_month": 0.26,
      "latency_p50_ms": 3866,
      "latency_p95_ms": 7781,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "93e1cbf715aa",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -3844,7 +3844,7 @@
      "usd_per_month": 0.26,
      "latency_p50_ms": 3866,
      "latency_p95_ms": 7781,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "93e1cbf715aa",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -3927,7 +3927,7 @@
      "usd_per_month": 1.04,
      "latency_p50_ms": 5345,
      "latency_p95_ms": 10994,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "cd9cddf52a09",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -4010,7 +4010,7 @@
      "usd_per_month": 1.04,
      "latency_p50_ms": 5345,
      "latency_p95_ms": 10994,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "cd9cddf52a09",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -4096,7 +4096,7 @@
      "usd_per_month": 2.04,
      "latency_p50_ms": 1758,
      "latency_p95_ms": 8808,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "3572e1d289af",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -4182,7 +4182,7 @@
      "usd_per_month": 2.04,
      "latency_p50_ms": 1758,
      "latency_p95_ms": 8808,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "3572e1d289af",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -4265,7 +4265,7 @@
      "usd_per_month": 0.36,
      "latency_p50_ms": 1840,
      "latency_p95_ms": 8683,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "0e122edf389b",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -4348,7 +4348,7 @@
      "usd_per_month": 0.36,
      "latency_p50_ms": 1840,
      "latency_p95_ms": 8683,
-     "commit": "83fcc37",
+     "commit": "ec23e70",
      "config_hash": "0e122edf389b",
      "config": {
       "harness": "bench/run.py (legacy raw API)",
@@ -4431,7 +4431,7 @@
      "usd_per_month": 0.5,
      "latency_p50_ms": 2912,
      "latency_p95_ms": 7596,
-     "commit": "bb03629",
+     "commit": "d5cdf14",
      "config_hash": null,
      "config": null,
      "prompt_version": "bench-v2-p1 (sha256 be426d40e385)",
@@ -4506,7 +4506,7 @@
      "usd_per_month": 0.5,
      "latency_p50_ms": 2912,
      "latency_p95_ms": 7596,
-     "commit": "bb03629",
+     "commit": "d5cdf14",
      "config_hash": null,
      "config": null,
      "prompt_version": "bench-v2-p1 (sha256 be426d40e385)",

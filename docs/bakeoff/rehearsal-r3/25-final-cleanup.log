@@ -8,9 +8,9 @@ chain       summary        primary=openrouter-gpt6-luna fallback=openrouter-glm5
 chain       synthesis      primary=openrouter-gpt6-luna fallback=openrouter (task override)
 jobs        embed          done     1800
 jobs        librarian_write done     1374
-checkout 805f4cd2955b; api image revision 805f4cd2955b; llm.env=present; release marker: HLM_ENV_RELEASE=r3
+checkout c98ec0aeed33; api image revision c98ec0aeed33; llm.env=present; release marker: HLM_ENV_RELEASE=r3
 RESULT librarian PASS llm.env=present release=r3 manifest=r3 enabled=true mode=live role=observer risk_judge=openrouter-gpt6-luna,openrouter-qwen38-27b-fast
-{'current_ref': '805f4cd2955b', 'previous_ref': '6902f91e7a79', 'previous_llm_env': '/etc/hlmemo/llm.env.release-6902f91e7a79', 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': []}
+{'current_ref': 'c98ec0aeed33', 'previous_ref': '25bd4654a67c', 'previous_llm_env': '/etc/hlmemo/llm.env.release-25bd4654a67c', 'env_switch': None, 'deploy_attempt': None, 'pending_cleanup': []}
 no dockerd drop-in (registry workaround removed)
 hlmemo-prod-api-1 1.231GiB / 2.5GiB
 hlmemo-prod-librarian-1 130.8MiB / 512MiB

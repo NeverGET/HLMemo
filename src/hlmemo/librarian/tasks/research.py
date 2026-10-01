@@ -2312,7 +2312,7 @@ def attribute(
     - ``sources`` (default; V16, D-162): candidates are the handles the sentence names and the
       model's ``model_sources`` (none → every shown excerpt) plus an excerpt stating a hard literal
       they lack; literal + word scoring (``_attribute_sources``); no embedding.
-    - ``wide`` (cbc4297): every shown excerpt is a candidate, scored by literals, words and the
+    - ``wide`` (2aa22a4): every shown excerpt is a candidate, scored by literals, words and the
       multilingual similarity of ``embed`` (a ``LineSim``, or texts -> L2-normalised rows; None →
       literals and words only; ``_attribute_wide``).
     - ``llm``: ``llm_cites[i]`` are the excerpt ids the JOB attribute named for sentence ``i`` (ids

@@ -1,16 +1,16 @@
 Remote deployment log: hlm-deploy:/opt/hlmemo/.deploy-runs/run.HxvzIv76/log (final exit code: /opt/hlmemo/.deploy-runs/run.HxvzIv76/status)
 From https://github.com/NeverGET/HLMemo
- * branch            805f4cd2955b -> FETCH_HEAD
-Previous HEAD position was 6902f91 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
-HEAD is now at 805f4cd D-123: owner accepts R3 behind VPS snapshot; T gates R4
-llm.env of 6902f91e7a79 recorded for rollback: /etc/hlmemo/llm.env.release-6902f91e7a79
+ * branch            c98ec0aeed33 -> FETCH_HEAD
+Previous HEAD position was 25bd465 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
+HEAD is now at c98ec0a D-123: owner accepts R3 behind VPS snapshot; T gates R4
+llm.env of 25bd4654a67c recorded for rollback: /etc/hlmemo/llm.env.release-25bd4654a67c
  Image caddy:2.11.2-alpine Pulling 
  Image pgvector/pgvector:0.8.6-pg17 Pulling 
  Image pgvector/pgvector:0.8.6-pg17 Pulled 
  Image caddy:2.11.2-alpine Pulled 
- Image hlmemo:805f4cd2955b Building 
- Image hlmemo:805f4cd2955b Building 
- Image hlmemo:805f4cd2955b Building 
+ Image hlmemo:c98ec0aeed33 Building 
+ Image hlmemo:c98ec0aeed33 Building 
+ Image hlmemo:c98ec0aeed33 Building 
 #1 [internal] load local bake definitions
 #1 reading from stdin 1.94kB done
 #1 DONE 0.0s
@@ -222,17 +222,17 @@ target worker: failed to solve: process "/bin/sh -c set -eu\nmkdir -p /app/model
 Warning: you are leaving 147 commits behind, not connected to
 any of your branches:
 
-  805f4cd D-123: owner accepts R3 behind VPS snapshot; T gates R4
-  dc2687a Merge r3-tooling: env-aware release state, manifest cutover check, crash journals, prod budget 10/2/1 (reviews 75/77; residual per D-122)
-  faf1593 D-122 (PROPOSED): tooling crash-safety deeper than one round; R3 behind a VPS-snapshot safety net
-  404c0da consult 77 prompt: release-gating review of r3-tooling fixes
+  c98ec0a D-123: owner accepts R3 behind VPS snapshot; T gates R4
+  523171a Merge r3-tooling: env-aware release state, manifest cutover check, crash journals, prod budget 10/2/1 (reviews 75/77; residual per D-122)
+  191f261 D-122 (PROPOSED): tooling crash-safety deeper than one round; R3 behind a VPS-snapshot safety net
+  37e2ee4 consult 77 prompt: release-gating review of r3-tooling fixes
  ... and 143 more.
 
 If you want to keep them by creating a new branch, this may be a good time
 to do so with:
 
- git branch <new-branch-name> 805f4cd
+ git branch <new-branch-name> c98ec0a
 
-HEAD is now at 6902f91 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
+HEAD is now at 25bd465 W2e synthesis: one deadline for the whole call, passed to the provider (no mid-HTTP cancel; ledger always written) — same as the risk_judge fix
 Deployment failed before writers stopped; previous stack remains running.
 

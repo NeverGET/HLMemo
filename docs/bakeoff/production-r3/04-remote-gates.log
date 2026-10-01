@@ -148,19 +148,19 @@ device inventory (hlm_ops.sh device list):
       14  gates-cli-5451               ci        revoked  expires=- last_seen=2026-09-23T07:26:58.184213+00:00 grants=-
       15  librarian                    server    trusted  expires=- last_seen=- grants=-
       16  routes-check-8ba89e64        ci        revoked  expires=2026-09-23T19:27:59.601010+00:00 last_seen=2026-09-23T19:17:59.696055+00:00 grants=-
-      17  deploy-routes-ee6ce9c9f1d6-6114 ci        revoked  expires=2026-09-23T19:28:01.050984+00:00 last_seen=2026-09-23T19:18:01.339127+00:00 grants=-
+      17  deploy-routes-62ae2b3c7aa5-6114 ci        revoked  expires=2026-09-23T19:28:01.050984+00:00 last_seen=2026-09-23T19:18:01.339127+00:00 grants=-
       18  gates-probe-20260923t191820z ci        revoked  expires=2026-09-23T19:48:33.415154+00:00 last_seen=2026-09-23T19:18:34.328319+00:00 grants=-
       19  gates-routes-20260923t191820z ci        revoked  expires=2026-09-23T19:28:40.061210+00:00 last_seen=2026-09-23T19:18:41.239387+00:00 grants=-
       20  gates-cli-28928              ci        revoked  expires=2026-09-23T19:49:06.397812+00:00 last_seen=2026-09-23T19:19:06.756797+00:00 grants=-
       21  cemals-mb-pro-3              personal  trusted  expires=- last_seen=2026-09-24T05:30:47.751467+00:00 grants=hlmemo:write,hlmemo-e2e:write
       22  routes-check-d164e5cf        ci        revoked  expires=2026-09-24T03:49:57.888250+00:00 last_seen=2026-09-24T03:39:57.960058+00:00 grants=-
-      23  deploy-routes-6902f91e7a79-29203 ci        revoked  expires=2026-09-24T03:49:59.167426+00:00 last_seen=2026-09-24T03:39:59.371787+00:00 grants=-
+      23  deploy-routes-25bd4654a67c-29203 ci        revoked  expires=2026-09-24T03:49:59.167426+00:00 last_seen=2026-09-24T03:39:59.371787+00:00 grants=-
       24  gates-probe-20260924t034021z ci        revoked  expires=2026-09-24T04:10:34.272180+00:00 last_seen=2026-09-24T03:40:35.141313+00:00 grants=-
       25  gates-routes-20260924t034021z ci        revoked  expires=2026-09-24T03:50:43.656783+00:00 last_seen=2026-09-24T03:40:44.910062+00:00 grants=-
       26  gates-cli-26053              ci        revoked  expires=2026-09-24T04:11:10.006801+00:00 last_seen=2026-09-24T03:41:10.350878+00:00 grants=-
       27  e2e-reader                   ci        revoked  expires=2026-09-24T11:45:44.111875+00:00 last_seen=2026-09-24T04:15:49.935729+00:00 grants=hlmemo-e2e:read
       28  routes-check-f20676ec        ci        revoked  expires=2026-09-25T21:50:13.466645+00:00 last_seen=2026-09-25T21:40:13.551920+00:00 grants=-
-      29  deploy-routes-805f4cd2955b-417 ci        revoked  expires=2026-09-25T21:50:14.673682+00:00 last_seen=2026-09-25T21:40:14.849789+00:00 grants=-
+      29  deploy-routes-c98ec0aeed33-417 ci        revoked  expires=2026-09-25T21:50:14.673682+00:00 last_seen=2026-09-25T21:40:14.849789+00:00 grants=-
       30  gates-probe-20260925t214122z ci        revoked  expires=2026-09-25T22:11:34.174508+00:00 last_seen=2026-09-25T21:43:03.358449+00:00 grants=-
       31  gates-routes-20260925t214122z ci        revoked  expires=2026-09-25T21:51:40.746216+00:00 last_seen=2026-09-25T21:41:41.852883+00:00 grants=-
       32  gates-cli-19180              ci        revoked  expires=2026-09-25T22:12:07.753090+00:00 last_seen=2026-09-25T21:42:08.264726+00:00 grants=-

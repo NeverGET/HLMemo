@@ -1,4 +1,4 @@
-You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Your consult 42 (docs/consults/42-sol-review-w15.md) said DO-NOT-MERGE for W1.5. The fixes 0afc34a, f69630d and e0a785e are now merged into main (merge 0c0c013). Review ONLY the fix delta: `git diff af7daa6 e0a785e` (run it in the main repo). Also read DECISIONS D-072/D-073.
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Your consult 42 (docs/consults/42-sol-review-w15.md) said DO-NOT-MERGE for W1.5. The fixes c399fe7, a3727bd and 03fe92d are now merged into main (merge 0202588). Review ONLY the fix delta: `git diff d53aff5 03fe92d` (run it in the main repo). Also read DECISIONS D-072/D-073.
 STATIC REVIEW ONLY. For each of your 6 findings: FIXED / PARTIAL / NOT FIXED (one line with file:line). Try to break the new pieces:
 - the online unique index: is the "open validity" predicate the same notion of "current" the write path uses? What about a duplicate that exists before the index build (the CONCURRENTLY build fails → INVALID index → the retry path)?
 - Item.close: authz, bi-temporal correctness, replay, the mass-close guard;

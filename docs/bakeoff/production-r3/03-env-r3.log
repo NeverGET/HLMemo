@@ -1,4 +1,4 @@
-# 2026-09-25T21:40:48Z STEP 3 bash deploy/scripts/install_llm_env.sh --state $STATE   (R3 tooling 805f4cd, under the deploy lock; operator key + caps PRESERVED, no --reset-operator-values; --key-file default ./.env is only a template input: the installed prod key wins)
+# 2026-09-25T21:40:48Z STEP 3 bash deploy/scripts/install_llm_env.sh --state $STATE   (R3 tooling c98ec0a, under the deploy lock; operator key + caps PRESERVED, no --reset-operator-values; --key-file default ./.env is only a template input: the installed prod key wins)
 install_llm_env: /etc/hlmemo/llm.env on hlm-deploy (/Users/cemalkurt/Projects/HLMemo/deploy/.local/153.92.1.166/ssh_config): profile=openrouter-gpt6-luna fallback=openrouter-glm53-flash role=observer enabled=true
 kept the operator's OPENROUTER_API_KEY from the installed llm.env (--reset-operator-values replaces it)
 backup /etc/hlmemo/llm.env.bak-20260925T214050Z (0600)
@@ -61,9 +61,9 @@ env_switch: None pending_cleanup: []
 -rw------- llm.env
 -rw------- llm.env.bak-20260925T213343Z
 -rw------- llm.env.bak-20260925T214050Z
--rw------- llm.env.release-6902f91e7a79
+-rw------- llm.env.release-25bd4654a67c
 # independent check --release r3 (the same collect/evaluate as the runner)
-checkout 805f4cd2955b; api image revision 805f4cd2955b; llm.env=present; release marker: HLM_ENV_RELEASE=r3
+checkout c98ec0aeed33; api image revision c98ec0aeed33; llm.env=present; release marker: HLM_ENV_RELEASE=r3
 librarian: llm.env=present enabled=true role=observer mode=live profile=openrouter-gpt6-luna fallback=openrouter-glm53-flash
 per-task fallbacks: query_rewrite=openrouter risk_judge=openrouter-qwen38-27b-fast synthesis=openrouter
 librarian heartbeat: enabled=True role=observer breaker_state=closed age_s=3.8 ready=0 (max age 30s, waited 0.0s)

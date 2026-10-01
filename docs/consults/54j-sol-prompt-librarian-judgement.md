@@ -1,7 +1,7 @@
 # Consult 54j — librarian judgement + throughput + promotion stranding (implementer J's position)
 
 You are gpt-6-sol, co-architect and adversarial reviewer of HLMemo. Read-only. Repo: the current
-directory (branch of main 132dda6). Read first: docs/decisions/DECISIONS.md D-062, D-067, D-074,
+directory (branch of main 047d30c). Read first: docs/decisions/DECISIONS.md D-062, D-067, D-074,
 D-076, D-077; docs/consults/50-sol-review-final-r2.md; src/hlmemo/librarian/{roles.py,guards.py,
 worker.py,actor.py,candidates.py}, src/hlmemo/librarian/tasks/{write_review.py,apply_batch.py},
 src/hlmemo/librarian/prompts/{relate,relate_verify}/v1.md, src/hlmemo/db/librarian_queries.py

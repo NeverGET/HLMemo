@@ -20,7 +20,7 @@ tools = sorted(t["name"] for t in r.json()["result"]["tools"])
 print(f"mcp initialize + tools/list: http {r.status_code}, {len(tools)} tools: {tools}")
 marker = f"r3-prod-e2e-{uuid.uuid4().hex[:8]}"
 err, p, ms = c.write(project, [{"kind": "fact", "title": marker,
-                                "body": f"R3 production e2e marker {marker}: 805f4cd deployed with the R3 env."}],
+                                "body": f"R3 production e2e marker {marker}: c98ec0a deployed with the R3 env."}],
                      client="r3-prod-e2e")
 vid = None if err else (p.get("versions") or [{}])[0].get("version_id")
 print(f"memory.write err={err} version_id={vid} {ms:.0f} ms")

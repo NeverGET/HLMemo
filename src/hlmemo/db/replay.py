@@ -271,7 +271,7 @@ SYSTEM_EVENT_KINDS = frozenset(
 def project_policy_change(payload: dict[str, Any], project_id: int | None) -> dict[str, Any] | None:
     """The policy change a ``librarian`` event records, in either shape (Sol 55): the current
     ``resolved.project_policy {project_id, key, value}``, or the LEGACY shape written before it
-    (4169ea6: only ``request {op: set_project_policy, key, value}`` on the event's project). Only
+    (e712565: only ``request {op: set_project_policy, key, value}`` on the event's project). Only
     the replayed keys and their allowed values are ever applied (a malformed row changes nothing)."""
     from hlmemo.db.librarian_queries import CROSS_PROJECT_VALUES, REPLAYED_POLICY_KEYS
 

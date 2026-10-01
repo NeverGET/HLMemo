@@ -1,4 +1,4 @@
-You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Your consult 34 (docs/consults/34-sol-review-w0a.md) said DO-NOT-MERGE for W0a. The implementer added commits 70d25bf and 6ddd2c8 on branch `worktree-agent-a142ee2b9b4948da6` (worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a142ee2b9b4948da6). Review ONLY the delta: `git -C <wt> diff ce64e79 6ddd2c8`.
+You are the adversarial reviewer on HLMemo (repo /Users/cemalkurt/Projects/HLMemo). Your consult 34 (docs/consults/34-sol-review-w0a.md) said DO-NOT-MERGE for W0a. The implementer added commits 6954fe6 and 36d967a on branch `worktree-agent-a142ee2b9b4948da6` (worktree /Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a142ee2b9b4948da6). Review ONLY the delta: `git -C <wt> diff bb60e9f 36d967a`.
 Claimed fixes:
 - #1: the manual block is replaced by `deploy.sh --accept-compose-change=<sha256>` through the detached runner; refused before any stop on a missing or wrong hash.
 - #2: the rollback model is rendered from the previous release before migrate_env_w0; the recovery exports and verifies the previous image ID; env backups are restored.

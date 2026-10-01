@@ -1,6 +1,6 @@
 ## Round-1 closure
 
-`W` = `.claude/worktrees/agent-ab919c6d103d1b46b` (`c307ff2`); `P` = `docs/decisions/R4-RELEASE-PLAN.md`. Kod yolları W’ye göredir. İnceleme salt okunurdu; testler yeniden çalıştırılmadı, özel dosyalar veya anahtarlar okunmadı.
+`W` = `.claude/worktrees/agent-ab919c6d103d1b46b` (`f02c39d`); `P` = `docs/decisions/R4-RELEASE-PLAN.md`. Kod yolları W’ye göredir. İnceleme salt okunurdu; testler yeniden çalıştırılmadı, özel dosyalar veya anahtarlar okunmadı.
 
 | Finding | Durum | Kanıt | Kalan somut senaryo |
 |---|---|---|---|

@@ -303,7 +303,7 @@ class ConvergenceTest(d108.D108RollbackTest):
         template = root / "r3-template.env.example"
         template.write_text(r4_fixtures.R3_TEMPLATE)
         env = dict(env, RELEASE_TEMPLATE=str(template))
-        r3_ref = "805f4cd"
+        r3_ref = "c98ec0a"
         prod_key = "fake-or-" + "PR" * 16
         # 1. an R3-installed env (the state the R4 switch starts from)
         result, output = self.install(
@@ -399,7 +399,7 @@ class ConvergenceTest(d108.D108RollbackTest):
         template = root / "r3-template.env.example"
         template.write_text(r4_fixtures.R3_TEMPLATE)
         env = dict(env, RELEASE_TEMPLATE=str(template))
-        self.assertEqual(0, self.install(root, env, "--release-template", "805f4cd")[0].returncode)
+        self.assertEqual(0, self.install(root, env, "--release-template", "c98ec0a")[0].returncode)
         result, output = self.install(root, env)
         self.assertEqual(0, result.returncode, output)
         self.assertEqual(("1", "2", "10"), self.caps(root))
