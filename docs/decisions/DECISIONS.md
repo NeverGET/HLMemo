@@ -1775,3 +1775,34 @@ Accepted residual risk:
 - invented hashes are only flagged;
 - the secret rule leans to false positives, in the safe direction;
 - the deploy depends on Docker Hub, and fails before any writer stops.
+D-220 | 2026-10-01 | ACCEPTED (owner) | **The public repo carries HLMemo product content only. The unpushed history was scrubbed before the push.**
+- Owner rule: nothing about the owner's other projects goes into the public repo (names, counts, dates, findings). Such records live in gitignored docs/private/.
+- The unpushed range was rewritten twice before the push: first the credential locations, then the project names and migration counts.
+  - Verification: 0 hits over every historical version of the affected files and over the commit messages; prepush_check PASS.
+  - Pushed 3b48926. The originals are kept privately.
+- One project name has been public since 2026-09-23 (D-058 and two other files). The purge runs as its own workstream after the R4.1 deploy:
+  - a full rewrite that also translates every pinned commit id in tests, deploy, eval and docs;
+  - a replay check of the recorded synthesis test;
+  - then a recreate or force-push of the GitHub repo.
+- TODO: prepush_check gains an owner-terms check fed from a private denylist.
+D-221 | 2026-10-01 | ACCEPTED (owner-approved release, D-219) | **R4.1 is LIVE in production (3b48926).**
+- Hostinger snapshot 382533 refreshed at 16:33Z; it expires 2026-10-02 16:33Z.
+- deploy.sh exit 0:
+  - migration 0009 -> 0010_billing_outcome;
+  - routes PASS, internal and public;
+  - librarian check PASS (release r4 manifest, observer, writer google-gemini38-flash-medium).
+- This Mac's IPv4 route to the VPS failed again, so SSH ran over IPv6:
+  - deploy.sh through a PATH wrapper;
+  - remote_gates with `--ssh-config <state>/ssh_config.ipv6`;
+  - hlm_ops with `HLM_OPS_SSH_CONFIG`.
+  The first gates run, without the IPv6 config, failed on SSH reachability only.
+- remote_gates --librarian: RESULT PASS, incl. WAN p95 216 ms and the backup-restore drill (33 s).
+- ops status: ready, 0 failures, queues empty. probe-writer: 200.
+- MCP smoke, 3 asks:
+  - writer Gemini medium, 0 fallbacks, truncated=false;
+  - budget limit 6000 (D-209);
+  - `memory_as_of` present (D-211); no freshness line, correctly, since memory is < 24 h old;
+  - $0.018–0.021 and 15.5–22.9 s per ask;
+  - the negative question was answered "the memory records none".
+- Rollback: `deploy.sh --rollback hlm-deploy` returns to R4 5025db5 from the server's local checkout, with no GitHub fetch.
+- TODO: pick the SSH route (IPv4/IPv6) automatically in deploy.sh, remote_gates and hlm_ops.
