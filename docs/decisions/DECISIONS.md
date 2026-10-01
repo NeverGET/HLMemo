@@ -1849,3 +1849,31 @@ D-223 | 2026-10-01 | ACCEPTED (owner: "Delete + recreate", "Yes, no-op redeploy"
   - remote_gates 11/11 PASS;
   - release-state previous = 3b48926 (same code), so rollback works from the server's local checkout.
 - Found after the redeploy: one memory.ask question gets "unavailable" from the Gemini writer every time, while the probe and other questions answer normally. It is under diagnosis.
+D-224 | 2026-10-01 | ACCEPTED (measurement) | **Active-librarian ceiling (pre-registered, 2 blind readers, stricter label counts): NO-GO for every job at the plan's bars, for both Gemini 3.8 Flash medium and an Opus 5.5 oracle. Strategic pause (D-125).**
+
+E0, the existing observer proposals:
+- precision .87 on curated items and .73 on imported docs;
+- the one proposal that would hide an item was wrong;
+- AL2 stays observer.
+
+E1, session distillation:
+- correct .84 for both arms;
+- harmful-stale .14–.17;
+- 3–4 harmful supersessions per arm.
+
+E2, project card + merge:
+- correct about .80;
+- coverage of the must-know facts: Opus .75, Gemini .34;
+- harmful merges: Opus 3, Gemini 1.
+
+E3, cross-project lessons:
+- Gemini proposed none;
+- Opus proposals were .25 correct, grounded and useful;
+- stitched quotes and unverifiable project independence.
+
+Cross-cutting findings:
+- Harm concentrates in HIDING operations (supersede, merge).
+- Verbatim quotes pass the deterministic check, yet readers reject 11–23% as over-reading.
+- The readers disagree on 33% of units; codex is the stricter reader.
+
+Spend: Gemini about $1.6 real ($4.35 booked; the gap is Google 503 refusals booked at worst case, D-062 (5)). The cap was amended 4 → 12 USD with the reason on record.
