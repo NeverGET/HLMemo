@@ -92,6 +92,24 @@ def test_silhouette_undefined_for_one_or_n_clusters():
     assert E.silhouette(d, [[i] for i in range(len(x))]) is None
 
 
+def test_centering_removes_the_shared_direction_deterministically():
+    rng = np.random.default_rng(5)
+    shared = np.ones(8) * 10.0  # an anisotropic corpus: every vector shares one big direction
+    x = shared + rng.normal(0, 1, size=(30, 8))
+    assert E.cosine_distances(x).max() < 0.1
+    c1, c2 = E.center(x), E.center(x)
+    assert np.array_equal(c1, c2) and np.allclose(c1.mean(axis=0), 0)
+    assert E.cosine_distances(c1).max() > 1.0
+
+
+def test_degenerate_clustering_is_refused_without_packets(e4_env):
+    cfg = small_cfg()
+    cfg["selection"]["E4"]["max_cluster_share"] = 0.3  # the 5-episode beta cluster is 50% of 10
+    with pytest.raises(C.HarnessError, match="degenerate clustering"):
+        E.build_e4(cfg, embed=fake_embed)
+    assert E.clusters_path().is_file() and not (C.packets_dir(C.E4) / "manifest.json").exists()
+
+
 def test_holdout_split_is_seeded_and_sized():
     ids = [f"ep{i:03d}" for i in range(50)]
     a = E.holdout_split(ids, 0.2, 11)

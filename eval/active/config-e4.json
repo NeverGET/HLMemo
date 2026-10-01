@@ -26,8 +26,11 @@
       "linkage": "average",
       "holdout_frac": 0.2,
       "seed": 20261001,
-      "grid": {"start": 0.04, "stop": 0.4, "step": 0.01},
+      "grid": {"start": 0.1, "stop": 1.5, "step": 0.02},
       "criterion": "cosine silhouette on the held-out split; ties -> the smaller threshold",
+      "center": true,
+      "max_cluster_share": 0.5,
+      "revision": "attempt 1 (raw E5 vectors, no centring) chose 0.14: on the held-out split the silhouette peaked at k=2 (one outlier vs the rest) and the full set merged 96 of 101 episodes into one cluster. Revised ONCE, before any pre-registration or arm output: mean-centred vectors (E5 anisotropy) with the grid widened to 0.10-1.50 (centred cosine distances span 0-2), same split and criterion, plus a guard that refuses packets when one cluster holds > 50% of the episodes.",
       "min_cross_episodes": 3,
       "min_cross_groups": 2,
       "min_local_episodes": 4

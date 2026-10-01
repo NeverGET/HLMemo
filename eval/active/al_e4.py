@@ -11,6 +11,8 @@ Clustering (pure, deterministic, unit-tested on synthetic vectors):
 
 * each episode's lesson + symptom text is embedded with the product's pinned E5 model
   (``hlmemo.core.embedder``, ``query:`` prefix: a symmetric comparison);
+* the vectors are mean-centred (``center``: E5 is anisotropic, unrelated texts sit at a high cosine
+  similarity; centring removes the shared direction) before the cosine distance;
 * agglomerative clustering, average linkage, cosine distance (distances rounded to 1e-6, ties broken
   by the smallest member index, so a run is reproducible bit for bit);
 * the merge threshold is tuned ONCE on a held-out split (``holdout_frac`` of the episodes, chosen by
@@ -168,6 +170,12 @@ def tune_threshold(d: np.ndarray, grid: list[float]) -> tuple[float, list[dict[s
     return best["threshold"], table
 
 
+def center(x: np.ndarray) -> np.ndarray:
+    """Subtract the corpus mean vector (deterministic; no labels involved)."""
+    x = np.asarray(x, dtype=np.float64)
+    return x - x.mean(axis=0, keepdims=True)
+
+
 def holdout_split(ids: Sequence[str], frac: float, seed: int | str) -> set[str]:
     order = sorted(ids, key=lambda i: hashlib.sha256(f"{seed}:{i}".encode()).hexdigest())
     m = max(2, math.ceil(frac * len(order)))
@@ -308,6 +316,8 @@ def build_e4(
     sel = cfg["selection"]["E4"]
     eps = episodes if episodes is not None else load_episodes()
     vectors = (embed or e5_embed)([f"{embed_text(e)}" for e in eps])
+    if sel.get("center"):
+        vectors = center(vectors)
     d_all = cosine_distances(vectors)
     ids = [e["episode_id"] for e in eps]
     hold = holdout_split(ids, float(sel["holdout_frac"]), sel["seed"])
@@ -337,6 +347,7 @@ def build_e4(
             packets.append(e4_packet(row["packet_id"], kind, [eps[i] for i in members], cluster=ci))
         rows.append(row)
     sizes = [len(c) for c in clusters]
+    degenerate = max(sizes) > float(sel.get("max_cluster_share", 1.0)) * len(eps)
     summary = {
         "linkage": "average",
         "distance": "cosine (E5 query embeddings of lesson + symptom)",
@@ -349,6 +360,9 @@ def build_e4(
         "clusters": len(clusters),
         "singletons": sum(1 for s in sizes if s == 1),
         "largest_cluster": max(sizes),
+        "centered": bool(sel.get("center")),
+        "degenerate": degenerate,
+        "revision": sel.get("revision"),
         "cross_project": nx,
         "project_local": nl,
         "eligibility": (
@@ -357,11 +371,16 @@ def build_e4(
         ),
         "episodes_input_sha256": C.sha256_file(episodes_path()) if episodes is None else None,
     }
-    P._write_packets(C.E4, packets, {"clustering": summary})
     C.write_json(
         clusters_path(),
         {"summary": summary, "grid": table, "holdout": sorted(hold), "clusters": rows},
     )
+    if degenerate:  # a guard, not a tuning knob: no packets from one catch-all cluster
+        raise C.HarnessError(
+            f"degenerate clustering: the largest cluster holds {max(sizes)} of {len(eps)} episodes"
+            f" (> {sel.get('max_cluster_share')}); no packets written"
+        )
+    P._write_packets(C.E4, packets, {"clustering": summary})
     return packets
 
 
@@ -467,6 +486,7 @@ __all__ = [
     "LOCAL",
     "agglomerate",
     "build_e4",
+    "center",
     "check_lesson",
     "clusters_path",
     "cosine_distances",
