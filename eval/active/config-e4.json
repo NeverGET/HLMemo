@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "spend_cap_usd": "3.00",
+  "arms": {
+    "gemini": {
+      "kind": "provider",
+      "profile": "google-gemini38-flash-medium",
+      "runs": 2,
+      "timeout_s": 240,
+      "env_file": ".env"
+    },
+    "opus": {
+      "kind": "claude_cli",
+      "cli": "claude",
+      "model": "opus",
+      "effort": "high",
+      "runs": 1,
+      "timeout_s": 1200
+    }
+  },
+  "max_tokens": {"E4": 12000},
+  "expected_output_tokens": {"E4": 3000},
+  "selection": {
+    "E4": {
+      "embedding": "lesson (when, do, avoid) + symptom, pinned E5, query prefix",
+      "linkage": "average",
+      "holdout_frac": 0.2,
+      "seed": 20261001,
+      "grid": {"start": 0.04, "stop": 0.4, "step": 0.01},
+      "criterion": "cosine silhouette on the held-out split; ties -> the smaller threshold",
+      "min_cross_episodes": 3,
+      "min_cross_groups": 2,
+      "min_local_episodes": 4
+    }
+  },
+  "grading": {"seed": 4243, "readers": ["A", "B"], "split_reader": "C"},
+  "bars": {
+    "grounded_min": 0.95,
+    "correct_min": 0.90,
+    "useful_min": {"E4": 0.50},
+    "harmful_max": 0,
+    "overgeneralized_max_rate": 0.10,
+    "opus_margin_max": 0.10,
+    "opus_margin_metrics": ["correct", "grounded", "useful"]
+  },
+  "rules": {
+    "split": "stricter label of readers A and B (correct/grounded/useful need both true; harmful/overgeneralized count when either is true); reader C (split units only) is reported, never used for the bar",
+    "grounded": "the deterministic E4 check (every quote inside ONE evidence quote of the cited episode; group count, recurrence count and first/last seen recomputed by code from the cited episodes; a cross-project lesson cites >= 2 independence groups) AND both readers' grounded label",
+    "packet_types": "cross-project and project-local units are pooled for the bars; each type is also reported per arm",
+    "abstain": "a packet answered with 'no lesson' gives no unit; abstentions are reported per run",
+    "gemini_runs": "pooled over both runs; each run also reported",
+    "failed_output": "a packet without a schema-valid output after the provider's retry counts as an arm failure, reported, no units",
+    "no_units": "an arm with 0 gradeable units cannot be GO",
+    "verdict": "GO-Gemini when Gemini passes every bar and Opus is at most opus_margin_max better on each margin metric; GO-Opus-only (owner call) when only Opus passes the absolute bars; else NO-GO"
+  }
+}

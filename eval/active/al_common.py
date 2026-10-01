@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -38,11 +39,61 @@ PROMPTS = {
     "E1": ("e1_distill.md", "e1.schema.json"),
     "E2": ("e2_card.md", "e2.schema.json"),
     "E3": ("e3_lessons.md", "e3.schema.json"),
+    "E4": ("e4_lessons.md", "e4.schema.json"),
 }
+#: E4 (lessons v2, D-222/D-225) is a SEPARATE suite: its own config, reader instructions,
+#: pre-registration file and private directory (its packets come from mined episodes, not the DB)
+E4 = "E4"
+E4_CONFIG_PATH = HERE / "config-e4.json"
+E4_READER_TEMPLATE = HERE / "READER-INSTRUCTIONS-E4.md"
+E4_PRIVATE_ENV = "HLM_AL_E4_PRIVATE_DIR"
+E4_DEFAULT_PRIVATE = ROOT / "docs" / "private" / "lessons-v2" / "e4"
+ENV_FILE_ENV = "HLM_AL_ENV_FILE"  # the provider key file (e.g. the main checkout's .env from a worktree)
+ALL_EXPERIMENTS = (*("E0", "E1", "E2", "E3"), E4)
 
 
 class HarnessError(RuntimeError):
     """A refusal of the harness (missing pre-registration, wrong database, spend cap, …)."""
+
+
+# --------------------------------------------------------------------------- suites
+@dataclass(frozen=True, slots=True)
+class Suite:
+    """One pre-registered experiment family: E0-E3 (``main``) or E4. Paths resolve lazily (tests
+    monkeypatch ``CONFIG_PATH``)."""
+
+    name: str
+    prereg: str
+    prereg_sha: str
+    exps: tuple[str, ...]
+    arm_exps: tuple[str, ...]
+
+    @property
+    def config_path(self) -> Path:
+        return E4_CONFIG_PATH if self.name == E4 else CONFIG_PATH
+
+    @property
+    def reader_template(self) -> Path:
+        return E4_READER_TEMPLATE if self.name == E4 else READER_TEMPLATE
+
+
+MAIN_SUITE = Suite("main", "PREREG.md", "PREREG.sha256", ("E0", "E1", "E2", "E3"), ("E1", "E2", "E3"))
+E4_SUITE = Suite(E4, "PREREG-E4.md", "PREREG-E4.sha256", (E4,), (E4,))
+
+
+def suite_of(exp: str | None) -> Suite:
+    return E4_SUITE if exp == E4 else MAIN_SUITE
+
+
+def use_e4_private() -> Path:
+    """Point this process's private directory at the E4 one (``HLM_AL_E4_PRIVATE_DIR``, default
+    ``docs/private/lessons-v2/e4``): E4 never shares the E0-E3 pre-registration, ledger or kit."""
+    target = Path(os.environ.get(E4_PRIVATE_ENV) or E4_DEFAULT_PRIVATE).expanduser().resolve()
+    main = (ROOT / "docs" / "private" / "active-librarian").resolve()
+    if target == main:
+        raise HarnessError("E4 must not use the E0-E3 private directory")
+    os.environ[PRIVATE_ENV] = str(target)
+    return target
 
 
 # --------------------------------------------------------------------------- paths
@@ -162,6 +213,11 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     return read_json(path or CONFIG_PATH)
 
 
+def load_config_for(exp: str | None) -> dict[str, Any]:
+    """The configuration of ``exp``'s suite (E4: ``config-e4.json``)."""
+    return read_json(suite_of(exp).config_path)
+
+
 def prompt_files(exp: str) -> tuple[Path, Path]:
     md, schema = PROMPTS[exp]
     return PROMPT_DIR / md, PROMPT_DIR / schema
@@ -214,7 +270,15 @@ def load_env_file(path: Path) -> None:
 
 
 __all__ = [
+    "ALL_EXPERIMENTS",
     "ARM_EXPERIMENTS",
+    "E4",
+    "E4_SUITE",
+    "MAIN_SUITE",
+    "Suite",
+    "load_config_for",
+    "suite_of",
+    "use_e4_private",
     "CEILING_DB",
     "CONFIG_PATH",
     "DEFAULT_DSN",

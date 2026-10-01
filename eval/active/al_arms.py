@@ -170,7 +170,7 @@ async def run_gemini(
 
     arm = cfg["arms"]["gemini"]
     label = run_label("gemini", run)
-    C.load_env_file(C.ROOT / arm.get("env_file", ".env"))
+    C.load_env_file(Path(os.environ.get(C.ENV_FILE_ENV) or (C.ROOT / arm.get("env_file", ".env"))))
     profile = named_profile(arm["profile"])
     if not profile.api_key and transport is None:
         raise C.HarnessError(f"profile {arm['profile']}: its API key is not in the environment")

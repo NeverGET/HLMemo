@@ -27,7 +27,13 @@ import al_common as C
 
 LABELS = ("correct", "grounded", "useful", "harmful_stale")
 E0_LABELS = ("correct", "harmful_stale")
+#: E4 (lessons v2, D-222): ``harmful`` and ``overgeneralized`` count when EITHER reader says true
+E4_LABELS = ("correct", "grounded", "useful", "harmful", "overgeneralized")
 STRICT_TRUE = ("correct", "grounded", "useful")  # the stricter value of these is False
+
+
+def labels_for(exp: str) -> tuple[str, ...]:
+    return E0_LABELS if exp == "E0" else E4_LABELS if exp == C.E4 else LABELS
 
 
 def grading_dir(exp: str) -> Path:
@@ -122,7 +128,7 @@ def build_kit(exp: str, record: dict[str, Any], packets: list[dict[str, Any]]) -
     used: set[str] = set()
     readers = list(record["grading"]["readers"])
     gdir = grading_dir(exp)
-    C.write_text(gdir / "READER-INSTRUCTIONS.md", C.READER_TEMPLATE.read_text(encoding="utf-8"))
+    C.write_text(gdir / "READER-INSTRUCTIONS.md", C.suite_of(exp).reader_template.read_text(encoding="utf-8"))
     key: dict[str, Any] = {"exp": exp, "prereg_sha256": record.get("_sha"), "units": {}, "coverage": {}}
     if exp == "E0":
         data = C.read_json(C.packets_dir("E0") / "units.json")
@@ -158,6 +164,8 @@ def build_kit(exp: str, record: dict[str, Any], packets: list[dict[str, Any]]) -
             "grounded_det": chk["grounded_det"],
             "grounding_flags": chk["grounding_flags"],
         }
+        if chk.get("packet_type"):
+            key["units"][code]["packet_type"] = chk["packet_type"]
     if exp == "E2":  # a card line is judged with its whole card in view
         whole = {(c["run"], c["packet"]): c["content"] for c in cards}
         for u in units:
@@ -165,7 +173,7 @@ def build_kit(exp: str, record: dict[str, Any], packets: list[dict[str, Any]]) -
                 u["content"] = {**u["content"], "whole_card": whole.get((u["run"], u["packet"]))}
     rows = _reader_rows(units, code_of, exp)
     for r in readers:
-        _write_reader(exp, r, rows, seed, LABELS)
+        _write_reader(exp, r, rows, seed, labels_for(exp))
     n_cov = 0
     if exp == "E2":
         n_cov = _coverage_kit(exp, cards, rng, used, key, readers, seed)
@@ -255,7 +263,7 @@ def split_codes(
 
 def build_split(exp: str, record: dict[str, Any]) -> dict[str, Any]:
     ra, rb = record["grading"]["readers"][:2]
-    labels = E0_LABELS if exp == "E0" else LABELS
+    labels = labels_for(exp)
     a, b = read_labels(exp, ra), read_labels(exp, rb)
     codes = set(split_codes(a, b, labels))
     rows = [r for r in C.read_jsonl(grading_dir(exp) / f"reader-{ra}" / "units.jsonl") if r["code"] in codes]
@@ -307,6 +315,37 @@ def metrics(codes: list[str], key: dict[str, Any], final: dict[str, dict[str, bo
     }
 
 
+def metrics_e4(codes: list[str], key: dict[str, Any], final: dict[str, dict[str, bool]]) -> dict[str, Any]:
+    rows = [(key["units"][c], final[c]) for c in codes if c in final]
+    n = len(rows)
+    return {
+        "units": n,
+        "correct": _rate(sum(f["correct"] for _, f in rows), n),
+        "grounded": _rate(sum(f.get("grounded", False) for _, f in rows), n),
+        "grounded_det": _rate(sum(bool(m.get("grounded_det")) for m, _ in rows), n),
+        "useful": _rate(sum(f.get("useful", False) for _, f in rows), n),
+        "harmful": sum(f["harmful"] for _, f in rows),
+        "overgeneralized_rate": _rate(sum(f["overgeneralized"] for _, f in rows), n) or 0.0,
+    }
+
+
+def passes_e4(m: dict[str, Any], bars: dict[str, Any]) -> tuple[bool, list[str]]:
+    fails = []
+    if not m["units"]:
+        return False, ["no units"]
+    if m["harmful"] > bars["harmful_max"]:
+        fails.append(f"harmful {m['harmful']}")
+    if m["overgeneralized_rate"] > bars["overgeneralized_max_rate"]:
+        fails.append(f"overgeneralized {m['overgeneralized_rate']}")
+    if m["grounded"] < bars["grounded_min"]:
+        fails.append(f"grounded {m['grounded']}")
+    if m["correct"] < bars["correct_min"]:
+        fails.append(f"correct {m['correct']}")
+    if m["useful"] < bars["useful_min"][C.E4]:
+        fails.append(f"useful {m['useful']}")
+    return not fails, fails
+
+
 def coverage(
     key: dict[str, Any], readers: list[dict[str, dict[str, bool | None]]], arm_runs: set[str]
 ) -> dict:
@@ -333,6 +372,8 @@ def _rate_f(values: list[float]) -> float | None:
 def passes(
     m: dict[str, Any], bars: dict[str, Any], exp: str, cov: float | None = None
 ) -> tuple[bool, list[str]]:
+    if exp == C.E4:
+        return passes_e4(m, bars)
     fails = []
     if not m["units"]:
         fails.append("no units")
@@ -383,7 +424,7 @@ def score(exp: str, record: dict[str, Any], *, allow_incomplete: bool = False) -
     g = record["grading"]
     readers = [read_labels(exp, r) for r in g["readers"]]
     split = read_labels(exp, g["split_reader"])
-    labels = E0_LABELS if exp == "E0" else LABELS
+    labels = labels_for(exp)
     final, missing = final_labels(key, readers, labels)
     if missing and not allow_incomplete:
         raise C.HarnessError(
@@ -399,7 +440,10 @@ def score(exp: str, record: dict[str, Any], *, allow_incomplete: bool = False) -
         for code, m in key["units"].items():
             groups.setdefault(m["run"], []).append(code)
             groups.setdefault(m["arm"], []).append(code)
-        out["by_group"] = {name: metrics(codes, key, final) for name, codes in sorted(groups.items())}
+            if m.get("packet_type"):
+                groups.setdefault(f"{m['arm']}|{m['packet_type']}", []).append(code)
+        measure = metrics_e4 if exp == C.E4 else metrics
+        out["by_group"] = {name: measure(codes, key, final) for name, codes in sorted(groups.items())}
         if exp == "E2":
             cov_readers = [read_coverage(exp, r) for r in g["readers"]]
             runs = {m["run"] for m in key["coverage"].values()}
@@ -408,7 +452,7 @@ def score(exp: str, record: dict[str, Any], *, allow_incomplete: bool = False) -
                 cov = coverage(key, cov_readers, arm_runs)
                 out["by_group"][name]["coverage"] = cov["coverage"]
                 out["by_group"][name]["coverage_cards"] = cov["cards"]
-        empty = metrics([], key, final)
+        empty = measure([], key, final)
         out["verdict"] = verdict(
             exp, out["by_group"].get("gemini", empty), out["by_group"].get("opus", empty), bars
         )
@@ -474,7 +518,17 @@ def _split_report(
 
 def render_score(res: dict[str, Any]) -> str:
     lines = [f"# {res['exp']} score", ""]
-    if res["exp"] == "E0":
+    if res["exp"] == C.E4:
+        lines.append(
+            "| group | units | correct | grounded | grounded_det | useful | harmful | overgeneralized |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for name, m in res["by_group"].items():
+            lines.append(
+                f"| {name} | {m['units']} | {m['correct']} | {m['grounded']} | {m['grounded_det']} |"
+                f" {m['useful']} | {m['harmful']} | {m['overgeneralized_rate']} |"
+            )
+    elif res["exp"] == "E0":
         for name, m in res["by_stratum"].items():
             lines.append(
                 f"- {name}: units {m['units']}, precision {m['precision']}, false invalidations"
@@ -509,7 +563,11 @@ def render_score(res: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "E4_LABELS",
     "LABELS",
+    "labels_for",
+    "metrics_e4",
+    "passes_e4",
     "build_kit",
     "build_split",
     "context_text",

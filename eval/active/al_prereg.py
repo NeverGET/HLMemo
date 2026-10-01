@@ -12,6 +12,10 @@ sha256. It refuses to overwrite a pre-registration once any arm output exists.
 recorded input hash and refuses on any difference (a changed prompt, packet, bar or rubric after the
 pre-registration voids the run).
 
+E4 (lessons v2) is a separate suite (``al_common.E4_SUITE``): ``PREREG-E4.md`` in the E4 private
+directory, ``config-e4.json``, ``READER-INSTRUCTIONS-E4.md``, and as extra inputs the episode file
+and the frozen clustering record. Every function takes the suite (default: E0-E3).
+
 ``amend`` is the one documented way to change a hashed input after the pre-registration: ONLY
 ``spend_cap_usd`` (allow-list), only upwards. It writes ``AMENDMENT-<n>.md`` + ``.sha256`` next to the
 PREREG (n, UTC time, field, old -> new, reason, the PREREG sha it amends, the new config sha) and edits
@@ -82,10 +86,31 @@ def packet_hashes(exp: str) -> dict[str, str]:
     return {row["file"]: C.sha256_file(d / row["file"]) for row in manifest["packets"]}
 
 
-def inputs(cfg_path: Path | None = None) -> dict[str, Any]:
+def e4_inputs() -> dict[str, Any]:
+    """E4's extra inputs: the episode file the clusters were built from and the clustering record."""
+    import al_e4
+
+    out: dict[str, Any] = {}
+    for name, f in (("episodes", al_e4.episodes_path()), ("clusters", al_e4.clusters_path())):
+        out[f"{name}_sha256"] = C.sha256_file(f) if f.is_file() else None
+    return out
+
+
+def inputs(cfg_path: Path | None = None, suite: C.Suite = C.MAIN_SUITE) -> dict[str, Any]:
     """Every hashed input, as it is NOW."""
-    cfg_path = cfg_path or C.CONFIG_PATH
+    cfg_path = cfg_path or suite.config_path
     cfg = C.load_config(cfg_path)
+    if suite.name == C.E4:
+        md, schema = C.prompt_files(C.E4)
+        pf = profile_file(cfg["arms"]["gemini"]["profile"])
+        return {
+            "config_sha256": C.sha256_file(cfg_path),
+            "reader_instructions_sha256": C.sha256_file(suite.reader_template),
+            "prompts": {C.E4: {"prompt_sha256": C.sha256_file(md), "schema_sha256": C.sha256_file(schema)}},
+            "packets": {C.E4: packet_hashes(C.E4)},
+            "e4": e4_inputs(),
+            "profile_sha256": C.sha256_file(pf) if pf else None,
+        }
     out: dict[str, Any] = {
         "config_sha256": C.sha256_file(cfg_path),
         "reader_instructions_sha256": C.sha256_file(C.READER_TEMPLATE),
@@ -180,12 +205,93 @@ def render(record: dict[str, Any], rubric: str) -> str:
     return "\n".join(lines)
 
 
-def write(*, force: bool = False) -> tuple[Path, str]:
+def render_e4(record: dict[str, Any], rubric: str) -> str:
+    bars, clu = record["bars"], record.get("clustering") or {}
+    lines = [
+        "# Lessons v2 (E4) ceiling experiment: pre-registration",
+        "",
+        f"Written {record['written_at']} before any arm ran. The sha256 of this file is in PREREG-E4.sha256;",
+        "every runner and the scorer verify it and every input hash below, and refuse on a difference.",
+        "",
+        "## Go/no-go bars (D-222)",
+        "",
+        f"- grounded >= {bars['grounded_min']}, correct >= {bars['correct_min']},"
+        f" useful >= {bars['useful_min']['E4']}",
+        f"- harmful: at most {bars['harmful_max']};"
+        f" overgeneralized rate <= {bars['overgeneralized_max_rate']}",
+        f"- Opus at most {bars['opus_margin_max']} better on {', '.join(bars['opus_margin_metrics'])}",
+        "",
+        "## Clustering (frozen before this registration)",
+        "",
+        f"- E5 embeddings of lesson + symptom; agglomerative, {clu.get('linkage')} linkage, cosine distance",
+        f"- threshold {clu.get('threshold')} tuned once on a held-out {clu.get('holdout_frac')} split"
+        f" (seed {clu.get('seed')}, criterion {clu.get('criterion')}), then frozen",
+        f"- episodes {clu.get('episodes')}, clusters {clu.get('clusters')}, cross-project packets"
+        f" {clu.get('cross_project')}, project-local packets {clu.get('project_local')}",
+        f"- eligibility: {clu.get('eligibility')}",
+        "",
+        "## Rules",
+        "",
+        *(f"- {k}: {v}" for k, v in record["rules"].items()),
+        "",
+        "## Arms",
+        "",
+        f"- Gemini: profile {record['arms']['gemini']['profile']} ({record['arms']['gemini']['model_id']}),"
+        f" {record['arms']['gemini']['runs']} runs, via the product Provider",
+        f"- Opus: `{record['arms']['opus']['cli']} -p --model {record['arms']['opus']['model']}"
+        f" --output-format stream-json` effort {record['arms']['opus'].get('effort')},"
+        f" {record['arms']['opus']['runs']} run(s); CLI {record['arms']['opus'].get('cli_version')}",
+        f"- max_tokens {record['arms']['max_tokens']}; hard spend cap ${record['arms']['spend_cap_usd']}",
+        "",
+        "## Rubric (reader instructions, verbatim)",
+        "",
+        rubric.strip(),
+        "",
+        "## Machine-readable record",
+        "",
+        "```json",
+        json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False),
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _write_e4(target: Path, suite: C.Suite) -> tuple[Path, str]:
+    import al_e4
+
+    cfg = C.load_config(suite.config_path)
+    ins = inputs(suite=suite)
+    if not ins["packets"][C.E4] or not ins["e4"]["clusters_sha256"]:
+        raise C.HarnessError("build the E4 packets first (al.py build --exp E4)")
+    clusters = C.read_json(al_e4.clusters_path())
+    record = {
+        "schema": "al-prereg-e4/1",
+        "written_at": datetime.now(UTC).isoformat(),
+        "harness": _git_head(),
+        "bars": cfg["bars"],
+        "rules": cfg["rules"],
+        "grading": cfg["grading"],
+        "selection": cfg["selection"],
+        "clustering": clusters["summary"],
+        "arms": arm_config(cfg),
+        "inputs": ins,
+    }
+    text = render_e4(record, suite.reader_template.read_text(encoding="utf-8"))
+    C.write_text(target, text)
+    digest = C.sha256_file(target)
+    C.write_text(C.private_dir() / suite.prereg_sha, f"{digest}  {suite.prereg}\n")
+    return target, digest
+
+
+def write(*, force: bool = False, suite: C.Suite = C.MAIN_SUITE) -> tuple[Path, str]:
     if _outputs_exist():
         raise C.HarnessError("arm outputs already exist: a pre-registration must precede every run")
-    target = C.ensure_private(C.private_dir() / PREREG)
+    target = C.ensure_private(C.private_dir() / suite.prereg)
     if target.is_file() and not force:
         raise C.HarnessError(f"{target} exists (pass --force to rewrite it; no arm has run yet)")
+    if suite.name == C.E4:
+        return _write_e4(target, suite)
     cfg = C.load_config()
     ins = inputs()
     missing = [exp for exp in C.EXPERIMENTS if not ins["packets"][exp]]
@@ -249,15 +355,15 @@ def _e2_packet_ids() -> list[str]:
     return [row["packet_id"] for row in C.read_json(m)["packets"]] if m.is_file() else []
 
 
-def load() -> tuple[dict[str, Any], str]:
-    f = C.private_dir() / PREREG
-    s = C.private_dir() / PREREG_SHA
+def load(suite: C.Suite = C.MAIN_SUITE) -> tuple[dict[str, Any], str]:
+    f = C.private_dir() / suite.prereg
+    s = C.private_dir() / suite.prereg_sha
     if not f.is_file() or not s.is_file():
-        raise C.HarnessError("no pre-registration: run `al.py prereg` before any arm")
+        raise C.HarnessError(f"no pre-registration ({suite.prereg}): run `al.py prereg` before any arm")
     digest = C.sha256_file(f)
     recorded = s.read_text(encoding="utf-8").split()[0]
     if digest != recorded:
-        raise C.HarnessError("PREREG.md does not match PREREG.sha256 (edited after registration)")
+        raise C.HarnessError(f"{suite.prereg} does not match {suite.prereg_sha} (edited after registration)")
     m = _JSON_BLOCK.search(f.read_text(encoding="utf-8"))
     if m is None:
         raise C.HarnessError("PREREG.md has no machine-readable record")
@@ -310,12 +416,14 @@ def _amendment_chain(prereg_digest: str) -> list[dict[str, Any]]:
     return chain
 
 
-def _config_explained(then_sha: str, chain: list[dict[str, Any]], prereg_cap: str) -> bool:
+def _config_explained(
+    then_sha: str, chain: list[dict[str, Any]], prereg_cap: str, config_path: Path | None = None
+) -> bool:
     """Undo the chain on the CURRENT config text: every intermediate hash and the pre-registered
     config hash must be reproduced exactly."""
     if not chain or chain[0]["old"] != prereg_cap:
         return False
-    text = C.CONFIG_PATH.read_text(encoding="utf-8")
+    text = (config_path or C.CONFIG_PATH).read_text(encoding="utf-8")
     for rec in reversed(chain):
         m = _CAP_LINE.search(text)
         if C.sha256_text(text) != rec["config_sha256_after"] or m is None or m.group(2) != str(rec["new"]):
@@ -324,7 +432,7 @@ def _config_explained(then_sha: str, chain: list[dict[str, Any]], prereg_cap: st
     return C.sha256_text(text) == then_sha
 
 
-def amend(field: str, value: str, reason: str) -> tuple[Path, str]:
+def amend(field: str, value: str, reason: str, suite: C.Suite = C.MAIN_SUITE) -> tuple[Path, str]:
     if field not in AMENDABLE:
         raise C.HarnessError(f"only {', '.join(AMENDABLE)} may be amended (got {field!r})")
     if not reason.strip():
@@ -335,10 +443,10 @@ def amend(field: str, value: str, reason: str) -> tuple[Path, str]:
         raise C.HarnessError(f"--value {value!r} is not a decimal") from exc
     if not new.is_finite() or new <= 0:
         raise C.HarnessError("--value must be a positive decimal")
-    _record, digest = verify()  # the registration and every earlier amendment must be intact
+    _record, digest = verify(suite.exps[0] if suite.name == C.E4 else None)  # intact registration
     chain = _amendment_chain(digest)
-    text = C.CONFIG_PATH.read_text(encoding="utf-8")
-    old = str(C.load_config()[field])
+    text = suite.config_path.read_text(encoding="utf-8")
+    old = str(C.load_config(suite.config_path)[field])
     if new < Decimal(old):
         raise C.HarnessError(f"the new cap {new} is below the current {old}: a cap can only be raised")
     new_text = _set_cap(text, value)
@@ -378,30 +486,33 @@ def amend(field: str, value: str, reason: str) -> tuple[Path, str]:
     C.write_text(target, body)
     own = C.sha256_file(target)
     C.write_text(C.private_dir() / f"AMENDMENT-{n}.sha256", f"{own}  AMENDMENT-{n}.md\n")
-    C.CONFIG_PATH.write_text(new_text, encoding="utf-8")  # the one in-repo file an amendment edits
+    suite.config_path.write_text(new_text, encoding="utf-8")  # the one in-repo file an amendment edits
     return target, own
 
 
 def verify(exp: str | None = None) -> tuple[dict[str, Any], str]:
     """The pre-registration, after checking that nothing it hashed has changed since. With ``exp``:
     that experiment's prompt, schema and packets; always: config, rubric and profile."""
-    record, digest = load()
-    then, now = record["inputs"], inputs()
+    suite = C.suite_of(exp)
+    record, digest = load(suite)
+    then, now = record["inputs"], inputs(suite=suite)
     diffs = [
         k
         for k in ("config_sha256", "reader_instructions_sha256", "profile_sha256")
         if then.get(k) != now.get(k)
     ]
+    if suite.name == C.E4 and then.get("e4") != now.get("e4"):
+        diffs.append("e4 episodes/clusters")
     chain = _amendment_chain(digest)
     record["_amendments"] = [
         {k: a[k] for k in ("n", "amended_at", "field", "old", "new", "reason")} for a in chain
     ]
     if "config_sha256" in diffs and _config_explained(
-        then["config_sha256"], chain, str(record["arms"]["spend_cap_usd"])
+        then["config_sha256"], chain, str(record["arms"]["spend_cap_usd"]), suite.config_path
     ):
         diffs.remove("config_sha256")
     if exp is not None:
-        if exp in C.ARM_EXPERIMENTS and then["prompts"].get(exp) != now["prompts"].get(exp):
+        if exp in suite.arm_exps and then["prompts"].get(exp) != now["prompts"].get(exp):
             diffs.append(f"prompts.{exp}")
         if then["packets"].get(exp) != now["packets"].get(exp):
             diffs.append(f"packets.{exp}")
@@ -419,4 +530,16 @@ def verify(exp: str | None = None) -> tuple[dict[str, Any], str]:
     return record, digest
 
 
-__all__ = ["AMENDABLE", "PREREG", "PREREG_SHA", "amend", "inputs", "load", "render", "verify", "write"]
+__all__ = [
+    "AMENDABLE",
+    "PREREG",
+    "PREREG_SHA",
+    "amend",
+    "e4_inputs",
+    "inputs",
+    "load",
+    "render",
+    "render_e4",
+    "verify",
+    "write",
+]
