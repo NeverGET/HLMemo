@@ -781,6 +781,11 @@ async def all_lessons(conn: Any, excl: list[str]) -> list[dict[str, Any]]:
           FROM memory_versions mv JOIN projects p ON p.project_id = mv.project_id
          WHERE mv.kind = ANY(%(kinds)s) AND {CURRENT} AND {NOT_RESERVED} AND {SHARED_SCOPE}
            AND {WRITER_OK}
+           -- D-083: an isolated project never takes part in cross-project librarian work, and a
+           -- project with the librarian off never reaches a provider
+           AND COALESCE(p.policy->>'librarian_cross_project', 'include') <> 'exclude'
+           AND COALESCE(p.policy->>'librarian', 'on') <> 'off'
+           AND cardinality(mv.project_ids) = 1
          ORDER BY p.slug, mv.valid_from, mv.version_id
         """,
         {"kinds": list(E3_KINDS), "excl": excl},
