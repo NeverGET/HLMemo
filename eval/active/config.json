@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "spend_cap_usd": "4.00",
+  "arms": {
+    "gemini": {
+      "kind": "provider",
+      "profile": "google-gemini38-flash-medium",
+      "runs": 2,
+      "timeout_s": 240,
+      "env_file": ".env"
+    },
+    "opus": {
+      "kind": "claude_cli",
+      "cli": "claude",
+      "model": "opus",
+      "effort": "high",
+      "runs": 1,
+      "timeout_s": 1200
+    }
+  },
+  "max_tokens": {"E1": 8000, "E2": 8000, "E3": 16000},
+  "expected_output_tokens": {"E1": 2500, "E2": 3000, "E3": 6000},
+  "selection": {
+    "exclude_device_classes": ["ci"],
+    "E0": {"sample": 60, "per_stratum": 30, "seed": 20261001, "imported_project": "hlmemo"},
+    "E1": {"min_notes": 15, "max_notes": 40, "candidate_chars": 1500},
+    "E2": {
+      "min_items": 20,
+      "map_tokens": 3000,
+      "max_items": 60,
+      "item_chars": 700,
+      "session_notes": 6,
+      "note_chars": 2500,
+      "card_tokens": 512,
+      "must_know": 8
+    },
+    "E3": {"lesson_chars": 1200}
+  },
+  "grading": {"seed": 4242, "readers": ["A", "B"], "split_reader": "C"},
+  "bars": {
+    "harmful_stale_hiding_max": 0,
+    "harmful_stale_other_max_rate": 0.02,
+    "grounded_min": 0.95,
+    "correct_min": 0.90,
+    "useful_min": {"E1": 0.60, "E2": 0.60, "E3": 0.50},
+    "coverage_min": {"E2": 0.70},
+    "opus_margin_max": 0.10,
+    "opus_margin_metrics": ["correct", "grounded", "useful"],
+    "e0": {"precision_go": 0.90, "precision_floor": 0.80, "false_invalidations_max": 0}
+  },
+  "rules": {
+    "split": "stricter label of readers A and B; reader C (split units only) is reported, never used for the bar",
+    "grounded": "deterministic grounding check AND both readers' grounded label",
+    "gemini_runs": "pooled over both runs; each run also reported",
+    "failed_output": "a packet without a schema-valid output after the provider's retry counts as an arm failure, reported, no units",
+    "no_units": "an arm with 0 gradeable units in an experiment cannot be GO",
+    "verdict": "GO-Gemini when Gemini passes every bar and Opus is at most opus_margin_max better on each margin metric; GO-Opus-only (owner call) when only Opus passes the absolute bars; else NO-GO"
+  }
+}

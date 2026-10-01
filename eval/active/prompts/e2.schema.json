@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "al-e2/v1 project card refresh",
+  "type": "object",
+  "required": ["abstain", "card"],
+  "properties": {
+    "abstain": {"type": "boolean"},
+    "abstain_reason": {"type": "string"},
+    "card": {
+      "type": "object",
+      "required": ["now", "decisions", "open_unknown", "as_of"],
+      "properties": {
+        "now": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "decisions": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "open_unknown": {"type": "array", "items": {"type": "string"}},
+        "as_of": {"type": "string"}
+      }
+    },
+    "merges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["keep", "absorb", "evidence"],
+        "properties": {
+          "keep": {"type": "string"},
+          "absorb": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "reason": {"type": "string"},
+          "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/quote"}}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "quote": {
+      "type": "object",
+      "required": ["source", "quote"],
+      "properties": {"source": {"type": "string"}, "quote": {"type": "string"}}
+    },
+    "claim": {
+      "type": "object",
+      "required": ["text", "evidence"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/quote"}}
+      }
+    }
+  }
+}

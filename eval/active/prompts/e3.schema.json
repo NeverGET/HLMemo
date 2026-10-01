@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "al-e3/v1 cross-project lesson synthesis",
+  "type": "object",
+  "required": ["abstain", "experiences"],
+  "properties": {
+    "abstain": {"type": "boolean"},
+    "abstain_reason": {"type": "string"},
+    "experiences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "when", "do", "avoid", "not_verified_for", "open_unknown"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "when": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+          "do": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+          "avoid": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+          "not_verified_for": {"type": "array", "items": {"type": "string"}},
+          "open_unknown": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "quote": {
+      "type": "object",
+      "required": ["source", "quote"],
+      "properties": {"source": {"type": "string"}, "quote": {"type": "string"}}
+    },
+    "claim": {
+      "type": "object",
+      "required": ["text", "evidence"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/quote"}}
+      }
+    }
+  }
+}

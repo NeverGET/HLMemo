@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "al-e1/v1 session distillation",
+  "type": "object",
+  "required": ["abstain", "facts"],
+  "properties": {
+    "abstain": {"type": "boolean"},
+    "abstain_reason": {"type": "string"},
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "claims", "as_of", "open_unknown"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "claims": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/claim"}},
+          "as_of": {"type": "string"},
+          "open_unknown": {"type": "array", "items": {"type": "string"}},
+          "supersedes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["target", "target_quote", "evidence"],
+              "properties": {
+                "target": {"type": "string"},
+                "target_quote": {"type": "string"},
+                "reason": {"type": "string"},
+                "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/quote"}}
+              }
+            }
+          },
+          "duplicate_of": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "open_unknown": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "quote": {
+      "type": "object",
+      "required": ["source", "quote"],
+      "properties": {"source": {"type": "string"}, "quote": {"type": "string"}}
+    },
+    "claim": {
+      "type": "object",
+      "required": ["text", "evidence"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/quote"}}
+      }
+    }
+  }
+}
