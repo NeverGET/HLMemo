@@ -17,7 +17,7 @@ WALL_ENV = "HLM_BRIEF_WALL_S"  # test/ops override of the hard wall clock
 WALL_S = 4.0  # hard budget for the whole hook process (the registered hook timeout is 5)
 FETCH_S = 3.2  # the memory calls must finish by then; the rest is assembly + output
 BRIEF_TOKENS = 1500
-SOURCES = ("startup", "resume", "clear", "compact")
+SOURCES = ("startup", "clear", "compact")
 
 
 def killed(env: dict[str, str] | None = None) -> bool:
@@ -39,6 +39,7 @@ class BriefConfig:
     enabled: bool = True  # [brief] enabled
     sources: tuple[str, ...] = SOURCES
     budget_tokens: int = BRIEF_TOKENS
+    decisions_max_age_days: int = 7
 
 
 def load_config(path: Path | None = None) -> BriefConfig:
@@ -58,8 +59,11 @@ def load_config(path: Path | None = None) -> BriefConfig:
     srcs = tuple(s for s in (b.get("sources") or SOURCES) if isinstance(s, str))
     bt = b.get("budget_tokens")
     ok = isinstance(bt, int) and not isinstance(bt, bool) and 200 <= bt <= BRIEF_TOKENS
+    ad = b.get("decisions_max_age_days")
+    age = ad if isinstance(ad, int) and not isinstance(ad, bool) and 1 <= ad <= 365 else 7
     return BriefConfig(
         capture=cap,
+        decisions_max_age_days=age,
         enabled=b.get("enabled", True) is not False,
         sources=srcs or SOURCES,
         budget_tokens=bt if ok else BRIEF_TOKENS,

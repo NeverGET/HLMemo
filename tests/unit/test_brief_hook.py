@@ -294,3 +294,15 @@ def test_wall_clock_is_four_seconds_and_inside_the_hook_timeout(monkeypatch: pyt
     assert BC.wall_seconds() == 4.0 and BC.FETCH_S < BC.wall_seconds() < 5.0
     monkeypatch.setenv("HLM_BRIEF_WALL_S", "bogus")
     assert BC.wall_seconds() == 4.0
+
+
+def test_config_defaults_and_age_setting(tmp_path: Path) -> None:
+    p = tmp_path / "c.toml"
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n')
+    assert BC.load_config(p).decisions_max_age_days == 7
+    assert BC.load_config(p).sources == ("startup", "clear", "compact")  # no resume: context is present
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ndecisions_max_age_days = 14\n')
+    assert BC.load_config(p).decisions_max_age_days == 14
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ndecisions_max_age_days = -3\n')
+    assert BC.load_config(p).decisions_max_age_days == 7
+    assert go(payload(tmp_path, source="resume"), p).status == "ignored"

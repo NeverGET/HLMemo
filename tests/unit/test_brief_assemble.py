@@ -27,6 +27,7 @@ def note(vid: int, body: str = NOTE) -> Item:
         logical_id=vid,
         verified=True,
         current=True,
+        recorded_at=datetime(2026, 9, 30, 11, 0, tzinfo=UTC),
     )
 
 
@@ -41,6 +42,7 @@ def snap(**kw) -> Snapshot:
         "project": "proj",
         "card": {"clue": "v1", "text": "# Proj\n\nReal card text.", "stale": False},
         "as_of": datetime(2026, 9, 30, 19, 0, tzinfo=UTC),
+        "now": datetime(2026, 10, 1, 12, 0, tzinfo=UTC),
     }
     base.update(kw)
     return Snapshot(**base)
@@ -55,10 +57,10 @@ def test_section_order_and_footer() -> None:
     )
     b = A.assemble(s)
     assert b is not None
-    assert b.sections == ["Now", "Decisions in force", "Open", "Lessons", "Pending review"]
+    assert b.sections == ["Now", A.DECISIONS_TITLE, "Open", "Lessons", "Pending review"]
     heads = [ln for ln in b.text.splitlines() if ln.startswith("## ")]
-    assert [h.split(" (")[0] for h in heads] == [
-        "## Now", "## Decisions in force", "## Open", "## Lessons", "## Pending review",
+    assert [h.split(" (project")[0] for h in heads] == [
+        "## Now", "## " + A.DECISIONS_TITLE, "## Open", "## Lessons", "## Pending review",
     ]  # fmt: skip
     assert (
         b.text.rstrip()
@@ -73,9 +75,9 @@ def test_every_item_line_has_its_handle_and_auto_marker() -> None:
     b = A.assemble(s)
     assert b is not None
     lines = [ln for ln in b.text.splitlines() if ln.startswith("- ")]
-    assert lines and all(ln.startswith("- [v") or ln[2].isdigit() for ln in lines)
-    assert "- [v5 auto] decide A" in b.text
-    assert "- [v5 auto] unsure one" in b.text
+    assert lines and all(ln.startswith(("- [v", "- [2026-")) or ln[2].isdigit() for ln in lines)
+    assert "- [2026-09-30 v5 auto] decide A" in b.text
+    assert "- [2026-09-30 v5 auto] unsure one" in b.text
     assert "- [v7] A lesson — The rule." in b.text
     assert "- [v8 auto] A lesson" in b.text
     assert "Free text that must never appear" not in b.text  # only Decisions/Open bullets, no prose
@@ -84,7 +86,7 @@ def test_every_item_line_has_its_handle_and_auto_marker() -> None:
 def test_empty_sections_are_skipped() -> None:
     b = A.assemble(snap(lessons=[lesson(7)]))
     assert b is not None and b.sections == ["Now", "Lessons"]
-    assert "## Decisions in force" not in b.text and "## Pending review" not in b.text
+    assert "## " + A.DECISIONS_TITLE not in b.text and "## Pending review" not in b.text
 
 
 def test_skeleton_card_with_nothing_else_skips_the_whole_brief() -> None:
@@ -113,7 +115,7 @@ def test_dedup_and_per_note_caps() -> None:
     b = A.assemble(snap(sessions=[note(5, body), note(6, body)]))
     assert b is not None
     assert b.text.count("] d0") == 1  # the same line from an older note is not repeated
-    assert b.text.count("[v5] d") == A.DECISIONS_PER_NOTE and b.text.count("[v5] o") == A.OPEN_PER_NOTE
+    assert b.text.count("v5] d") == A.DECISIONS_PER_NOTE and b.text.count("v5] o") == A.OPEN_PER_NOTE
 
 
 def test_only_three_newest_sessions_and_five_lessons() -> None:
@@ -128,9 +130,9 @@ def test_long_lines_are_cut_with_an_ellipsis_never_rewritten() -> None:
     long = "word " * 200
     b = A.assemble(snap(sessions=[note(5, f"## Decisions\n- {long}")]))
     assert b is not None
-    line = next(ln for ln in b.text.splitlines() if ln.startswith("- [v5"))
+    line = next(ln for ln in b.text.splitlines() if ln.startswith("- [2026-09-30 v5"))
     assert line.endswith("…") and len(line) < A.LINE_CHARS + 20
-    assert line[len("- [v5] ") : -1].strip() in long  # a verbatim prefix
+    assert line[len("- [2026-09-30 v5] ") : -1].strip() in long  # a verbatim prefix
 
 
 def test_token_budget_is_held_with_the_repo_meter() -> None:
@@ -167,12 +169,12 @@ def test_drop_order_lessons_then_open_then_decisions() -> None:
     assert no_lessons is not None and no_open is not None
     b = A.assemble(s, budget=no_lessons.tokens + 3)
     assert b is not None
-    assert "## Lessons" not in b.text and "## Open" in b.text and "## Decisions in force" in b.text
+    assert "## Lessons" not in b.text and "## Open" in b.text and "## " + A.DECISIONS_TITLE in b.text
     b2 = A.assemble(s, budget=no_open.tokens + 3)
     assert (
         b2 is not None
         and "## Open" not in b2.text
-        and "## Decisions in force" in b2.text
+        and "## " + A.DECISIONS_TITLE in b2.text
         and b2.tokens <= no_open.tokens + 3
     )
 
@@ -198,3 +200,28 @@ def test_note_sections_parser() -> None:
         "# T\n- ignored\n## Decisions\n- a\n* b\n1. c\n### Open questions\n- q\n## Other\n- z\n"
     )
     assert d == ["a", "b", "c"] and o == ["q"]
+
+
+def test_old_notes_contribute_nothing_and_the_sections_vanish() -> None:
+    old = note(5)
+    old.recorded_at = datetime(2026, 9, 20, tzinfo=UTC)  # 11 days before "now"
+    b = A.assemble(snap(sessions=[old], lessons=[lesson(7)]))
+    assert b is not None and b.sections == ["Now", "Lessons"]
+    assert "decide A" not in b.text and "unsure one" not in b.text
+
+
+def test_age_window_is_configurable_and_per_note() -> None:
+    old, new = note(5, "## Decisions\n- older decision"), note(6)
+    old.recorded_at = datetime(2026, 9, 20, tzinfo=UTC)
+    b7 = A.assemble(snap(sessions=[new, old]))
+    b30 = A.assemble(snap(sessions=[new, old]), max_age_days=30)
+    assert b7 is not None and b30 is not None
+    assert "2026-09-30 v6 auto" in b7.text and "v5 auto" not in b7.text
+    assert "2026-09-20 v5] older decision" in b30.text
+
+
+def test_undated_note_is_skipped() -> None:
+    n = note(5)
+    n.recorded_at = None
+    b = A.assemble(snap(sessions=[n], lessons=[lesson(7)]))
+    assert b is not None and "decide A" not in b.text

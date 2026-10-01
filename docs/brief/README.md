@@ -8,7 +8,9 @@ block). Everything in it is a verbatim memory line (cut with an ellipsis, never 
 ```
 # Memory brief: project <slug> (read-only, verbatim lines from HLMemo, not model-written)
 ## Now (project card [vN])          the card text (<= 420 tokens) + a stale flag
-## Decisions in force               "Decisions" bullets of the newest 3 session notes (4 per note)
+## Recent session decisions (auto-captured, unreviewed)
+                                    "Decisions" bullets of the newest 3 session notes recorded in the last
+                                    7 days (4 per note), each as [YYYY-MM-DD vN auto]; older notes add nothing
 ## Open                             "Open / Uncertain / Unverified" bullets of the same notes (3 per note)
 ## Lessons                          newest 5 current lessons: title + first body line
 ## Pending review                   count of pending librarian questions + the newest notice
@@ -42,7 +44,8 @@ Optional table (the brief is NOT silenced by `[capture] enabled = false`):
 ```toml
 [brief]
 enabled = true                                   # false = off
-sources = ["startup", "resume", "clear", "compact"]
+sources = ["startup", "clear", "compact"]    # resume is off: the context is already present
+decisions_max_age_days = 7                       # session notes older than this add no decisions/open items
 budget_tokens = 1500                             # 200..1500
 ```
 
@@ -50,6 +53,9 @@ Kill switches: `HLM_BRIEF=off` (also `0`, `false`, `no`), `[brief] enabled = fal
 Dry run: `HLM_BRIEF_DRYRUN=<dir>` writes `<session>-<source>-<epoch>.brief.txt` and a `.meta.json`
 (tokens, sections, excluded handles with reasons, ms) and injects nothing. Every run appends one
 content-free line to `<capture state dir>/brief.log` (`~/.local/state/hlm/capture/`).
+
+Follow-up (not implemented): a dedicated hook device with a read-only grant, so the hook does not use the
+owner's personal device token.
 
 ## Install (NOT done; owner decision)
 
@@ -60,7 +66,7 @@ Project-scoped, in `<project>/.claude/settings.local.json` (gitignored), merged 
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear|compact",
+        "matcher": "startup|clear|compact",
         "hooks": [
           {
             "type": "command",

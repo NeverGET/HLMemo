@@ -104,7 +104,7 @@ def handle(
         snap = asyncio.run(asyncio.wait_for((fetcher or default_fetcher)(slug, cfg), timeout=BC.FETCH_S))
         if snap is None:
             return Outcome("empty")
-        brief = assemble(snap, budget=cfg.budget_tokens)
+        brief = assemble(snap, budget=cfg.budget_tokens, max_age_days=cfg.decisions_max_age_days)
         if brief is None:
             return Outcome("empty")
         dry = e.get(BC.DRYRUN_ENV, "").strip()

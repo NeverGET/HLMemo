@@ -1,6 +1,6 @@
 """Assemble the brief: pure, deterministic, LLM-free. Verbatim memory lines only.
 
-Sections, in this fixed order (each skipped when empty): Now (card) / Decisions in force / Open /
+Sections, in this fixed order (each skipped when empty): Now (card) / Recent session decisions / Open /
 Lessons / Pending review / the "as of" footer. Every item line starts with its handle (``[v123]``) so
 the agent can drill down (``memory.drilldown`` / ``memory.raw``). Lines are cut with an ellipsis, never
 rewritten. The whole text is held to ``budget`` o200k_base tokens (the repo's meter, ``core/budget.py``).
@@ -11,12 +11,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 from hlmemo.brief.fetch import Item, Snapshot
 from hlmemo.core import METER_VERSION
 
 SKELETON_MARK = "Skeleton card (D-015)"  # core/skeleton_card.skeleton_body
-SECTIONS = ("Now", "Decisions in force", "Open", "Lessons", "Pending review")
+DECISIONS_TITLE = "Recent session decisions (auto-captured, unreviewed)"
+SECTIONS = ("Now", DECISIONS_TITLE, "Open", "Lessons", "Pending review")
 
 MAX_SESSIONS = 3
 MAX_LESSONS = 5
@@ -94,6 +96,16 @@ def _tag(it: Item) -> str:
     return f"{it.handle} auto" if it.auto else it.handle
 
 
+def note_stamp(it: Item) -> datetime | None:
+    return it.recorded_at or it.valid_from
+
+
+def note_tag(it: Item) -> str:
+    """``YYYY-MM-DD v123 auto``: the note date, the handle, the auto-captured marker."""
+    t = note_stamp(it)
+    return f"{t.date().isoformat()} {_tag(it)}" if t else _tag(it)
+
+
 def lesson_line(it: Item) -> str:
     """Title + the first prose line of the body (verbatim, cut)."""
     first = next((ln.strip() for ln in it.body.splitlines() if ln.strip()), "")
@@ -141,7 +153,7 @@ def _render(
         if stale:
             out.append("(the card is flagged stale: a pinned source changed since it was written; verify)")
         names.append("Now")
-    for name, lines in (("Decisions in force", dec), ("Open", opn), ("Lessons", les)):
+    for name, lines in ((DECISIONS_TITLE, dec), ("Open", opn), ("Lessons", les)):
         if lines:
             out += ["", f"## {name}", *lines]
             names.append(name)
@@ -156,7 +168,7 @@ def _render(
 
 
 def assemble(
-    snap: Snapshot, *, budget: int = 1500, counter: Callable[[str], int] = count_tokens
+    snap: Snapshot, *, budget: int = 1500, max_age_days: int = 7, counter: Callable[[str], int] = count_tokens
 ) -> Brief | None:
     """The brief, or None when there is nothing trustworthy to say (no card beyond the skeleton and no
     decisions, open items or lessons)."""
@@ -169,7 +181,11 @@ def assemble(
     dec: list[str] = []
     opn: list[str] = []
     seen: set[str] = set()
+    cutoff = snap.now - timedelta(days=max_age_days)
     for it in snap.sessions[:MAX_SESSIONS]:
+        stamp = note_stamp(it)
+        if stamp is None or stamp < cutoff:  # old or undated notes contribute nothing
+            continue
         d, o = note_sections(it.body)
         for src, dst, cap in ((d, dec, DECISIONS_PER_NOTE), (o, opn, OPEN_PER_NOTE)):
             for ln in src[:cap]:
@@ -177,7 +193,7 @@ def assemble(
                 if key in seen:
                     continue
                 seen.add(key)
-                dst.append(f"- [{_tag(it)}] {cut(ln)}")
+                dst.append(f"- [{note_tag(it)}] {cut(ln)}")
     les = [lesson_line(it) for it in snap.lessons[:MAX_LESSONS]]
     if card is None and not (dec or opn or les):
         return None
