@@ -644,6 +644,130 @@ async def raw_links(
     return [RawLink(*r) for r in await cur.fetchall()]
 
 
+#: B3 (D-207 #5): at most this many incoming ``superseded_by`` entries on one ``memory.raw`` envelope
+#: (newest first; the envelope repeats on every page, so the list is bounded)
+SUPERSEDED_BY_MAX = 5
+#: a part-scope entry carries its quote (the outdated statement), cut to this many characters
+SUPERSEDED_QUOTE_CHARS = 160
+#: B3: at most this many ``superseded_by`` entries on one ``memory.query`` hit
+HIT_SUPERSEDED_BY_MAX = 3
+
+
+@dataclass(slots=True)
+class SupersededBy:
+    """One incoming live ``supersedes`` link of a version (``memory.raw``): the superseding item
+    and the version of it that stands for the link (the one valid at the link's start, else its
+    newest visible row), whole or part scope, the link's validity and quote."""
+
+    logical_id: int
+    version_id: int
+    part: bool
+    quote: str
+    valid_from: datetime
+    valid_to: datetime | None
+
+
+async def incoming_supersedes(
+    conn: AsyncConnection, version: ReadVersion, pid: int, scopes: list[str], known_at: datetime
+) -> list[SupersededBy]:
+    """B3 (D-207 #5): the INCOMING ``supersedes`` links of ``version``'s item that are live in
+    transaction time at ``known_at`` (a reverted link is gone; an as-of cursor keeps its view) and
+    whose validity does not end before the version starts (a link that ended earlier is about
+    older history). The link row and the superseding item must pass §4.4 (a): a superseder the
+    caller cannot see is never named, and its link is not reported at all.
+
+    The item's own revision self-link (a span revision, ``src = dst``) is about the version it
+    pins (``dst_version_id``) — that version, or its survivor copy that ends where the revision
+    starts — never about the revised head. Newest first, at most ``SUPERSEDED_BY_MAX``."""
+    cur = await conn.execute(
+        f"""
+        SELECT l.src_logical_id, s.version_id, COALESCE(l.props->>'scope', 'whole') = 'part',
+               COALESCE(l.props->>'quote', ''), l.valid_from, nullif(l.valid_to, 'infinity')
+          FROM links l
+          JOIN LATERAL (
+                SELECT s.version_id FROM memory_versions s
+                 WHERE s.logical_id = l.src_logical_id AND {_authz("s")}
+                   AND s.recorded_at <= %(known_at)s AND s.superseded_at > %(known_at)s
+                 ORDER BY (s.valid_from <= l.valid_from AND s.valid_to > l.valid_from) DESC,
+                          s.version_id DESC
+                 LIMIT 1) s ON true
+         WHERE l.rel = 'supersedes' AND l.dst_logical_id = %(lid)s AND {AUTHZ_L}
+           AND l.recorded_at <= %(known_at)s AND l.superseded_at > %(known_at)s
+           AND l.valid_to > %(valid_from)s
+           AND (l.src_logical_id <> l.dst_logical_id
+                OR l.dst_version_id = %(vid)s
+                OR (l.dst_version_id = %(base_vid)s AND %(valid_to)s::timestamptz IS NOT NULL
+                    AND %(valid_to)s::timestamptz <= l.valid_from))
+         ORDER BY l.valid_from DESC, l.link_id DESC
+         LIMIT %(limit)s
+        """,  # noqa: S608 - fixed fragments
+        {
+            "lid": version.logical_id,
+            "vid": version.version_id,
+            "base_vid": version.supersedes_version_id,
+            "pid": pid,
+            "scopes": scopes,
+            "valid_from": version.valid_from,
+            "valid_to": version.valid_to,
+            "known_at": known_at,
+            "limit": SUPERSEDED_BY_MAX,
+        },
+    )
+    return [SupersededBy(int(a), int(b), bool(c), str(d), e, f) for a, b, c, d, e, f in await cur.fetchall()]
+
+
+async def superseded_hits(
+    conn: AsyncConnection,
+    logical_ids: list[int],
+    *,
+    pid: int,
+    scopes: list[str],
+    valid_at: datetime,
+    known_at: datetime,
+    statuses: list[str],
+) -> dict[int, list[tuple[int, bool]]]:
+    """B3 (D-207 #5), ONE query: ``{superseded logical id: [(superseder's version id, part)]}`` over
+    the live ``supersedes`` links (valid and known at ``(valid_at, known_at)``, the link row passing
+    §4.4 (a)) that target one of ``logical_ids`` from ANOTHER item. The superseder must be a live
+    item of the caller's view (§4.4 (a) + the same temporal point and statuses as the query): a
+    hidden one is never named and does not flag the hit. One entry per superseding item (a whole
+    link wins over a part link of the same item); whole entries first, then newest; at most
+    ``HIT_SUPERSEDED_BY_MAX`` per item."""
+    if not logical_ids:
+        return {}
+    cur = await conn.execute(
+        f"""
+        SELECT DISTINCT ON (l.dst_logical_id, l.src_logical_id)
+               l.dst_logical_id, s.version_id, COALESCE(l.props->>'scope', 'whole') = 'part'
+          FROM links l
+          JOIN LATERAL (
+                SELECT s.version_id FROM memory_versions s
+                 WHERE s.logical_id = l.src_logical_id AND {_authz("s")} AND {_temporal("s")}
+                   AND s.status = ANY(%(statuses)s)
+                 ORDER BY s.version_id DESC LIMIT 1) s ON true
+         WHERE l.rel = 'supersedes' AND l.dst_logical_id = ANY(%(lids)s)
+           AND l.src_logical_id <> l.dst_logical_id AND {AUTHZ_L} AND {TEMPORAL_L}
+         ORDER BY l.dst_logical_id, l.src_logical_id,
+                  COALESCE(l.props->>'scope', 'whole') = 'part', l.link_id DESC
+        """,  # noqa: S608 - fixed fragments
+        {
+            "lids": sorted(set(logical_ids)),
+            "pid": pid,
+            "scopes": scopes,
+            "valid_at": valid_at,
+            "known_at": known_at,
+            "statuses": statuses,
+        },
+    )
+    out: dict[int, list[tuple[int, bool]]] = {}
+    for dst, vid, part in await cur.fetchall():
+        out.setdefault(int(dst), []).append((int(vid), bool(part)))
+    return {
+        dst: sorted(entries, key=lambda e: (e[1], -e[0]))[:HIT_SUPERSEDED_BY_MAX]
+        for dst, entries in out.items()
+    }
+
+
 async def endpoint_authz(
     conn: AsyncConnection, pid: int, scopes: list[str], *, logical_ids: list[int], version_ids: list[int]
 ) -> tuple[set[int], set[int]]:
@@ -731,6 +855,9 @@ async def record_access(
 
 __all__ = [
     "AUTHZ_MV",
+    "HIT_SUPERSEDED_BY_MAX",
+    "SUPERSEDED_BY_MAX",
+    "SUPERSEDED_QUOTE_CHARS",
     "TEMPORAL_MV",
     "TITLE_TSV",
     "Candidate",
@@ -741,12 +868,14 @@ __all__ = [
     "RawLink",
     "ReadVersion",
     "SourceEvent",
+    "SupersededBy",
     "card_version",
     "chunk_spans",
     "clock_now",
     "drilldown_links",
     "endpoint_authz",
     "hit_rows",
+    "incoming_supersedes",
     "indexing_pending",
     "lexical_candidates",
     "pinned_sources",
@@ -756,6 +885,7 @@ __all__ = [
     "resolve_project",
     "set_trigram_threshold",
     "source_event",
+    "superseded_hits",
     "term_stats",
     "term_stats_key",
     "unseen_write_age",

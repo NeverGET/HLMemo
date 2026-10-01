@@ -200,6 +200,42 @@ Error output for HTTP/tool errors is `error <CODE>: <message>` on stderr (+ the 
 details exist). Exit codes: `E_AUTH`/`E_DEVICE_PENDING`/`E_FORBIDDEN*` → 77, `E_UNAVAILABLE` → 69,
 `E_INVALID_ARG`/`E_NOT_FOUND`/`E_BUDGET_*` → 64, other spec codes → 1.
 
+## Correcting what you read: `memory.write` updates (D-118) and supersession status
+
+An agent that writes a memory which CORRECTS one it read (a `memory.query` / `memory.drilldown` hit) adds
+`updates` to that item; the new memory is always written, and each update is judged on its own:
+
+```json
+{"kind": "fact", "title": "Cache TTL raised", "body": "The API cache TTL is now 300 seconds.",
+ "updates": [{"item": "v123.0", "old_span": "60 seconds", "mode": "revise", "replacement": "300 seconds"}]}
+```
+
+- `item` is the clue you saw (`v<version_id>[.<ordinal>]`): it names the memory AND the version you read.
+  If that memory changed since, the update is rejected `E_VERSION_CONFLICT` with `current_clue`. (The hlm
+  CLI may send an integer logical id plus `expected_version`; a clue contradicted by `expected_version` is
+  `E_INVALID_ARG expected_version_mismatch`.)
+- `mode: revise` replaces ONLY `old_span` (verbatim, exactly once, on word boundaries, not the whole
+  memory) with `replacement`, which must occur verbatim in THIS item's body (omitted: the body itself, if
+  it is one statement). The target gets a new version byte-identical outside the span; the old text stays
+  valid before the cut (the item's `valid_from`, else now).
+- `mode: supersede` closes the whole memory at the cut and links `supersedes` from the new item.
+- Historical records (episodes, session notes, decision/ADR rows) are never rewritten: both modes only add
+  a `supersedes` link (`linked`, scope `part` for revise, `whole` for supersede). Kinds that may be changed:
+  `HLM_LIBRARIAN_REVISE_KINDS` (default `fact,lesson,doc_chunk`).
+- The ack lists each update as `applied`, `linked` or `rejected` (`code`, `reason`, a fixed `hint`). Undo one:
+  `python -m hlmemo.ops librarian revert-update <write event> --item I --update K --reason ..` (ONE
+  compensating event; refused while a later change depends on it).
+
+Reads report supersession from LIVE `supersedes` links whose superseder you can see (D-207 #5):
+
+- a `memory.query` hit whose item is targeted carries `"superseded": true` and
+  `"superseded_by": [{"clue": "v456", "scope": "whole"|"part"}]` (`part`: one quoted statement is outdated,
+  the rest still holds). Unflagged hits have no such keys. A whole-superseded hit whose superseder is among
+  the same hits is still hidden (D-057);
+- `memory.raw` always carries the INCOMING `superseded_by: [{logical_id, version_id, scope, valid_from,
+  valid_to, quote?}]` of the version (`links` stays the outgoing view); `quote` (part scope) is the outdated
+  statement, cut at 160 characters.
+
 ## Import and export (W1.5)
 
 ```sh

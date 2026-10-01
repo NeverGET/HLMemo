@@ -66,7 +66,11 @@ class FakeServer:
                 raise RuntimeError("boom")
             kind = args["kinds"][0]
             hits = [
-                hit(v["vid"], v["kind"], v["title"], v["day"], v["tags"])
+                {
+                    **hit(v["vid"], v["kind"], v["title"], v["day"], v["tags"]),
+                    # B3: a current server flags a superseded hit (absent otherwise)
+                    **({"superseded": True, "superseded_by": v["hit_sup"]} if v.get("hit_sup") else {}),
+                }
                 for v in self.versions.values()
                 if v["kind"] == kind
             ]
@@ -81,7 +85,7 @@ class FakeServer:
         v = self.versions[vid]
         page = int(args.get("cursor") or 0)
         more = page + 1 < v["pages"]
-        return {
+        out = {
             "version_id": vid, "logical_id": v["lid"], "kind": v["kind"],
             "recorded_at": f"2026-09-{v['day']:02d}T11:00:00.000000Z",
             "valid_to": v["valid_to"], "superseded_at": v["superseded_at"],
@@ -89,6 +93,9 @@ class FakeServer:
             "links": v["links"] if (page + 1 == v["pages"]) else [],  # links ride on the LAST page
             "next_cursor": str(page + 1) if more else None,
         }  # fmt: skip
+        if "incoming" in v:  # B3: a current server's incoming view (an older one has no key)
+            out["superseded_by"] = v["incoming"]
+        return out
 
 
 def sup(dst_lid: int, **kw: Any) -> dict:
@@ -136,6 +143,59 @@ def test_superseded_by_live_link_is_excluded() -> None:
     snap = run(s)
     assert [i.version_id for i in snap.lessons] == [21]
     assert ("v20", "superseded") in snap.excluded
+
+
+def incoming(lid: int, scope: str = "whole", **kw: Any) -> dict:
+    return {"logical_id": lid, "version_id": lid - 1000, "scope": scope,
+            "valid_from": "2026-09-27T00:00:00.000000Z", "valid_to": None, **kw}  # fmt: skip
+
+
+def test_superseder_outside_the_pool_is_excluded_via_raw_superseded_by() -> None:
+    """B3: the server's incoming view names a superseder the pool never saw (the old gap 1)."""
+    s = server_with_notes()
+    s.versions[20]["incoming"] = [incoming(9999)]  # an item of another kind, outside the pool
+    for v in (10, 11, 21):
+        s.versions[v]["incoming"] = []
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [21]
+    assert ("v20", "superseded") in snap.excluded
+
+
+def test_a_superseded_query_hit_is_excluded_even_without_raw_entries() -> None:
+    s = server_with_notes()
+    s.versions[20]["hit_sup"] = [{"clue": "v8999", "scope": "whole"}]
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [21]
+    assert ("v20", "superseded") in snap.excluded
+
+
+def test_part_scope_is_excluded_with_its_own_reason() -> None:
+    s = server_with_notes()
+    s.versions[20]["hit_sup"] = [{"clue": "v8999", "scope": "part"}]
+    s.versions[10]["incoming"] = [incoming(9998, "part", quote="d10")]
+    snap = run(s)
+    assert ("v20", "superseded-part") in snap.excluded and ("v10", "superseded-part") in snap.excluded
+    assert [i.version_id for i in snap.sessions] == [11] and [i.version_id for i in snap.lessons] == [21]
+
+
+@pytest.mark.parametrize(
+    "extra", [{"valid_to": "2026-09-30T00:00:00.000000Z"}, {"valid_from": "2026-10-05T00:00:00.000000Z"}]
+)
+def test_a_raw_entry_that_does_not_apply_now_does_not_exclude(extra: dict) -> None:
+    s = server_with_notes()
+    s.versions[20]["incoming"] = [incoming(9999, **extra)]
+    assert [i.version_id for i in run(s).lessons] == [21, 20]
+
+
+def test_the_pool_fallback_still_works_next_to_the_new_field() -> None:
+    """A server whose raw carries ``superseded_by`` (empty here) and a pool item's OUTGOING link: the
+    old fallback still excludes (both checks are applied)."""
+    s = server_with_notes()
+    for v in s.versions.values():
+        v["incoming"] = []
+    s.versions[21]["links"] = [sup(s.versions[20]["lid"])]
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [21] and ("v20", "superseded") in snap.excluded
 
 
 def test_cross_kind_superseder_in_pool_excludes() -> None:

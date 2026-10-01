@@ -9,6 +9,12 @@ is the exact o200k measure of its canonical JSON and never exceeds ``limit``). E
 * drilldown / raw: record an ``access`` event and touch ``last_access_at`` (D-012) in the same
   transaction; cursors are ``hlmemo.auth.cursors`` HMAC tokens bound to device + generation, and a
   continuation re-runs the full authorization inside its own transaction (§2).
+
+B3 (D-207 defect #5, additive): supersession status from LIVE ``supersedes`` links whose superseder
+the caller can see. A query hit whose item is targeted carries ``superseded: true`` and
+``superseded_by: [{clue, scope}]`` (a hit without one is unchanged; D-057 still hides a
+whole-superseded hit when its superseder is among the hits). ``memory.raw`` carries the incoming
+``superseded_by: [{logical_id, version_id, scope, valid_from, valid_to, quote?}]`` (always present).
 """
 
 from __future__ import annotations
@@ -260,6 +266,19 @@ async def query_parts(
         rows = await q.hit_rows(conn, [f.chunk_id for f in head])
         for f in head:
             f.row = rows[f.chunk_id]
+        # B3 (D-207 #5, additive): every hit learns whether a live `supersedes` link targets its
+        # item (whole or part) and by whom; nothing is hidden or re-ranked by this
+        superseded = await q.superseded_hits(
+            conn,
+            [f.logical_id for f in head],
+            pid=project.project_id,
+            scopes=scopes,
+            valid_at=valid_at,
+            known_at=known_at,
+            statuses=filters.statuses,
+        )
+        for f in head:
+            f.superseded_by = superseded.get(f.logical_id, [])
         head = newer_first_on_ties(head)  # D-057: exact RRF tie, same title -> newer first
         if partial:  # D-076 fact-level supersession, only for a query that matched the outdated span
             head = demote_partially_superseded(head, partial, terms.terms)  # the c0e3138 term set
@@ -618,6 +637,23 @@ async def _provenance(
     raise _not_found("version")
 
 
+def _superseded_entry(s: q.SupersededBy) -> dict[str, Any]:
+    """One ``memory.raw`` ``superseded_by`` entry: the superseding item and version, ``whole`` or
+    ``part`` (a part-scope entry carries its quote, the outdated statement, cut with an ellipsis)
+    and the link's validity."""
+    out: dict[str, Any] = {
+        "logical_id": s.logical_id,
+        "version_id": s.version_id,
+        "scope": "part" if s.part else "whole",
+        "valid_from": fmt_ts(s.valid_from),
+        "valid_to": fmt_ts(s.valid_to),
+    }
+    if s.part and s.quote:
+        n = q.SUPERSEDED_QUOTE_CHARS
+        out["quote"] = s.quote if len(s.quote) <= n else s.quote[: n - 1] + "…"
+    return out
+
+
 async def raw(
     conn: AsyncConnection,
     ctx: AuthContext,
@@ -647,6 +683,7 @@ async def raw(
         else:
             known_at = await q.clock_now(conn)
         links = await q.raw_links(conn, v, project.project_id, scopes, known_at)
+        incoming = await q.incoming_supersedes(conn, v, project.project_id, scopes, known_at)
         slugs = await q.project_slugs(conn, v.project_ids)
         ev, payload_item = await _provenance(conn, v, project.project_id, scopes)
         spans = await q.chunk_spans(conn, v.version_id)
@@ -679,6 +716,9 @@ async def raw(
                 {"path": path, "commit": commit}
                 for path, commit in (await iq.code_refs_of(conn, [v.version_id]))[v.version_id]
             ],
+            # B3 (D-207 #5, additive): the INCOMING live `supersedes` links (who supersedes this
+            # version, whole or part); `links` stays the outgoing view. Always present (may be []).
+            "superseded_by": [_superseded_entry(s) for s in incoming],
             "links": [],
             "chunks": [],
             "next_cursor": None,

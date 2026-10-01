@@ -155,6 +155,9 @@ class Fused:
     title_rank: int | None = None
     device_scope: str = "all"
     row: HitRow | None = None
+    #: B3 (D-207 #5): ``[(superseder's version id, part)]`` from the live ``supersedes`` links that
+    #: target this hit's item (``read_queries.superseded_hits``); empty = not superseded
+    superseded_by: list[tuple[int, bool]] = field(default_factory=list)
 
 
 def rrf_fuse(
@@ -330,9 +333,13 @@ def query_preview(meter: Meter, text: str, terms: Sequence[str], max_tokens: int
 
 
 def render_hit(meter: Meter, f: Fused, preview_tok: int, terms: Sequence[str] = ()) -> dict[str, Any]:
+    """One packed hit. B3 (D-207 #5, additive): a hit whose item a live ``supersedes`` link targets
+    also carries ``superseded: true`` and ``superseded_by: [{clue, scope}]`` (``scope`` = ``whole``
+    or ``part``: a part-scope link outdates one quoted statement of the item, not all of it); a hit
+    without one renders exactly as before (no key)."""
     row = f.row
     assert row is not None
-    return {
+    out: dict[str, Any] = {
         "clue": encode_clue(row.version_id, row.ordinal),
         "kind": row.kind,
         "title": row.title,
@@ -342,6 +349,12 @@ def render_hit(meter: Meter, f: Fused, preview_tok: int, terms: Sequence[str] = 
         "tags": list(row.tags),
         "device_scope": row.device_scope,
     }
+    if f.superseded_by:
+        out["superseded"] = True
+        out["superseded_by"] = [
+            {"clue": encode_clue(vid), "scope": "part" if part else "whole"} for vid, part in f.superseded_by
+        ]
+    return out
 
 
 def pack_prefix(
