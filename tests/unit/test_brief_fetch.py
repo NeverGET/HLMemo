@@ -225,7 +225,7 @@ def test_pool_is_capped_and_read_only() -> None:
     for i in range(30):
         s.add(100 + i, "lesson", f"L{i}", "b", 1 + i % 28)
     snap = run(s)
-    raws = [a for t, a in s.calls if t == "memory.raw"]
+    raws = [a for t, a in s.calls if t == "memory.raw" and a["version_id"] != 1]  # v1 = the card
     assert len(raws) <= F.POOL_LESSONS
     assert {t for t, _ in s.calls} == {"memory.query", "memory.raw"}  # never a write tool
     assert len(snap.lessons) <= F.POOL_LESSONS
@@ -236,3 +236,20 @@ def test_auto_detection() -> None:
     b = F.Item(2, "lesson", "t", None, ["auto-capture"], body="x")
     c = F.Item(3, "session_note", "t", None, [], body="Session 2026-09-26\n\nhand written")
     assert a.auto and b.auto and not c.auto
+
+
+def test_card_date_from_the_card_version() -> None:
+    s = server_with_notes()
+    s.add(1, "project_card", "Project card", "# Proj", 27)
+    snap = run(s)
+    assert snap.card_date == datetime(2026, 9, 27, 11, 0, tzinfo=UTC)
+
+
+def test_card_date_unknown_when_raw_fails_or_no_card() -> None:
+    s = server_with_notes()
+    s.add(1, "project_card", "Project card", "# Proj", 27)
+    s.fail_raw = {1}
+    assert run(s).card_date is None
+    s2 = server_with_notes()
+    s2.card = None
+    assert run(s2).card_date is None

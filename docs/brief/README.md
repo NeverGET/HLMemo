@@ -45,6 +45,7 @@ Optional table (the brief is NOT silenced by `[capture] enabled = false`):
 [brief]
 enabled = true                                   # false = off
 sources = ["startup", "clear", "compact"]    # resume is off: the context is already present
+include_auto = false                             # true = also show auto-captured (unreviewed) notes and lessons
 decisions_max_age_days = 7                       # session notes older than this add no decisions/open items
 budget_tokens = 1500                             # 200..1500
 ```
@@ -84,3 +85,10 @@ Hook input (stdin): `session_id`, `transcript_path`, `cwd`, `hook_event_name = "
 Output (stdout, exit 0): `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"<brief>"}}`.
 Suggested first step: run with `HLM_BRIEF_DRYRUN=/tmp/hlm-brief` set in the hook command for a few sessions,
 read the files, then remove it.
+
+## Reviewed items only by default (D-206)
+
+`include_auto = false` (default): decisions/open lines of auto-captured notes and auto-captured lessons
+are NOT shown; only the card, non-auto lessons and non-auto notes (within the age window) appear. The
+"Pending review" line counts them ("at least M auto-captured items", from what the brief fetched) next to
+the librarian questions. The "Now" heading shows the card version's date and "may be stale" after 3 days.

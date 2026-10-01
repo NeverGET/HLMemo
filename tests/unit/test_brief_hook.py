@@ -306,3 +306,39 @@ def test_config_defaults_and_age_setting(tmp_path: Path) -> None:
     p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ndecisions_max_age_days = -3\n')
     assert BC.load_config(p).decisions_max_age_days == 7
     assert go(payload(tmp_path, source="resume"), p).status == "ignored"
+
+
+def test_include_auto_config_default_false_and_only_true_enables(tmp_path: Path) -> None:
+    p = tmp_path / "c.toml"
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n')
+    assert BC.load_config(p).include_auto is False
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ninclude_auto = true\n')
+    assert BC.load_config(p).include_auto is True
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ninclude_auto = "yes"\n')
+    assert BC.load_config(p).include_auto is False
+
+
+def test_hook_hides_auto_lessons_unless_configured(tmp_path: Path) -> None:
+    async def auto(slug: str, cfg: Any) -> Snapshot:
+        s = good_snapshot()
+        s.lessons = [
+            Item(
+                9,
+                "lesson",
+                "Auto L",
+                None,
+                ["auto-capture"],
+                body="b",
+                logical_id=9,
+                verified=True,
+                current=True,
+            )
+        ]
+        return s
+
+    p = tmp_path / "c.toml"
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n')
+    o = go(payload(tmp_path), p, fetcher=auto)
+    assert o.output and "Auto L" not in o.output and "at least 1 auto-captured item" in o.output
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ninclude_auto = true\n')
+    assert "Auto L" in (go(payload(tmp_path), p, fetcher=auto).output or "")

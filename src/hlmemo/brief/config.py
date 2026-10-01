@@ -40,6 +40,7 @@ class BriefConfig:
     sources: tuple[str, ...] = SOURCES
     budget_tokens: int = BRIEF_TOKENS
     decisions_max_age_days: int = 7
+    include_auto: bool = False  # auto-captured (unreviewed) notes/lessons are NOT shown unless true
 
 
 def load_config(path: Path | None = None) -> BriefConfig:
@@ -64,6 +65,7 @@ def load_config(path: Path | None = None) -> BriefConfig:
     return BriefConfig(
         capture=cap,
         decisions_max_age_days=age,
+        include_auto=b.get("include_auto", False) is True,
         enabled=b.get("enabled", True) is not False,
         sources=srcs or SOURCES,
         budget_tokens=bt if ok else BRIEF_TOKENS,

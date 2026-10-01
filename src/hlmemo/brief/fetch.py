@@ -69,6 +69,7 @@ class Snapshot:
     sessions: list[Item] = field(default_factory=list)  # verified, current, not superseded; newest first
     lessons: list[Item] = field(default_factory=list)
     excluded: list[tuple[str, str]] = field(default_factory=list)  # (handle, reason)
+    card_date: datetime | None = None  # recorded_at of the card version (None: unknown)
     as_of: datetime | None = None  # newest recorded_at among the items read
     now: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -165,6 +166,18 @@ async def _bounded(sem: asyncio.Semaphore, coro: Awaitable[Any]) -> Any:
         return await coro
 
 
+async def _card_date(call: Call, project: str, card: dict[str, Any] | None) -> datetime | None:
+    """When the card version was recorded (memory.raw); None when unknown. Never raises."""
+    vid = _vid(card.get("clue")) if isinstance(card, dict) else None
+    if vid is None:
+        return None
+    try:
+        r = await call("memory.raw", {"project": project, "version_id": vid, "token_budget": 4000})
+    except Exception:  # noqa: BLE001
+        return None
+    return parse_ts(r.get("recorded_at"))
+
+
 async def gather_snapshot(call: Call, project: str, *, now: datetime | None = None) -> Snapshot:
     """Everything the brief shows, read-only. Raises only if NOTHING could be read."""
     now = now or datetime.now(UTC)
@@ -191,6 +204,7 @@ async def gather_snapshot(call: Call, project: str, *, now: datetime | None = No
             n = lib.get("pending_questions")
             snap.pending = n if isinstance(n, int) and n > 0 else 0
             snap.notices = [x for x in (lib.get("notices") or []) if isinstance(x, dict)]
+    snap.card_date = await _card_date(call, project, snap.card)
     lesson_res = results[0] if isinstance(results[0], dict) else {}
     sess_hits = [h for r in results[1:] if isinstance(r, dict) for h in (r.get("hits") or [])]
     s_pool = candidates(sess_hits, POOL_SESSIONS)

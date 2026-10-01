@@ -17,13 +17,15 @@ from hlmemo.brief.fetch import Item, Snapshot
 from hlmemo.core import METER_VERSION
 
 SKELETON_MARK = "Skeleton card (D-015)"  # core/skeleton_card.skeleton_body
-DECISIONS_TITLE = "Recent session decisions (auto-captured, unreviewed)"
+DECISIONS_TITLE = "Recent session decisions (auto-captured, unreviewed)"  # include_auto = true
+DECISIONS_TITLE_REVIEWED = "Recent session decisions"  # default: auto-captured notes are hidden
 SECTIONS = ("Now", DECISIONS_TITLE, "Open", "Lessons", "Pending review")
 
 MAX_SESSIONS = 3
 MAX_LESSONS = 5
 DECISIONS_PER_NOTE = 4
 OPEN_PER_NOTE = 3
+CARD_STALE_DAYS = 3
 LINE_CHARS = 220
 CARD_TOKENS = 420
 MIN_CARD_TOKENS = 120
@@ -115,12 +117,18 @@ def lesson_line(it: Item) -> str:
     return f"- [{_tag(it)}] {text}"
 
 
-def pending_line(snap: Snapshot) -> str | None:
-    if snap.pending <= 0:
+def pending_line(snap: Snapshot, auto_n: int = 0) -> str | None:
+    """Questions + auto-captured items awaiting review. ``auto_n`` counts only what the brief fetched
+    (the newest session notes and lessons), so it is shown as "at least"."""
+    if snap.pending <= 0 and auto_n <= 0:
         return None
-    plural = "s" if snap.pending != 1 else ""
-    line = f"- {snap.pending} librarian question{plural} await review (memory.answer)"
-    n = snap.notices[0] if snap.notices else None
+    parts = []
+    if snap.pending > 0:
+        parts.append(f"{snap.pending} librarian question{'s' if snap.pending != 1 else ''}")
+    if auto_n > 0:
+        parts.append(f"at least {auto_n} auto-captured item{'s' if auto_n != 1 else ''}")
+    line = f"- {' + '.join(parts)} await review (memory.answer)"
+    n = snap.notices[0] if snap.pending > 0 and snap.notices else None
     if n and isinstance(n.get("text"), str):
         clues = " ".join(str(c) for c in (n.get("clues") or [])[:3])
         line += f"; newest: {cut(n['text'], 100)}" + (f" [{clues}]" if clues else "")
@@ -138,6 +146,7 @@ class Brief:
 
 def _render(
     slug: str,
+    dec_title: str,
     card: tuple[str, str, bool] | None,
     dec: list[str],
     opn: list[str],
@@ -149,11 +158,11 @@ def _render(
     names: list[str] = []
     if card:
         handle, text, stale = card
-        out += ["", f"## Now (project card [{handle}])", text]
+        out += ["", f"## Now ({handle})", text]
         if stale:
             out.append("(the card is flagged stale: a pinned source changed since it was written; verify)")
         names.append("Now")
-    for name, lines in ((DECISIONS_TITLE, dec), ("Open", opn), ("Lessons", les)):
+    for name, lines in ((dec_title, dec), ("Open", opn), ("Lessons", les)):
         if lines:
             out += ["", f"## {name}", *lines]
             names.append(name)
@@ -168,7 +177,12 @@ def _render(
 
 
 def assemble(
-    snap: Snapshot, *, budget: int = 1500, max_age_days: int = 7, counter: Callable[[str], int] = count_tokens
+    snap: Snapshot,
+    *,
+    budget: int = 1500,
+    max_age_days: int = 7,
+    include_auto: bool = False,
+    counter: Callable[[str], int] = count_tokens,
 ) -> Brief | None:
     """The brief, or None when there is nothing trustworthy to say (no card beyond the skeleton and no
     decisions, open items or lessons)."""
@@ -176,13 +190,21 @@ def assemble(
     c = snap.card
     if isinstance(c, dict) and isinstance(c.get("text"), str) and c["text"].strip():
         if SKELETON_MARK not in c["text"]:
-            card = (str(c.get("clue") or "card"), c["text"].strip(), bool(c.get("stale")))
+            label = f"project card {c.get('clue') or '?'}"
+            if snap.card_date is not None:
+                age = (snap.now - snap.card_date).days
+                label += f", updated {snap.card_date.date().isoformat()}"
+                label += ", may be stale" if age > CARD_STALE_DAYS else ""
+            card = (label, c["text"].strip(), bool(c.get("stale")))
 
     dec: list[str] = []
     opn: list[str] = []
     seen: set[str] = set()
+    auto_n = 0 if include_auto else sum(1 for it in snap.sessions + snap.lessons if it.auto)  # hidden ones
+    sessions = [it for it in snap.sessions if include_auto or not it.auto]
+    lessons = [it for it in snap.lessons if include_auto or not it.auto]
     cutoff = snap.now - timedelta(days=max_age_days)
-    for it in snap.sessions[:MAX_SESSIONS]:
+    for it in sessions[:MAX_SESSIONS]:
         stamp = note_stamp(it)
         if stamp is None or stamp < cutoff:  # old or undated notes contribute nothing
             continue
@@ -194,16 +216,17 @@ def assemble(
                     continue
                 seen.add(key)
                 dst.append(f"- [{note_tag(it)}] {cut(ln)}")
-    les = [lesson_line(it) for it in snap.lessons[:MAX_LESSONS]]
+    les = [lesson_line(it) for it in lessons[:MAX_LESSONS]]
     if card is None and not (dec or opn or les):
         return None
 
     as_of = snap.as_of.date().isoformat() if snap.as_of else "unknown"
     if card:
         card = (card[0], truncate_tokens(card[1], CARD_TOKENS), card[2])
-    pend = pending_line(snap)
+    pend = pending_line(snap, auto_n)
+    dec_title = DECISIONS_TITLE if include_auto else DECISIONS_TITLE_REVIEWED
 
-    text, names = _render(snap.project, card, dec, opn, les, pend, as_of)
+    text, names = _render(snap.project, dec_title, card, dec, opn, les, pend, as_of)
     # Over budget: drop from the tail of Lessons, then Open, then Decisions, then shrink the card.
     while counter(text) > budget:
         if les:
@@ -218,7 +241,7 @@ def assemble(
             pend = None
         else:
             break
-        text, names = _render(snap.project, card, dec, opn, les, pend, as_of)
+        text, names = _render(snap.project, dec_title, card, dec, opn, les, pend, as_of)
     truncated = False
     if counter(text) > budget:  # last resort: a hard cut (cannot happen with the caps above)
         text, truncated = truncate_tokens(text, budget), True
