@@ -1877,3 +1877,15 @@ Cross-cutting findings:
 - The readers disagree on 33% of units; codex is the stricter reader.
 
 Spend: Gemini about $1.6 real ($4.35 booked; the gap is Google 503 refusals booked at worst case, D-062 (5)). The cap was amended 4 → 12 USD with the reason on record.
+D-225 | 2026-10-01 | ACCEPTED (owner) | **After the D-224 NO-GO: "assist now + lessons v2".**
+
+Assist now:
+- The librarian PROPOSES derived facts (AL1) and project-card drafts (AL3) into a review queue.
+- Nothing is hidden, merged or superseded automatically. The owner accepts or rejects in short batches, and that acceptance rate is the real-usage precision measurement.
+- Also shipped: the LLM-free SessionStart brief (AL5) and agent write-time updates (B3, the D-118 port).
+
+Lessons v2 (AL4), data-first:
+- Evidence comes from past Claude Code session transcripts of HLMemo and the migrated projects (owner-approved), mined locally in dry run, scrubbed and kept private.
+- Forks count as one source.
+- Deterministic clustering plus a fork-aware project graph find the candidates; the LLM only phrases clusters that have ≥ 2 independent sources.
+- A new pre-registered ceiling run follows. Nothing is imported without owner review (D-222).
