@@ -1909,3 +1909,17 @@ Results:
 Next:
 - The owner reviews the 7 drafts (private OWNER-REVIEW.md); only accepted lessons are imported.
 - More evidence needs the transcript archive (classifier-gated; the owner's call) and the live capture of future sessions.
+D-228 | 2026-10-02 | ACCEPTED (orchestrator, under D-225 "assist now") | **AL5 SessionStart brief is INSTALLED for the HLMemo project only.**
+
+What it is:
+- An LLM-free client hook (src/hlmemo/brief), matcher startup|clear|compact.
+- Verbatim lines only: the project card with its date, current non-auto lesson TITLES, and the pending-review counts.
+- Unreviewed auto-captured items are counted, never shown. Decision history is off by default.
+- Fail-open with a 4 s budget. Kill switch: HLM_BRIEF=off or `[brief] enabled=false`.
+
+Blind gate (2 readers, stricter label; ≥ 60% useful and 0 stale):
+- v1 failed: a stale decision line from an older note, and decision-history lines judged noise.
+- v4 PASSED: 14 lines, 10 useful, 4 noise, 0 stale; the readers agree line for line.
+- The remaining noise (generic lessons, backlog counts) belongs to task-time recall, not the session start.
+
+Gap (D-207 #5): memory.query and memory.raw expose no incoming `superseded_by`, so the brief can only exclude superseded items inside its own candidate pool.
