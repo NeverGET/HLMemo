@@ -96,7 +96,13 @@ async def test_gl1_5xx_six_times_falls_back(db_dsn, connect) -> None:  # noqa: A
             "SELECT count(*) FROM llm_calls WHERE outcome = 'http_error' AND cost_usd = reserved_usd"
             " AND reserved_usd > 0"
         )
-        assert (await cur.fetchone())[0] == 6  # a 5xx may have been billed: charged at worst case
+        assert (await cur.fetchone())[0] == 3  # 502, 500, 504 may have been billed: worst case
+        cur = await conn.execute(
+            "SELECT count(*) FROM llm_calls WHERE outcome = 'http_error' AND cost_usd = 0"
+            " AND reserved_usd > 0"
+        )
+        # the three 503s carry the provider's error object and no usage: rejected before generation
+        assert (await cur.fetchone())[0] == 3
         assert ledger == spent > Decimal("0.00002")
     await p.aclose()
 

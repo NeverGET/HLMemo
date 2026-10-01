@@ -140,6 +140,28 @@ _RATE_LIMIT = re.compile(
 #: WEAK: a billing/quota word that is billing only when nothing says it is a rate limit
 _WEAK_BILLING = re.compile(r"(?<![a-z0-9])(?:resource_exhausted|quota|billing)(?![a-z0-9])")
 
+#: (proposed amendment to D-062 (5), id assigned at merge) the 5xx statuses that mean "not
+#: processed": the provider refused the request at admission (overloaded / unavailable)
+REJECTED_5XX = frozenset({503, 529})
+
+
+def rejected_before_generation(status: int, body: bytes | None) -> bool:
+    """A 503/529 whose body is the provider's OWN error object (``{"error": {...}}``, or Google's
+    OpenAI-compatible ``[{"error": {...}}]``) and reports no ``usage`` and no ``choices``: rejected
+    before generation, so settled at $0 like a 4xx. Every other 5xx, and a 503 with any other body (a
+    proxy's HTML page, an empty body, a body with usage), keeps D-062's worst-case settlement."""
+    if status not in REJECTED_5XX or not body:
+        return False
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return False
+    items = parsed if isinstance(parsed, list) else [parsed]
+    return bool(items) and all(
+        isinstance(x, dict) and isinstance(x.get("error"), dict) and "usage" not in x and "choices" not in x
+        for x in items
+    )
+
 
 def is_billing_or_quota(
     status: int | None, body: bytes | str | dict[str, Any] | None, retry_after: str | None = None
@@ -1144,9 +1166,13 @@ class Provider:
             (data.get("error") and not data.get("choices")) or choice.get("finish_reason") == "error"
         )
         if resp.status_code != 200 or data is None or provider_error:
-            # Only a 4xx is a definitive no-charge answer (rejected before generation). A 5xx,
-            # an unparseable 200 or a mid-generation provider error may have been billed.
-            no_charge = 400 <= resp.status_code < 500
+            # A 4xx is a definitive no-charge answer (rejected before generation), and so is a
+            # 503/529 carrying the provider's own error object and no usage (overloaded: never
+            # processed). Any other 5xx, an unparseable 200 or a mid-generation provider error may
+            # have been billed: worst case.
+            no_charge = 400 <= resp.status_code < 500 or rejected_before_generation(
+                resp.status_code, raw_bytes
+            )
             charged = Decimal(0) if no_charge else worst
             err_status = resp.status_code
             if err_status == 200 and isinstance((data or {}).get("error"), dict):
