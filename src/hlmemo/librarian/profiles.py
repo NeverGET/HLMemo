@@ -4,7 +4,9 @@ profile, and the per-task fallback overrides.
 The primary profile is what ``Settings`` resolved (profile file < hlm.toml < ``HLM_*`` env), so a
 deployment can override the model or key by env. A fallback profile is loaded from its own file
 only (``profiles/<name>.toml`` or an inline ``[profiles.<name>]``): env overrides of ``HLM_LLM_*``
-never leak into it. Nothing outside a profile names a vendor, model id or price.
+never leak into it. Nothing outside a profile names a vendor, model id or price. A profile's
+spend-settlement policy (``unbilled_errors``) is read from its FILE only, for the primary too: it is
+release state through the image (no env, ``[hlm]`` or inline override exists).
 
 Per-task fallbacks (D-094): ``HLM_FALLBACK_PROFILE`` is every task's fallback unless the task has
 its own ``HLM_FALLBACK_PROFILE__<TASK>`` (task name upper-cased; ``Settings.task_fallback_profiles``).
@@ -28,7 +30,7 @@ from decimal import Decimal
 from typing import Any
 
 from hlmemo.config import TASK_FALLBACK_ENV, Settings, _strip_prefix, expand_env, load_profile
-from hlmemo.librarian.errors import LlmConfigError
+from hlmemo.librarian.errors import LlmConfigError, ProfilePolicyError
 
 FALLBACK_ENV = "HLM_FALLBACK_PROFILE"
 
@@ -42,9 +44,10 @@ class UnbilledError:
     """(Proposed D-062 (5) amendment, id assigned at merge) ONE HTTP 5xx error that the profile's
     provider documents as never billed (the profile file cites the document). Opt-in: a profile
     without ``unbilled_errors`` settles every 5xx at the worst case. The provider settles a response
-    at $0 only when its body is EXACTLY this envelope (``provider.is_unbilled_error``): the declared
-    wrapper, an error object whose keys are exactly ``error``'s keys plus a non-empty ``message``,
-    every declared value equal (type included), and no usage or output evidence anywhere."""
+    at $0 only when its body is EXACTLY this envelope (``provider.is_unbilled_error``): no duplicate
+    key at any depth, the declared wrapper, an object whose only key is ``error``, an error object
+    whose keys are exactly ``error``'s keys plus a non-empty string ``message``, every declared value
+    equal (type included). Nothing else can be in such a body, so no usage or output can either."""
 
     http_status: int
     #: subset of ``UNBILLED_WRAPPERS``
@@ -185,21 +188,18 @@ def _scalar(v: Any) -> bool:
 
 
 def _unbilled_errors(name: str, value: Any) -> tuple[UnbilledError, ...]:
-    """``unbilled_errors``: a list of ``{http_status, wrappers, error}`` tables (TOML, or JSON from
-    the env). Strict: a malformed entry is a configuration error (startup fails fast), never a
-    silently wider match. Empty or absent: none (every 5xx settles at the worst case)."""
-    try:
-        value = _json(value)
-    except ValueError:
-        raise LlmConfigError(f"profile {name!r}: unbilled_errors is not valid JSON") from None
-    if not value:
+    """``unbilled_errors``: a TOML array of ``{http_status, wrappers, error}`` tables in the profile
+    file. Absent or ``[]``: none (every 5xx settles at the worst case). Anything else that is not
+    exactly that (``false``, ``0``, ``{}``, a string, a malformed entry) is a ``ProfilePolicyError``
+    (startup fails fast), never a silent "off" nor a silently wider match."""
+
+    def bad(why: str) -> ProfilePolicyError:
+        return ProfilePolicyError(f"profile {name!r}: unbilled_errors {why}")
+
+    if value is None:
         return ()
-
-    def bad(why: str) -> LlmConfigError:
-        return LlmConfigError(f"profile {name!r}: unbilled_errors {why}")
-
     if not isinstance(value, list):
-        raise bad("must be a list of {http_status, wrappers, error} tables")
+        raise bad(f"must be an array of {{http_status, wrappers, error}} tables ([] = none): {value!r}")
     out: list[UnbilledError] = []
     for entry in value:
         if not isinstance(entry, dict) or set(entry) != _UNBILLED_KEYS:
@@ -252,6 +252,13 @@ def _usage_reasoning(name: str, value: Any) -> str:
     return v
 
 
+def profile_unbilled_errors(name: str) -> Any:
+    """The raw ``unbilled_errors`` of a profile FILE (validated by ``_build``): the primary's policy
+    too comes from its file alone, never from ``Settings`` (consult 94 #5: an env or ``[hlm]`` value is
+    outside the release's fingerprint and manifest)."""
+    return _strip_prefix(load_profile(name)).get("unbilled_errors")
+
+
 def primary_profile(settings: Settings) -> LlmProfile:
     return _build(
         settings.profile,
@@ -268,7 +275,7 @@ def primary_profile(settings: Settings) -> LlmProfile:
             "json_mode": settings.json_mode,
             "usage_reasoning": settings.usage_reasoning,
             "price_valid_until": settings.price_valid_until,
-            "unbilled_errors": settings.unbilled_errors,
+            "unbilled_errors": profile_unbilled_errors(settings.profile),
         },
         profile_disabled_tasks(settings.profile),
     )
@@ -279,7 +286,9 @@ def named_profile(name: str) -> LlmProfile:
     raw = load_profile(name)
     if not raw:
         raise LlmConfigError(f"profile {name!r} not found")
-    return _build(name, {k: expand_env(v) for k, v in _strip_prefix(raw).items()})
+    # the spend-settlement policy is the file's literal value: never an ``env:``/``${}`` reference
+    fields = _strip_prefix(raw)
+    return _build(name, {k: v if k == "unbilled_errors" else expand_env(v) for k, v in fields.items()})
 
 
 def task_fallback_var(task: str) -> str:
@@ -294,11 +303,12 @@ def task_fallback_names(settings: Any) -> dict[str, str]:
 
 
 def _fallback(var: str, name: str) -> LlmProfile:
-    """``named_profile`` with an error that names the setting (startup fails fast on a typo)."""
+    """``named_profile`` with an error that names the setting (startup fails fast on a typo); a
+    ``ProfilePolicyError`` keeps its class."""
     try:
         return named_profile(name)
     except LlmConfigError as exc:
-        raise LlmConfigError(f"{var}={name!r}: {exc} (profiles/<name>.toml)") from None
+        raise type(exc)(f"{var}={name!r}: {exc} (profiles/<name>.toml)") from None
 
 
 def for_task(chain: Sequence[LlmProfile], task: str) -> list[LlmProfile]:
@@ -407,6 +417,7 @@ __all__ = [
     "primary_profile",
     "profile_chain",
     "profile_disabled_tasks",
+    "profile_unbilled_errors",
     "task_fallback_names",
     "task_fallback_var",
 ]

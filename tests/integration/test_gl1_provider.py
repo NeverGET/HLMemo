@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import replace
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from hlmemo.librarian.errors import BreakerOpen, ProviderUnavailable, SchemaFail
@@ -133,6 +134,35 @@ async def test_gl1_opt_in_unbilled_503_releases_its_windows(db_dsn, connect) -> 
         windows = {k: (r, s) for k, r, s in await cur.fetchall()}
         assert set(windows) == {"hour", "day", "month"}
         assert all(r == 0 and s == c1 + c3 for r, s in windows.values()), windows
+        cur = await conn.execute("SELECT count(*) FROM llm_reservations")
+        assert (await cur.fetchone())[0] == 0
+    await p.aclose()
+
+
+async def test_gl1_corrupt_body_settles_its_windows_once(db_dsn, connect) -> None:  # noqa: ANN001
+    """Consult 94 #1 (pre-existing on main 0986678): a gzip-labelled 503 whose body httpx cannot
+    decode raised ``httpx.DecodingError`` (not a ``TransportError``) AFTER the reservation: the
+    llm_reservations row stayed open (the TTL sweep would book its worst case later), no llm_calls row
+    was written and the call failed. It is now one attempt settled at its worst case (billing
+    uncertain), retried like any transient failure; no reservation is left behind."""
+    # a stream: the CLIENT reads and decodes it, as on the wire (``content=`` would decode right here)
+    corrupt = httpx.Response(503, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(b"not-gzip"))
+    llm = ScriptedLLM([corrupt, chat(CONTRADICTS_B, cost=0.00002)])
+    clock = FakeClock()
+    p = make_provider(db_dsn, llm, clock=clock)
+    res = await p.complete(load_task("contradiction"), USER, job_id=12)
+    assert res.profile == PRIMARY and clock.sleeps == [1] and llm.calls == 2
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT outcome, reserved_usd, cost_usd FROM llm_calls ORDER BY created_at, call_id"
+        )
+        (o1, w1, c1), (o2, _w2, c2) = await cur.fetchall()
+        assert (o1, o2) == ("http_error", "ok")
+        assert c1 == w1 > 0 and c2 == Decimal("0.00002")  # the unreadable answer: worst case, once
+        cur = await conn.execute("SELECT period_kind, reserved_usd, spent_usd FROM llm_budget")
+        windows = {k: (r, s) for k, r, s in await cur.fetchall()}
+        assert set(windows) == {"hour", "day", "month"}
+        assert all(r == 0 and s == c1 + c2 for r, s in windows.values()), windows
         cur = await conn.execute("SELECT count(*) FROM llm_reservations")
         assert (await cur.fetchone())[0] == 0
     await p.aclose()

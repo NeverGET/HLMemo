@@ -13,13 +13,16 @@ The fixture is Google's byte-exact 503 body: its sha256 is the ``response_sha256
 ledger rows. The fix (a proposed amendment to D-062 (5)): a profile MAY declare, citing its
 provider's billing document, the 5xx errors that are never billed (``unbilled_errors``; the Google
 profiles declare this 503, Google's billing doc says failed 400/500 requests are not charged). Such
-a response settles at $0 only when its body is exactly the declared envelope and carries no usage or
-output evidence anywhere. A profile without the opt-in, any other 5xx and any other body keep the
-worst case (review: docs/consults/93-astra-writer-503.md)."""
+a response settles at $0 only when its body is exactly the declared envelope (no duplicate key, no
+undeclared field: so no usage or output either). A profile without the opt-in, any other 5xx and
+any other body keep the worst case (reviews: docs/consults/93-astra-writer-503.md, round 2
+docs/consults/94-*: a response that cannot be read after the reservation is settled once at the
+worst case; the policy lives in the profile file only and a malformed one stops the api)."""
 
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import json
 import tomllib
@@ -30,16 +33,18 @@ from pathlib import Path
 import httpx
 import pytest
 
-from hlmemo.config import get_settings
+from hlmemo.config import Settings, get_settings
 from hlmemo.core import research_service as rsv
 from hlmemo.librarian import privacy
 from hlmemo.librarian import provider as prov
 from hlmemo.librarian.budget import MemoryBudget
-from hlmemo.librarian.errors import LlmConfigError
+from hlmemo.librarian.errors import LlmConfigError, ProviderUnavailable
 from hlmemo.librarian.ledger import MemoryLedger
 from hlmemo.librarian.profiles import LlmProfile, UnbilledError, named_profile, primary_profile
+from hlmemo.librarian.prompts import load_task
 from hlmemo.librarian.provider import Provider
 from hlmemo.librarian.tasks import research as rs
+from hlmemo.server.app import check_llm_config
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "provider" / "google_openai_503_unavailable.json"
@@ -73,6 +78,15 @@ WITH_EVIDENCE = [
     b' "details": [{"usageMetadata": {"totalTokenCount": 100}}]}}]',  # nested native usage
     b'[{"error": {"code": 503, "message": "m", "status": "UNAVAILABLE", "candidates": [{}]}}]',
 ]
+#: consult 94 #4: a duplicate key at any depth (``json.loads`` keeps the LAST one, so the first,
+#: with its usage, was never seen): the body is rejected, worst case
+DUPLICATE_KEYS = [
+    b'[{"error":{"usage":{"completion_tokens":100}},"error":{"code":503,"message":"m","status":"UNAVAILABLE"}}]',
+    b'[{"error":{"code":503,"message":"m","status":"UNAVAILABLE","status":"UNAVAILABLE"}}]',
+    b'[{"error":{"code":503,"message":"m","message":"n","status":"UNAVAILABLE"}}]',
+    b'[{"error":{"code":503,"message":"m","status":"UNAVAILABLE"},'
+    b'"error":{"code":503,"message":"m","status":"UNAVAILABLE"}}]',
+]
 
 
 def _profile_file(name: str) -> str:
@@ -88,13 +102,21 @@ def _shipped(name: str) -> dict:
     return tomllib.loads((ROOT / "profiles" / f"{name}.toml").read_text())
 
 
+def _toml(value: object) -> str:
+    """A TOML inline value of a policy (tables, arrays, strings, integers)."""
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{k} = {_toml(v)}" for k, v in value.items()) + " }"
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml(v) for v in value) + "]"
+    return json.dumps(value)  # a string (JSON escapes are TOML basic-string escapes) or an integer
+
+
 @pytest.fixture
 def writer_profiles(tmp_path, monkeypatch):  # noqa: ANN001, ANN201
-    """``w-gem`` carries the shipped Google profile's own ``unbilled_errors`` (copied from the file,
-    as JSON: the env form); ``w-other`` is the same endpoint WITHOUT the opt-in (an unknown/other
-    provider)."""
-    policy = json.dumps(_shipped(GOOGLE_PROFILES[1])["unbilled_errors"])
-    (tmp_path / "w-gem.toml").write_text(_profile_file("w-gem") + f"unbilled_errors = '{policy}'\n")
+    """``w-gem`` carries the shipped Google profile's own ``unbilled_errors`` (copied from the file);
+    ``w-other`` is the same endpoint WITHOUT the opt-in (an unknown/other provider)."""
+    policy = _toml(_shipped(GOOGLE_PROFILES[1])["unbilled_errors"])
+    (tmp_path / "w-gem.toml").write_text(_profile_file("w-gem") + f"unbilled_errors = {policy}\n")
     (tmp_path / "w-other.toml").write_text(_profile_file("w-other"))
     monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
     return tmp_path
@@ -133,19 +155,27 @@ def _ok() -> httpx.Response:
 
 
 def _researcher(
-    writer: str, writer_status: int, writer_body: bytes, *, failures: int | None = None
+    writer: str,
+    writer_status: int,
+    writer_body: bytes,
+    *,
+    failures: int | None = None,
+    headers: dict[str, str] | None = None,
 ) -> tuple[rs.Researcher, MemoryBudget]:
-    """A prose Researcher whose writer ``writer`` answers ``writer_status``/``writer_body`` (its first
-    ``failures`` requests only, when given; then a normal answer); the task profile always answers.
-    The reservations go through a ``MemoryBudget`` (the spend guard's contract in memory)."""
+    """A prose Researcher whose writer ``writer`` answers ``writer_status``/``writer_body`` (with
+    ``headers``; its first ``failures`` requests only, when given; then a normal answer); the task
+    profile always answers. The reservations go through a ``MemoryBudget`` (the spend guard's
+    contract in memory)."""
     sent = {"writer": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if json.loads(request.content)["model"] == f"stub/{writer}":
             sent["writer"] += 1
             if failures is None or sent["writer"] <= failures:
-                return httpx.Response(
-                    writer_status, content=writer_body, headers={"content-type": "application/json"}
+                return httpx.Response(  # a stream: the CLIENT reads (and decodes) it, as on the wire
+                    writer_status,
+                    stream=httpx.ByteStream(writer_body),
+                    headers={"content-type": "application/json", **(headers or {})},
                 )
         return _ok()
 
@@ -243,6 +273,16 @@ def test_the_policy_reaches_a_named_and_a_primary_profile(writer_profiles, monke
         "[{ http_status = 503, error = { code = 503 } }]",
         '[{ http_status = 503, wrappers = ["list"], error = { code = 503 } },'
         ' { http_status = 503, wrappers = ["object"], error = { code = 503 } }]',
+        # consult 94 #3: only an absent key or [] is "off"; any other falsy value is malformed
+        "false",
+        "0",
+        "{}",
+        '""',
+        "true",
+        "1",
+        '"[]"',  # a string is not a table array (there is no JSON/env form)
+        "'" + json.dumps(GOOGLE_POLICY) + "'",
+        '"env:HLM_UNBILLED_ERRORS"',
     ],
 )
 def test_a_malformed_policy_is_a_configuration_error(tmp_path, monkeypatch, policy: str) -> None:  # noqa: ANN001
@@ -261,6 +301,7 @@ def test_a_malformed_policy_is_a_configuration_error(tmp_path, monkeypatch, poli
         *[(503, b, False) for b in COUNTER_EXAMPLES],
         *[(503, b"[" + b + b"]", False) for b in COUNTER_EXAMPLES],
         *[(503, b, False) for b in WITH_EVIDENCE],
+        *[(503, b, False) for b in DUPLICATE_KEYS],
         (503, f'{{"error": {_ERR}}}'.encode(), False),  # the object form: not declared by Google
         (503, f'[{{"error": {_ERR}}}, {{"error": {_ERR}}}]'.encode(), False),  # two elements
         (503, f'[[{{"error": {_ERR}}}]]'.encode(), False),
@@ -338,6 +379,7 @@ async def test_writer_503_falls_back_as_unavailable_and_is_not_charged(writer_pr
         ("w-other", 503, PROD_503),  # the same prod body on a profile without the opt-in
         *[("w-gem", 503, b) for b in COUNTER_EXAMPLES],
         *[("w-gem", 503, b) for b in WITH_EVIDENCE[:2]],  # choices beside it; usage: null
+        ("w-gem", 503, DUPLICATE_KEYS[0]),  # consult 94 #4: the reviewer's duplicate-key body
         ("w-gem", 500, PROD_503.replace(b"503", b"500").replace(b"UNAVAILABLE", b"INTERNAL")),
         ("w-gem", 529, PROD_503.replace(b"503", b"529")),  # 529: not declared by Google
         ("w-gem", 503, b"<html>503</html>"),
@@ -399,3 +441,247 @@ async def test_after_a_writer_503_the_second_prose_call_runs_only_with_the_opt_i
         assert r.attempts(run.lineage) == [("w-other", "http_error"), ("t-task", "ok")]
         assert budget.reserved == 0 and budget.spent > Decimal("0.06")
     await r.aclose()
+
+
+# --------------------------------------------------------------------------- consult 94 (round 2)
+def test_only_an_absent_key_or_an_empty_array_is_off(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """Consult 94 #3: ``unbilled_errors = []`` (or no key) is the default "off"; every other falsy
+    value is a configuration error (``test_a_malformed_policy_is_a_configuration_error``)."""
+    (tmp_path / "empty.toml").write_text(_profile_file("empty") + "unbilled_errors = []\n")
+    (tmp_path / "absent.toml").write_text(_profile_file("absent"))
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    assert named_profile("empty").unbilled_errors == () == named_profile("absent").unbilled_errors
+
+
+def test_the_policy_comes_only_from_the_profile_file(writer_profiles, monkeypatch) -> None:  # noqa: ANN001
+    """Consult 94 #5: the policy is release state only through the profile FILE (in the image, under
+    the release's fingerprint and manifest). ``HLM_UNBILLED_ERRORS``, an ``[hlm]`` key and a Settings
+    argument are not settings at all: none of them widens or narrows a primary profile's policy."""
+    want = named_profile("w-gem").unbilled_errors
+    assert want and "unbilled_errors" not in Settings.model_fields
+    monkeypatch.setenv("HLM_UNBILLED_ERRORS", json.dumps(GOOGLE_POLICY))
+    monkeypatch.setenv("HLM_PROFILE", "w-other")
+    assert primary_profile(get_settings()).unbilled_errors == ()  # the env cannot opt a profile in
+    assert primary_profile(get_settings(unbilled_errors=GOOGLE_POLICY)).unbilled_errors == ()
+    monkeypatch.setenv("HLM_UNBILLED_ERRORS", "[]")
+    monkeypatch.setenv("HLM_PROFILE", "w-gem")
+    assert primary_profile(get_settings()).unbilled_errors == want  # ... nor turn the file's off
+    toml = writer_profiles / "hlm.toml"
+    toml.write_text("[hlm]\nunbilled_errors = []\n[profiles.w-other]\nunbilled_errors = []\n")
+    monkeypatch.setenv("HLM_CONFIG", str(toml))
+    assert primary_profile(get_settings()).unbilled_errors == want
+    monkeypatch.setenv("HLM_UNBILLED_ERRORS", "false")  # not even read: no startup error from it
+    assert primary_profile(get_settings()).unbilled_errors == want
+
+
+def _writer_settings(writer: str | None, **kw: object) -> Settings:
+    return get_settings(
+        **{
+            "profile": "w-other",
+            "fallback_profile": None,
+            "task_fallback_profiles": {},
+            "librarian_enabled": True,
+            "llm_mode": "live",
+            "research_enabled": True,
+            "research_answer_mode": "prose",
+            "research_writer_profile": writer,
+            **kw,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "policy", ["false", "{}", '[{ http_status = 503, wrappers = ["list"], error = {} }]']
+)
+def test_a_malformed_writer_policy_stops_the_api_at_startup(writer_profiles, policy: str) -> None:  # noqa: ANN001
+    """Consult 94 #3: the writer profile is resolved lazily (on the first question) and a broken one
+    is logged and replaced by the research profile (D-171). A malformed spend-settlement policy is
+    never that: the api refuses to start (``check_llm_config``, the lifespan's first check), and the
+    lazy resolution raises instead of writing with the task profile."""
+    (writer_profiles / "w-bad.toml").write_text(_profile_file("w-bad") + f"unbilled_errors = {policy}\n")
+    s = _writer_settings("w-bad")
+    with pytest.raises(LlmConfigError, match=r"HLM_RESEARCH_WRITER_PROFILE='w-bad'.*unbilled_errors"):
+        check_llm_config(s)
+    with pytest.raises(LlmConfigError, match=r"HLM_RESEARCH_WRITER_PROFILE='w-bad'.*unbilled_errors"):
+        rs.writer_chain(s, [_task_profile()])
+    # the same broken policy on the research PRIMARY: never "research disabled" in silence either
+    s = _writer_settings(None, profile="w-bad")
+    with pytest.raises(LlmConfigError, match="unbilled_errors"):
+        check_llm_config(s)
+    with pytest.raises(LlmConfigError, match="unbilled_errors"):
+        rs.research_chain(s)
+
+
+def test_an_unknown_writer_still_only_warns(writer_profiles, caplog) -> None:  # noqa: ANN001
+    """D-171 unchanged outside the policy: an unknown writer profile is logged at startup and the
+    research profile writes (``test_d171_writer_chain_resolution``)."""
+    s = _writer_settings("no-such-profile")
+    check_llm_config(s)
+    assert rs.writer_chain(s, [_task_profile()]) == []
+    assert "no-such-profile" in caplog.text
+
+
+@pytest.mark.parametrize("declared", ["candidates = 0", 'usageMetadata = "none"', 'retry_token = "t-1"'])
+def test_a_declared_field_is_matched_whatever_its_name(tmp_path, monkeypatch, declared: str) -> None:  # noqa: ANN001
+    """D-017 (consult 94 #2): the matcher used to veto a body holding any key of a SHARED list of
+    OpenAI and Google names (``usage``, ``choices``, ``usageMetadata``, ``candidates``) or a
+    token-named key, even when the profile declared that very field: a generic profile's documented
+    envelope settled at the worst case because of another provider's names. The profile's exact
+    declaration is the only authority; the same body without the field, or with another value,
+    keeps the worst case."""
+    (tmp_path / "g.toml").write_text(
+        _profile_file("g") + 'unbilled_errors = [{ http_status = 529, wrappers = ["object"],'
+        f' error = {{ type = "overloaded_error", {declared} }} }}]\n'
+    )
+    monkeypatch.setenv("HLM_PROFILES_DIR", str(tmp_path))
+    policy = named_profile("g").unbilled_errors
+    key, value = (part.strip() for part in declared.split("=", 1))
+    err = {"type": "overloaded_error", key: json.loads(value), "message": "Overloaded"}
+    assert prov.is_unbilled_error(policy, 529, json.dumps({"error": err}).encode()) is True
+    other = {**err, key: "other" if isinstance(err[key], int) else 1}
+    assert prov.is_unbilled_error(policy, 529, json.dumps({"error": other}).encode()) is False
+    missing = {k: v for k, v in err.items() if k != key}
+    assert prov.is_unbilled_error(policy, 529, json.dumps({"error": missing}).encode()) is False
+
+
+async def test_a_generic_529_policy_settles_its_declared_envelope_at_zero(writer_profiles) -> None:  # noqa: ANN001
+    """Consult 94 #2, end to end: a non-Google profile declaring a 529 whose error object carries a
+    ``candidates`` field is settled at $0 for exactly that body (it was booked at the worst case)."""
+    (writer_profiles / "w-529.toml").write_text(
+        _profile_file("w-529") + 'unbilled_errors = [{ http_status = 529, wrappers = ["object"],'
+        ' error = { type = "overloaded_error", candidates = 0 } }]\n'
+    )
+    body = b'{"error": {"type": "overloaded_error", "candidates": 0, "message": "Overloaded"}}'
+    r, budget = _researcher("w-529", 529, body)
+    lineage = str(uuid.uuid4())
+    res = await _prose(r, lineage)
+    assert res.profile == "t-task" and res.fallbacks == [("w-529", "unavailable")]
+    w = r.provider.ledger.inner.rows[0]
+    assert w.outcome == "http_error" and w.reserved_usd > Decimal("0.06") and w.cost_usd == 0
+    assert budget.reserved == 0 and budget.spent == OK_COST == r.spent(lineage)[0]
+    await r.aclose()
+
+
+#: consult 94 #1: responses that raise AFTER the reservation, before it was settled
+UNREADABLE = [
+    pytest.param(503, b"not-gzip", {"content-encoding": "gzip"}, id="corrupt-gzip-503"),
+    pytest.param(503, b"not-deflate", {"content-encoding": "deflate"}, id="corrupt-deflate-503"),
+    pytest.param(200, b"not-gzip", {"content-encoding": "gzip"}, id="corrupt-gzip-200"),
+    pytest.param(200, b'{"choices": "abc"}', {}, id="unwalkable-200"),
+    pytest.param(
+        200,
+        json.dumps(
+            {
+                "choices": [{"message": {"role": "assistant", "content": "{}"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "prompt_tokens_details": "x"},
+            }
+        ).encode(),
+        {},
+        id="unreadable-usage-200",
+    ),
+]
+
+
+@pytest.mark.parametrize("writer", ["w-gem", "w-other"])
+@pytest.mark.parametrize(("status", "body", "headers"), UNREADABLE)
+async def test_an_unreadable_response_is_settled_once_at_the_worst_case(
+    writer_profiles,  # noqa: ANN001
+    writer: str,
+    status: int,
+    body: bytes,
+    headers: dict[str, str],
+) -> None:
+    """Consult 94 #1 (HIGH; pre-existing on main 0986678): a response that raises after the
+    reservation (a gzip body httpx cannot decode: ``httpx.DecodingError``, which is not a
+    ``TransportError``; a body this code cannot walk) left the reservation OPEN: ``MemoryBudget``
+    leaked it for good, ``DbBudget`` held it until the TTL sweep booked its worst case, no ledger row
+    was written and the question failed instead of falling back. Billing is uncertain: it is settled
+    once at the worst case, its ``http_error`` row is written and the next profile answers."""
+    r, budget = _researcher(writer, status, body, headers=headers)
+    lineage = str(uuid.uuid4())
+    res = await _prose(r, lineage)
+    assert res.profile == "t-task" and res.fallbacks == [(writer, "unavailable")]
+    rows = r.provider.ledger.inner.rows
+    assert [(x.profile, x.outcome) for x in rows] == [(writer, "http_error"), ("t-task", "ok")]
+    w = rows[0]
+    assert w.cost_usd == w.reserved_usd > Decimal("0.06")
+    assert budget.reserved == 0 and budget._open == {} and budget.spent == w.cost_usd + OK_COST
+    assert r.spent(lineage)[0] == w.cost_usd + OK_COST
+    await r.aclose()
+
+
+async def test_a_valid_gzip_503_is_matched_after_decoding(writer_profiles) -> None:  # noqa: ANN001
+    """A complete gzip body is decoded by httpx before the matcher sees it: the prod 503, gzipped, is
+    still the declared envelope ($0)."""
+    r, budget = _researcher("w-gem", 503, gzip.compress(PROD_503), headers={"content-encoding": "gzip"})
+    res = await _prose(r, str(uuid.uuid4()))
+    w = r.provider.ledger.inner.rows[0]
+    assert res.fallbacks == [("w-gem", "unavailable")] and w.cost_usd == 0 < w.reserved_usd
+    assert w.response_sha256 == PROD_RESPONSE_SHA256  # the decoded body
+    assert budget.reserved == 0 and budget.spent == OK_COST
+    await r.aclose()
+
+
+class _CountingBudget(MemoryBudget):
+    """``MemoryBudget`` that records every settlement call."""
+
+    def __init__(self) -> None:
+        super().__init__(Decimal(1))
+        self.settles: list[tuple[uuid.UUID, Decimal | None]] = []
+
+    async def settle(self, call_id: uuid.UUID, actual_usd: Decimal | None) -> None:
+        self.settles.append((call_id, actual_usd))
+        await super().settle(call_id, actual_usd)
+
+
+class _FailingLedger(MemoryLedger):
+    """The ledger write of an ``http_error`` row fails (e.g. the database went away)."""
+
+    async def record(self, row) -> None:  # noqa: ANN001
+        if row.outcome == "http_error":
+            raise OSError("ledger down")
+        await super().record(row)
+
+
+def _lone_provider(handler, budget: MemoryBudget, ledger: MemoryLedger | None = None) -> Provider:  # noqa: ANN001
+    return Provider(
+        [_task_profile()],
+        mode="live",
+        budget=budget,
+        ledger=ledger or MemoryLedger(),
+        transport=httpx.MockTransport(handler),
+    )
+
+
+async def test_a_corrupt_body_settles_exactly_once_without_a_fallback() -> None:
+    """Consult 94 #1: with no later profile the call fails as unavailable (not with httpx's
+    ``DecodingError``), after exactly one worst-case settlement and its ledger row."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(b"not-gzip"))
+
+    budget = _CountingBudget()
+    p = _lone_provider(handler, budget)
+    with pytest.raises(ProviderUnavailable):
+        await p.complete(load_task("contradiction"), "USER: x", attempt_policy="latency")
+    ((_cid, actual),) = budget.settles
+    assert actual is None and budget.reserved == 0 and budget._open == {}
+    (row,) = p.ledger.rows
+    assert row.outcome == "http_error" and row.cost_usd == row.reserved_usd == budget.spent > 0
+    await p.aclose()
+
+
+async def test_a_failure_after_the_settlement_never_settles_twice() -> None:
+    """Exactly once: when the settlement already happened (here the ledger write after it fails),
+    the error propagates as before and the reservation is not settled a second time."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"code": 500, "message": "boom"}})
+
+    budget = _CountingBudget()
+    p = _lone_provider(handler, budget, _FailingLedger())
+    with pytest.raises(OSError, match="ledger down"):
+        await p.complete(load_task("contradiction"), "USER: x", attempt_policy="latency")
+    ((_cid, actual),) = budget.settles
+    assert actual is not None and actual > 0 and budget.reserved == 0 and budget._open == {}
+    await p.aclose()

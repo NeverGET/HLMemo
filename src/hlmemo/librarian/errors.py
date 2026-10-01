@@ -17,6 +17,12 @@ class LlmConfigError(LibrarianError):
     """A profile cannot be used as configured (no model, no key, no prices for a live call)."""
 
 
+class ProfilePolicyError(LlmConfigError):
+    """A profile's spend-settlement policy (``unbilled_errors``) is malformed. It is never skipped
+    or replaced by another profile (as an unresolvable writer profile is): the api and the librarian
+    refuse to start, and a lazy resolution raises."""
+
+
 class LlmDisabled(LibrarianError):
     """``HLM_LLM_MODE=off``: no provider call is ever made (replay, maintenance)."""
 
@@ -97,6 +103,7 @@ __all__ = [
     "LlmDisabled",
     "NotReady",
     "PrivacyDenied",
+    "ProfilePolicyError",
     "ProviderUnavailable",
     "RoleNotAuthorized",
     "SchemaFail",
