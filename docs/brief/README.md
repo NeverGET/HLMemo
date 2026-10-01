@@ -45,6 +45,8 @@ Optional table (the brief is NOT silenced by `[capture] enabled = false`):
 [brief]
 enabled = true                                   # false = off
 sources = ["startup", "clear", "compact"]    # resume is off: the context is already present
+decisions_max_lines = 0                         # >0: that many decision and open lines, from the NEWEST qualifying non-auto note only
+lesson_body_chars = 0                            # >0: add the first body line (cut) to each lesson
 include_auto = false                             # true = also show auto-captured (unreviewed) notes and lessons
 decisions_max_age_days = 7                       # session notes older than this add no decisions/open items
 budget_tokens = 1500                             # 200..1500
@@ -92,3 +94,11 @@ read the files, then remove it.
 are NOT shown; only the card, non-auto lessons and non-auto notes (within the age window) appear. The
 "Pending review" line counts them ("at least M auto-captured items", from what the brief fetched) next to
 the librarian questions. The "Now" heading shows the card version's date and "may be stale" after 3 days.
+
+## Titles and the card, not history (blind gate)
+
+The blind gate (22 lines: 11 useful, 10 noise, 1 stale) showed that decision-history lines and lesson
+bodies are noise and an older note's decision can be stale. Defaults now: `decisions_max_lines = 0` (no
+decision/open history; the card is the canonical current state) and `lesson_body_chars = 0` (lesson titles
+only; drill down for the body). With `decisions_max_lines > 0`, lines come from the newest qualifying
+non-auto note only, never mixed with older notes.

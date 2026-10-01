@@ -40,7 +40,13 @@ class BriefConfig:
     sources: tuple[str, ...] = SOURCES
     budget_tokens: int = BRIEF_TOKENS
     decisions_max_age_days: int = 7
+    decisions_max_lines: int = 0  # 0 = no decision/open history (the card is the current state)
+    lesson_body_chars: int = 0  # 0 = lesson titles only
     include_auto: bool = False  # auto-captured (unreviewed) notes/lessons are NOT shown unless true
+
+
+def _nat(v: Any, default: int, hi: int) -> int:
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= hi else default
 
 
 def load_config(path: Path | None = None) -> BriefConfig:
@@ -65,6 +71,8 @@ def load_config(path: Path | None = None) -> BriefConfig:
     return BriefConfig(
         capture=cap,
         decisions_max_age_days=age,
+        decisions_max_lines=_nat(b.get("decisions_max_lines"), 0, 50),
+        lesson_body_chars=_nat(b.get("lesson_body_chars"), 0, 400),
         include_auto=b.get("include_auto", False) is True,
         enabled=b.get("enabled", True) is not False,
         sources=srcs or SOURCES,

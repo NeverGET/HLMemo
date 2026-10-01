@@ -23,8 +23,6 @@ SECTIONS = ("Now", DECISIONS_TITLE, "Open", "Lessons", "Pending review")
 
 MAX_SESSIONS = 3
 MAX_LESSONS = 5
-DECISIONS_PER_NOTE = 4
-OPEN_PER_NOTE = 3
 CARD_STALE_DAYS = 3
 LINE_CHARS = 220
 CARD_TOKENS = 420
@@ -108,12 +106,13 @@ def note_tag(it: Item) -> str:
     return f"{t.date().isoformat()} {_tag(it)}" if t else _tag(it)
 
 
-def lesson_line(it: Item) -> str:
-    """Title + the first prose line of the body (verbatim, cut)."""
-    first = next((ln.strip() for ln in it.body.splitlines() if ln.strip()), "")
-    if first.lower() == it.title.strip().lower():
-        first = ""
-    text = cut(it.title, 90) + (f" — {cut(first, 130)}" if first else "")
+def lesson_line(it: Item, body_chars: int = 0) -> str:
+    """The lesson TITLE (cut) with its handle; ``body_chars`` > 0 adds the first body line, cut."""
+    text = cut(it.title, 110)
+    if body_chars > 0:
+        first = next((ln.strip() for ln in it.body.splitlines() if ln.strip()), "")
+        if first and first.lower() != it.title.strip().lower():
+            text += f" — {cut(first, body_chars)}"
     return f"- [{_tag(it)}] {text}"
 
 
@@ -182,6 +181,8 @@ def assemble(
     budget: int = 1500,
     max_age_days: int = 7,
     include_auto: bool = False,
+    decisions_max_lines: int = 0,
+    lesson_body_chars: int = 0,
     counter: Callable[[str], int] = count_tokens,
 ) -> Brief | None:
     """The brief, or None when there is nothing trustworthy to say (no card beyond the skeleton and no
@@ -204,19 +205,20 @@ def assemble(
     sessions = [it for it in snap.sessions if include_auto or not it.auto]
     lessons = [it for it in snap.lessons if include_auto or not it.auto]
     cutoff = snap.now - timedelta(days=max_age_days)
-    for it in sessions[:MAX_SESSIONS]:
-        stamp = note_stamp(it)
-        if stamp is None or stamp < cutoff:  # old or undated notes contribute nothing
-            continue
-        d, o = note_sections(it.body)
-        for src, dst, cap in ((d, dec, DECISIONS_PER_NOTE), (o, opn, OPEN_PER_NOTE)):
-            for ln in src[:cap]:
+    # Decision history is off by default (the card is the current state). When on: lines of the NEWEST
+    # qualifying note only (recent enough, non-auto unless include_auto), never mixed with older notes.
+    newest = next(
+        (it for it in sessions[:MAX_SESSIONS] if (st := note_stamp(it)) is not None and st >= cutoff), None
+    )
+    if newest is not None and decisions_max_lines > 0:
+        d, o = note_sections(newest.body)
+        for src, dst in ((d, dec), (o, opn)):
+            for ln in src:
                 key = " ".join(ln.split()).lower()
-                if key in seen:
-                    continue
-                seen.add(key)
-                dst.append(f"- [{note_tag(it)}] {cut(ln)}")
-    les = [lesson_line(it) for it in lessons[:MAX_LESSONS]]
+                if key not in seen and len(dst) < decisions_max_lines:
+                    seen.add(key)
+                    dst.append(f"- [{note_tag(newest)}] {cut(ln)}")
+    les = [lesson_line(it, lesson_body_chars) for it in lessons[:MAX_LESSONS]]
     if card is None and not (dec or opn or les):
         return None
 

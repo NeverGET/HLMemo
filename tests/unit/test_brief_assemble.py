@@ -9,7 +9,9 @@ from hlmemo.brief import assemble as A
 from hlmemo.brief.fetch import Item, Snapshot
 from hlmemo.core.budget import Meter
 
-asm = partial(A.assemble, include_auto=True)  # most tests use auto-captured notes
+asm = partial(
+    A.assemble, include_auto=True, decisions_max_lines=4, lesson_body_chars=130
+)  # most tests use auto-captured notes
 SKELETON = "# Proj\n\nSkeleton card (D-015) of project `proj`: no summary yet."
 NOTE = (
     "Session 2026-09-30\n\nAUTO-CAPTURED session note (claude-code capture hook); not reviewed.\n\n"
@@ -107,24 +109,24 @@ def test_stale_card_is_flagged() -> None:
     assert b is not None and "flagged stale" in b.text
 
 
-def test_dedup_and_per_note_caps() -> None:
+def test_only_the_newest_qualifying_note_and_the_line_cap() -> None:
     body = (
         "## Decisions\n"
         + "\n".join(f"- d{i}" for i in range(10))
         + "\n## Open\n"
         + "\n".join(f"- o{i}" for i in range(10))
     )
-    b = asm(snap(sessions=[note(5, body), note(6, body)]))
+    b = asm(snap(sessions=[note(5, body), note(6, "## Decisions\n- from the older note")]))
     assert b is not None
-    assert b.text.count("] d0") == 1  # the same line from an older note is not repeated
-    assert b.text.count("v5] d") == A.DECISIONS_PER_NOTE and b.text.count("v5] o") == A.OPEN_PER_NOTE
+    assert b.text.count("v5] d") == 4 and b.text.count("v5] o") == 4  # capped, in note order
+    assert "from the older note" not in b.text  # never mixed with an older note
 
 
-def test_only_three_newest_sessions_and_five_lessons() -> None:
+def test_only_five_lessons_and_only_the_newest_note() -> None:
     notes = [note(i, f"## Decisions\n- decision {i}") for i in range(10, 16)]
     b = asm(snap(sessions=notes, lessons=[lesson(i, f"L{i}") for i in range(30, 40)]))
     assert b is not None
-    assert "decision 12" in b.text and "decision 13" not in b.text
+    assert "decision 10" in b.text and "decision 11" not in b.text
     assert b.text.count("- [v3") == A.MAX_LESSONS
 
 
@@ -212,13 +214,13 @@ def test_old_notes_contribute_nothing_and_the_sections_vanish() -> None:
     assert "decide A" not in b.text and "unsure one" not in b.text
 
 
-def test_age_window_is_configurable_and_per_note() -> None:
-    old, new = note(5, "## Decisions\n- older decision"), note(6)
+def test_age_window_is_configurable() -> None:
+    old = note(5, "## Decisions\n- older decision")
     old.recorded_at = datetime(2026, 9, 20, tzinfo=UTC)
-    b7 = asm(snap(sessions=[new, old]))
-    b30 = asm(snap(sessions=[new, old]), max_age_days=30)
+    b7 = asm(snap(sessions=[old]))
+    b30 = asm(snap(sessions=[old]), max_age_days=30)
     assert b7 is not None and b30 is not None
-    assert "2026-09-30 v6 auto" in b7.text and "v5 auto" not in b7.text
+    assert "older decision" not in b7.text
     assert "2026-09-20 v5] older decision" in b30.text
 
 
@@ -238,7 +240,7 @@ def test_auto_items_are_excluded_by_default_but_counted() -> None:
         pending=4,
         notices=[{"text": "refines: v1 ~ v2", "clues": ["v1", "v2"]}],
     )
-    b = A.assemble(s)
+    b = A.assemble(s, decisions_max_lines=4, lesson_body_chars=0)
     assert b is not None
     assert "decide A" not in b.text and "unsure one" not in b.text and "Auto one" not in b.text
     assert "curated decision" in b.text and "Curated" in b.text
@@ -248,7 +250,9 @@ def test_auto_items_are_excluded_by_default_but_counted() -> None:
 
 def test_include_auto_true_shows_them() -> None:
     b = A.assemble(
-        snap(sessions=[note(5)], lessons=[lesson(8, "Auto one", tags=["auto-capture"])]), include_auto=True
+        snap(sessions=[note(5)], lessons=[lesson(8, "Auto one", tags=["auto-capture"])]),
+        include_auto=True,
+        decisions_max_lines=4,
     )
     assert b is not None and "decide A" in b.text and "Auto one" in b.text
 
@@ -266,7 +270,7 @@ def test_only_auto_content_and_skeleton_card_skips_the_brief() -> None:
 def test_non_auto_note_still_obeys_the_age_window() -> None:
     manual = note(6, "hand written\n\n## Decisions\n- curated decision\n")
     manual.recorded_at = datetime(2026, 9, 1, tzinfo=UTC)
-    b = A.assemble(snap(sessions=[manual]))
+    b = A.assemble(snap(sessions=[manual]), decisions_max_lines=4)
     assert b is not None and "curated decision" not in b.text
 
 
@@ -289,11 +293,37 @@ def test_card_heading_shows_its_date_and_staleness() -> None:
 
 def test_decisions_heading_says_auto_only_when_auto_is_included() -> None:
     manual = note(6, "hand written\n\n## Decisions\n- curated decision\n")
-    b = A.assemble(snap(sessions=[manual]))
+    b = A.assemble(snap(sessions=[manual]), decisions_max_lines=4)
     assert (
         b is not None
         and "## Recent session decisions\n" in b.text
         and "auto-captured, unreviewed)" not in b.text
     )
-    b2 = A.assemble(snap(sessions=[manual]), include_auto=True)
+    b2 = A.assemble(snap(sessions=[manual]), include_auto=True, decisions_max_lines=4)
     assert b2 is not None and "## " + A.DECISIONS_TITLE in b2.text
+
+
+def test_defaults_show_no_history_and_lesson_titles_only() -> None:
+    manual = note(6, "hand written\n\n## Decisions\n- curated decision\n\n## Open\n- open one\n")
+    b = A.assemble(snap(sessions=[manual], lessons=[lesson(7, "Only the title", "BODY LINE")]))
+    assert b is not None
+    assert b.sections == ["Now", "Lessons"]  # decision/open history is off by default
+    assert (
+        "- [v7] Only the title" in b.text
+        and "BODY LINE" not in b.text
+        and "—" not in b.text.split("## Lessons")[1]
+    )
+    b2 = A.assemble(snap(lessons=[lesson(7, "T", "BODY LINE")]), lesson_body_chars=9)
+    assert b2 is not None and "- [v7] T — BODY" in b2.text
+
+
+def test_open_section_follows_the_newest_note_rule() -> None:
+    older = note(5, "hand\n\n## Open\n- stale open item\n")
+    newer = note(6, "hand\n\n## Decisions\n- fresh decision\n")
+    b = A.assemble(snap(sessions=[newer, older]), decisions_max_lines=3, include_auto=True)
+    assert (
+        b is not None
+        and "fresh decision" in b.text
+        and "stale open item" not in b.text
+        and "Open" not in b.sections
+    )

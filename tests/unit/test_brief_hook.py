@@ -342,3 +342,21 @@ def test_hook_hides_auto_lessons_unless_configured(tmp_path: Path) -> None:
     assert o.output and "Auto L" not in o.output and "at least 1 auto-captured item" in o.output
     p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ninclude_auto = true\n')
     assert "Auto L" in (go(payload(tmp_path), p, fetcher=auto).output or "")
+
+
+def test_config_history_and_body_defaults(tmp_path: Path) -> None:
+    p = tmp_path / "c.toml"
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n')
+    c = BC.load_config(p)
+    assert c.decisions_max_lines == 0 and c.lesson_body_chars == 0
+    p.write_text(
+        f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ndecisions_max_lines = 5\nlesson_body_chars = 100\n'
+    )
+    c = BC.load_config(p)
+    assert c.decisions_max_lines == 5 and c.lesson_body_chars == 100
+    p.write_text(
+        f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\n'
+        "decisions_max_lines = -1\nlesson_body_chars = 7.5\n"
+    )
+    c = BC.load_config(p)
+    assert c.decisions_max_lines == 0 and c.lesson_body_chars == 0
