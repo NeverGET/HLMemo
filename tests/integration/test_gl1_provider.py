@@ -10,11 +10,13 @@ windows settle to exactly the ledger's spend.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 
 from hlmemo.librarian.errors import BreakerOpen, ProviderUnavailable, SchemaFail
+from hlmemo.librarian.profiles import UnbilledError
 from hlmemo.librarian.prompts import load_task
 from tests.integration._librarian_fixtures import (
     CONTRADICTS_B,
@@ -25,6 +27,7 @@ from tests.integration._librarian_fixtures import (
     chat,
     ledger_rows,
     make_provider,
+    stub_profile,
 )
 
 pytestmark = pytest.mark.integration
@@ -96,14 +99,42 @@ async def test_gl1_5xx_six_times_falls_back(db_dsn, connect) -> None:  # noqa: A
             "SELECT count(*) FROM llm_calls WHERE outcome = 'http_error' AND cost_usd = reserved_usd"
             " AND reserved_usd > 0"
         )
-        assert (await cur.fetchone())[0] == 3  # 502, 500, 504 may have been billed: worst case
-        cur = await conn.execute(
-            "SELECT count(*) FROM llm_calls WHERE outcome = 'http_error' AND cost_usd = 0"
-            " AND reserved_usd > 0"
-        )
-        # the three 503s carry the provider's error object and no usage: rejected before generation
-        assert (await cur.fetchone())[0] == 3
+        # a 5xx may have been billed: charged at worst case (the stub profiles declare no
+        # unbilled_errors, so their 503s keep D-062 (5)'s worst case too)
+        assert (await cur.fetchone())[0] == 6
         assert ledger == spent > Decimal("0.00002")
+    await p.aclose()
+
+
+async def test_gl1_opt_in_unbilled_503_releases_its_windows(db_dsn, connect) -> None:  # noqa: ANN001
+    """(Proposed D-062 (5) amendment) a profile that opts in to a never-billed 503 (its declared
+    exact envelope): that 503 is reserved, then settled at $0, so its hour/day/month reservations are
+    released and nothing is booked as spent; the same 503 carrying usage keeps the worst case, which
+    every window books as spent. No reservation is left behind."""
+    policy = (UnbilledError(503, frozenset({"list"}), {"code": 503, "status": "UNAVAILABLE"}),)
+    chain = [replace(stub_profile(PRIMARY), unbilled_errors=policy), stub_profile(FALLBACK)]
+    refused = [{"error": {"code": 503, "message": "High demand.", "status": "UNAVAILABLE"}}]
+    with_usage = [{**refused[0], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}]
+    llm = ScriptedLLM([("http", 503, with_usage), ("http", 503, refused), chat(CONTRADICTS_B, cost=0.00002)])
+    clock = FakeClock()
+    p = make_provider(db_dsn, llm, chain=chain, clock=clock)
+    res = await p.complete(load_task("contradiction"), USER, job_id=11)
+    assert res.profile == PRIMARY and clock.sleeps == [1, 2]
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT outcome, reserved_usd, cost_usd FROM llm_calls ORDER BY created_at, call_id"
+        )
+        (o1, w1, c1), (o2, w2, c2), (o3, _w3, c3) = await cur.fetchall()
+        assert (o1, o2, o3) == ("http_error", "http_error", "ok")
+        assert c1 == w1 > 0  # usage in the body: worst case
+        assert w2 > 0 and c2 == 0  # the declared envelope: reserved before the send, settled at $0
+        assert c3 == Decimal("0.00002")
+        cur = await conn.execute("SELECT period_kind, reserved_usd, spent_usd FROM llm_budget")
+        windows = {k: (r, s) for k, r, s in await cur.fetchall()}
+        assert set(windows) == {"hour", "day", "month"}
+        assert all(r == 0 and s == c1 + c3 for r, s in windows.values()), windows
+        cur = await conn.execute("SELECT count(*) FROM llm_reservations")
+        assert (await cur.fetchone())[0] == 0
     await p.aclose()
 
 

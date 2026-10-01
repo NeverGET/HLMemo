@@ -209,6 +209,9 @@ class Settings(BaseSettings):
     # R4 (R-5): the last day (UTC) the profile's prices hold; after it the profile is unusable for
     # live calls (the provider skips it and falls back). Set in the profile file.
     price_valid_until: date | None = None
+    # (proposed D-062 (5) amendment) the provider's documented never-billed 5xx errors, opt-in, set
+    # in the profile file (librarian.profiles.UnbilledError; validated there). None: worst case.
+    unbilled_errors: list[dict[str, Any]] | None = None
     # Model quirks live only here (D-017): {task: {"system_append": str}}.
     prompt_overrides: dict[str, Any] = Field(default_factory=dict)
 
@@ -391,7 +394,7 @@ class Settings(BaseSettings):
     client: dict[str, Any] = Field(default_factory=dict)
     preflight: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("llm_reasoning", "extra", "prompt_overrides", mode="before")
+    @field_validator("llm_reasoning", "extra", "prompt_overrides", "unbilled_errors", mode="before")
     @classmethod
     def _json_string(cls, v: Any) -> Any:
         if isinstance(v, str):

@@ -32,6 +32,27 @@ from hlmemo.librarian.errors import LlmConfigError
 
 FALLBACK_ENV = "HLM_FALLBACK_PROFILE"
 
+#: how an unbilled error's object may be wrapped: ``list`` = ``[{"error": {...}}]`` (exactly one
+#: element), ``object`` = ``{"error": {...}}``
+UNBILLED_WRAPPERS = frozenset({"list", "object"})
+
+
+@dataclass(frozen=True, slots=True)
+class UnbilledError:
+    """(Proposed D-062 (5) amendment, id assigned at merge) ONE HTTP 5xx error that the profile's
+    provider documents as never billed (the profile file cites the document). Opt-in: a profile
+    without ``unbilled_errors`` settles every 5xx at the worst case. The provider settles a response
+    at $0 only when its body is EXACTLY this envelope (``provider.is_unbilled_error``): the declared
+    wrapper, an error object whose keys are exactly ``error``'s keys plus a non-empty ``message``,
+    every declared value equal (type included), and no usage or output evidence anywhere."""
+
+    http_status: int
+    #: subset of ``UNBILLED_WRAPPERS``
+    wrappers: frozenset[str]
+    #: the error object's exact fields besides ``message`` (e.g. ``code`` = the HTTP status and the
+    #: provider's ``status`` string); scalar values only
+    error: Mapping[str, str | int]
+
 
 @dataclass(frozen=True, slots=True)
 class LlmProfile:
@@ -64,6 +85,9 @@ class LlmProfile:
     #: R4 (R-5): the last day (UTC) its prices hold (``price_valid_until = "YYYY-MM-DD"``); after it the
     #: profile is unusable for live calls (``Provider`` skips it, counted, and falls back)
     price_valid_until: date | None = None
+    #: (proposed D-062 (5) amendment) the provider's documented never-billed 5xx errors, OPT-IN per
+    #: profile file (``unbilled_errors``); empty (the default): every 5xx settles at the worst case
+    unbilled_errors: tuple[UnbilledError, ...] = ()
 
     def price_expired(self, today: date | None = None) -> bool:
         """R4 (R-5): today (UTC) is past ``price_valid_until``."""
@@ -149,7 +173,57 @@ def _build(name: str, raw: dict[str, Any], disabled: frozenset[str] = frozenset(
         json_mode=_flag(raw.get("json_mode"), True),
         usage_reasoning=_usage_reasoning(name, raw.get("usage_reasoning")),
         price_valid_until=_valid_until(name, raw.get("price_valid_until")),
+        unbilled_errors=_unbilled_errors(name, raw.get("unbilled_errors")),
     )
+
+
+_UNBILLED_KEYS = frozenset({"http_status", "wrappers", "error"})
+
+
+def _scalar(v: Any) -> bool:
+    return isinstance(v, str | int) and not isinstance(v, bool)
+
+
+def _unbilled_errors(name: str, value: Any) -> tuple[UnbilledError, ...]:
+    """``unbilled_errors``: a list of ``{http_status, wrappers, error}`` tables (TOML, or JSON from
+    the env). Strict: a malformed entry is a configuration error (startup fails fast), never a
+    silently wider match. Empty or absent: none (every 5xx settles at the worst case)."""
+    try:
+        value = _json(value)
+    except ValueError:
+        raise LlmConfigError(f"profile {name!r}: unbilled_errors is not valid JSON") from None
+    if not value:
+        return ()
+
+    def bad(why: str) -> LlmConfigError:
+        return LlmConfigError(f"profile {name!r}: unbilled_errors {why}")
+
+    if not isinstance(value, list):
+        raise bad("must be a list of {http_status, wrappers, error} tables")
+    out: list[UnbilledError] = []
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != _UNBILLED_KEYS:
+            raise bad(f"entry must have exactly the keys {sorted(_UNBILLED_KEYS)}: {entry!r}")
+        status, wrappers, error = entry["http_status"], entry["wrappers"], entry["error"]
+        if not (isinstance(status, int) and not isinstance(status, bool) and 500 <= status <= 599):
+            raise bad(f"http_status must be a 5xx status (a 4xx is never billed anyway): {status!r}")
+        if any(u.http_status == status for u in out):
+            raise bad(f"declares http_status {status} twice")
+        if (
+            not isinstance(wrappers, list)
+            or not wrappers
+            or not all(isinstance(w, str) for w in wrappers)
+            or not set(wrappers) <= UNBILLED_WRAPPERS
+        ):
+            raise bad(f"wrappers must be a non-empty subset of {sorted(UNBILLED_WRAPPERS)}: {wrappers!r}")
+        if not isinstance(error, dict) or not error or not all(_scalar(v) for v in error.values()):
+            raise bad(f"error must be a non-empty table of string/integer fields: {error!r}")
+        if "message" in error:
+            raise bad("error must not declare 'message' (it is the free text: present and non-empty)")
+        if "code" in error and error["code"] != status:
+            raise bad(f"error.code {error['code']!r} must equal http_status {status}")
+        out.append(UnbilledError(status, frozenset(wrappers), dict(error)))
+    return tuple(out)
 
 
 def _valid_until(name: str, value: Any) -> date | None:
@@ -194,6 +268,7 @@ def primary_profile(settings: Settings) -> LlmProfile:
             "json_mode": settings.json_mode,
             "usage_reasoning": settings.usage_reasoning,
             "price_valid_until": settings.price_valid_until,
+            "unbilled_errors": settings.unbilled_errors,
         },
         profile_disabled_tasks(settings.profile),
     )
@@ -321,7 +396,9 @@ def describe_chains(settings: Settings) -> dict[str, Any]:
 
 __all__ = [
     "FALLBACK_ENV",
+    "UNBILLED_WRAPPERS",
     "LlmProfile",
+    "UnbilledError",
     "check_chains",
     "describe_chains",
     "for_task",

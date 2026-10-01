@@ -27,7 +27,11 @@ whose file lists the task in ``disabled_tasks`` is never used for it. Per profil
   each failed half-open trial up to 15 min; an open breaker costs a ``breaker_open`` ledger row
   and no network;
 * before every network attempt the worst case is reserved atomically (``budget``) and the
-  per-job call ceiling is checked; after it the reservation is settled at the actual cost.
+  per-job call ceiling is checked; after it the reservation is settled at the actual cost. A 4xx
+  settles at $0 (rejected before generation); D-062 (5): any 5xx, timeout or transport error at the
+  worst case, unless (proposed amendment, id assigned at merge) the PROFILE opts in to $0 for a 5xx
+  its provider documents as never billed and the body is exactly that declared envelope with no
+  usage or output evidence (``is_unbilled_error``; ``LlmProfile.unbilled_errors``, default none).
 
 Attempt policies (``complete(attempt_policy=)``):
 
@@ -74,7 +78,7 @@ import re
 import time
 import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -102,7 +106,7 @@ from hlmemo.librarian.errors import (
     SchemaFail,
 )
 from hlmemo.librarian.ledger import DbLedger, Ledger, LedgerRow
-from hlmemo.librarian.profiles import LlmProfile, for_task, profile_chain
+from hlmemo.librarian.profiles import LlmProfile, UnbilledError, for_task, profile_chain
 from hlmemo.librarian.prompts import TaskSpec
 from hlmemo.librarian.redact import Redactor
 
@@ -140,27 +144,68 @@ _RATE_LIMIT = re.compile(
 #: WEAK: a billing/quota word that is billing only when nothing says it is a rate limit
 _WEAK_BILLING = re.compile(r"(?<![a-z0-9])(?:resource_exhausted|quota|billing)(?![a-z0-9])")
 
-#: (proposed amendment to D-062 (5), id assigned at merge) the 5xx statuses that mean "not
-#: processed": the provider refused the request at admission (overloaded / unavailable)
-REJECTED_5XX = frozenset({503, 529})
+#: (proposed D-062 (5) amendment) keys that are usage or output evidence wherever they appear in an
+#: error body, whatever their value (``usage: null`` included): the OpenAI and Google conventions
+_EVIDENCE_KEYS = frozenset({"usage", "usagemetadata", "choices", "candidates"})
 
 
-def rejected_before_generation(status: int, body: bytes | None) -> bool:
-    """A 503/529 whose body is the provider's OWN error object (``{"error": {...}}``, or Google's
-    OpenAI-compatible ``[{"error": {...}}]``) and reports no ``usage`` and no ``choices``: rejected
-    before generation, so settled at $0 like a 4xx. Every other 5xx, and a 503 with any other body (a
-    proxy's HTML page, an empty body, a body with usage), keeps D-062's worst-case settlement."""
-    if status not in REJECTED_5XX or not body:
+def _usage_evidence(node: Any) -> bool:
+    """Any usage or output evidence ANYWHERE in a parsed body: an ``_EVIDENCE_KEYS`` key, or a
+    token count (a key naming tokens) that is not null. Missing usage is not zero usage, so any of
+    them keeps the worst case. Iterative: a deeply nested body cannot exhaust the stack."""
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                key = str(k).lower()
+                if key in _EVIDENCE_KEYS or ("token" in key and v is not None):
+                    return True
+                stack.append(v)
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return False
+
+
+def _same(value: Any, declared: str | int) -> bool:
+    """Equal AND of the same JSON type (``true`` is not ``1``, ``503.0`` is not ``503``)."""
+    return type(value) is type(declared) and value == declared
+
+
+def is_unbilled_error(policies: Sequence[UnbilledError], status: int, body: bytes | None) -> bool:
+    """(Proposed D-062 (5) amendment, id assigned at merge) True only when the PROFILE declares
+    ``status`` as never billed (``LlmProfile.unbilled_errors``: opt-in, citing the provider's billing
+    document; none by default) and ``body`` is EXACTLY that declared envelope: the declared wrapper
+    (a one-element list or a bare object) around an object whose only key is ``error``; the error
+    object's keys are exactly the declared fields plus ``message``; every declared value is equal
+    (type included); the message is a non-empty string; and no usage or output evidence appears
+    anywhere (``_usage_evidence``). Anything else (an undeclared status or profile, an empty,
+    non-JSON or ambiguous body) keeps D-062's worst-case settlement. Only this generic JSON shape is
+    shared code; which statuses, wrappers and field values qualify comes from the profile (D-017)."""
+    policy = next((p for p in policies if p.http_status == status), None)
+    if policy is None or not body:
         return False
     try:
         parsed = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         return False
-    items = parsed if isinstance(parsed, list) else [parsed]
-    return bool(items) and all(
-        isinstance(x, dict) and isinstance(x.get("error"), dict) and "usage" not in x and "choices" not in x
-        for x in items
-    )
+    if _usage_evidence(parsed):
+        return False
+    if isinstance(parsed, list):
+        if "list" not in policy.wrappers or len(parsed) != 1:
+            return False
+        parsed = parsed[0]
+    elif "object" not in policy.wrappers:
+        return False
+    if not isinstance(parsed, dict) or set(parsed) != {"error"}:
+        return False
+    err = parsed["error"]
+    if not isinstance(err, dict) or set(err) != {*policy.error, "message"}:
+        return False
+    message = err["message"]
+    if not isinstance(message, str) or not message.strip():
+        return False
+    return all(_same(err[k], v) for k, v in policy.error.items())
 
 
 def is_billing_or_quota(
@@ -1166,12 +1211,13 @@ class Provider:
             (data.get("error") and not data.get("choices")) or choice.get("finish_reason") == "error"
         )
         if resp.status_code != 200 or data is None or provider_error:
-            # A 4xx is a definitive no-charge answer (rejected before generation), and so is a
-            # 503/529 carrying the provider's own error object and no usage (overloaded: never
-            # processed). Any other 5xx, an unparseable 200 or a mid-generation provider error may
-            # have been billed: worst case.
-            no_charge = 400 <= resp.status_code < 500 or rejected_before_generation(
-                resp.status_code, raw_bytes
+            # A 4xx is a definitive no-charge answer (rejected before generation), and so is a 5xx
+            # the PROFILE opts in to as documented never billed, when the body is exactly its
+            # declared envelope with no usage or output (proposed D-062 (5) amendment). Any other
+            # 5xx, an unparseable 200 or a mid-generation provider error may have been billed:
+            # worst case. (No retry is added here: a measured, opt-in single retry is a follow-up.)
+            no_charge = 400 <= resp.status_code < 500 or is_unbilled_error(
+                profile.unbilled_errors, resp.status_code, raw_bytes
             )
             charged = Decimal(0) if no_charge else worst
             err_status = resp.status_code
@@ -1317,6 +1363,7 @@ __all__ = [
     "AttemptAffordable",
     "AttemptGuard",
     "Provider",
+    "is_unbilled_error",
     "lineage_scope",
     "parse_json_object",
 ]
