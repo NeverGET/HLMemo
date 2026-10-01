@@ -1893,3 +1893,19 @@ D-226 | 2026-10-01 | ACCEPTED (measurement) | **The second migration's sealed bl
 - Method as in D-216: questions asked once through prod memory.ask via the code-saved relay; 2 blind graders (Claude Sonnet and codex astra-low); the stricter grade counts; 3 splits. Prod spend $0.21.
 - The migration is NOT signed off. A root-cause analysis per failing question is running (curation gap / retrieval / writer / stale preference / truth set / grader).
 - Any data or truth-set correction needs the owner's OK (D-132).
+D-227 | 2026-10-02 | ACCEPTED (measurement) | **Lessons v2 (data-first, pre-registered E4): better than v1, still NO-GO at the strict bars. The owner reviews the drafts (D-222).**
+
+Data:
+- Transcripts older than 30 days are auto-deleted by the client, so episodes came from the few surviving transcripts plus the owner's own prompts.
+- 101 episodes: 30 from transcripts, plus 71 owner-feedback episodes that the reader judged supported.
+- Mean-centred E5 clustering: 5 broad clusters, each spanning 2–4 independent project groups (forks count as one).
+
+Results:
+- Gemini: 1 lesson per run, correct and grounded but not useful (too generic).
+- Opus: 5 lessons; correct .60, grounded .60, useful .80, 1 harmful, overgeneralized .40.
+- Compared with v1 (D-224): correct .25 → .60, useful .25 → .80.
+- The two blind readers disagree on 4 of 7 units, so on n = 7 the reader rule decides the verdict.
+
+Next:
+- The owner reviews the 7 drafts (private OWNER-REVIEW.md); only accepted lessons are imported.
+- More evidence needs the transcript archive (classifier-gated; the owner's call) and the live capture of future sessions.
