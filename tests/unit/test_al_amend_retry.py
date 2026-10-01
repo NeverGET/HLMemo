@@ -30,6 +30,10 @@ def reg(monkeypatch, tmp_path):
     priv = tmp_path / "priv"
     cfg = tmp_path / "config.json"
     shutil.copy(C.CONFIG_PATH, cfg)
+    # Pin the starting cap: the real config.json carries every amendment applied since (e.g. 12.00).
+    data = json.loads(cfg.read_text())
+    data["spend_cap_usd"] = "4.00"
+    cfg.write_text(json.dumps(data, indent=2) + "\n")
     monkeypatch.setenv(C.PRIVATE_ENV, str(priv))
     monkeypatch.setattr(C, "CONFIG_PATH", cfg)
     monkeypatch.setattr(R, "_claude_version", lambda cli: "test-cli 0")
