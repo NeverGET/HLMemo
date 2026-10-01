@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "spend_cap_usd": "4.00",
+  "spend_cap_usd": "12.00",
   "arms": {
     "gemini": {
       "kind": "provider",
