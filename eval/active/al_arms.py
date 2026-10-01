@@ -91,6 +91,45 @@ def _done(exp: str, label: str, packet_id: str) -> bool:
     return f.is_file() and C.read_json(f).get("status") == "ok"
 
 
+BUDGET_STOP = "budget_stop"
+
+
+def select_retry(
+    exp: str, label: str, packets: list[dict[str, Any]], reasons: list[str]
+) -> dict[str, list[str]]:
+    """Packet ids to re-run, per reason: exactly those whose recorded FINAL status is the reason
+    (``ok``, ``SchemaFail`` and anything not asked for stay untouched). ``budget_stop`` also covers
+    packets never attempted because the cap ended the run (no record at all)."""
+    picked: dict[str, list[str]] = {r: [] for r in reasons}
+    for p in packets:
+        f = out_dir(exp, label) / f"{p['packet_id']}.json"
+        status = C.read_json(f).get("status") if f.is_file() else None
+        if status is None and BUDGET_STOP in picked:
+            picked[BUDGET_STOP].append(p["packet_id"])
+        elif status in picked and status != "ok":
+            picked[status].append(p["packet_id"])
+    return picked
+
+
+def print_selection(label: str, exp: str, picked: dict[str, list[str]]) -> None:
+    for reason, ids in picked.items():
+        print(f"{label} {exp} retry {reason}: {len(ids)} packet(s) {', '.join(ids) or '-'}")
+
+
+def archive_attempt(exp: str, label: str, packet_id: str) -> None:
+    """Keep the previous record (and its raw attempts) as history before a re-run overwrites it."""
+    d = out_dir(exp, label)
+    cur = d / f"{packet_id}.json"
+    if not cur.is_file():
+        return
+    hist = C.pdir("outputs", exp, label, "history")
+    n = len(list(hist.glob(f"{packet_id}.attempt?.json"))) + 1
+    C.write_text(hist / f"{packet_id}.attempt{n}.json", cur.read_text(encoding="utf-8"))
+    raw = d / f"{packet_id}.raw.json"
+    if raw.is_file():
+        C.write_text(hist / f"{packet_id}.attempt{n}.raw.json", raw.read_text(encoding="utf-8"))
+
+
 def _record(exp: str, label: str, packet: dict[str, Any], rec: dict[str, Any]) -> None:
     rec = {
         "exp": exp,
@@ -119,6 +158,7 @@ async def run_gemini(
     run: int,
     prereg_sha: str,
     retry_failed: bool = False,
+    retry_reasons: list[str] | None = None,
     transport: Any = None,
 ) -> dict[str, Any]:
     from hlmemo.librarian.budget import MemoryBudget
@@ -138,12 +178,18 @@ async def run_gemini(
     remaining = remaining_usd(cfg)
     if remaining <= 0:
         raise C.HarnessError(f"spend cap ${cfg['spend_cap_usd']} reached (spent ${spent_usd()})")
-    todo = [
-        p
-        for p in packets
-        if not _done(exp, label, p["packet_id"])
-        and (retry_failed or not (out_dir(exp, label) / f"{p['packet_id']}.json").is_file())
-    ]
+    if retry_reasons:
+        picked = select_retry(exp, label, packets, retry_reasons)
+        print_selection(label, exp, picked)
+        ids = {i for v in picked.values() for i in v}
+        todo = [p for p in packets if p["packet_id"] in ids]
+    else:
+        todo = [
+            p
+            for p in packets
+            if not _done(exp, label, p["packet_id"])
+            and (retry_failed or not (out_dir(exp, label) / f"{p['packet_id']}.json").is_file())
+        ]
     worst = worst_case_usd(profile, todo, spec)
     print(
         f"{label} {exp}: {len(todo)} packets, worst case ${worst:.4f} (first attempts),"
@@ -165,6 +211,7 @@ async def run_gemini(
     try:
         for pk in todo:
             attempts: list[dict[str, Any]] = []
+            archive_attempt(exp, label, pk["packet_id"])
 
             def observe(event: dict[str, Any], sink: list[dict[str, Any]] = attempts) -> None:
                 sink.append({k: v for k, v in event.items() if k != "user"})  # raw model text, by code
@@ -247,6 +294,7 @@ def run_opus(
     run: int,
     prereg_sha: str,
     retry_failed: bool = False,
+    retry_reasons: list[str] | None = None,
     runner: Any = None,
 ) -> dict[str, Any]:
     from hlmemo.librarian.provider import parse_json_object
@@ -257,10 +305,19 @@ def run_opus(
     cmd = claude_cmd(arm, spec.system)
     summary = {"run": label, "ok": 0, "failed": 0}
     run_cmd = runner or _subprocess_runner
+    chosen: set[str] | None = None
+    if retry_reasons:
+        picked = select_retry(exp, label, packets, retry_reasons)
+        print_selection(label, exp, picked)
+        chosen = {i for v in picked.values() for i in v}
     for pk in packets:
         f = out_dir(exp, label) / f"{pk['packet_id']}.json"
-        if _done(exp, label, pk["packet_id"]) or (f.is_file() and not retry_failed):
+        if chosen is not None:
+            if pk["packet_id"] not in chosen:
+                continue
+        elif _done(exp, label, pk["packet_id"]) or (f.is_file() and not retry_failed):
             continue
+        archive_attempt(exp, label, pk["packet_id"])
         rec: dict[str, Any] = {"arm": "opus", "cli_model": arm["model"], "effort": arm.get("effort")}
         t0 = time.monotonic()
         err = None
@@ -308,9 +365,11 @@ __all__ = [
     "claude_cmd",
     "parse_stream",
     "remaining_usd",
+    "archive_attempt",
     "run_gemini",
     "run_label",
     "run_opus",
+    "select_retry",
     "spent_usd",
     "task_spec",
     "worst_case_usd",

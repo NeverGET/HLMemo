@@ -391,6 +391,7 @@ def score(exp: str, record: dict[str, Any], *, allow_incomplete: bool = False) -
         )
     bars = record["bars"]
     out: dict[str, Any] = {"exp": exp, "prereg_sha256": record.get("_sha"), "missing_labels": len(missing)}
+    out["amendments"] = record.get("_amendments", [])
     if exp == "E0":
         out.update(_score_e0(key, final, bars))
     else:
@@ -491,6 +492,12 @@ def render_score(res: dict[str, Any]) -> str:
                 f" {m['grounded_det']} | {m['useful']} | {m['harmful_stale_hiding']} |"
                 f" {m['harmful_stale_other_rate']} | {m.get('coverage', '')} |"
             )
+    if res.get("amendments"):
+        lines += ["", "Pre-registration amendments applied:"]
+        lines += [
+            f"- AMENDMENT-{a['n']} ({a['amended_at']}): {a['field']} {a['old']} -> {a['new']}: {a['reason']}"
+            for a in res["amendments"]
+        ]
     v = res["verdict"]
     lines += ["", f"**Verdict: {v['decision']}**"]
     for k in ("gemini_fails", "opus_fails", "opus_minus_gemini"):

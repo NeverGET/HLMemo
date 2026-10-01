@@ -10,6 +10,9 @@ Commands, in order (see eval/active/restore.md for the database):
     estimate                                           Gemini cost per experiment from the packet sizes
     prereg [--force]                                   PREREG.md + PREREG.sha256 (before ANY arm)
     run --exp E1|E2|E3 --arm gemini|opus [--run N] [--packets ID,ID] [--retry-failed]
+        [--retry-reason ProviderUnavailable|budget_stop|...]   (repeatable; only packets whose final
+                                                                status is that reason; history kept)
+    amend --field spend_cap_usd --value 12.00 --reason "..."   documented post-registration cap raise
     check --exp E1|E2|E3                               deterministic grounding of every saved output
     kit --exp E0|E1|E2|E3                              blind grading kit + key (outside the kit)
     split --exp E0|E1|E2|E3                            reader C file: the units readers A and B split on
@@ -135,6 +138,14 @@ def cmd_prereg(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_amend(args: argparse.Namespace) -> int:
+    import al_prereg as R
+
+    path, digest = R.amend(args.field, args.value, args.reason)
+    _print({"amendment": str(path), "sha256": digest})
+    return 0
+
+
 def _verified(exp: str | None) -> dict[str, Any]:
     import al_prereg as R
 
@@ -159,11 +170,23 @@ async def cmd_run(args: argparse.Namespace) -> int:
         raise C.HarnessError(f"--run must be 1..{runs} for {args.arm} (pre-registered)")
     if args.arm == "gemini":
         res = await A.run_gemini(
-            exp, packets, cfg, run=args.run, prereg_sha=record["_sha"], retry_failed=args.retry_failed
+            exp,
+            packets,
+            cfg,
+            run=args.run,
+            prereg_sha=record["_sha"],
+            retry_failed=args.retry_failed,
+            retry_reasons=args.retry_reason,
         )
     else:
         res = A.run_opus(
-            exp, packets, cfg, run=args.run, prereg_sha=record["_sha"], retry_failed=args.retry_failed
+            exp,
+            packets,
+            cfg,
+            run=args.run,
+            prereg_sha=record["_sha"],
+            retry_failed=args.retry_failed,
+            retry_reasons=args.retry_reason,
         )
     _print(res)
     return 0
@@ -255,6 +278,11 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--run", type=int, default=1)
     r.add_argument("--packets", default="")
     r.add_argument("--retry-failed", action="store_true")
+    r.add_argument("--retry-reason", action="append", default=[], metavar="REASON")
+    a = sub.add_parser("amend")
+    a.add_argument("--field", required=True)
+    a.add_argument("--value", required=True)
+    a.add_argument("--reason", required=True)
     for name in ("check", "kit", "split"):
         s = sub.add_parser(name)
         s.add_argument("--exp", required=True)
@@ -272,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
         "mustknow-kit": cmd_mustknow_kit,
         "estimate": cmd_estimate,
         "prereg": cmd_prereg,
+        "amend": cmd_amend,
         "run": cmd_run,
         "check": cmd_check,
         "kit": cmd_kit,

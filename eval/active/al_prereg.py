@@ -11,6 +11,13 @@ sha256. It refuses to overwrite a pre-registration once any arm output exists.
 ``verify`` is called by every runner and by the scorer: it recomputes the file hash and every
 recorded input hash and refuses on any difference (a changed prompt, packet, bar or rubric after the
 pre-registration voids the run).
+
+``amend`` is the one documented way to change a hashed input after the pre-registration: ONLY
+``spend_cap_usd`` (allow-list), only upwards. It writes ``AMENDMENT-<n>.md`` + ``.sha256`` next to the
+PREREG (n, UTC time, field, old -> new, reason, the PREREG sha it amends, the new config sha) and edits
+that one line of config.json. ``verify`` accepts a config hash that differs from the PREREG's only
+when the amendment chain explains it exactly (see ``_amendment_chain``); every other input must
+still match the pre-registration byte for byte.
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ import json
 import re
 import subprocess
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +34,9 @@ import al_common as C
 
 PREREG = "PREREG.md"
 PREREG_SHA = "PREREG.sha256"
+AMENDABLE = ("spend_cap_usd",)
+_AMEND_FILE = re.compile(r"^AMENDMENT-(\d+)\.md$")
+_CAP_LINE = re.compile(r'("spend_cap_usd"\s*:\s*")([^"]*)(")')
 _JSON_BLOCK = re.compile(r"```json\n(.*?)\n```", re.S)
 
 
@@ -253,6 +264,124 @@ def load() -> tuple[dict[str, Any], str]:
     return json.loads(m.group(1)), digest
 
 
+def _set_cap(config_text: str, value: str) -> str:
+    """config.json with its spend_cap_usd replaced (a textual edit: every other byte is kept)."""
+    if len(_CAP_LINE.findall(config_text)) != 1:
+        raise C.HarnessError("config.json must contain exactly one spend_cap_usd string")
+    return _CAP_LINE.sub(lambda m: f"{m.group(1)}{value}{m.group(3)}", config_text, count=1)
+
+
+def _amendment_files() -> list[tuple[int, Path]]:
+    d = C.private_dir()
+    found = [(int(m.group(1)), p) for p in d.glob("AMENDMENT-*.md") if (m := _AMEND_FILE.match(p.name))]
+    return sorted(found)
+
+
+def _load_amendment(n: int, path: Path) -> dict[str, Any]:
+    sha_file = path.with_suffix(".sha256")
+    if not sha_file.is_file() or C.sha256_file(path) != sha_file.read_text(encoding="utf-8").split()[0]:
+        raise C.HarnessError(f"{path.name} does not match its .sha256 (edited after it was written)")
+    m = _JSON_BLOCK.search(path.read_text(encoding="utf-8"))
+    if m is None:
+        raise C.HarnessError(f"{path.name} has no machine-readable record")
+    rec = json.loads(m.group(1))
+    if rec.get("n") != n:
+        raise C.HarnessError(f"{path.name}: records n={rec.get('n')}")
+    return rec
+
+
+def _amendment_chain(prereg_digest: str) -> list[dict[str, Any]]:
+    """The valid amendments in order, or HarnessError. Each file hash matches, numbers run 1..k,
+    each names this PREREG sha and the value the previous one set, and only allow-listed fields."""
+    chain: list[dict[str, Any]] = []
+    for i, (n, path) in enumerate(_amendment_files(), start=1):
+        if n != i:
+            raise C.HarnessError(f"amendment numbering has a gap: expected AMENDMENT-{i}.md, found {n}")
+        rec = _load_amendment(n, path)
+        if rec.get("prereg_sha256") != prereg_digest:
+            raise C.HarnessError(f"{path.name} amends a different pre-registration")
+        if rec.get("field") not in AMENDABLE:
+            raise C.HarnessError(f"{path.name}: field {rec.get('field')!r} is not amendable")
+        if chain and rec.get("old") != chain[-1]["new"]:
+            raise C.HarnessError(f"{path.name}: old value does not continue the previous amendment")
+        if Decimal(str(rec["new"])) < Decimal(str(rec["old"])):
+            raise C.HarnessError(f"{path.name}: lowers the cap")
+        chain.append(rec)
+    return chain
+
+
+def _config_explained(then_sha: str, chain: list[dict[str, Any]], prereg_cap: str) -> bool:
+    """Undo the chain on the CURRENT config text: every intermediate hash and the pre-registered
+    config hash must be reproduced exactly."""
+    if not chain or chain[0]["old"] != prereg_cap:
+        return False
+    text = C.CONFIG_PATH.read_text(encoding="utf-8")
+    for rec in reversed(chain):
+        m = _CAP_LINE.search(text)
+        if C.sha256_text(text) != rec["config_sha256_after"] or m is None or m.group(2) != str(rec["new"]):
+            return False
+        text = _set_cap(text, str(rec["old"]))
+    return C.sha256_text(text) == then_sha
+
+
+def amend(field: str, value: str, reason: str) -> tuple[Path, str]:
+    if field not in AMENDABLE:
+        raise C.HarnessError(f"only {', '.join(AMENDABLE)} may be amended (got {field!r})")
+    if not reason.strip():
+        raise C.HarnessError("--reason is required")
+    try:
+        new = Decimal(value)
+    except InvalidOperation as exc:
+        raise C.HarnessError(f"--value {value!r} is not a decimal") from exc
+    if not new.is_finite() or new <= 0:
+        raise C.HarnessError("--value must be a positive decimal")
+    _record, digest = verify()  # the registration and every earlier amendment must be intact
+    chain = _amendment_chain(digest)
+    text = C.CONFIG_PATH.read_text(encoding="utf-8")
+    old = str(C.load_config()[field])
+    if new < Decimal(old):
+        raise C.HarnessError(f"the new cap {new} is below the current {old}: a cap can only be raised")
+    new_text = _set_cap(text, value)
+    n = len(chain) + 1
+    rec = {
+        "schema": "al-amendment/1",
+        "n": n,
+        "amended_at": datetime.now(UTC).isoformat(),
+        "field": field,
+        "old": old,
+        "new": value,
+        "reason": reason.strip(),
+        "prereg_sha256": digest,
+        "config_sha256_before": C.sha256_text(text),
+        "config_sha256_after": C.sha256_text(new_text),
+    }
+    body = "\n".join(
+        [
+            f"# Pre-registration amendment {n}",
+            "",
+            f"- n: {n}",
+            f"- timestamp (UTC): {rec['amended_at']}",
+            f"- field: {field}",
+            f"- change: {old} -> {value}",
+            f"- reason: {rec['reason']}",
+            f"- amends PREREG sha256: {digest}",
+            f"- new config.json sha256: {rec['config_sha256_after']}",
+            f"- (this file's own sha256 is in AMENDMENT-{n}.sha256)",
+            "",
+            "```json",
+            json.dumps(rec, indent=2, sort_keys=True, ensure_ascii=False),
+            "```",
+            "",
+        ]
+    )
+    target = C.private_dir() / f"AMENDMENT-{n}.md"
+    C.write_text(target, body)
+    own = C.sha256_file(target)
+    C.write_text(C.private_dir() / f"AMENDMENT-{n}.sha256", f"{own}  AMENDMENT-{n}.md\n")
+    C.CONFIG_PATH.write_text(new_text, encoding="utf-8")  # the one in-repo file an amendment edits
+    return target, own
+
+
 def verify(exp: str | None = None) -> tuple[dict[str, Any], str]:
     """The pre-registration, after checking that nothing it hashed has changed since. With ``exp``:
     that experiment's prompt, schema and packets; always: config, rubric and profile."""
@@ -263,6 +392,14 @@ def verify(exp: str | None = None) -> tuple[dict[str, Any], str]:
         for k in ("config_sha256", "reader_instructions_sha256", "profile_sha256")
         if then.get(k) != now.get(k)
     ]
+    chain = _amendment_chain(digest)
+    record["_amendments"] = [
+        {k: a[k] for k in ("n", "amended_at", "field", "old", "new", "reason")} for a in chain
+    ]
+    if "config_sha256" in diffs and _config_explained(
+        then["config_sha256"], chain, str(record["arms"]["spend_cap_usd"])
+    ):
+        diffs.remove("config_sha256")
     if exp is not None:
         if exp in C.ARM_EXPERIMENTS and then["prompts"].get(exp) != now["prompts"].get(exp):
             diffs.append(f"prompts.{exp}")
@@ -282,4 +419,4 @@ def verify(exp: str | None = None) -> tuple[dict[str, Any], str]:
     return record, digest
 
 
-__all__ = ["PREREG", "PREREG_SHA", "inputs", "load", "render", "verify", "write"]
+__all__ = ["AMENDABLE", "PREREG", "PREREG_SHA", "amend", "inputs", "load", "render", "verify", "write"]
