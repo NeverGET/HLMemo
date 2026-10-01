@@ -1889,3 +1889,7 @@ Lessons v2 (AL4), data-first:
 - Forks count as one source.
 - Deterministic clustering plus a fork-aware project graph find the candidates; the LLM only phrases clusters that have ≥ 2 independent sources.
 - A new pre-registered ceiling run follows. Nothing is imported without owner review (D-222).
+D-226 | 2026-10-01 | ACCEPTED (measurement) | **The second migration's sealed blind check FAILS: 4/8 answerable correct (.50; bar .80). 0 superseded-as-current, and 2/2 negatives abstained.**
+- Method as in D-216: questions asked once through prod memory.ask via the code-saved relay; 2 blind graders (Claude Sonnet and codex astra-low); the stricter grade counts; 3 splits. Prod spend $0.21.
+- The migration is NOT signed off. A root-cause analysis per failing question is running (curation gap / retrieval / writer / stale preference / truth set / grader).
+- Any data or truth-set correction needs the owner's OK (D-132).
