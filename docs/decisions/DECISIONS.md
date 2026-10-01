@@ -1923,3 +1923,17 @@ Blind gate (2 readers, stricter label; ≥ 60% useful and 0 stale):
 - The remaining noise (generic lessons, backlog counts) belongs to task-time recall, not the session start.
 
 Gap (D-207 #5): memory.query and memory.raw expose no incoming `superseded_by`, so the brief can only exclude superseded items inside its own candidate pool.
+D-229 | 2026-10-02 | ACCEPTED (measurement) | **R4.2 answer-quality fixes (literal notation variants, main-sentence repair, window merge in prose mode, clip on a line boundary), measured blind against sealed sets, with controls.**
+
+Results:
+- Second migration set: .63 → .88 correct (PASS; was FAIL).
+- First migration set: 41/45 vs 42/45. One borderline split under a stricter panel.
+- hlmemo hold-out: 37/50 vs 38/50; contradictions 3 → 2; fabricated 1/10 → 0/10. The §5.1 rule now gives KEEP instead of OWNER CALL.
+- Main sentence dropped: 0/120 (it was 5 in the earlier runs).
+
+Controls on the same DB (3-reader panel):
+- Hold-out temporal questions: R4 code 6/13 and 5/13; merge-base 6/13; R4.2 code 6/13 and 8/13. So neither R4.1 nor R4.2 regressed temporal answers.
+- The gap to the R4 final test (10/13) is not supersession hiding: the replica had the same 371 links, and no gold item was hidden. It is the environment or sampling.
+- One mechanism is confirmed: the literal check drops unit paraphrases of supported values ("$3/hour" vs `HLM_LLM_BUDGET_HOUR_USD=3`). Next fix: the writer copies the excerpt's literal form for values.
+
+Method lesson: one run moves a 13-question subset by ±2. Temporal and other small-subset comparisons need ≥ 3 samples per arm.
