@@ -156,7 +156,7 @@ class Fused:
     device_scope: str = "all"
     row: HitRow | None = None
     #: B3 (D-207 #5): ``[(superseder's version id, part)]`` from the live ``supersedes`` links that
-    #: target this hit's item (``read_queries.superseded_hits``); empty = not superseded
+    #: apply to this hit's VERSION (``read_queries.superseded_hits``); empty = not superseded
     superseded_by: list[tuple[int, bool]] = field(default_factory=list)
 
 

@@ -21,6 +21,13 @@ candidate one of them names is excluded too. Remaining gaps, reported not guesse
 * on an older server the superseder must be in the pool (the newest session notes and lessons), and a
   ``scope=part`` link looks whole there (``props`` is not exposed by the outgoing view);
 * a candidate whose ``memory.raw`` failed cannot be verified and is excluded.
+
+BODY (review 96 Sol #5). The body is the verbatim ``payload_item.body`` (or its ``payload_body``
+pages). A version a D-118 mutation wrote (a span revision's new version, a reversal's restored copy)
+has no request item of its own (``payload_item == {}``): its body is rebuilt from its ``chunks``
+(exact ``char_start``/``char_end`` offsets; overlapping chunks must agree, a gap is never filled —
+``body_from_chunks``). A body that cannot be rebuilt leaves the candidate unverified (excluded),
+never shown empty.
 """
 
 from __future__ import annotations
@@ -166,16 +173,59 @@ def _live(link: dict[str, Any], now: datetime) -> bool:
     return True
 
 
+def body_from_chunks(chunks: list[Any]) -> str | None:
+    """The text a version's ``chunks`` tile (``text == body[char_start:char_end]``; neighbouring
+    chunks overlap and must agree on the overlap), from the first chunk's start to the last one's
+    end; ``None`` when there is no chunk, one is malformed, two disagree or a gap lies between two
+    (never guessed). Leading/trailing whitespace outside the chunks is not part of it (the chunker
+    trims window edges)."""
+    spans: list[tuple[int, int, str]] = []
+    for c in chunks:
+        if not isinstance(c, dict):
+            return None
+        a, b, t = c.get("char_start"), c.get("char_end"), c.get("text")
+        if (
+            isinstance(a, bool)
+            or isinstance(b, bool)
+            or not isinstance(a, int)
+            or not isinstance(b, int)
+            or not isinstance(t, str)
+            or not 0 <= a < b
+            or len(t) != b - a
+        ):
+            return None
+        spans.append((a, b, t))
+    if not spans:
+        return None
+    spans.sort()
+    base, end, text = spans[0][0], spans[0][1], spans[0][2]
+    for a, b, t in spans[1:]:
+        if a > end:  # a gap: the text between is unknown
+            return None
+        known = text[a - base : min(b, end) - base]
+        if t[: len(known)] != known:
+            return None
+        if b > end:
+            text += t[end - a :]
+            end = b
+    return text
+
+
 async def read_raw(call: Call, project: str, item: Item, budget: int, now: datetime) -> None:
-    """memory.raw -> body, logical id, currency and live supersedes edges (all pages); raises on error."""
+    """memory.raw -> body, logical id, currency and live supersedes edges (all pages); raises on error.
+    A version without a verbatim request item (a D-118 mutation's) gets its body from its chunks
+    (``body_from_chunks``); when that fails too the item stays unverified."""
     args: dict[str, Any] = {"project": project, "version_id": item.version_id, "token_budget": budget}
     body: str | None = None
+    paged = False
     segments: list[str] = []
     links: list[dict[str, Any]] = []
+    chunks: list[Any] = []
     for _ in range(RAW_PAGES):
         r = await call("memory.raw", args)
         if body is None:
             pi = r.get("payload_item") or {}
+            paged = paged or pi.get("body_paged") is True
             if isinstance(pi.get("body"), str):
                 body = pi["body"]
             item.logical_id = r.get("logical_id") if isinstance(r.get("logical_id"), int) else None
@@ -188,16 +238,26 @@ async def read_raw(call: Call, project: str, item: Item, budget: int, now: datet
             item.superseded = _worst(item.superseded, raw_superseded(r.get("superseded_by"), now))
         segments += [s.get("text", "") for s in (r.get("payload_body") or []) if isinstance(s, dict)]
         links += [x for x in (r.get("links") or []) if isinstance(x, dict)]
+        chunks += list(r.get("chunks") or [])
         cur = r.get("next_cursor")
         if not cur:
             item.verified = True
             break
         args = {**args, "cursor": cur}
+    if body is None and not paged and not segments:  # review 96 Sol #5: no request item of its own
+        body = body_from_chunks(chunks)
+        if body is None:
+            item.verified = False  # an unknown body is never shown (empty or partial)
     item.body = body if body is not None else "".join(segments)
+    # a link from the item to ITSELF is a span revision's record (D-118): it supersedes the item's
+    # OLD version, never the one read here (review 96 Sol #5: it hid every revised lesson)
     item.live_supersedes = {
         int(x["dst_logical_id"])
         for x in links
-        if x.get("rel") == "supersedes" and isinstance(x.get("dst_logical_id"), int) and _live(x, now)
+        if x.get("rel") == "supersedes"
+        and isinstance(x.get("dst_logical_id"), int)
+        and x["dst_logical_id"] != item.logical_id
+        and _live(x, now)
     }
 
 

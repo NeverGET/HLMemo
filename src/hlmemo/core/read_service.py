@@ -15,6 +15,9 @@ the caller can see. A query hit whose item is targeted carries ``superseded: tru
 ``superseded_by: [{clue, scope}]`` (a hit without one is unchanged; D-057 still hides a
 whole-superseded hit when its superseder is among the hits). ``memory.raw`` carries the incoming
 ``superseded_by: [{logical_id, version_id, scope, valid_from, valid_to, quote?}]`` (always present).
+Review 96: a PINNED link speaks only to a reader of the pinned version and only about that version
+or a body-identical copy of it (``read_queries.incoming_supersedes``); ``payload_item.updates``
+keeps only the entries whose target the reader may see (``_filter_item_updates``).
 """
 
 from __future__ import annotations
@@ -258,6 +261,7 @@ async def query_parts(
             scopes=scopes,
             valid_at=valid_at,
             known_at=known_at,
+            version_of=version_of([(f.logical_id, f.version_id) for f in ordered]),  # review 96
         )
         if hidden:
             ordered = [f for f in ordered if f.logical_id not in hidden]
@@ -267,10 +271,11 @@ async def query_parts(
         for f in head:
             f.row = rows[f.chunk_id]
         # B3 (D-207 #5, additive): every hit learns whether a live `supersedes` link targets its
-        # item (whole or part) and by whom; nothing is hidden or re-ranked by this
+        # item (whole or part) and by whom; nothing is hidden or re-ranked by this. Review 96
+        # Astra #1: per hit VERSION (a pinned link speaks only about its pinned text)
         superseded = await q.superseded_hits(
             conn,
-            [f.logical_id for f in head],
+            [f.version_id for f in head],
             pid=project.project_id,
             scopes=scopes,
             valid_at=valid_at,
@@ -278,7 +283,7 @@ async def query_parts(
             statuses=filters.statuses,
         )
         for f in head:
-            f.superseded_by = superseded.get(f.logical_id, [])
+            f.superseded_by = superseded.get(f.version_id, [])
         head = newer_first_on_ties(head)  # D-057: exact RRF tie, same title -> newer first
         if partial:  # D-076 fact-level supersession, only for a query that matched the outdated span
             head = demote_partially_superseded(head, partial, terms.terms)  # the c0e3138 term set
@@ -602,6 +607,59 @@ async def _filter_item_links(
     return {**item, "links": kept}
 
 
+def version_of(pairs: list[tuple[int, int]]) -> dict[int, int | None]:
+    """``{logical id: the one version read for it}`` from ``(logical id, version id)`` pairs, or
+    ``None`` when several versions of an item are read (review 96: a pinned ``supersedes`` link is
+    then not applied to it, ``read_queries.pinned_applies``)."""
+    out: dict[int, int | None] = {}
+    for lid, vid in pairs:
+        out[lid] = vid if out.get(lid, vid) == vid else None
+    return out
+
+
+def _update_target(u: Any) -> tuple[int | None, int | None]:
+    """``(logical id, pinned version id)`` an ``items[].updates`` entry names (the clue fixes the
+    version; the integer form is a logical id with ``expected_version``), or ``(None, None)`` when it
+    names nothing resolvable (``write_updates.parse_item``)."""
+    from hlmemo.core.write_updates import parse_item
+
+    if not isinstance(u, dict):
+        return None, None
+    item, expected = u.get("item"), u.get("expected_version")
+    if isinstance(item, bool) or not isinstance(item, int | str):
+        return None, None
+    if expected is not None and (isinstance(expected, bool) or not isinstance(expected, int)):
+        return None, None
+    lid, vid, reason = parse_item(item, expected)
+    return (None, None) if reason is not None else (lid, vid)
+
+
+async def _filter_item_updates(
+    conn: AsyncConnection, item: dict[str, Any], pid: int, scopes: list[str]
+) -> dict[str, Any]:
+    """Review 96 Sol #1: the verbatim D-118 ``updates`` of an item name another memory (its clue or
+    logical id) and QUOTE it (``old_span``). An entry is kept only when the reader may see its target
+    (§4.4 (a)): the pinned version (clue or ``expected_version``) and, for the integer form, the
+    logical item too. A hidden, unknown or unresolvable target drops the entry whole."""
+    updates = item.get("updates")
+    if not isinstance(updates, list) or not updates:
+        return item
+    targets = [_update_target(u) for u in updates]
+    lids_ok, vids_ok = await q.endpoint_authz(
+        conn,
+        pid,
+        scopes,
+        logical_ids=[lid for lid, _ in targets if lid is not None],
+        version_ids=[vid for _, vid in targets if vid is not None],
+    )
+    kept = [
+        u
+        for u, (lid, vid) in zip(updates, targets, strict=True)
+        if vid is not None and vid in vids_ok and (lid is None or lid in lids_ok)
+    ]
+    return {**item, "updates": kept}
+
+
 async def _provenance(
     conn: AsyncConnection, v: q.ReadVersion, pid: int, scopes: list[str]
 ) -> tuple[q.SourceEvent | None, dict[str, Any]]:
@@ -627,7 +685,8 @@ async def _provenance(
             item = items[index] if 0 <= index < len(items) else {}
             if not isinstance(item, dict):
                 item = {}
-            return ev, await _filter_item_links(conn, item, _resolved_links(ev.payload, index), pid, scopes)
+            item = await _filter_item_links(conn, item, _resolved_links(ev.payload, index), pid, scopes)
+            return ev, await _filter_item_updates(conn, item, pid, scopes)
         if origin_vid is None:  # not recorded by its own event: nothing verbatim to show
             return ev, {}
         origin = await q.version_authz(conn, origin_vid, pid, scopes)

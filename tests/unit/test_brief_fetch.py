@@ -89,7 +89,8 @@ class FakeServer:
             "version_id": vid, "logical_id": v["lid"], "kind": v["kind"],
             "recorded_at": f"2026-09-{v['day']:02d}T11:00:00.000000Z",
             "valid_to": v["valid_to"], "superseded_at": v["superseded_at"],
-            "payload_item": {"body": v["body"]},
+            "payload_item": v.get("payload_item", {"body": v["body"]}),
+            "chunks": v.get("chunks", []) if (page + 1 == v["pages"]) else [],
             "links": v["links"] if (page + 1 == v["pages"]) else [],  # links ride on the LAST page
             "next_cursor": str(page + 1) if more else None,
         }  # fmt: skip
@@ -313,3 +314,57 @@ def test_card_date_unknown_when_raw_fails_or_no_card() -> None:
     s2 = server_with_notes()
     s2.card = None
     assert run(s2).card_date is None
+
+
+# --------------------------------------------------------------------------- review 96 Sol #5
+def chunk(a: int, text: str, ordinal: int = 0) -> dict:
+    return {"ordinal": ordinal, "char_start": a, "char_end": a + len(text), "text": text}
+
+
+BODY = "Lesson: measure the cache first.\nRule: never tune blind; the mistake was tuning blind."
+
+
+def test_body_from_chunks_tiles_overlapping_chunks_and_never_guesses() -> None:
+    a, b = BODY[:40], BODY[30:]  # overlap [30, 40)
+    assert F.body_from_chunks([chunk(30, b, 1), chunk(0, a)]) == BODY  # any order
+    assert F.body_from_chunks([chunk(0, BODY)]) == BODY
+    assert F.body_from_chunks([chunk(2, BODY[2:20])]) == BODY[2:20]  # trimmed edges stay trimmed
+    assert F.body_from_chunks([chunk(0, BODY[:30]), chunk(31, BODY[31:])]) is None  # a gap
+    assert F.body_from_chunks([chunk(0, a), chunk(30, "X" + b[1:])]) is None  # the overlap disagrees
+    assert F.body_from_chunks([]) is None
+    for bad in (
+        {"char_start": 0, "char_end": 3, "text": "ab"},  # length mismatch
+        {"char_start": True, "char_end": 2, "text": "ab"},
+        {"char_start": 2, "char_end": 2, "text": ""},
+        "not a chunk",
+    ):
+        assert F.body_from_chunks([bad]) is None
+
+
+def test_a_mutation_version_without_a_request_item_gets_its_body_from_its_chunks() -> None:
+    """A span revision's new version (or a reversal's restored copy) has ``payload_item == {}``: the
+    brief rebuilds its body from the chunks (on the LAST page here) instead of showing it empty."""
+    s = server_with_notes()
+    s.versions[21].update(payload_item={}, pages=2, chunks=[chunk(0, BODY[:40]), chunk(30, BODY[30:], 1)])
+    snap = run(s)
+    (got,) = [i for i in snap.lessons if i.version_id == 21]
+    assert got.body == BODY
+
+
+def test_a_body_that_cannot_be_rebuilt_is_unverified_never_empty() -> None:
+    s = server_with_notes()
+    s.versions[21].update(payload_item={}, chunks=[chunk(0, BODY[:30]), chunk(31, BODY[31:])])
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [20]
+    assert ("v21", "unverified") in snap.excluded
+    s.versions[21].update(chunks=[])  # no chunk at all
+    assert ("v21", "unverified") in run(s).excluded
+
+
+def test_a_span_revision_self_link_never_hides_the_revised_item() -> None:
+    """D-118: a revised item holds a LIVE supersedes link to ITSELF (it pins the old version); the
+    pool fallback must not read it as the item superseding its current version."""
+    s = server_with_notes()
+    s.versions[21]["links"] = [sup(s.versions[21]["lid"], dst_version_id=7)]
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [21, 20]

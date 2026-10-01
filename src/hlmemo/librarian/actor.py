@@ -839,9 +839,15 @@ async def _live_version(conn: AsyncConnection, logical_id: int, version_id: int)
     """The CURRENT row that stands for ``version_id``: itself while current, else the copy a
     REVERSAL restored of it — the ``restored`` row of a recorded ``version_reopen`` whose
     ``from_version_id`` is it — transitively; ``None`` when neither is current (a later revision,
-    close or write replaced it)."""
+    close or write replaced it).
+
+    Review 96 Astra #2: the chain has NO fixed length bound (every revise/revert cycle of a later
+    update adds one restored copy, so a fixed bound refused a valid revert); a recorded copy always
+    has a newer id than its original, so the walk ends, and a visited set stops it defensively."""
     vid = int(version_id)
-    for _ in range(16):
+    seen: set[int] = set()
+    while vid not in seen:
+        seen.add(vid)
         cur = await conn.execute(
             "SELECT superseded_at = 'infinity' FROM memory_versions"
             " WHERE version_id = %s AND logical_id = %s",
@@ -868,14 +874,17 @@ async def _live_version(conn: AsyncConnection, logical_id: int, version_id: int)
         if copy is None:
             return None
         vid = int(copy[0])
-    return None  # pragma: no cover - a reversal chain this deep does not exist
+    return None  # pragma: no cover - a cycle: a recorded copy never names a newer row
 
 
 async def _live_link(conn: AsyncConnection, link_id: int) -> q.LinkRow | None:
     """The LIVE link row that stands for ``link_id``: itself, else the copy a reversal restored of
-    it (its recorded ``link_insert`` names it as ``supersedes_link_id``), transitively."""
+    it (its recorded ``link_insert`` names it as ``supersedes_link_id``), transitively, with no
+    fixed length bound (review 96 Astra #2; a visited set stops a cycle)."""
     lk = int(link_id)
-    for _ in range(16):
+    seen: set[int] = set()
+    while lk not in seen:
+        seen.add(lk)
         row = await q.get_link(conn, lk)
         if row is None:
             return None
@@ -897,7 +906,7 @@ async def _live_link(conn: AsyncConnection, link_id: int) -> q.LinkRow | None:
         if copy is None:
             return None
         lk = int(copy[0])
-    return None  # pragma: no cover
+    return None  # pragma: no cover - a cycle: a recorded copy never names a newer link
 
 
 async def unrevise_records(

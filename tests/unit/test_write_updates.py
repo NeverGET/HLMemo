@@ -16,7 +16,7 @@ from hlmemo.core.write_updates import (
     parse_item,
     pessimistic_ack_entries,
     revise_guards,
-    span_occurs,
+    update_guards,
 )
 from hlmemo.librarian import revise
 from hlmemo.server.tools import TOOL_BY_NAME, schemas
@@ -147,10 +147,112 @@ def test_statement_count_follows_the_statement_boundaries() -> None:
     assert revise.statement_count('He said "stop." Then left.') == 2
 
 
-def test_supersede_grounding_is_nfc_byte_exact() -> None:
-    assert span_occurs(OLD, "Backups run nightly")
-    assert not span_occurs(OLD, "backups run nightly")  # no case folding
-    assert span_occurs("Café opens", "Café")  # NFC on both sides
+def ug(mode: str, historical: bool = False, **kw: Any) -> tuple[Any, str | None]:
+    args: dict[str, Any] = {
+        "old_body": OLD,
+        "old_span": "Backups run nightly",
+        "replacement": None,
+        "carrier_body": NEW,
+        "old_projects": [1],
+        "old_scope": "all",
+        "new_projects": [1],
+        "new_scope": "all",
+    }
+    args.update(kw)
+    return update_guards(mode=mode, historical=historical, **args)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_supersede_grounding_is_nfc_byte_exact(historical: bool) -> None:
+    assert ug("supersede", historical)[1] is None
+    assert ug("supersede", historical, old_span="backups run nightly")[1] == "span_not_found"  # no folding
+    nfc, nfd = "Café", "Café"
+    # NFC on both sides: a decomposed quote of an NFC memory, and the other way round
+    assert ug("supersede", historical, old_body=f"{nfc} opens at 9 every day.", old_span=nfd)[1] is None
+    assert ug("supersede", historical, old_body=f"{nfd} opens at 9 every day.", old_span=nfc)[1] is None
+
+
+@pytest.mark.parametrize("historical", [False, True])
+@pytest.mark.parametrize("mode", ["supersede", "revise"])
+def test_r96_sol2_every_update_passes_the_shared_old_span_rules_first(mode: str, historical: bool) -> None:
+    """Review 96 Sol #2: exactly once and on word boundaries, whatever the mode or kind (the old
+    supersede/link-only path only checked that the quote occurs)."""
+    body = "The cache is Redis. The cache is monitored by the ops team every day."
+    kw = {"old_body": body, "replacement": "removed", "carrier_body": "The cache was removed."}
+    assert ug(mode, historical, old_span="cache", **kw) == (None, "span_not_unique")
+    assert ug(mode, historical, old_span="Redi", **kw) == (None, "span_word_boundary")
+    assert ug(mode, historical, old_span="Memcached", **kw) == (None, "span_not_found")
+    assert ug(mode, historical, old_span="The cache is Redis", **kw)[1] is None
+
+
+def test_r96_sol2_the_part_and_replacement_rules_apply_to_every_revise_not_to_a_supersede() -> None:
+    whole = {"old_body": "Deploys go out on Tuesdays.", "old_span": "Deploys go out on Tuesdays"}
+    assert ug("supersede", **whole)[1] is None  # a supersede IS the whole-item update
+    assert ug("supersede", True, **whole)[1] is None
+    for historical in (False, True):
+        assert ug("revise", historical, replacement="x", **whole) == (None, "span_whole")
+        assert ug("revise", historical, replacement="900 seconds") == (None, "replacement_not_in_body")
+        assert ug("revise", historical, carrier_body="One. Two.") == (None, "replacement_required")
+    # a historical revise is a link: it copies nothing into the target, so it may be narrower
+    assert (
+        ug("revise", True, old_span="60 seconds", replacement="300 seconds", new_scope="device:7")[1] is None
+    )
+    assert ug("revise", False, old_span="60 seconds", replacement="300 seconds", new_scope="device:7") == (
+        None,
+        "replacement_visibility",
+    )
+
+
+@pytest.mark.parametrize("kw", [{"new_scope": "device:7"}, {"old_projects": [1, 2]}])
+def test_r96_sol3_a_closing_supersede_needs_a_carrier_as_visible_as_its_target(kw: dict[str, Any]) -> None:
+    """Review 96 Sol #3: a narrow carrier never closes a broader target (its readers would lose the
+    memory without seeing why); a link-only (historical) supersede adds a narrow link only."""
+    assert ug("supersede", **kw) == (None, "replacement_visibility")
+    assert ug("supersede", True, **kw)[1] is None
+    hint = REASONS["replacement_visibility"][1]
+    assert "widen" in hint and "supersede" not in hint  # supersede is no way around it any more
+
+
+# --------------------------------------------------------------------------- review 96 Astra #2
+class _ChainConn:
+    """A fake connection over a restore chain: version (link) ``k`` is superseded and the copy a
+    reversal restored of it is ``k + 1``; only ``last`` is live (the shape that revise/revert cycles
+    of later updates leave behind)."""
+
+    def __init__(self, last: int) -> None:
+        self.last = last
+
+    async def execute(self, sql: str, params: Any) -> Any:
+        last = self.last
+        if "version_reopen" in sql:  # the reversal copy of a version
+            key, row = int(params[2]), None
+            row = (key + 1,) if key < last else None
+        elif "supersedes_link_id" in sql:  # the reversal copy of a link
+            key = int(params[1])
+            row = (key + 1,) if key < last else None
+        else:  # is this version / link live?
+            row = (int(params[0]) == last,)
+
+        class Cur:
+            async def fetchone(self) -> Any:
+                return row
+
+        return Cur()
+
+
+@pytest.mark.parametrize("last", [2, 17, 40])
+def test_r96_astra2_the_restore_chain_has_no_fixed_length_bound(last: int, monkeypatch: Any) -> None:
+    import asyncio
+
+    from hlmemo.librarian import actor
+
+    async def get_link(_conn: Any, lk: int) -> Any:
+        return f"link-{lk}"
+
+    monkeypatch.setattr(actor.q, "get_link", get_link)
+    conn = _ChainConn(last)
+    assert asyncio.run(actor._live_version(conn, 99, 1)) == last  # None at 17 before the fix
+    assert asyncio.run(actor._live_link(conn, 1)) == f"link-{last}"
 
 
 # --------------------------------------------------------------------------- D-113 floor

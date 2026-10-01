@@ -32,7 +32,10 @@ reviewed by the owner. "as of" = newest `recorded_at` among the items read.
   `superseded-part` (the brief cannot tell whether the line it would show is the outdated statement).
   The old pool fallback stays as a second check (and for an older server): an item is also dropped when a
   candidate-pool item has a LIVE outgoing `supersedes` link to its `logical_id`. An item is also dropped
-  when its own version is expired/superseded or `memory.raw` failed.
+  when its own version is expired/superseded or `memory.raw` failed. A span revision's link from an item
+  to ITSELF never hides it (it supersedes the old version). A version a D-118 update or its reversal
+  wrote has no request item of its own: its body is rebuilt from its chunks' exact offsets, and an item
+  whose body cannot be rebuilt is dropped as unverified (never shown empty).
   Known gaps: on an older server a superseder outside the pool (newest 8 session notes + 14 lessons) is not
   seen and `scope=part` links look whole; decisions are bullets inside a note, so a later note that
   reverses an earlier decision without a link is not detected.

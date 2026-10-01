@@ -20,6 +20,14 @@ Semantics (the new memory is ALWAYS written; an update never fails the call):
 * **historical records** (D-113: ``revise.revisable``; episodes, session notes and decision/ADR rows
   whatever the configured kinds): link-only in BOTH modes, never revised or closed.
 
+The guards (``update_guards``; review 96 Sol #2/#3), in this order, BEFORE mode or kind matter:
+``old_span`` occurs exactly once in the NFC target, on word boundaries (``SPAN_GUARDS``, every
+update). A revise (also a historical one, which becomes a part-scope link) quotes PART of the memory
+(``span_not_whole``) and passes the replacement rules (``REPLACEMENT_GUARDS``). A MUTATING update (a
+revise or a closing supersede) needs a carrying item visible wherever the target is
+(``replacement_visibility``): a narrower carrier would change the memory for readers who can never
+see why. A supersede quoting the whole memory is allowed (it IS the whole-item update).
+
 Order inside the write transaction (consult 74; J/D-095): ``parse`` (pure) → ``resolve`` BEFORE
 any lock (§4.4 (a) visibility; a hidden or unknown target is ``not_found`` and never locked) →
 the batch's ONE sorted item lock (with ``resolve``'s ids) → ``validate`` (visibility again, batch
@@ -81,7 +89,7 @@ REASONS: dict[str, tuple[str | None, str]] = {
     "length_ratio": ("E_INVALID_ARG", "replacement is too long: at most 3x old_span and 1000 characters"),
     "replacement_visibility": (
         "E_INVALID_ARG",
-        "this item is visible more narrowly than that memory: widen it or use supersede",
+        "this item is visible more narrowly than that memory: widen its projects and device_scope",
     ),
     "future_valid_from": ("E_INVALID_ARG", "this item starts in the future: send the update once it applies"),
     "cut_outside_validity": ("E_INVALID_ARG", "that memory is not valid yet at this item's start"),
@@ -126,8 +134,20 @@ def parse_item(item: int | str, expected_version: int | None) -> tuple[int | Non
     return int(item), int(expected_version), None
 
 
-def revise_guards(
+#: review 96 Sol #2: the old_span rules EVERY update passes, before mode or kind matter
+SPAN_GUARDS = ("old_body_nfc", "old_span_unique", "span_word_boundary")
+#: a revise (a historical one too: a part-scope link) quotes PART of the memory
+PART_GUARDS = ("span_not_whole",)
+#: the replacement / new-body rules of every revise (a historical one too)
+REPLACEMENT_GUARDS = ("replacement_found", "replacement_differs", "length_ratio")
+#: review 96 Sol #3: a MUTATING update (a revise, a closing supersede) never narrows who sees the memory
+VISIBILITY_GUARDS = ("replacement_visibility",)
+
+
+def update_guards(
     *,
+    mode: str,
+    historical: bool,
     old_body: str,
     old_span: str,
     replacement: str | None,
@@ -137,44 +157,49 @@ def revise_guards(
     new_projects: Any,
     new_scope: str,
 ) -> tuple[Any, str | None]:
-    """The D-110 guards of a write-time revise (``revise.WRITE_GUARDS``), pure: ``(Check, None)``
-    when every one holds, else ``(None, reason)``. The replacement is searched ONLY in the carrying
+    """The D-118 guards of one update, pure: ``(Check, None)`` when every guard of its path holds,
+    else ``(None, reason)`` of the first failed one (the order of the module doc). ``historical`` =
+    the target is link-only (``revise.revisable``). The replacement is searched ONLY in the carrying
     item's body; an omitted one is the whole body, only when that is one statement and passes the
     length ratio (else ``replacement_required``)."""
     from hlmemo.librarian import revise as rv
 
-    implied = replacement is None
-    if implied:
-        if rv.statement_count(carrier_body) > 1:
-            return None, "replacement_required"
-        replacement = carrier_body.strip()
+    revise = mode == "revise"
+    implied = revise and replacement is None
+    # only a text revision needs the stored body itself NFC (its span offsets index it); a close or
+    # a link is grounded in the NFC text like the quote (byte-exact, no other normalisation)
+    body = old_body if revise and not historical else rv.nfc(old_body)
     chk = rv.check(
-        old_body=old_body,
+        old_body=body,
         old_span=old_span,
-        replacement=replacement,
+        replacement=carrier_body.strip() if implied else (replacement or ""),
         new_body=carrier_body,
         old_projects=old_projects,
         old_scope=old_scope,
         new_projects=new_projects,
         new_scope=new_scope,
     )
-    failed = chk.failed_of(rv.WRITE_GUARDS)
+    failed = chk.failed_of(SPAN_GUARDS + (PART_GUARDS if revise else ()))
+    if not failed and revise:
+        if implied and rv.statement_count(carrier_body) > 1:
+            return None, "replacement_required"
+        failed = chk.failed_of(REPLACEMENT_GUARDS)
+        if implied and failed and failed[0] == "length_ratio":
+            return None, "replacement_required"
+    if not failed and not historical:
+        failed = chk.failed_of(VISIBILITY_GUARDS)
     if not failed:
         return chk, None
     first = failed[0]
     if first == "old_span_unique":
-        n = len(rv.occurrences(old_body, rv.nfc(old_span)))
+        n = len(rv.occurrences(body, rv.nfc(old_span)))
         return None, "span_not_found" if n == 0 else "span_not_unique"
-    if implied and first == "length_ratio":
-        return None, "replacement_required"
     return None, _GUARD_REASON[first]
 
 
-def span_occurs(body: str, old_span: str) -> bool:
-    """Supersede / link-only grounding: the quote occurs in the target (NFC, byte-exact)."""
-    from hlmemo.librarian import revise as rv
-
-    return bool(rv.occurrences(rv.nfc(body), rv.nfc(old_span)))
+def revise_guards(**kw: Any) -> tuple[Any, str | None]:
+    """The guards of a revise of a revisable memory (``update_guards`` with ``mode=revise``)."""
+    return update_guards(mode="revise", historical=False, **kw)
 
 
 @dataclass(slots=True)
@@ -311,15 +336,10 @@ class WriteUpdates:
                 continue
             u.target = head
             historical = rv.revisable(head.kind, head.body, head.source, kinds)
-            if historical is not None or u.spec.mode == "supersede":
-                if not span_occurs(head.body, u.spec.old_span):
-                    u.reject("span_not_found")
-                    continue
-                u.action = "link" if historical is not None else "close"
-                if historical is not None:
-                    u.reason = historical
-                continue
-            chk, reason = revise_guards(
+            # review 96 Sol #2/#3: the shared old_span rules first, then the path's own
+            chk, reason = update_guards(
+                mode=u.spec.mode,
+                historical=historical is not None,
                 old_body=head.body,
                 old_span=u.spec.old_span,
                 replacement=u.spec.replacement,
@@ -332,7 +352,12 @@ class WriteUpdates:
             if chk is None:
                 u.reject(reason or "span_not_found")
                 continue
-            u.action, u.chk = "revise", chk
+            if historical is not None:  # link-only in both modes
+                u.action, u.reason = "link", historical
+            elif u.spec.mode == "supersede":
+                u.action = "close"
+            else:
+                u.action, u.chk = "revise", chk
 
     def has_pending(self) -> bool:
         return bool(self._pending())
@@ -581,12 +606,16 @@ def pessimistic_ack_entries(n: int, meter: Any) -> list[dict[str, Any]]:
 
 __all__ = [
     "CLUE_RE",
+    "PART_GUARDS",
     "REASONS",
+    "REPLACEMENT_GUARDS",
+    "SPAN_GUARDS",
+    "VISIBILITY_GUARDS",
     "Update",
     "WriteUpdates",
     "endpoint_visible",
     "parse_item",
     "pessimistic_ack_entries",
     "revise_guards",
-    "span_occurs",
+    "update_guards",
 ]

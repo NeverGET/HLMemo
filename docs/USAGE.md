@@ -218,9 +218,13 @@ An agent that writes a memory which CORRECTS one it read (a `memory.query` / `me
   memory) with `replacement`, which must occur verbatim in THIS item's body (omitted: the body itself, if
   it is one statement). The target gets a new version byte-identical outside the span; the old text stays
   valid before the cut (the item's `valid_from`, else now).
-- `mode: supersede` closes the whole memory at the cut and links `supersedes` from the new item.
+- `mode: supersede` closes the whole memory at the cut and links `supersedes` from the new item. Its
+  `old_span` too must occur exactly once, on word boundaries (it may be the whole memory).
+- A revise or a close needs THIS item to be visible wherever the target is (its projects include the
+  target's, its `device_scope` is `all` or the target's); else `replacement_visibility`.
 - Historical records (episodes, session notes, decision/ADR rows) are never rewritten: both modes only add
-  a `supersedes` link (`linked`, scope `part` for revise, `whole` for supersede). Kinds that may be changed:
+  a `supersedes` link (`linked`, scope `part` for revise, `whole` for supersede), after the same `old_span`
+  rules (and, for revise, the replacement rules). Kinds that may be changed:
   `HLM_LIBRARIAN_REVISE_KINDS` (default `fact,lesson,doc_chunk`).
 - The ack lists each update as `applied`, `linked` or `rejected` (`code`, `reason`, a fixed `hint`). Undo one:
   `python -m hlmemo.ops librarian revert-update <write event> --item I --update K --reason ..` (ONE
@@ -234,7 +238,10 @@ Reads report supersession from LIVE `supersedes` links whose superseder you can 
   the same hits is still hidden (D-057);
 - `memory.raw` always carries the INCOMING `superseded_by: [{logical_id, version_id, scope, valid_from,
   valid_to, quote?}]` of the version (`links` stays the outgoing view); `quote` (part scope) is the outdated
-  statement, cut at 160 characters.
+  statement, cut at 160 characters. A link must overlap the version in valid time;
+- a link PINNED to a version (every update's link) speaks only about that version or an unchanged copy of
+  it (a cut survivor, a restored copy), never about a later revision, and only to a device that may read
+  the pinned version. `payload_item.updates` lists only the updates whose target you may see.
 
 ## Import and export (W1.5)
 
