@@ -1823,3 +1823,29 @@ D-222 | 2026-10-01 | ACCEPTED (owner directive) | **Lesson extraction and cross-
   - owner review of every global lesson in v1 (no auto-promotion).
 - Outcome metric: recurrences after promotion and the catch rate of lesson-backed risk checks. The question is whether the lesson prevents the repeat.
 - Evidence comes from past session transcripts as well as memory files, scrubbed and approved by the owner per project.
+D-223 | 2026-10-01 | ACCEPTED (owner: "Delete + recreate", "Yes, no-op redeploy") | **The already-public project name is purged from the GitHub history. The repo was recreated, and prod was redeployed on the purged commit.**
+- A re-runnable, idempotent pipeline (two runs give the same SHAs) rewrote 534 of 631 commits.
+- The name appeared in D-058, consult 68, historical STATUS.md versions, the w2e cassette and one commit subject. It became neutral text of the same token length, so the E5 chunk boundaries are unchanged.
+- The w2e cassette:
+  - keys recomputed (210/210);
+  - the two prompts whose rank shifted were re-keyed from a database run, with responses kept as recorded;
+  - one citation id was remapped to the same document.
+- One forward commit translated 999 pinned commit ids in 146 files: docs, logs, test pins incl. CORPUS_COMMIT, deploy pins, code comments.
+  - Verified: apart from the name replacements and the cassette, every change is a hex-id swap.
+- Checks:
+  - tests: unit 1080, deploy 243, w2e replay 24/24 with unchanged accuracy;
+  - 0 hits for the name and for every owner-project term, over all 3119 blobs and 632 messages;
+  - prepush PASS except large-blobs, where the one hit is a 14.7 MB fixture that has been public since 2026-09-22 and is unchanged.
+- GitHub:
+  - `gh repo delete` + `gh repo create` (same name, description and visibility; the repo had 0 forks, stars, issues, PRs, hooks, keys, secrets and no wiki), then pushed main fda8fa0;
+  - the old commits answer "No commit found".
+- Local:
+  - main was reset to the purged history;
+  - 35 merged branches on the old history were deleted;
+  - 13 unmerged branches are kept LOCAL ONLY. They still carry the old history, so they must never be pushed; rebase them before any reuse.
+- Prod:
+  - snapshot refreshed;
+  - `deploy.sh` fda8fa0 exit 0 (no migration; infra files identical; code differs only in comment ids);
+  - remote_gates 11/11 PASS;
+  - release-state previous = 3b48926 (same code), so rollback works from the server's local checkout.
+- Found after the redeploy: one memory.ask question gets "unavailable" from the Gemini writer every time, while the probe and other questions answer normally. It is under diagnosis.
