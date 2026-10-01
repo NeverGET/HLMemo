@@ -8,6 +8,8 @@ chunk offsets, resolved link targets — plus validated items in ``payload.resol
 (falling back to ``payload.request.items`` for older write events), with bodies sliced by the
 recorded ``char_start/char_end``. Never calls ``clock_timestamp()``, ``nextval()`` or the
 chunker; identity sequences and ``logical_id_seq`` are ``setval``'d to their maxima at the end.
+A write's D-118 ``resolved.updates[].mutations`` (the writer's span revisions, closes and
+``supersedes`` links) are applied verbatim by ``actor.apply_mutations`` after its links.
 
 Each event is applied in two passes, exactly like the live path: every version and chunk row of
 the batch first, then every link. A batch may pin ``derived_from "$1"`` from item 0 (forward
@@ -243,6 +245,15 @@ async def _replay_write(
                 ),
             )
             stats.links += 1
+
+    # D-118: the writer's updates (revise / close / supersedes links), recorded with their ids and
+    # applied at the same point as on the live path: after the batch's versions and links
+    mutations = [m for u in res.get("updates") or [] for m in u.get("mutations") or []]
+    if mutations:
+        from hlmemo.librarian.actor import apply_mutations
+
+        stats.links += sum(1 for m in mutations if m.get("op") == "link_insert")
+        await apply_mutations(conn, mutations, event_id, T)
 
     for job in res.get("jobs", []):
         await q.insert_job(

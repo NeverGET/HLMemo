@@ -9,7 +9,8 @@ Run inside the api container (it has the app DSN), normally through `deploy/scri
     python -m hlmemo.ops project policy show SLUG | policy set SLUG librarian_cross_project include|exclude
     python -m hlmemo.ops status [--json]
     python -m hlmemo.ops probe-writer    (R4, R-14: one authenticated 16-token writer call; ops/probe.py)
-    python -m hlmemo.ops librarian audit|questions list|approve-batch|role set|expire (ops/librarian.py)
+    python -m hlmemo.ops librarian audit|questions list|approve-batch|role set|expire|revert-update
+        (ops/librarian.py)
 
 `device mint` and `device rotate` print ONLY the token on stdout (so it can be piped into
 `hlm device login --token-stdin`); their metadata goes to stderr as one JSON line. Every command

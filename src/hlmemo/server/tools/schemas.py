@@ -1,8 +1,14 @@
-"""Input JSON schemas of the five tools, verbatim from PHASE0-SPEC §3.
+"""Input JSON schemas of the five tools, verbatim from PHASE0-SPEC §3 (two additive deviations below).
 
 ``tools/list`` advertises exactly these ``inputSchema`` objects and nothing else (D-024 (6): no
 ``outputSchema`` — the output shapes are validated internally by the services). Each schema
 embeds the shared ``$defs`` so it is self-contained on the wire.
+
+B3 (the D-118 port): ``Item.updates`` is added (optional), and no schema carries the ``$schema``
+key any more (JSON Schema 2020-12 is the MCP default dialect for ``inputSchema``, as ``memory.ask``
+already relied on). The key cost ~15 o200k tokens per tool; dropping it is what funds the
+``updates`` schema and guidance inside G-SURF (``tools/list`` ≤ 3,000 tokens). The schemas are not
+used for server-side validation (the Pydantic request models are).
 """
 
 from __future__ import annotations
@@ -94,6 +100,25 @@ DEFS: dict[str, Any] = {
                 "type": "boolean",
                 "description": "revision only: the fact ended at valid_to (nothing survives after it)",
             },
+            # D-118 (additive, optional): write-time supersession of memories the writer read. Types
+            # only on the wire (G-SURF); the limits live in write_models.UpdateSpec. The clue fixes
+            # the expected version, so ``expected_version`` (the integer-logical-id form of the hlm
+            # CLI) is accepted but NOT advertised: the client benchmark saw agents fill it with 0.
+            "updates": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "item": {"type": "string"},
+                        "old_span": {"type": "string", "minLength": 1},
+                        "mode": {"enum": ["revise", "supersede"]},
+                        "replacement": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["item", "old_span", "mode"],
+                    "additionalProperties": False,
+                },
+            },
         },
         "required": ["kind", "title", "body"],
         "additionalProperties": False,
@@ -103,7 +128,6 @@ DEFS: dict[str, Any] = {
 
 def _schema(properties: dict[str, Any], required: list[str], *, defs: tuple[str, ...]) -> dict[str, Any]:
     return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$defs": {k: DEFS[k] for k in defs},
         "type": "object",
         "properties": properties,

@@ -68,6 +68,11 @@ class AuthorityLost(LibrarianError):
     """The apply-time capability recheck failed (CC-3)."""
 
 
+class RevisionRefused(LibrarianError):
+    """A span revision (D-118 ``version_revise``) cannot be built at its cut (e.g. the cut is not
+    inside the head's validity): nothing is applied; the write-time update is rejected."""
+
+
 class PrivacyDenied(LibrarianError):
     """The privacy gate denied an item of the prompt immediately before a provider attempt."""
 
@@ -98,6 +103,7 @@ __all__ = [
     "NotReady",
     "PrivacyDenied",
     "ProviderUnavailable",
+    "RevisionRefused",
     "RoleNotAuthorized",
     "SchemaFail",
 ]

@@ -10,7 +10,10 @@ reloads its current grants and checks every project the mutation touches:
   holds ``write`` NOW, intersected with the enqueue-time set) and both endpoints pass authz (a)
   for the device (``device_scope`` visible);
 * ``correct(P)``: the bi-temporal close of an item (``version_close``: ``valid_to`` set, nothing
-  deleted): item home ∈ P and all its ``project_ids ⊆ P`` (the W2b auto-resolve rule);
+  deleted): item home ∈ P and all its ``project_ids ⊆ P`` (the W2b auto-resolve rule). D-118: the
+  writer's own updates (``core/write_updates.py``) record a ``version_close`` or a span revision
+  (``version_revise``) through the same record/apply path; their reversal compensates with
+  ``version_reopen`` (``librarian/reversal.py``);
 * ``question(P)``: every subject readable by the device;
 * ``librarian_memory``: the reserved ``hlm-librarian`` project only (``memory.write_rule``);
 * ``global_experience``: only via an accepted ``promote`` answer (W4a), never at enqueue.
@@ -35,11 +38,11 @@ from psycopg.types.json import Jsonb
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.auth.resolve import context_from_row, lock_device_access
 from hlmemo.core.normalize import normalize
-from hlmemo.core.temporal import fmt_ts, overlaps, parse_opt_ts, parse_ts
+from hlmemo.core.temporal import fmt_ts, overlaps, parse_opt_ts, parse_ts, surviving_segments
 from hlmemo.db import auth_queries as aq
 from hlmemo.db import librarian_queries as lq
 from hlmemo.db import write_queries as q
-from hlmemo.librarian.errors import AuthorityLost
+from hlmemo.librarian.errors import AuthorityLost, RevisionRefused
 
 ANNOTATE_RELS = frozenset({"relates_to", "contradicts", "supersedes", "member_of"})
 CAPABILITY_ROLE = {"annotate": Role.WRITE, "correct": Role.WRITE, "question": Role.READ}
@@ -264,6 +267,146 @@ async def _close_record(conn: AsyncConnection, m: dict[str, Any]) -> tuple[dict[
     return record, [r.recorded_at for r in hit]
 
 
+#: D-118 write-time updates reuse the close unchanged (a concrete ``valid_to`` cut)
+close_record = _close_record
+
+
+# --------------------------------------------------------------------------- span revision (D-118)
+def _revise_cut(m: dict[str, Any], head: Any, now: datetime) -> tuple[datetime, str]:
+    """D-110 cut of a span revision: the trusted effective date when it lies inside the head's
+    validity and is not in the future (``valid_from < date ≤ now``), else ``now`` (the write's
+    clock). D-118 uses it for both modes (review 76 #1: the cut is chosen against the TARGETED
+    head only)."""
+    if m.get("cut") == "effective_date" and m.get("valid_from"):
+        eff = parse_ts(m["valid_from"], field="valid_from")
+        if head.valid_from < eff <= now:
+            return eff, "effective_date"
+    return now, "approval"
+
+
+revise_cut = _revise_cut
+
+
+def _chunk_json(chunks: list[Any], ids: list[int]) -> list[dict[str, Any]]:
+    return [
+        {
+            "chunk_id": cid,
+            "ordinal": c.ordinal,
+            "char_start": c.char_start,
+            "char_end": c.char_end,
+            "e5_tokens": c.e5_tokens,
+        }
+        for c, cid in zip(chunks, ids, strict=True)
+    ]
+
+
+async def revise_build(
+    conn: AsyncConnection,
+    head: Any,
+    chk: Any,
+    *,
+    cut: datetime,
+    rule: str,
+    from_logical_id: int | None,
+    from_version_id: int | None,
+    capability: str = "correct",
+    assessed: dict[str, int] | None = None,
+    by: str = "writer",
+) -> tuple[dict[str, Any], list[datetime]]:
+    """The ``version_revise`` record of a checked span revision of ``head`` (the caller holds the
+    item lock and has run the guards: ``chk``, ``librarian/revise.check``) at ``cut``: ids
+    allocated, the new body chunked and metered by the write path. The record holds:
+
+    * ``superseded`` = the old head; ``survivor`` = its copy for ``[valid_from, cut)`` (same text,
+      chunks, provenance); ``version`` = the new head for ``[cut, ∞)`` whose body is the old one with
+      ONLY ``span`` replaced by ``replacement`` (``body_sha256`` recorded; chunk offsets recorded so
+      replay never re-chunks);
+    * the item's pinned self-``supersedes`` link (new version → old version, ``dst_version_id``,
+      ``props.scope = part``); an earlier self-link segment reaching past the cut is superseded and
+      keeps its part before the cut (``links_superseded`` / ``link_survivors``).
+
+    D-118 (``by=writer``): the replacing item is written in the same event, so ``from_*`` are
+    filled in by the write path once its ids exist. Returns ``(record, recorded_at of every
+    row/link it supersedes)``; ``RevisionRefused`` when the cut is not inside the head's validity."""
+    from hlmemo.core.write_service import default_deps
+    from hlmemo.librarian import revise as rv
+
+    assert chk.start is not None and chk.end is not None
+    lid = int(head.logical_id)
+    if not head.valid_from < cut:
+        raise RevisionRefused("cut_outside_validity")
+    body = rv.apply_span(head.body, chk.start, chk.end, chk.replacement)
+    deps = default_deps()
+    new_chunks = deps.chunker.chunk(body)
+    token_count = deps.meter.count_text(body)
+    old_chunks = await q.chunks_of_version(conn, head.version_id)
+    selfs = [
+        ln
+        for ln in await q.current_links_from(conn, lid, valid_from=cut, valid_to=None)
+        if ln.dst_logical_id == lid and ln.rel == "supersedes"
+    ]
+    link_survivors = [
+        (ln, seg) for ln in selfs for seg in surviving_segments(ln.valid_from, ln.valid_to, cut, None)
+    ]
+    svid, nvid = await q.allocate_ids(conn, "memory_versions", 2)  # the new version is the head
+    cids = await q.allocate_ids(conn, "chunks", len(old_chunks) + len(new_chunks))
+    link_ids = await q.allocate_ids(conn, "links", len(link_survivors) + 1)
+    record: dict[str, Any] = {
+        "op": rv.OP,
+        "capability": capability,
+        "logical_id": lid,
+        "base_version_id": head.version_id,
+        "superseded": [head.version_id],
+        "span": [chk.start, chk.end],
+        "old_span": head.body[chk.start : chk.end],
+        "replacement": chk.replacement,
+        "body_sha256": rv.sha256_text(body),
+        "from_logical_id": from_logical_id,
+        "from_version_id": from_version_id,
+        "valid_from": fmt_ts(cut),
+        "cut_rule": rule,
+        "chunker": deps.chunker_descriptor(),
+        "survivor": {
+            "version_id": svid,
+            "valid_from": fmt_ts(head.valid_from),
+            "valid_to": fmt_ts(cut),
+            "chunks": _chunk_json(old_chunks, cids[: len(old_chunks)]),
+        },
+        "version": {
+            "version_id": nvid,
+            "valid_from": fmt_ts(cut),
+            "valid_to": None,
+            "token_count": token_count,
+            "chunks": _chunk_json(new_chunks, cids[len(old_chunks) :]),
+        },
+        "links_superseded": [ln.link_id for ln in selfs],
+        "link_survivors": [
+            {"link_id": link_ids[k], "from_link_id": ln.link_id, **seg.as_json()}
+            for k, (ln, seg) in enumerate(link_survivors)
+        ],
+        "link": {
+            "link_id": link_ids[-1],
+            "project_id": head.project_id,
+            "project_ids": list(head.project_ids),
+            "device_scope": head.device_scope,
+            "dst_version_id": head.version_id,
+            "props": {
+                "by": by,
+                "relation": "revises",
+                "scope": "part",
+                "quote": head.body[chk.start : chk.end],
+                "replacement": chk.replacement,
+                "from_logical_id": from_logical_id,
+                "from_version_id": from_version_id,
+            },
+            "valid_from": fmt_ts(cut),
+            "valid_to": None,
+        },
+        "assessed": dict(assessed or {}),
+    }
+    return record, [head.recorded_at, *(ln.recorded_at for ln in selfs)]
+
+
 def signal_record(m: dict[str, Any]) -> dict[str, Any]:
     return {
         "op": "signal_upsert",
@@ -342,17 +485,24 @@ async def materialize_links(
 
 
 def close_embed_jobs(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The ``embed`` job descriptors for the survivor versions of ``version_close`` records (the
-    worker copies the predecessor's vectors: same text, ``supersedes_version_id`` set). Recorded in
+    """The ``embed`` job descriptors for the survivor versions of ``version_close`` records, the
+    restored rows of ``version_reopen`` records and both new rows of a ``version_revise`` (the
+    worker copies the predecessor's vectors where a chunk's text is unchanged). Recorded in
     ``resolved.jobs`` with their ids so a replay re-creates the exact rows."""
     from hlmemo.core.write_service import embed_dedupe_key, embed_job_payload, embedder_descriptor
 
     embedder = embedder_descriptor()
     jobs = []
     for rec in records:
-        if rec["op"] != "version_close":
+        if rec["op"] == "version_close":
+            rows = rec["survivors"]
+        elif rec["op"] == "version_reopen":
+            rows = rec["restored"]
+        elif rec["op"] == "version_revise":
+            rows = [rec["survivor"], rec["version"]]
+        else:
             continue
-        for sv in rec["survivors"]:
+        for sv in rows:
             if sv["chunks"]:
                 jobs.append(
                     {
@@ -388,6 +538,8 @@ async def apply_mutations(
                     valid_to=parse_opt_ts(m.get("valid_to"), field="valid_to"),
                     recorded_at=at,
                     source_event_id=event_id,
+                    # D-118: a link a reversal restores names the one it restores (else None)
+                    supersedes_link_id=m.get("supersedes_link_id"),
                 ),
             )
             n += 1
@@ -398,6 +550,10 @@ async def apply_mutations(
             n += 1
         elif m["op"] == "version_close":
             n += await _apply_close(conn, m, event_id, at)
+        elif m["op"] == "version_revise":  # D-118: the writer's span revision
+            n += await _apply_revise(conn, m, event_id, at)
+        elif m["op"] == "version_reopen":  # D-118: the compensation of a close or a revision
+            n += await _apply_reopen(conn, m, event_id, at)
         else:  # pragma: no cover - guarded by materialize
             raise ValueError(f"unknown mutation {m['op']!r}")
     return n
@@ -429,6 +585,10 @@ async def upsert_signal(conn: AsyncConnection, m: dict[str, Any], event_id: int,
 
 
 async def _apply_close(conn: AsyncConnection, m: dict[str, Any], event_id: int, at: datetime) -> int:
+    """Apply a recorded ``version_close``. A D-118 writer close (``keep_source``) keeps the
+    survivor's ``source`` and ``code_refs`` like a write-path survivor; a librarian close record
+    (no flag) is applied exactly as before, so older events replay byte-identically."""
+    keep = bool(m.get("keep_source"))
     sup = [int(v) for v in m["superseded"]]
     if await q.supersede_versions(conn, sup, at) != len(sup):
         raise AuthorityLost("a version to close changed concurrently")
@@ -459,8 +619,11 @@ async def _apply_close(conn: AsyncConnection, m: dict[str, Any], event_id: int, 
                 source_event_id=event_id,
                 supersedes_version_id=base.version_id,
                 last_access_at=base.last_access_at,
+                source=base.source if keep else None,
             ),
         )
+        if keep:
+            await _copy_code_refs(conn, int(sv["version_id"]), base.version_id)
         await q.insert_chunks(
             conn,
             [
@@ -480,6 +643,391 @@ async def _apply_close(conn: AsyncConnection, m: dict[str, Any], event_id: int, 
             ],
         )
     return 1 + len(m["survivors"])
+
+
+async def _copy_code_refs(conn: AsyncConnection, version_id: int, base_version_id: int) -> None:
+    """A copied row keeps its base's ``code_refs`` (the W1.5 describes projection), exactly as a
+    write-path survivor does (``survivor_code_refs``)."""
+    from hlmemo.core.import_contract import survivor_code_refs
+    from hlmemo.db import import_queries as iq
+
+    await iq.insert_code_refs(conn, await survivor_code_refs(conn, [(version_id, base_version_id)]))
+
+
+async def _apply_revise(conn: AsyncConnection, m: dict[str, Any], event_id: int, at: datetime) -> int:
+    """Apply a recorded ``version_revise`` (live and replay): supersede the old head, insert its
+    survivor and the revised version (body rebuilt from the base row + the recorded span and
+    replacement, checked against ``body_sha256``; chunks sliced at the recorded offsets; source and
+    code_refs kept), then the self-link segments."""
+    from dataclasses import replace
+
+    from hlmemo.librarian import revise as rv
+
+    sup = [int(v) for v in m["superseded"]]
+    if await q.supersede_versions(conn, sup, at) != len(sup):
+        raise AuthorityLost("a version to revise changed concurrently")
+    base = await q.get_version(conn, int(m["base_version_id"]))
+    if base is None:  # pragma: no cover - the record names an existing row
+        raise ValueError(f"revision base {m['base_version_id']} missing")
+    start, end = int(m["span"][0]), int(m["span"][1])
+    if base.body[start:end] != m["old_span"]:
+        raise ValueError(f"revision of v{base.version_id}: the recorded span does not match")
+    body = rv.apply_span(base.body, start, end, m["replacement"])
+    if rv.sha256_text(body) != m["body_sha256"]:
+        raise ValueError(f"revision of v{base.version_id}: body_sha256 mismatch")
+    sv, nv = m["survivor"], m["version"]
+    for rec, text, vf, vt, tokens, access in (
+        (sv, base.body, sv["valid_from"], sv["valid_to"], base.token_count, base.last_access_at),
+        (nv, body, nv["valid_from"], nv.get("valid_to"), int(nv["token_count"]), None),
+    ):
+        vid = int(rec["version_id"])
+        await q.insert_version(
+            conn,
+            q.VersionRow(
+                version_id=vid,
+                logical_id=base.logical_id,
+                project_id=base.project_id,
+                project_ids=list(base.project_ids),
+                device_scope=base.device_scope,
+                kind=base.kind,
+                status=base.status,
+                title=base.title,
+                body=text,
+                tags=list(base.tags),
+                pinned=base.pinned,
+                stability=base.stability,
+                importance=base.importance,
+                token_count=tokens,
+                valid_from=parse_ts(vf, field="valid_from"),
+                valid_to=parse_opt_ts(vt, field="valid_to"),
+                recorded_at=at,
+                source_event_id=event_id,
+                supersedes_version_id=base.version_id,
+                last_access_at=access,
+                source=base.source,  # the provenance is kept (byte-identical)
+            ),
+        )
+        await _copy_code_refs(conn, vid, base.version_id)
+        await q.insert_chunks(
+            conn,
+            [
+                q.ChunkRow(
+                    chunk_id=int(c["chunk_id"]),
+                    version_id=vid,
+                    project_ids=list(base.project_ids),
+                    device_scope=base.device_scope,
+                    ordinal=int(c["ordinal"]),
+                    char_start=int(c["char_start"]),
+                    char_end=int(c["char_end"]),
+                    text=text[int(c["char_start"]) : int(c["char_end"])],
+                    text_norm=normalize(text[int(c["char_start"]) : int(c["char_end"])]),
+                    e5_tokens=int(c["e5_tokens"]),
+                )
+                for c in rec["chunks"]
+            ],
+        )
+    links_sup = [int(x) for x in m.get("links_superseded") or []]
+    if await q.supersede_links(conn, links_sup, at) != len(links_sup):
+        raise AuthorityLost("a self-link of the revised item changed concurrently")
+    for ls in m.get("link_survivors") or []:
+        old = await q.get_link(conn, int(ls["from_link_id"]))
+        if old is None:  # pragma: no cover - the record names an existing link
+            raise ValueError(f"link survivor base {ls['from_link_id']} missing")
+        await q.insert_link(
+            conn,
+            replace(
+                old,
+                link_id=int(ls["link_id"]),
+                valid_from=parse_ts(ls["valid_from"], field="valid_from"),
+                valid_to=parse_opt_ts(ls.get("valid_to"), field="valid_to"),
+                recorded_at=at,
+                source_event_id=event_id,
+                supersedes_link_id=old.link_id,
+            ),
+        )
+    ln = m["link"]
+    await q.insert_link(
+        conn,
+        q.LinkRow(
+            link_id=int(ln["link_id"]),
+            project_id=int(ln["project_id"]),
+            project_ids=[int(p) for p in ln["project_ids"]],
+            device_scope=ln["device_scope"],
+            src_logical_id=base.logical_id,
+            dst_logical_id=base.logical_id,
+            dst_version_id=int(ln["dst_version_id"]),
+            rel="supersedes",
+            props=ln.get("props") or {},
+            valid_from=parse_ts(ln["valid_from"], field="valid_from"),
+            valid_to=parse_opt_ts(ln.get("valid_to"), field="valid_to"),
+            recorded_at=at,
+            source_event_id=event_id,
+        ),
+    )
+    return 3 + len(links_sup) + len(m.get("link_survivors") or [])
+
+
+async def _apply_reopen(conn: AsyncConnection, m: dict[str, Any], event_id: int, at: datetime) -> int:
+    """Apply a recorded ``version_reopen`` (live and replay): supersede the rows a close or a
+    revision left and insert the restored copies of the rows it had superseded (content, chunks,
+    source and code_refs of the original)."""
+    sup = [int(v) for v in m["superseded"]]
+    if await q.supersede_versions(conn, sup, at) != len(sup):
+        raise AuthorityLost("a version to reopen changed concurrently")
+    for rv in m["restored"]:
+        base = await q.get_version(conn, int(rv["from_version_id"]))
+        if base is None:  # pragma: no cover - the record names an existing row
+            raise ValueError(f"reopen base {rv['from_version_id']} missing")
+        await q.insert_version(
+            conn,
+            q.VersionRow(
+                version_id=int(rv["version_id"]),
+                logical_id=base.logical_id,
+                project_id=base.project_id,
+                project_ids=list(base.project_ids),
+                device_scope=base.device_scope,
+                kind=base.kind,
+                status=base.status,
+                title=base.title,
+                body=base.body,
+                tags=list(base.tags),
+                pinned=base.pinned,
+                stability=base.stability,
+                importance=base.importance,
+                token_count=base.token_count,
+                valid_from=parse_ts(rv["valid_from"], field="valid_from"),
+                valid_to=parse_opt_ts(rv.get("valid_to"), field="valid_to"),
+                recorded_at=at,
+                source_event_id=event_id,
+                supersedes_version_id=base.version_id,
+                last_access_at=base.last_access_at,
+                source=base.source,
+            ),
+        )
+        await _copy_code_refs(conn, int(rv["version_id"]), base.version_id)
+        await q.insert_chunks(
+            conn,
+            [
+                q.ChunkRow(
+                    chunk_id=int(c["chunk_id"]),
+                    version_id=int(rv["version_id"]),
+                    project_ids=list(base.project_ids),
+                    device_scope=base.device_scope,
+                    ordinal=int(c["ordinal"]),
+                    char_start=int(c["char_start"]),
+                    char_end=int(c["char_end"]),
+                    text=base.body[int(c["char_start"]) : int(c["char_end"])],
+                    text_norm=normalize(base.body[int(c["char_start"]) : int(c["char_end"])]),
+                    e5_tokens=int(c["e5_tokens"]),
+                )
+                for c in rv["chunks"]
+            ],
+        )
+    return len(sup) + len(m["restored"])
+
+
+# --------------------------------------------------------------------------- reversal (D-118)
+#: the ops whose events RESTORE rows as copies (a reversal): only their recorded copies stand for
+#: the rows they restored (never an ordinary write that happens to look the same)
+_REVERSAL_OPS = ["revert_write_update"]
+#: the reversal ops that restore superseded self-links as copies (``link_insert`` naming the original
+#: in ``supersedes_link_id``)
+_LINK_RESTORING_OPS = ["revert_write_update"]
+
+
+async def _live_version(conn: AsyncConnection, logical_id: int, version_id: int) -> int | None:
+    """The CURRENT row that stands for ``version_id``: itself while current, else the copy a
+    REVERSAL restored of it — the ``restored`` row of a recorded ``version_reopen`` whose
+    ``from_version_id`` is it — transitively; ``None`` when neither is current (a later revision,
+    close or write replaced it)."""
+    vid = int(version_id)
+    for _ in range(16):
+        cur = await conn.execute(
+            "SELECT superseded_at = 'infinity' FROM memory_versions"
+            " WHERE version_id = %s AND logical_id = %s",
+            (vid, int(logical_id)),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        if row[0]:
+            return vid
+        cur = await conn.execute(
+            """
+            SELECT (r->>'version_id')::bigint
+              FROM events e, jsonb_array_elements(e.payload->'resolved'->'mutations') m,
+                   jsonb_array_elements(m->'restored') r
+             WHERE e.kind = 'librarian' AND e.payload->'request'->>'op' = ANY(%s)
+               AND m->>'op' = 'version_reopen' AND (m->>'logical_id')::bigint = %s
+               AND (r->>'from_version_id')::bigint = %s
+             ORDER BY 1 DESC LIMIT 1
+            """,
+            (_REVERSAL_OPS, int(logical_id), vid),
+        )
+        copy = await cur.fetchone()
+        if copy is None:
+            return None
+        vid = int(copy[0])
+    return None  # pragma: no cover - a reversal chain this deep does not exist
+
+
+async def _live_link(conn: AsyncConnection, link_id: int) -> q.LinkRow | None:
+    """The LIVE link row that stands for ``link_id``: itself, else the copy a reversal restored of
+    it (its recorded ``link_insert`` names it as ``supersedes_link_id``), transitively."""
+    lk = int(link_id)
+    for _ in range(16):
+        row = await q.get_link(conn, lk)
+        if row is None:
+            return None
+        cur = await conn.execute("SELECT superseded_at = 'infinity' FROM links WHERE link_id = %s", (lk,))
+        (live,) = await cur.fetchone()
+        if live:
+            return row
+        cur = await conn.execute(
+            """
+            SELECT (m->>'link_id')::bigint
+              FROM events e, jsonb_array_elements(e.payload->'resolved'->'mutations') m
+             WHERE e.kind = 'librarian' AND e.payload->'request'->>'op' = ANY(%s)
+               AND m->>'op' = 'link_insert' AND (m->>'supersedes_link_id')::bigint = %s
+             ORDER BY 1 DESC LIMIT 1
+            """,
+            (_LINK_RESTORING_OPS, lk),
+        )
+        copy = await cur.fetchone()
+        if copy is None:
+            return None
+        lk = int(copy[0])
+    return None  # pragma: no cover
+
+
+async def unrevise_records(
+    conn: AsyncConnection, rev: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[datetime]] | str:
+    """The COMPENSATION of an applied ``version_revise`` record (nothing deleted), built from
+    existing ops so replay needs nothing new: ``version_reopen`` supersedes the revision's survivor
+    and revised version (or the copies a later reversal restored of them) and restores a copy of
+    the pre-revision head with its ORIGINAL validity, text, chunks, source and code_refs;
+    ``link_supersede`` ends the revision's self-link and its link survivors; ``link_insert``
+    restores the self-links the revision had superseded (``supersedes_link_id`` names the original,
+    so a later reversal finds them). The caller holds the item lock.
+
+    Refused (returns the reason) when a LATER change depends on it: the revised version is no
+    longer the item's head (a later revision, close or write), a row of the revision is no longer
+    current, a current segment was recorded after it, or a link of the revision is not live."""
+    lid = int(rev["logical_id"])
+    rows = await q.current_versions(conn, lid)
+    current = {r.version_id: r for r in rows}
+    sv = await _live_version(conn, lid, int(rev["survivor"]["version_id"]))
+    nv = await _live_version(conn, lid, int(rev["version"]["version_id"]))
+    if sv is None or nv is None or nv not in current or sv not in current or max(current) != nv:
+        return "a later revision or change depends on this revision"
+    if any(r.recorded_at > current[nv].recorded_at for v, r in current.items() if v not in (sv, nv)):
+        return "a later revision or change depends on this revision"  # pragma: no cover
+    base = await q.get_version(conn, int(rev["base_version_id"]))
+    if base is None:  # pragma: no cover - the record names a real row
+        return "the pre-revision version is missing"
+    link_rows: list[q.LinkRow] = []
+    for k in [int(rev["link"]["link_id"]), *(int(x["link_id"]) for x in rev.get("link_survivors") or [])]:
+        live = await _live_link(conn, k)
+        if live is None:
+            return "a link of the revision is no longer live"
+        link_rows.append(live)
+    (vid,) = await q.allocate_ids(conn, "memory_versions", 1)
+    chunks = await q.chunks_of_version(conn, base.version_id)
+    cids = await q.allocate_ids(conn, "chunks", len(chunks))
+    restored_links = [await q.get_link(conn, int(x)) for x in rev.get("links_superseded") or []]
+    link_ids = await q.allocate_ids(conn, "links", len(restored_links))
+    records: list[dict[str, Any]] = [
+        {
+            "op": "version_reopen",
+            "capability": "correct",
+            "logical_id": lid,
+            "superseded": sorted({sv, nv}),
+            "restored": [
+                {
+                    "version_id": vid,
+                    "from_version_id": base.version_id,
+                    "valid_from": fmt_ts(base.valid_from),
+                    "valid_to": fmt_ts(base.valid_to),
+                    "chunks": _chunk_json(chunks, cids),
+                }
+            ],
+            "reverts_revision": int(rev["version"]["version_id"]),
+        },
+        *({"op": "link_supersede", "link_id": ln.link_id, "rel": ln.rel} for ln in link_rows),
+    ]
+    for old, new_id in zip(restored_links, link_ids, strict=True):
+        if old is None:  # pragma: no cover - the record names a real link
+            return "a superseded self-link is missing"
+        records.append(
+            {
+                "op": "link_insert",
+                "capability": "annotate",
+                "rel": old.rel,
+                "link_id": new_id,
+                "src_logical_id": old.src_logical_id,
+                "dst_logical_id": old.dst_logical_id,
+                "dst_version_id": old.dst_version_id,
+                "project_id": old.project_id,
+                "project_ids": list(old.project_ids),
+                "device_scope": old.device_scope,
+                "props": dict(old.props or {}),
+                "valid_from": fmt_ts(old.valid_from),
+                "valid_to": fmt_ts(old.valid_to),
+                "supersedes_link_id": old.link_id,
+                "assessed": {},
+            }
+        )
+    recorded = [current[sv].recorded_at, current[nv].recorded_at, *(ln.recorded_at for ln in link_rows)]
+    return records, recorded
+
+
+async def reopen_record(
+    conn: AsyncConnection, close_rec: dict[str, Any], closed_at: datetime
+) -> tuple[dict[str, Any], list[datetime]] | None:
+    """The COMPENSATION of an applied ``version_close`` record (nothing is deleted): the close's
+    survivor rows are superseded and every row the close superseded is restored as a new version
+    with its ORIGINAL validity, content, chunks and provenance. Version-checked against the state
+    the close left (``closed_at`` = its event's recorded_at): every survivor is still current, and
+    every OTHER current segment predates the close (a segment the close never touched) — a revision
+    since the close makes it ``None`` (nothing can be reverted automatically). Returns ``(record,
+    recorded_at of the rows it supersedes)``."""
+    lid = int(close_rec["logical_id"])
+    rows = await q.current_versions(conn, lid)
+    survivors = sorted(int(sv["version_id"]) for sv in close_rec["survivors"])
+    current = {r.version_id: r for r in rows}
+    if not set(survivors) <= set(current) or any(
+        r.recorded_at >= closed_at for v, r in current.items() if v not in survivors
+    ):
+        return None
+    rows = [current[v] for v in survivors]  # only the survivors are superseded
+    originals = [await q.get_version(conn, int(v)) for v in close_rec["superseded"]]
+    if any(o is None for o in originals):  # pragma: no cover - the close record names real rows
+        return None
+    vids = await q.allocate_ids(conn, "memory_versions", len(originals))
+    restored: list[dict[str, Any]] = []
+    for o, vid in zip(originals, vids, strict=True):
+        assert o is not None
+        chunks = await q.chunks_of_version(conn, o.version_id)
+        cids = await q.allocate_ids(conn, "chunks", len(chunks))
+        restored.append(
+            {
+                "version_id": vid,
+                "from_version_id": o.version_id,
+                "valid_from": fmt_ts(o.valid_from),
+                "valid_to": fmt_ts(o.valid_to),  # None = infinity (the usual open item)
+                "chunks": _chunk_json(chunks, cids),
+            }
+        )
+    record = {
+        "op": "version_reopen",
+        "capability": "correct",
+        "logical_id": lid,
+        "superseded": survivors,
+        "restored": restored,
+        "reverts_cut": close_rec.get("valid_to"),
+    }
+    return record, [r.recorded_at for r in rows]
 
 
 async def mark_done_by_key(conn: AsyncConnection, done: dict[str, Any], at: datetime) -> None:
@@ -653,6 +1201,7 @@ __all__ = [
     "check_correct",
     "check_link",
     "close_embed_jobs",
+    "close_record",
     "head_endpoint",
     "insert_questions",
     "is_stale",
@@ -664,9 +1213,13 @@ __all__ = [
     "pending_question_exists",
     "readable",
     "recheck",
+    "reopen_record",
     "restore_deferred",
+    "revise_build",
+    "revise_cut",
     "set_question_status",
     "signal_record",
     "ts",
+    "unrevise_records",
     "upsert_signal",
 ]

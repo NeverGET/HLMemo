@@ -230,6 +230,11 @@ class Settings(BaseSettings):
     # W2b (D-067): who gives the second opinion on high-impact proposals: "cross" = the other
     # profile of the chain (primary <-> fallback), "self" = the answering profile again.
     librarian_verifier: str = Field(default="cross", pattern="^(cross|self)$")
+    # D-113 (owner) / D-118: the item kinds a span revision or a close may change — living
+    # knowledge. Historical records keep their text (episodes/session logs, and decision/ADR records
+    # of any kind: librarian/revise.decision_record); a write-time update of one only adds a
+    # supersedes link. Comma-separated kinds; enforced at write time (librarian/revise.revisable).
+    librarian_revise_kinds: str = "fact,lesson,doc_chunk"
     # e2e #7: jobs processed concurrently by ONE librarian process (each with its own connection,
     # lease keeper and fenced done; spend guard + lineage ceiling are atomic in the database).
     librarian_concurrency: int = Field(default=3, ge=1, le=16)
@@ -400,6 +405,24 @@ class Settings(BaseSettings):
                 return None
             return json.loads(v)
         return v
+
+    @field_validator("librarian_revise_kinds", mode="before")
+    @classmethod
+    def _revise_kinds(cls, v: Any) -> Any:
+        """``HLM_LIBRARIAN_REVISE_KINDS``: a comma-separated (or JSON list) subset of the item kinds;
+        an unknown kind is a configuration error (fail fast)."""
+        from typing import get_args
+
+        from hlmemo.core.write_models import Kind
+
+        items = (
+            v if isinstance(v, list | tuple) else str(v or "").replace("[", "").replace("]", "").split(",")
+        )
+        kinds = [str(k).strip().strip("'\"").lower() for k in items if str(k).strip().strip("'\"")]
+        unknown = sorted(set(kinds) - set(get_args(Kind)))
+        if unknown:
+            raise ValueError(f"HLM_LIBRARIAN_REVISE_KINDS: unknown kind(s) {unknown}")
+        return ",".join(dict.fromkeys(kinds))
 
     @field_validator("task_fallback_profiles", mode="before")
     @classmethod
