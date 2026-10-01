@@ -1806,3 +1806,20 @@ D-221 | 2026-10-01 | ACCEPTED (owner-approved release, D-219) | **R4.1 is LIVE i
   - the negative question was answered "the memory records none".
 - Rollback: `deploy.sh --rollback hlm-deploy` returns to R4 5025db5 from the server's local checkout, with no GitHub fetch.
 - TODO: pick the SSH route (IPv4/IPv6) automatically in deploy.sh, remote_gates and hlm_ops.
+D-222 | 2026-10-01 | ACCEPTED (owner directive) | **Lesson extraction and cross-project lessons are treated as a one-way door: they become the agent's permanent knowledge.**
+- Owner: "make sure this system works fine and firm, this will be your real permanent knowledge in the future."
+- Every lesson gets an explicit schema:
+  - When / Do / Avoid;
+  - verbatim evidence, from ≥ 2 projects for a cross-project lesson;
+  - Not verified for;
+  - scope tags (stack and version);
+  - a recurrence count;
+  - first-seen and last-confirmed dates.
+- It also gets a lifecycle: supersede, retract and decay. An outdated scope version is flagged, never silently applied.
+- Gates:
+  - a pre-registered ceiling run;
+  - dual review (Astra + Sol), at most 2 rounds, then the owner's risk call;
+  - harmful = 0;
+  - owner review of every global lesson in v1 (no auto-promotion).
+- Outcome metric: recurrences after promotion and the catch rate of lesson-backed risk checks. The question is whether the lesson prevents the repeat.
+- Evidence comes from past session transcripts as well as memory files, scrubbed and approved by the owner per project.
