@@ -55,6 +55,18 @@ def _commit(repo: Path, files: dict[str, str | bytes | None], message: str) -> N
     _git(repo, "commit", "-q", "-m", message)
 
 
+TERM = "acmesecretproj"  # synthetic: the tests never carry a real owner term
+
+
+def _denylist(repo: Path, text: str | None) -> None:
+    path = repo / "docs" / "private" / "publish-denylist.txt"
+    if text is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     """main + r4-rc, clean: code, docs and a .env.example."""
@@ -74,6 +86,7 @@ def repo(tmp_path: Path) -> Path:
     _git(r, "checkout", "-q", "-b", "r4-rc")
     _commit(r, {"src/feature.py": "print('r4')\n"}, "feature")
     _git(r, "checkout", "-q", "main")
+    _denylist(r, "")  # untracked and private, like the real one; an empty file means no terms
     return r
 
 
@@ -194,3 +207,54 @@ def test_usage_errors(repo: Path, tmp_path: Path) -> None:
         subprocess.run(["bash", str(SCRIPT), "--repo", str(tmp_path), "main"], capture_output=True).returncode
         == 64
     )
+
+
+def test_owner_terms_an_added_line_fails_and_the_term_is_never_printed(repo: Path) -> None:
+    _denylist(repo, f"# synthetic\n\n{TERM.upper()}\n")  # case-insensitive, comments and blanks ignored
+    _commit(repo, {"docs/notes.md": f"one\ntwo\nsee {TERM} here\n"}, "innocent message")
+    res = _run(repo, "main")
+    assert res.returncode == 1, res.stdout
+    assert _line(res.stdout, "owner-terms").startswith("FAIL"), res.stdout
+    assert "main:docs/notes.md:3" in res.stdout and "docs/notes.md:3" in res.stdout
+    assert TERM not in res.stdout.lower() and TERM not in res.stderr.lower()
+    assert "see " not in res.stdout.replace("see the", "")  # the line text is not shown
+
+
+def test_owner_terms_already_public_history_passes_with_base(repo: Path) -> None:
+    _denylist(repo, f"{TERM}\n")
+    _commit(repo, {"docs/old.md": f"{TERM}\n"}, "published")
+    _git(repo, "branch", "published")
+    _commit(repo, {"docs/new.md": "clean\n"}, "new, clean")
+    res = _run(repo, "--base", "published", "main")
+    assert _line(res.stdout, "owner-terms").startswith("PASS"), res.stdout
+    assert TERM not in res.stdout.lower()
+    without = _run(repo, "main")  # the full history sees it
+    assert _line(without.stdout, "owner-terms").startswith("FAIL"), without.stdout
+    _commit(repo, {"docs/old.md": f"{TERM}\nmore\n"}, "touches the public file")  # a changed blob is new
+    assert _line(_run(repo, "--base", "published", "main").stdout, "owner-terms").startswith("FAIL")
+
+
+def test_owner_terms_a_commit_message_fails(repo: Path) -> None:
+    _denylist(repo, f"{TERM}\n")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", f"work on {TERM} integration")
+    res = _run(repo, "main")
+    line = _line(res.stdout, "owner-terms")
+    assert line.startswith("FAIL"), res.stdout
+    sha = _git(repo, "rev-parse", "HEAD").strip()
+    assert f"commit {sha}" in res.stdout
+    assert TERM not in res.stdout.lower()
+
+
+def test_owner_terms_a_missing_denylist_fails_with_instructions(repo: Path) -> None:
+    _denylist(repo, None)
+    res = _run(repo, "main")
+    line = _line(res.stdout, "owner-terms")
+    assert line.startswith("FAIL") and "docs/private/publish-denylist.txt" in line, res.stdout
+    assert res.returncode == 1
+
+
+def test_owner_terms_an_empty_denylist_passes(repo: Path) -> None:
+    _denylist(repo, "# only a comment\n\n")
+    _commit(repo, {"docs/a.md": f"{TERM}\n"}, f"{TERM}")
+    res = _run(repo, "main")
+    assert _line(res.stdout, "owner-terms").startswith("PASS"), res.stdout

@@ -16,6 +16,14 @@
 #   key-grep       a grep of every tracked file of each ref for key-shaped strings (Google AIza…,
 #                  OpenRouter sk-or-…, Anthropic sk-ant-…, GitHub ghp_…, a PEM private key); it lists
 #                  ref:path only, never the match.
+#   owner-terms    D-220: the public repo must never contain data about the owner's other projects. The
+#                  denylist is PRIVATE and gitignored: docs/private/publish-denylist.txt in the repo (one
+#                  term per line, `#` comments, case-insensitive literal match; an empty file = no terms =
+#                  PASS; a missing file = FAIL). Scans the ADDED lines of the history range (with --base:
+#                  only commits not in REF; otherwise the full history), the commit messages of that
+#                  range, and the tracked content of each ref. With --base, tree hits whose blob is
+#                  already in the base tree at the same path are skipped (already public). It lists
+#                  ref:path / commit <sha> with the line NUMBER only, never the term or the line text.
 # Prints PASS/FAIL per check and a RESULT line. Exit 0 = every check PASS, 1 = a FAIL, 64 = usage.
 # Usage: prepush_check.sh [--repo DIR] [--base REF] <ref>...   e.g. prepush_check.sh --base origin/main main r4-rc
 set -uo pipefail
@@ -157,6 +165,82 @@ check_large_blobs() {
     fi
 }
 
+DENYLIST_REL=docs/private/publish-denylist.txt
+
+# Reads "ref<NUL>line<NUL>text" git-grep records on stdin; prints "ref:path:line" (never the text),
+# dropping paths whose blob is identical in the base tree (already public).
+OWNER_TREE_FILTER='
+import subprocess, sys
+ref, base = sys.argv[1], sys.argv[2]
+seen = {}
+def blob(r, path):
+    p = subprocess.run(["git", "rev-parse", "-q", "--verify", r + ":" + path], capture_output=True, text=True)
+    return p.stdout.strip() if p.returncode == 0 else None
+for raw in sys.stdin.buffer:
+    parts = raw.rstrip(b"\n").split(b"\0", 2)
+    if len(parts) < 3:
+        continue
+    path = parts[0].decode("utf-8", "replace")[len(ref) + 1:]
+    if base:
+        if path not in seen:
+            mine = blob(ref, path)
+            seen[path] = mine is not None and mine == blob(base, path)
+        if seen[path]:
+            continue
+    print(ref + ":" + path + ":" + parts[1].decode())
+'
+
+# Reads `git log -p -U0 --format="@@COMMIT <sha>"` on stdin; prints "commit <sha12>  path:line" for each
+# ADDED line containing a term (terms file = $1). Hunk-aware, so "+++"/"---" content lines are not headers.
+OWNER_LOG_AWK='
+BEGIN { while ((getline t < tf) > 0) terms[++n] = tolower(t) }
+function hit(s,   i, l) { l = tolower(s); for (i = 1; i <= n; i++) if (index(l, terms[i])) return 1; return 0 }
+/^@@COMMIT / { sha = substr($2, 1, 12); orem = nrem = 0; next }
+orem > 0 && substr($0, 1, 1) == "-" { orem--; next }
+nrem > 0 && substr($0, 1, 1) == "+" { nrem--; if (hit(substr($0, 2))) print "commit " sha "  " file ":" ln; ln++; next }
+/^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
+/^@@ / {
+    split($2, o, ","); split($3, c, ",")
+    orem = (o[2] == "" ? 1 : o[2]); nrem = (c[2] == "" ? 1 : c[2]); ln = substr(c[1], 2) + 0; next
+}
+'
+
+check_owner_terms() {
+    local list="$PWD/$DENYLIST_REL" terms="$tmp/terms" ref sha rc
+    local range=("${refs[@]}" "${exclude[@]}")
+    if [ ! -f "$list" ]; then
+        result owner-terms FAIL "denylist missing: create $DENYLIST_REL (one owner project term per line, # comments; an empty file means no terms)"
+        return
+    fi
+    # strip CR, comments, surrounding blanks and empty lines (an empty pattern would match everything)
+    tr -d '\r' <"$list" | sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' >"$terms" || true
+    : >"$tmp/owner"
+    if [ -s "$terms" ]; then
+        git -c core.quotepath=off log -p -U0 --no-color --format='@@COMMIT %H' "${range[@]}" |
+            awk -v tf="$terms" "$OWNER_LOG_AWK" >>"$tmp/owner"
+        for sha in $(git log --format=%H "${range[@]}"); do
+            if git show -s --format=%B "$sha" | grep -qiF -f "$terms"; then
+                echo "commit $sha  (message)" >>"$tmp/owner"
+            fi
+        done
+        for ref in "${refs[@]}"; do
+            git grep -I -n -i -F -f "$terms" --null "$ref" -- 2>/dev/null |
+                python3 -c "$OWNER_TREE_FILTER" "$ref" "$base" >>"$tmp/owner"
+            rc=("${PIPESTATUS[@]}") # git grep: 0 = match, 1 = none, >1 = error
+            if [ "${rc[0]}" -gt 1 ] || [ "${rc[1]}" -ne 0 ]; then
+                result owner-terms FAIL "could not scan the tree of $ref"
+                return
+            fi
+        done
+    fi
+    if [ -s "$tmp/owner" ]; then
+        result owner-terms FAIL "$(sort -u "$tmp/owner" | wc -l | tr -d ' ') owner-term hit(s) (location and line number only; the term is not shown)"
+        sort -u "$tmp/owner" | indent
+    else
+        result owner-terms PASS "no denylisted owner term in the scanned history, messages or trees ($(wc -l <"$terms" | tr -d ' ') term(s))"
+    fi
+}
+
 check_key_grep() {
     local ref rc bad=0
     : >"$tmp/keys"
@@ -180,6 +264,7 @@ check_gitleaks
 check_private_paths
 check_large_blobs
 check_key_grep
+check_owner_terms
 if [ "$failed" -eq 0 ]; then
     echo "RESULT PASS"
     exit 0
