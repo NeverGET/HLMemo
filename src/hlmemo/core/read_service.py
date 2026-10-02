@@ -16,7 +16,8 @@ the caller can see. A query hit whose item is targeted carries ``superseded: tru
 whole-superseded hit when its superseder is among the hits). ``memory.raw`` carries the incoming
 ``superseded_by: [{logical_id, version_id, scope, valid_from, valid_to, quote?}]`` (always present).
 Review 96: a PINNED link speaks only to a reader of the pinned version and only about that version
-or a body-identical copy of it (``read_queries.incoming_supersedes``); ``payload_item.updates``
+or a body-identical copy of it, or (a part link, review 98) a later version still quoting it verbatim
+(``read_queries.incoming_supersedes``); ``payload_item.updates``
 keeps only the entries whose target the reader may see (``_filter_item_updates``).
 """
 

@@ -310,7 +310,8 @@ async def cross_project_excluded(
 
 def _version_map(logical_ids: list[int], version_of: dict[int, int | None] | None) -> tuple[list, list]:
     """``(logical ids, the version read for each or None)`` for ``read_queries.pinned_applies``: a
-    pinned link speaks only about the version the caller reads (or its body-identical copy); a
+    pinned link speaks only about the version the caller reads (its pinned version, a body-identical
+    copy, or a later version still quoting a part link verbatim); a
     logical id without one version (none given, or several) matches no pinned link."""
     lids = sorted(set(logical_ids))
     vids = [(version_of or {}).get(lid) for lid in lids]
@@ -339,8 +340,9 @@ async def supersession_among(
 
     Review 96 Astra #1: a PINNED link (``dst_version_id``) counts only for the superseded item's
     version the caller reads (``version_of``: logical id → that hit's version) when it is the pinned
-    version or a body-identical copy and the caller may read the pinned one
-    (``read_queries.pinned_applies``); an unpinned link is unchanged."""
+    version, a body-identical copy, or (a part link, review 98) a later version still quoting it, and
+    the caller may read the pinned one (``read_queries.pinned_applies``); an unpinned link is
+    unchanged."""
     from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L, pinned_applies
 
     if len(logical_ids) < 2:
@@ -419,22 +421,6 @@ async def supersessions_of(
     return [(int(s), int(d), bool(p), str(q)) for s, d, p, q in await cur.fetchall()]
 
 
-async def superseded_among(
-    conn: AsyncConnection,
-    logical_ids: list[int],
-    *,
-    pid: int,
-    scopes: list[str],
-    valid_at: datetime,
-    known_at: datetime,
-) -> set[int]:
-    """The hidden ids of ``supersession_among`` (whole-item supersession only)."""
-    hidden, _partial = await supersession_among(
-        conn, logical_ids, pid=pid, scopes=scopes, valid_at=valid_at, known_at=known_at
-    )
-    return hidden
-
-
 async def project_slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[int, str]:
     if not project_ids:
         return {}
@@ -460,7 +446,6 @@ __all__ = [
     "project_slugs",
     "readable_projects",
     "subject_vectors",
-    "superseded_among",
     "supersession_among",
     "supersessions_of",
     "vector_list",

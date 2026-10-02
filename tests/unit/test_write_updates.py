@@ -255,6 +255,43 @@ def test_r96_astra2_the_restore_chain_has_no_fixed_length_bound(last: int, monke
     assert asyncio.run(actor._live_link(conn, 1)) == f"link-{last}"
 
 
+def test_r98_every_supersedes_reader_takes_the_version_read() -> None:
+    """Review 98 #3: the old ``superseded_among`` wrapper called ``supersession_among`` without
+    ``version_of``, so it silently dropped every pinned link. It is gone; every remaining reader of
+    ``supersedes`` links in ``librarian_queries`` applies ``pinned_applies`` with the version read."""
+    import inspect
+
+    from hlmemo.db import librarian_queries as lq
+
+    assert not hasattr(lq, "superseded_among") and "superseded_among" not in lq.__all__
+    readers = {n: f for n, f in inspect.getmembers(lq, inspect.iscoroutinefunction) if n.startswith("supers")}
+    assert set(readers) == {"supersession_among", "supersessions_of"}
+    for f in readers.values():
+        assert "version_of" in inspect.signature(f).parameters
+        assert 'pinned_applies("l", "hv.vid")' in inspect.getsource(f)
+
+
+def test_r98_the_part_carry_is_for_part_links_from_another_item_with_a_quote_only() -> None:
+    """Review 98 #1: the carry to a later version is guarded in SQL (part scope, another item, a
+    non-empty quote held verbatim by a later version of the same item) and sits behind the pinned
+    version's authorization like the copy chain."""
+    from hlmemo.db.read_queries import pinned_applies, pinned_part_carry
+
+    carry = pinned_part_carry("l", "v")
+    for guard in (
+        "COALESCE(l.props->>'scope', 'whole') = 'part'",
+        "l.src_logical_id <> l.dst_logical_id",
+        "length(COALESCE(l.props->>'quote', '')) > 0",
+        "pv.logical_id = l.dst_logical_id",
+        "pv.version_id > l.dst_version_id",
+        "strpos(pv.body, l.props->>'quote') > 0",
+    ):
+        assert guard in carry, guard
+    sql = " ".join(pinned_applies("l", "v").split())
+    authz = sql.index("pd.version_id = l.dst_version_id")
+    assert authz < sql.index("WITH RECURSIVE") and authz < sql.index("strpos(")
+
+
 # --------------------------------------------------------------------------- D-113 floor
 @pytest.mark.parametrize("kind", sorted(revise.PROTECTED_KINDS))
 def test_session_logs_are_protected_even_when_the_kinds_list_names_them(kind: str) -> None:

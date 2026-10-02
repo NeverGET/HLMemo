@@ -667,23 +667,12 @@ class SupersededBy:
     valid_to: datetime | None
 
 
-def pinned_applies(link: str, version: str) -> str:
-    """SQL predicate (review 96 Astra #1): does the link ``link`` (an alias) speak about the version
-    ``version`` (an SQL expression; NULL never matches a pinned link)? Needs ``%(pid)s`` and
-    ``%(scopes)s``.
-
-    * An UNPINNED link (no ``dst_version_id``) is about its item: true (the caller checks time).
-    * A PINNED link (a D-118 update, a span revision's self-link, any link pinned to a version) is
-      true only when the caller may read the pinned version (§4.4 (a): its quote is that version's
-      text) AND ``version`` is that version or a BODY-IDENTICAL copy of it: its
-      ``supersedes_version_id`` chain inside the item, every hop with the same body (a close or
-      revision cut survivor, a write-path survivor, a reversal's restored copy). Never a later
-      revision whose text differs (it may be public where the pinned one was private). The chain
-      walks strictly older ids, so it ends."""
-    return f"""({link}.dst_version_id IS NULL OR (
-        EXISTS (SELECT 1 FROM memory_versions pd
-                 WHERE pd.version_id = {link}.dst_version_id AND {_authz("pd")})
-        AND {link}.dst_version_id IN (
+def pinned_copy(link: str, version: str) -> str:
+    """SQL predicate: ``version`` is the version the link ``link`` pins or a BODY-IDENTICAL copy of
+    it: its ``supersedes_version_id`` chain inside the item, every hop with the same body (a close or
+    revision cut survivor, a write-path survivor, a reversal's restored copy). The chain walks
+    strictly older ids, so it ends. No authorization: ``pinned_applies`` adds it."""
+    return f"""{link}.dst_version_id IN (
             WITH RECURSIVE pc(version_id, sup) AS (
                 SELECT ph.version_id, ph.supersedes_version_id FROM memory_versions ph
                  WHERE ph.version_id = {version}
@@ -694,7 +683,41 @@ def pinned_applies(link: str, version: str) -> str:
                   JOIN memory_versions ph ON ph.version_id = {version}
                  WHERE pp.version_id < pc.version_id AND pp.logical_id = ph.logical_id
                    AND pp.body = ph.body)
-            SELECT pc.version_id FROM pc)))"""
+            SELECT pc.version_id FROM pc)"""
+
+
+def pinned_part_carry(link: str, version: str) -> str:
+    """SQL predicate (review 98 #1): a pinned PART link from ANOTHER item still speaks about a LATER
+    version of its target item whose body holds the link's quote verbatim (an unrelated revision
+    kept the outdated statement: "TTL 60. Owner Alice." → "TTL 60. Owner Bob."). A whole link, a
+    span revision's self-link and an empty quote never carry. No authorization: ``pinned_applies``
+    adds it (the quote is the pinned version's text)."""
+    return f"""(COALESCE({link}.props->>'scope', 'whole') = 'part'
+            AND {link}.src_logical_id <> {link}.dst_logical_id
+            AND length(COALESCE({link}.props->>'quote', '')) > 0
+            AND EXISTS (SELECT 1 FROM memory_versions pv
+                         WHERE pv.version_id = {version} AND pv.logical_id = {link}.dst_logical_id
+                           AND pv.version_id > {link}.dst_version_id
+                           AND strpos(pv.body, {link}.props->>'quote') > 0))"""
+
+
+def pinned_applies(link: str, version: str) -> str:
+    """SQL predicate (review 96 Astra #1): does the link ``link`` (an alias) speak about the version
+    ``version`` (an SQL expression; NULL never matches a pinned link)? Needs ``%(pid)s`` and
+    ``%(scopes)s``.
+
+    * An UNPINNED link (no ``dst_version_id``) is about its item: true (the caller checks time).
+    * A PINNED link (a D-118 update, a span revision's self-link, any link pinned to a version) is
+      true only when the caller may read the pinned version (§4.4 (a): its quote is that version's
+      text) AND ``version`` is that version or a body-identical copy of it (``pinned_copy``), or, a
+      part link from another item, a later version of the item that still holds its quote verbatim
+      (``pinned_part_carry``, review 98 #1). Never a later revision whose text lost the quote, nor
+      any later revision for a whole link (it may be public where the pinned one was private)."""
+    return f"""({link}.dst_version_id IS NULL OR (
+        EXISTS (SELECT 1 FROM memory_versions pd
+                 WHERE pd.version_id = {link}.dst_version_id AND {_authz("pd")})
+        AND ({pinned_copy(link, version)}
+             OR {pinned_part_carry(link, version)})))"""
 
 
 async def incoming_supersedes(
@@ -712,9 +735,10 @@ async def incoming_supersedes(
       ``link.valid_to > version.valid_from``; touching intervals do not overlap);
     * a PINNED link (a D-118 update, a span revision's self-link, any link pinned to a version): only
       for a caller who may read the PINNED version (§4.4 (a); its quote is that version's text), and
-      only on that version or a body-identical copy of it (``pinned_applies``) — never on a later
-      revision of the item, whose text may differ (or be public where the pinned one was private).
-      Its valid time overlaps the version's, or the version is a copy that ends exactly where the
+      only on that version or a body-identical copy of it, or (a part link from another item) a
+      later version that still holds its quote verbatim (``pinned_applies``) — never on a later
+      revision that lost the quote (it may be public where the pinned one was private). Its valid time
+      overlaps the version's, or the version is a body-identical copy that ends exactly where the
       link starts (the cut survivor of the very close or revision the link records).
 
     Newest first, at most ``SUPERSEDED_BY_MAX``."""
@@ -739,7 +763,8 @@ async def incoming_supersedes(
                ELSE
                     {pinned_applies("l", "%(vid)s::bigint")}
                     AND (l.valid_from < coalesce(%(valid_to)s::timestamptz, 'infinity')
-                         OR (l.dst_version_id <> %(vid)s AND l.valid_from = %(valid_to)s::timestamptz))
+                         OR (l.dst_version_id <> %(vid)s AND l.valid_from = %(valid_to)s::timestamptz
+                             AND {pinned_copy("l", "%(vid)s::bigint")}))
                END
          ORDER BY l.valid_from DESC, l.link_id DESC
          LIMIT %(limit)s
@@ -776,7 +801,8 @@ async def superseded_hits(
 
     Review 96 Astra #1: never by logical id alone. An unpinned link flags any live version of its
     item; a PINNED link flags a hit only when the caller may read the pinned version (§4.4 (a)) and
-    the hit is that version or a body-identical copy of it (the rule of ``incoming_supersedes``).
+    the hit is that version or a body-identical copy of it, or a later version still quoting a part
+    link verbatim (``pinned_applies``, the rule of ``incoming_supersedes``).
     One entry per superseding item (a whole link wins over a part link of the same item); whole
     entries first, then newest; at most ``HIT_SUPERSEDED_BY_MAX`` per hit."""
     if not version_ids:
