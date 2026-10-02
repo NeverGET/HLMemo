@@ -86,7 +86,7 @@ import numpy as np
 from hlmemo.librarian import privacy
 from hlmemo.librarian.budget import Caps, DbBudget, NoBudget
 from hlmemo.librarian.cassette import CassetteStore
-from hlmemo.librarian.errors import AuthorityLost, LlmConfigError, PrivacyDenied
+from hlmemo.librarian.errors import AuthorityLost, LlmConfigError, PrivacyDenied, ProfilePolicyError
 from hlmemo.librarian.ledger import NETWORK_OUTCOMES, DbLedger, Ledger, LedgerRow
 from hlmemo.librarian.profiles import LlmProfile, for_task, named_profile, profile_chain
 from hlmemo.librarian.prompts import TaskSpec, load_task
@@ -3173,9 +3173,13 @@ class _TeeLedger:
 
 def research_chain(settings: Any) -> list[LlmProfile]:
     """The primary plus the research fallback (``HLM_FALLBACK_PROFILE__RESEARCH`` when set, else
-    ``HLM_FALLBACK_PROFILE``; D-094) minus profiles not qualified for ``research`` (D-071)."""
+    ``HLM_FALLBACK_PROFILE``; D-094) minus profiles not qualified for ``research`` (D-071). A
+    malformed spend-settlement policy raises (``ProfilePolicyError``, consult 94 #3); any other
+    configuration error disables research (logged)."""
     try:
         chain = profile_chain(settings, TASK)
+    except ProfilePolicyError:
+        raise
     except LlmConfigError as exc:
         log.warning("research disabled: %s", exc)
         return []
@@ -3192,18 +3196,38 @@ def writer_name(settings: Any) -> str:
     return chain[0].name if chain else str(getattr(settings, "profile", "") or "")
 
 
+def check_writer(settings: Any) -> None:
+    """Startup check of the api (``server.app.check_llm_config``; consult 94 #3): the writer profile
+    is otherwise resolved lazily, on the first question, where a profile that cannot be resolved is
+    logged and the research profile writes (D-171, unchanged). A malformed spend-settlement policy in
+    the configured writer's file is never that: ``ProfilePolicyError`` naming the variable."""
+    name = str(getattr(settings, "research_writer_profile", None) or "").strip()
+    if not name:
+        return
+    try:
+        named_profile(name)
+    except ProfilePolicyError as exc:
+        raise ProfilePolicyError(f"{WRITER_ENV}={name!r}: {exc}") from None
+    except LlmConfigError:
+        return  # D-171: logged by writer_chain when the researcher is built
+
+
 def writer_chain(settings: Any, task_chain: list[LlmProfile]) -> list[LlmProfile]:
     """D-171: the chain of the jobs that write the prose answer (``WRITER_JOBS``): the named profile
     ``HLM_RESEARCH_WRITER_PROFILE`` (resolved like ``HLM_FALLBACK_PROFILE__<TASK>``: its own file,
     never the env's ``HLM_LLM_*``; D-172: its attempts capped at ``HLM_RESEARCH_WRITER_TIMEOUT_S``,
     ``LlmProfile.attempt_timeout_s``), then the research task's own profile as its fallback. ``[]`` (the
     task chain writes) when unset, naming the task profile, without a task chain, unknown or broken
-    (logged), or not qualified for ``research`` (its ``disabled_tasks``, D-071; logged)."""
+    (logged), or not qualified for ``research`` (its ``disabled_tasks``, D-071; logged). A malformed
+    spend-settlement policy is never hidden behind the task profile: ``ProfilePolicyError`` (the api
+    refuses to start on it first, ``check_writer``; consult 94 #3)."""
     name = str(getattr(settings, "research_writer_profile", None) or "").strip()
     if not name or not task_chain or name == task_chain[0].name:
         return []
     try:
         writer = named_profile(name)
+    except ProfilePolicyError as exc:
+        raise ProfilePolicyError(f"{WRITER_ENV}={name!r}: {exc}") from None
     except LlmConfigError as exc:
         log.warning("%s=%r ignored (the research profile writes): %s", WRITER_ENV, name, exc)
         return []
@@ -3630,6 +3654,7 @@ __all__ = [
     "unattributed",
     "support_hay",
     "parse_rerank",
+    "check_writer",
     "research_chain",
     "rerank_chain",
     "rerank_text",

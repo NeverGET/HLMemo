@@ -416,13 +416,16 @@ def check_access_config(settings: Settings) -> None:
 def check_llm_config(settings: Settings) -> None:
     """D-094: with the librarian on, the primary, the default fallback and every per-task fallback
     (``HLM_FALLBACK_PROFILE__<TASK>``) must resolve before the api serves (``LlmConfigError``
-    naming the variable); an override for an unknown task or an unqualified profile only warns."""
+    naming the variable); an override for an unknown task or an unqualified profile only warns. The
+    research writer profile's spend-settlement policy too (consult 94 #3, ``check_writer``)."""
     from hlmemo.librarian.profiles import check_chains  # local: keeps the import block merge-stable
+    from hlmemo.librarian.tasks.research import check_writer
 
     if not settings.librarian_enabled or settings.llm_mode == "off":
         return
     for warning in check_chains(settings):
         log.warning("llm config: %s", warning)
+    check_writer(settings)
 
 
 def create_app(

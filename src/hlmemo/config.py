@@ -209,6 +209,9 @@ class Settings(BaseSettings):
     # R4 (R-5): the last day (UTC) the profile's prices hold; after it the profile is unusable for
     # live calls (the provider skips it and falls back). Set in the profile file.
     price_valid_until: date | None = None
+    # NOT a setting: a profile's never-billed 5xx policy (``unbilled_errors``, proposed D-062 (5)
+    # amendment) is read from the profile FILE only (librarian.profiles.profile_unbilled_errors), so
+    # no env or [hlm] value outside the release's fingerprint and manifest can change it.
     # Model quirks live only here (D-017): {task: {"system_append": str}}.
     prompt_overrides: dict[str, Any] = Field(default_factory=dict)
 
