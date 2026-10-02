@@ -14,9 +14,13 @@ A candidate is excluded as ``superseded`` when a live entry has ``scope=whole``,
 lines it cannot match against the quoted outdated statement, so a partly superseded item stays out
 (safe; the reason now says it was only part).
 
-The OLD FALLBACK stays, for an older server and as a second check: ``memory.raw``'s ``links`` (OUTGOING
-edges of each pool item) give the pool's own live ``supersedes`` targets (``superseded_pool_ids``); a
-candidate one of them names is excluded too. Remaining gaps, reported not guessed:
+A current server's ``superseded_by`` is AUTHORITATIVE (review 98 Sol #3): it already applies a pinned
+link only to its pinned version (and body-identical copies), so the brief never second-guesses it by
+logical id. The OLD FALLBACK runs only for a candidate whose ``memory.raw`` has no ``superseded_by``
+(an older server): ``memory.raw``'s ``links`` (OUTGOING edges of each pool item) give the pool's own
+live ``supersedes`` targets (``superseded_pool_ids``); a candidate one of them names is excluded too —
+an unpinned target names every version of the item, a pinned one (``dst_version_id``) only that
+version. Remaining gaps on an older server, reported not guessed:
 
 * on an older server the superseder must be in the pool (the newest session notes and lessons), and a
   ``scope=part`` link looks whole there (``props`` is not exposed by the outgoing view);
@@ -61,7 +65,10 @@ class Item:
     body: str = ""
     logical_id: int | None = None
     recorded_at: datetime | None = None
-    live_supersedes: set[int] = field(default_factory=set)  # logical ids this item supersedes
+    #: ``(logical id, pinned version id or None)`` of each live ``supersedes`` target of this item
+    live_supersedes: set[tuple[int, int | None]] = field(default_factory=set)
+    #: memory.raw carried ``superseded_by``: a current server's authoritative incoming view (no fallback)
+    server_incoming: bool = False
     current: bool = False  # verified current by memory.raw
     verified: bool = False  # memory.raw (body + links) was read completely
     #: the server's own status (query hit ``superseded_by`` / raw ``superseded_by``): "whole", "part"
@@ -234,7 +241,8 @@ async def read_raw(call: Call, project: str, item: Item, budget: int, now: datet
             item.current = (
                 (vt is None or vt > now) and (sa is None or sa > now) and r.get("kind") == item.kind
             )
-            # B3 (D-207 #5): the server's incoming view, preferred over the pool fallback below
+            # B3 (D-207 #5): the server's incoming view; when present it is authoritative (review 98)
+            item.server_incoming = item.server_incoming or isinstance(r.get("superseded_by"), list)
             item.superseded = _worst(item.superseded, raw_superseded(r.get("superseded_by"), now))
         segments += [s.get("text", "") for s in (r.get("payload_body") or []) if isinstance(s, dict)]
         links += [x for x in (r.get("links") or []) if isinstance(x, dict)]
@@ -252,7 +260,7 @@ async def read_raw(call: Call, project: str, item: Item, budget: int, now: datet
     # a link from the item to ITSELF is a span revision's record (D-118): it supersedes the item's
     # OLD version, never the one read here (review 96 Sol #5: it hid every revised lesson)
     item.live_supersedes = {
-        int(x["dst_logical_id"])
+        (int(x["dst_logical_id"]), _pinned(x.get("dst_version_id")))
         for x in links
         if x.get("rel") == "supersedes"
         and isinstance(x.get("dst_logical_id"), int)
@@ -261,13 +269,25 @@ async def read_raw(call: Call, project: str, item: Item, budget: int, now: datet
     }
 
 
-def superseded_pool_ids(pool: list[Item]) -> set[int]:
-    """Logical ids superseded by a LIVE ``supersedes`` link from any verified item of the pool."""
-    out: set[int] = set()
+def _pinned(v: Any) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def superseded_pool_ids(pool: list[Item]) -> set[tuple[int, int | None]]:
+    """The ``(logical id, pinned version id or None)`` targets of every LIVE ``supersedes`` link from
+    a verified item of the pool."""
+    out: set[tuple[int, int | None]] = set()
     for it in pool:
         if it.verified:
             out |= it.live_supersedes
     return out
+
+
+def pool_supersedes(it: Item, targets: set[tuple[int, int | None]]) -> bool:
+    """The older-server fallback: an unpinned target names every version of its item, a pinned one
+    (``dst_version_id``) only its own version (review 98 Sol #3)."""
+    lid = it.logical_id
+    return lid is not None and ((lid, None) in targets or (lid, it.version_id) in targets)
 
 
 async def _bounded(sem: asyncio.Semaphore, coro: Awaitable[Any]) -> Any:
@@ -341,7 +361,7 @@ async def gather_snapshot(call: Call, project: str, *, now: datetime | None = No
                 snap.excluded.append((it.handle, "superseded"))
             elif it.superseded == "part":
                 snap.excluded.append((it.handle, "superseded-part"))
-            elif it.logical_id is not None and it.logical_id in dead:  # the pool fallback
+            elif not it.server_incoming and pool_supersedes(it, dead):  # older server only
                 snap.excluded.append((it.handle, "superseded"))
             elif it.logical_id is None:
                 snap.excluded.append((it.handle, "unverified"))

@@ -188,15 +188,41 @@ def test_a_raw_entry_that_does_not_apply_now_does_not_exclude(extra: dict) -> No
     assert [i.version_id for i in run(s).lessons] == [21, 20]
 
 
-def test_the_pool_fallback_still_works_next_to_the_new_field() -> None:
-    """A server whose raw carries ``superseded_by`` (empty here) and a pool item's OUTGOING link: the
-    old fallback still excludes (both checks are applied)."""
+def test_a_current_server_superseded_by_is_trusted_over_the_pool_fallback() -> None:
+    """Review 98 Sol #3: a server whose raw carries ``superseded_by`` (empty here) is authoritative;
+    a pool item's OUTGOING link does not override it (the logical-id fallback is for older servers)."""
     s = server_with_notes()
     for v in s.versions.values():
         v["incoming"] = []
     s.versions[21]["links"] = [sup(s.versions[20]["lid"])]
     snap = run(s)
-    assert [i.version_id for i in snap.lessons] == [21] and ("v20", "superseded") in snap.excluded
+    assert [i.version_id for i in snap.lessons] == [21, 20] and snap.excluded == []
+
+
+def test_r98_sol3_a_pinned_link_to_an_old_version_never_hides_the_current_one() -> None:
+    """The reproducer: the current v21 (logical id 1021) has ``superseded_by=[]`` from the server, but
+    another lesson holds a link PINNED to the old v7 of logical id 1021. v21 stays in the brief."""
+    s = server_with_notes()
+    s.add(22, "lesson", "Lesson newer", "rule newer", 27, links=[sup(1021, dst_version_id=7)])
+    for v in s.versions.values():
+        v["incoming"] = []
+    assert s.versions[21]["lid"] == 1021
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [22, 21, 20]
+    assert ("v21", "superseded") not in snap.excluded and snap.excluded == []
+
+
+@pytest.mark.parametrize(("pinned", "hidden"), [(7, False), (21, True), (None, True)])
+def test_r98_sol3_the_older_server_fallback_respects_the_pinned_version(
+    pinned: int | None, hidden: bool
+) -> None:
+    """An older server (no ``superseded_by``): the pool fallback still runs, but a link pinned to
+    another version of the item does not hide this one; one pinned to it, or an unpinned one, does."""
+    s = server_with_notes()
+    s.add(22, "lesson", "Lesson newer", "rule newer", 27, links=[sup(1021, dst_version_id=pinned)])
+    snap = run(s)
+    assert (21 not in [i.version_id for i in snap.lessons]) is hidden
+    assert (("v21", "superseded") in snap.excluded) is hidden
 
 
 def test_cross_kind_superseder_in_pool_excludes() -> None:
