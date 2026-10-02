@@ -1953,3 +1953,19 @@ The answer-quality set:
 - R4.3 needs a same-DB comparison against main with ≥ 3 samples per arm, and a decision on extractive (verbatim) main-sentence repair.
 
 Lesson: lexical validation cannot make generated repair text safe; repairs must be extractive.
+D-231 | 2026-10-02 | ACCEPTED (reviews, last rounds) | **Review outcomes. R4.2s (spend/robustness only) is ready for the owner. The answer-quality set stays out (NO-GO). B3 is GO-with-fixes; its residual risks go to the owner.**
+
+R4.2 integrated, round 2 (consult 99):
+- NO-GO on the answer-quality set only. The narrowed notation expansion can still alter non-path parts of a URL, and the alternation path lacks the nested-bracket guard (HIGH, reproduced by both reviewers). MEDIUMs: the dangling-drop word lists, the preview filter width.
+- Change set B (the 503/unbilled policy, settle-once, strict validation) is confirmed intact and release-compatible with prod.
+- R4.2s (main + B only, tests green) is the deploy candidate. Its findings feed R4.3.
+
+B3 write-time updates, round 2 (consult 98):
+- GO-with-fixes; no open HIGH; all 7 round-1 findings closed.
+- Applied after the review:
+  - pinned PART corrections carry to a later version when the quote is still present exactly once on word boundaries (the write-path rule);
+  - query cost measured: prod-copy p95 ≤ 3.7 ms; stress L=10 / D=5 about 20 ms; only an extreme case nears the 10 s timeout; no index needed now;
+  - the brief trusts the server's superseded_by (fix in progress).
+- Residual risks for the owner:
+  - supersede may close a whole item from a unique span (D-118 semantics; exempt from not-whole);
+  - forward-only data: a rollback restores the pre-upgrade dump and loses later writes. If R4.2 ships first, B3 ships as a combined artifact with a replay + restore rehearsal.
