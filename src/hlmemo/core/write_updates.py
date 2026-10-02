@@ -197,6 +197,27 @@ def update_guards(
     return None, _GUARD_REASON[first]
 
 
+def span_quoted_once(body: str, quote: str) -> bool:
+    """Review 98: does ``body`` still quote ``quote`` the way a link-only update's target must
+    (``update_guards`` on a historical target): the ``SPAN_GUARDS`` over its NFC text — the quote
+    occurs exactly once (overlapping occurrences count) and starts and ends on word boundaries
+    (``revise.cuts_word``: Python ``\\w``). "TTL 60" is not quoted by "TTL 600", nor by a body
+    holding it twice (ambiguous)."""
+    from hlmemo.librarian import revise as rv
+
+    chk = rv.check(
+        old_body=rv.nfc(body),
+        old_span=quote,
+        replacement="",
+        new_body="",
+        old_projects=(),
+        old_scope="all",
+        new_projects=(),
+        new_scope="all",
+    )
+    return not chk.failed_of(SPAN_GUARDS)
+
+
 def revise_guards(**kw: Any) -> tuple[Any, str | None]:
     """The guards of a revise of a revisable memory (``update_guards`` with ``mode=revise``)."""
     return update_guards(mode="revise", historical=False, **kw)
@@ -617,5 +638,6 @@ __all__ = [
     "parse_item",
     "pessimistic_ack_entries",
     "revise_guards",
+    "span_quoted_once",
     "update_guards",
 ]

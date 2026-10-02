@@ -343,11 +343,12 @@ async def supersession_among(
     version, a body-identical copy, or (a part link, review 98) a later version still quoting it, and
     the caller may read the pinned one (``read_queries.pinned_applies``); an unpinned link is
     unchanged."""
-    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L, pinned_applies
+    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L, part_carries, pinned_applies
 
     if len(logical_ids) < 2:
         return set(), []
     lids, vids = _version_map(logical_ids, version_of)
+    carry = await part_carries(conn, vids, pid, scopes)  # review 98 #1
     cur = await conn.execute(
         f"""
         SELECT DISTINCT l.src_logical_id, l.dst_logical_id, COALESCE(l.props->>'scope', 'whole') = 'part',
@@ -365,6 +366,7 @@ async def supersession_among(
             "scopes": scopes,
             "valid_at": valid_at,
             "known_at": known_at,
+            "carry": carry,
         },
     )
     hidden: set[int] = set()
@@ -393,11 +395,12 @@ async def supersessions_of(
     ``supersession_among``, and the same review 96 rule for a PINNED link (it counts only for the
     version ``version_of`` names, its quote only for a reader of the pinned version); newest link
     first."""
-    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L, pinned_applies
+    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L, part_carries, pinned_applies
 
     if not logical_ids:
         return []
     lids, vids = _version_map(logical_ids, version_of)
+    carry = await part_carries(conn, vids, pid, scopes)  # review 98 #1
     cur = await conn.execute(
         f"""
         SELECT l.src_logical_id, l.dst_logical_id, COALESCE(l.props->>'scope', 'whole') = 'part',
@@ -416,6 +419,7 @@ async def supersessions_of(
             "scopes": scopes,
             "valid_at": valid_at,
             "known_at": known_at,
+            "carry": carry,
         },
     )
     return [(int(s), int(d), bool(p), str(q)) for s, d, p, q in await cur.fetchall()]

@@ -688,30 +688,59 @@ def pinned_copy(link: str, version: str) -> str:
 
 def pinned_part_carry(link: str, version: str) -> str:
     """SQL predicate (review 98 #1): a pinned PART link from ANOTHER item still speaks about a LATER
-    version of its target item whose body holds the link's quote verbatim (an unrelated revision
-    kept the outdated statement: "TTL 60. Owner Alice." → "TTL 60. Owner Bob."). A whole link, a
-    span revision's self-link and an empty quote never carry. No authorization: ``pinned_applies``
-    adds it (the quote is the pinned version's text)."""
-    return f"""(COALESCE({link}.props->>'scope', 'whole') = 'part'
-            AND {link}.src_logical_id <> {link}.dst_logical_id
-            AND length(COALESCE({link}.props->>'quote', '')) > 0
-            AND EXISTS (SELECT 1 FROM memory_versions pv
-                         WHERE pv.version_id = {version} AND pv.logical_id = {link}.dst_logical_id
-                           AND pv.version_id > {link}.dst_version_id
-                           AND strpos(pv.body, {link}.props->>'quote') > 0))"""
+    version of its target item that still quotes the link's quote ("TTL 60. Owner Alice." → "TTL
+    60. Owner Bob."): the pair ``(version, link)`` is one ``part_carries`` approved, passed as
+    ``%(carry)s`` (``"<version id>:<link id>"``). No authorization: ``pinned_applies`` adds it (the
+    quote is the pinned version's text)."""
+    return f"(({version})::text || ':' || {link}.link_id::text) = ANY(%(carry)s::text[])"
+
+
+async def part_carries(
+    conn: AsyncConnection, version_ids: list[int | None], pid: int, scopes: list[str]
+) -> list[str]:
+    """Review 98 #1: the ``"<version id>:<link id>"`` pairs for ``pinned_part_carry``. A candidate is
+    a ``supersedes`` link passing §4.4 (a) as a row, of part scope with a non-empty quote, from
+    ANOTHER item (a span revision's self-link never carries; a whole link never does), pinned to an
+    OLDER version of the same item as ``version``; SQL only prefilters on the quote being in the
+    NFC body. The decision is the write path's own rule for a link-only target
+    (``write_updates.span_quoted_once``, the ``SPAN_GUARDS``): the quote occurs EXACTLY ONCE in the
+    NFC body, on word boundaries — "TTL 60" never carries to "TTL 600", nor to a body quoting it
+    twice."""
+    from hlmemo.core.write_updates import span_quoted_once
+
+    vids = sorted({int(v) for v in version_ids if v is not None})
+    if not vids:
+        return []
+    cur = await conn.execute(
+        f"""
+        SELECT pv.version_id, l.link_id, pv.body, l.props->>'quote'
+          FROM memory_versions pv
+          JOIN links l ON l.dst_logical_id = pv.logical_id
+         WHERE pv.version_id = ANY(%(vids)s)
+           AND l.rel = 'supersedes' AND {AUTHZ_L}
+           AND l.dst_version_id < pv.version_id
+           AND l.src_logical_id <> l.dst_logical_id
+           AND COALESCE(l.props->>'scope', 'whole') = 'part'
+           AND length(COALESCE(l.props->>'quote', '')) > 0
+           AND strpos(normalize(pv.body, NFC), l.props->>'quote') > 0
+        """,  # noqa: S608 - fixed fragments
+        {"vids": vids, "pid": pid, "scopes": scopes},
+    )
+    return [f"{v}:{lk}" for v, lk, body, quote in await cur.fetchall() if span_quoted_once(body, quote)]
 
 
 def pinned_applies(link: str, version: str) -> str:
     """SQL predicate (review 96 Astra #1): does the link ``link`` (an alias) speak about the version
-    ``version`` (an SQL expression; NULL never matches a pinned link)? Needs ``%(pid)s`` and
-    ``%(scopes)s``.
+    ``version`` (an SQL expression; NULL never matches a pinned link)? Needs ``%(pid)s``,
+    ``%(scopes)s`` and ``%(carry)s`` (``part_carries`` of the versions read).
 
     * An UNPINNED link (no ``dst_version_id``) is about its item: true (the caller checks time).
     * A PINNED link (a D-118 update, a span revision's self-link, any link pinned to a version) is
       true only when the caller may read the pinned version (§4.4 (a): its quote is that version's
       text) AND ``version`` is that version or a body-identical copy of it (``pinned_copy``), or, a
       part link from another item, a later version of the item that still holds its quote verbatim
-      (``pinned_part_carry``, review 98 #1). Never a later revision whose text lost the quote, nor
+      (``pinned_part_carry``, review 98 #1). Never a later revision that does not quote it exactly
+      once on word boundaries, nor
       any later revision for a whole link (it may be public where the pinned one was private)."""
     return f"""({link}.dst_version_id IS NULL OR (
         EXISTS (SELECT 1 FROM memory_versions pd
@@ -742,6 +771,7 @@ async def incoming_supersedes(
       link starts (the cut survivor of the very close or revision the link records).
 
     Newest first, at most ``SUPERSEDED_BY_MAX``."""
+    carry = await part_carries(conn, [version.version_id], pid, scopes)
     cur = await conn.execute(
         f"""
         SELECT l.src_logical_id, s.version_id, COALESCE(l.props->>'scope', 'whole') = 'part',
@@ -778,6 +808,7 @@ async def incoming_supersedes(
             "valid_to": version.valid_to,
             "known_at": known_at,
             "limit": SUPERSEDED_BY_MAX,
+            "carry": carry,
         },
     )
     return [SupersededBy(int(a), int(b), bool(c), str(d), e, f) for a, b, c, d, e, f in await cur.fetchall()]
@@ -807,6 +838,7 @@ async def superseded_hits(
     entries first, then newest; at most ``HIT_SUPERSEDED_BY_MAX`` per hit."""
     if not version_ids:
         return {}
+    carry = await part_carries(conn, version_ids, pid, scopes)
     cur = await conn.execute(
         f"""
         SELECT DISTINCT ON (h.version_id, l.src_logical_id)
@@ -831,6 +863,7 @@ async def superseded_hits(
             "valid_at": valid_at,
             "known_at": known_at,
             "statuses": statuses,
+            "carry": carry,
         },
     )
     out: dict[int, list[tuple[int, bool]]] = {}
@@ -952,7 +985,10 @@ __all__ = [
     "incoming_supersedes",
     "indexing_pending",
     "lexical_candidates",
+    "part_carries",
     "pinned_applies",
+    "pinned_copy",
+    "pinned_part_carry",
     "pinned_sources",
     "project_slugs",
     "raw_links",

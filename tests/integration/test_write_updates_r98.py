@@ -94,12 +94,14 @@ async def _among(connect, ctx: AuthContext, world: World, pairs: list[tuple[int,
     return out
 
 
-async def _part_link(connect, world: World, deps, ep: dict, **kw: Any) -> dict:  # noqa: ANN001
+async def _part_link(
+    connect, world: World, deps, ep: dict, span: str = SPAN, repl: str = REPL, **kw: Any
+) -> dict:  # noqa: ANN001
     ack = await _write(
         connect,
         world.ctx_a,
         MAIN,
-        [item(*CARRIER, device_scope="all", updates=[_upd(ep, old_span=SPAN, replacement=REPL)], **kw)],
+        [item(*CARRIER, device_scope="all", updates=[_upd(ep, old_span=span, replacement=repl)], **kw)],
         deps,
     )
     assert ack["updates"][0]["status"] == "linked"  # a historical kind: a pinned part link only
@@ -225,3 +227,47 @@ async def test_r98_1_a_whole_link_and_a_self_link_stay_bound_to_their_version(
     assert (self_entry["logical_id"], self_entry["scope"]) == (fact["logical_id"], "part")
     hit = _hit(await _hits(connect, world.ctx_a, read_deps, "API cache TTL 60 seconds"), head)
     assert "superseded" not in hit
+
+
+async def test_r98_1_the_carry_needs_the_quote_exactly_once_on_word_boundaries(
+    connect, world, deps, read_deps
+) -> None:  # noqa: ANN001
+    """The write path's old_span rule decides the carry (``update_guards``: exactly once, on word
+    boundaries). A correction of "the cache TTL is 60" pinned to V1 does NOT carry to a later
+    "... TTL is 600" (the quote ends inside a word), nor to a version quoting it twice (ambiguous);
+    it does carry to a version quoting it exactly once."""
+    span, repl = "the cache TTL is 60", "the cache TTL is now 90"
+    ep = await _old(
+        connect, world, deps, kind="episode", body="Session log: the cache TTL is 60. Owner Alice."
+    )
+    carrier = await _part_link(connect, world, deps, ep, span=span, repl=repl)
+    lid, cl = ep["logical_id"], carrier["logical_id"]
+
+    async def flagged(v: dict, text: str) -> bool:
+        raw_by = (await _raw(connect, world.ctx_a, read_deps, v["version_id"]))["superseded_by"]
+        hit = _hit(await _hits(connect, world.ctx_a, read_deps, text), v["version_id"])
+        ask = await _ask_links(connect, world.ctx_a, world, lid, v["version_id"])
+        among = await _among(
+            connect, world.ctx_a, world, [(lid, v["version_id"]), (cl, carrier["version_id"])]
+        )
+        got = {bool(raw_by), "superseded" in hit, bool(ask), bool(among[1])}
+        assert len(got) == 1, (raw_by, hit, ask, among)  # every channel agrees
+        if raw_by:
+            assert [(e["logical_id"], e["scope"], e["quote"]) for e in raw_by] == [(cl, "part", span)]
+            assert ask == [(cl, lid, True, span)] and among == (set(), [(cl, lid, span)])
+        return got.pop()
+
+    v600 = await _revise(connect, world, deps, ep, "Session log: the cache TTL is 600. Owner Bob.")
+    assert not await flagged(v600, "cache TTL 600 owner")
+    twice = await _revise(
+        connect,
+        world,
+        deps,
+        v600,
+        "Session log: the cache TTL is 60. Owner Bob; before, the cache TTL is 60 too.",
+    )
+    assert not await flagged(twice, "cache TTL 60 owner before")
+    once = await _revise(connect, world, deps, twice, "Session log: the cache TTL is 60. Owner Bob.")
+    assert await flagged(once, "cache TTL 60 owner")
+    # the pinned V1 itself keeps its link
+    assert len((await _raw(connect, world.ctx_a, read_deps, ep["version_id"]))["superseded_by"]) == 1

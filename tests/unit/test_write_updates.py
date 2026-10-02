@@ -271,25 +271,63 @@ def test_r98_every_supersedes_reader_takes_the_version_read() -> None:
         assert 'pinned_applies("l", "hv.vid")' in inspect.getsource(f)
 
 
-def test_r98_the_part_carry_is_for_part_links_from_another_item_with_a_quote_only() -> None:
-    """Review 98 #1: the carry to a later version is guarded in SQL (part scope, another item, a
-    non-empty quote held verbatim by a later version of the same item) and sits behind the pinned
-    version's authorization like the copy chain."""
-    from hlmemo.db.read_queries import pinned_applies, pinned_part_carry
+@pytest.mark.parametrize(
+    ("body", "quote", "carries"),
+    [
+        ("Session log: the cache TTL is 60. Owner Bob.", "the cache TTL is 60", True),  # exactly once
+        ("Session log: the cache TTL is 600. Owner Bob.", "the cache TTL is 60", False),  # inside a word
+        ("Session log: TTL 60 here and TTL 60 there.", "TTL 60", False),  # twice: ambiguous
+        ("Session log: STTL 60 only.", "TTL 60", False),  # starts inside a word
+        ("Oturum: değer 60ı oldu.", "değer 60", False),  # Unicode word char (Python \w)
+        ("Oturum: değer 60, sahibi Ayşe.", "değer 60", True),
+        ("Session log: TTL 6060 only.", "TTL 60", False),
+        ("Session log: nothing here.", "TTL 60", False),
+        ("Session log: Cafe\u0301 opens at 9. Owner Bob.", "Café opens at 9", True),  # NFC body
+    ],
+)
+def test_r98_the_part_carry_uses_the_write_path_span_rule(body: str, quote: str, carries: bool) -> None:
+    """Review 98 #1 (coordinator round): a pinned part link carries to a later version only when
+    that version quotes it the way ``update_guards`` requires of a link-only target — exactly once
+    in the NFC body, on word boundaries. The verdict equals ``update_guards`` itself."""
+    from hlmemo.core.write_updates import span_quoted_once
 
-    carry = pinned_part_carry("l", "v")
+    assert span_quoted_once(body, quote) is carries
+    _chk, reason = update_guards(
+        mode="supersede",
+        historical=True,
+        old_body=body,
+        old_span=quote,
+        replacement=None,
+        carrier_body="x",
+        old_projects=[1],
+        old_scope="all",
+        new_projects=[1],
+        new_scope="all",
+    )
+    assert (reason is None) is carries
+
+
+def test_r98_the_part_carry_is_for_part_links_from_another_item_behind_the_pinned_authz() -> None:
+    """Review 98 #1: SQL only selects the candidates (part scope, another item, a non-empty quote,
+    pinned to an OLDER version of the same item, quote in the NFC body) and the carry sits behind the
+    pinned version's authorization like the copy chain."""
+    import inspect
+
+    from hlmemo.db.read_queries import part_carries, pinned_applies
+
+    src = inspect.getsource(part_carries)
     for guard in (
         "COALESCE(l.props->>'scope', 'whole') = 'part'",
         "l.src_logical_id <> l.dst_logical_id",
         "length(COALESCE(l.props->>'quote', '')) > 0",
-        "pv.logical_id = l.dst_logical_id",
-        "pv.version_id > l.dst_version_id",
-        "strpos(pv.body, l.props->>'quote') > 0",
+        "JOIN links l ON l.dst_logical_id = pv.logical_id",
+        "l.dst_version_id < pv.version_id",
+        "span_quoted_once(body, quote)",
     ):
-        assert guard in carry, guard
+        assert guard in src, guard
     sql = " ".join(pinned_applies("l", "v").split())
     authz = sql.index("pd.version_id = l.dst_version_id")
-    assert authz < sql.index("WITH RECURSIVE") and authz < sql.index("strpos(")
+    assert authz < sql.index("WITH RECURSIVE") and authz < sql.index("%(carry)s")
 
 
 # --------------------------------------------------------------------------- D-113 floor
