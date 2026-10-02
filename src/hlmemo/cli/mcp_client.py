@@ -29,7 +29,7 @@ _STATUS_RE = re.compile(r"\b(401|403|404|429|5\d\d)\b")
 #: surface stays small). The SDK validates every result against the listed output schema; for an
 #: unlisted tool it re-lists the tools and warns "not listed by server" on EVERY call (e2e
 #: 2026-09-24 #10). There is no schema to validate against, so these are not validated.
-UNLISTED_TOOLS = frozenset({"hlm.export"})
+UNLISTED_TOOLS = frozenset({"hlm.export", "hlm.questions"})
 
 
 def _skip_unlisted_validation(client: Client) -> None:
