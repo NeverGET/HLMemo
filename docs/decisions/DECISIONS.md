@@ -1937,3 +1937,19 @@ Controls on the same DB (3-reader panel):
 - One mechanism is confirmed: the literal check drops unit paraphrases of supported values ("$3/hour" vs `HLM_LLM_BUDGET_HOUR_USD=3`). Next fix: the writer copies the excerpt's literal form for values.
 
 Method lesson: one run moves a 13-question subset by ±2. Temporal and other small-subset comparisons need ≥ 3 samples per arm.
+D-230 | 2026-10-02 | ACCEPTED (orchestrator, overnight drive) | **R4.2 is split. R4.2 = spend/robustness fixes only. The memory.ask answer-quality changes move to R4.3 pending a proper measurement.**
+
+R4.2 (deploy candidate, needs the owner's residual-risk acceptance per D-125):
+- An opt-in unbilled-error profile policy for the declared Google 503/529 envelope. This amends D-062 (5) for opted-in profiles only.
+- Settle-once on any post-reservation exception. This fixes a pre-existing reservation leak on corrupt bodies.
+- Duplicate-key rejection.
+- Strict policy validation at startup.
+- 2 review rounds, with every round-2 finding fixed by a reproducer test.
+
+The answer-quality set:
+- After review round 1 (consult 97), the free-text "restate" repair was REMOVED: lexical validation cannot stop a meaning flip. The notation expansions were narrowed, and the window merge was cut to a provenance-safe form.
+- Re-measured (single samples, same DB): the second migration set 7/8 and 6/8; hold-out 33/50 with 4 contradictions, vs 37/50 and 2 before narrowing (more literal drops, no repair).
+- One sample moves the result by ±2–4, and the hold-out baseline comes from a different environment, so a net gain is NOT shown.
+- R4.3 needs a same-DB comparison against main with ≥ 3 samples per arm, and a decision on extractive (verbatim) main-sentence repair.
+
+Lesson: lexical validation cannot make generated repair text safe; repairs must be extractive.
