@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hlmemo.core import export_service
-from hlmemo.server.tools import answer, ask, handlers, query, risk, schemas
+from hlmemo.server.tools import answer, ask, handlers, query, questions, risk, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
 
@@ -74,6 +74,8 @@ CLIENT_TOOLS: tuple[ToolSpec, ...] = (
         export_service.INPUT_SCHEMA,
         handlers.hlm_export,
     ),
+    # `hlm review`: the open librarian questions with what a reviewer needs (read-only)
+    ToolSpec(questions.NAME, questions.DESCRIPTION, questions.INPUT_SCHEMA, questions.hlm_questions),
 )
 
 TOOL_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in (*TOOLS, *CLIENT_TOOLS)}
