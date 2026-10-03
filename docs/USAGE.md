@@ -122,7 +122,9 @@ Failure behaviour (`[preflight].on_failure`, D-014):
 | codex | `codex mcp add hlm --url <URL>/mcp --bearer-token-env-var HLM_DEVICE_TOKEN` — the flag names an env var; `hlm codex` exports it for the launch, or `export HLM_DEVICE_TOKEN=...` yourself |
 | agy | no `mcp` subcommand in 1.1.4 → merges `{"mcpServers":{"hlm":{"serverUrl":"<URL>/mcp","headers":{"Authorization":"Bearer <token>"}}}}` into `~/.gemini/config/mcp_config.json` (other entries preserved, idempotent, file mode 0600) |
 
-The MCP server name is `hlm` everywhere, so tools appear as `mcp__hlm__memory.query` etc.
+The MCP server name is `hlm` everywhere. Claude Code exposes the tools as `mcp__hlm__memory_query`,
+`mcp__hlm__memory_drilldown`, `mcp__hlm__memory_write`, `mcp__hlm__memory_call_the_day` and so on (the
+dot of `memory.query` becomes an underscore).
 
 ## Configuration
 
