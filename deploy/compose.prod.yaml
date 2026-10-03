@@ -190,7 +190,14 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    networks: [frontend, outbound]
+    # IPv6 client addresses: `edge` is dual-stack and carries the published ports (gw_priority), so
+    # Docker DNATs IPv6 clients natively instead of docker-proxy relaying them from an IPv4 gateway.
+    # `outbound` stays: check_edge.py's TLS client-IP gate reaches Caddy from the worker over it.
+    networks:
+      frontend: {}
+      outbound: {}
+      edge:
+        gw_priority: 100
     restart: unless-stopped
     logging: *logging
     mem_limit: 256m
@@ -216,6 +223,13 @@ networks:
       config:
         - subnet: 172.30.39.0/24
   outbound: {}
+  # Caddy only. Never enable IPv6 on frontend: Caddy -> API must stay inside HLM_TRUSTED_PROXY_IPS.
+  edge:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.30.40.0/24
+        - subnet: fd78:85e8:5c6a:1::/64
 
 volumes:
   pgdata:
