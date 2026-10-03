@@ -1969,3 +1969,5 @@ B3 write-time updates, round 2 (consult 98):
 - Residual risks for the owner:
   - supersede may close a whole item from a unique span (D-118 semantics; exempt from not-whole);
   - forward-only data: a rollback restores the pre-upgrade dump and loses later writes. If R4.2 ships first, B3 ships as a combined artifact with a replay + restore rehearsal.
+D-232 | 2026-10-03 | ACCEPTED (owner: "lets do the todo list as is, in order") | **The owner accepts R4.2s's residual risk and approves its deploy. The owner approves the order of the remaining items: B3 as a combined release with a rehearsal, the lesson drafts review, transcript-archive access, transcript retention.**
+- D-062 (5) is amended for opted-in profiles only: a 503/529 whose body exactly matches the profile-declared provider error envelope (no usage, no output, unique keys) settles at $0. Only the two Google Gemini profiles opt in, per Google's "failed requests are not charged" policy. Everything else stays worst case.
