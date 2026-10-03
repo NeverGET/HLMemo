@@ -24,9 +24,9 @@ REGISTER_LESSON = "memory.register_lesson"
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
-    """Self-contained like the §3 schemas, but single-use definitions are inlined (G-SURF)."""
+    """Self-contained like the §3 schemas, but single-use definitions are inlined (G-SURF). No
+    ``$schema`` key: JSON Schema 2020-12 is the MCP default dialect for ``inputSchema`` (B3/G-SURF)."""
     return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": properties,
         "required": required,

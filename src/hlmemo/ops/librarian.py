@@ -20,6 +20,10 @@ librarian's proposals. Runs in the ops transaction (``ops/cli.py``); nothing pri
         librarian was enabled (roadmap §5: ``hlm.ops librarian backfill --project hlmemo``). The
         capabilities are those of each event's device NOW, or of ``--device`` (e.g. the owner's
         current device when the importer device was revoked).
+    librarian revert-update EVENT --item I [--update K] --reason TEXT [--owner NAME]
+        reverses the writer's own update ``items[I].updates[K]`` of the ``memory.write`` event EVENT
+        (D-118: a span revision, a close or a ``supersedes`` link) by ONE compensating ``librarian``
+        event (op ``revert_write_update``). Refused while a later change depends on it.
 """
 
 from __future__ import annotations
@@ -72,6 +76,14 @@ def add_parser(sub: Any) -> None:
     bf.add_argument("--project", required=True)
     bf.add_argument("--device", help="device id or name whose capabilities the jobs carry")
     bf.add_argument("--limit", type=int, default=None, help="at most N source events")
+    ru = lsub.add_parser(
+        "revert-update", help="reverse a writer's memory.write update by a compensating event (D-118)"
+    )
+    ru.add_argument("event", type=int, help="the write event id")
+    ru.add_argument("--item", type=int, required=True, help="the carrying item's index")
+    ru.add_argument("--update", type=int, default=0, help="the update's index within the item")
+    ru.add_argument("--reason", required=True)
+    ru.add_argument("--owner", default="owner", help="the owner's device name, recorded in the event")
 
 
 def _ops_ctx(owner: str = "owner") -> AuthContext:
@@ -375,6 +387,20 @@ async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
             return 0
         if action == "backfill":
             _print(await backfill(conn, args.project, device=args.device, limit=args.limit))
+            return 0
+        if action == "revert-update":
+            from hlmemo.librarian.reversal import revert_write_update
+
+            _print(
+                await revert_write_update(
+                    conn,
+                    event_id=args.event,
+                    index=args.item,
+                    update=args.update,
+                    by=_ops_ctx(args.owner),
+                    reason=args.reason,
+                )
+            )
             return 0
         if action == "expire":
             from hlmemo.librarian.questions import expire_due

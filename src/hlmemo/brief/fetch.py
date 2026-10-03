@@ -1,18 +1,37 @@
 """Read-only fetch for the brief: memory.query + memory.raw through the hlm client (direct path only).
 
-SUPERSESSION (D-207 defect #5). ``memory.query`` hits carry no superseded flag; the server only hides a
-superseded item when its superseder is ALSO among the same query's hits (``read_service.query_parts`` ->
-``librarian_queries.supersession_among``). The only per-item field a client can read is
-``memory.raw``'s ``links`` (OUTGOING edges of the item: ``rel``, ``dst_logical_id``, ``valid_to``,
-``superseded_at``) and its own ``logical_id``. So the brief reads ``memory.raw`` for every candidate
-(it needs the verbatim body anyway) and excludes a candidate when ANY item of the candidate pool has a
-LIVE ``supersedes`` link to its ``logical_id`` (``superseded_pool_ids``). Gaps, reported not guessed:
+SUPERSESSION (D-207 defect #5, closed server-side by the B3 read side). The brief PREFERS the server's
+own supersession status, computed from LIVE ``supersedes`` links whose superseder the caller can see:
 
-* the superseder must be in the pool (the newest session notes and lessons); a superseder of another
-  kind, or older than the pool, is not seen (``memory.raw`` has no incoming-link view);
-* ``scope=part`` (fact-level, D-076) links look like whole links here (``props`` is not exposed), so a
-  partly superseded item is excluded as a whole: safe, but it also drops its still-valid statements;
+* a ``memory.query`` hit carries ``superseded: true`` and ``superseded_by: [{clue, scope}]`` when a live
+  link targets its item (absent otherwise, and on an older server);
+* ``memory.raw`` carries the INCOMING ``superseded_by: [{logical_id, version_id, scope, valid_from,
+  valid_to}]`` of the addressed version (always present on a current server, so its absence tells an
+  older server apart).
+
+A candidate is excluded as ``superseded`` when a live entry has ``scope=whole``, and as
+``superseded-part`` when only part-scope (fact-level, D-076) entries are live: the brief shows verbatim
+lines it cannot match against the quoted outdated statement, so a partly superseded item stays out
+(safe; the reason now says it was only part).
+
+A current server's ``superseded_by`` is AUTHORITATIVE (review 98 Sol #3): it already applies a pinned
+link only to its pinned version (and body-identical copies), so the brief never second-guesses it by
+logical id. The OLD FALLBACK runs only for a candidate whose ``memory.raw`` has no ``superseded_by``
+(an older server): ``memory.raw``'s ``links`` (OUTGOING edges of each pool item) give the pool's own
+live ``supersedes`` targets (``superseded_pool_ids``); a candidate one of them names is excluded too —
+an unpinned target names every version of the item, a pinned one (``dst_version_id``) only that
+version. Remaining gaps on an older server, reported not guessed:
+
+* on an older server the superseder must be in the pool (the newest session notes and lessons), and a
+  ``scope=part`` link looks whole there (``props`` is not exposed by the outgoing view);
 * a candidate whose ``memory.raw`` failed cannot be verified and is excluded.
+
+BODY (review 96 Sol #5). The body is the verbatim ``payload_item.body`` (or its ``payload_body``
+pages). A version a D-118 mutation wrote (a span revision's new version, a reversal's restored copy)
+has no request item of its own (``payload_item == {}``): its body is rebuilt from its ``chunks``
+(exact ``char_start``/``char_end`` offsets; overlapping chunks must agree, a gap is never filled —
+``body_from_chunks``). A body that cannot be rebuilt leaves the candidate unverified (excluded),
+never shown empty.
 """
 
 from __future__ import annotations
@@ -46,9 +65,15 @@ class Item:
     body: str = ""
     logical_id: int | None = None
     recorded_at: datetime | None = None
-    live_supersedes: set[int] = field(default_factory=set)  # logical ids this item supersedes
+    #: ``(logical id, pinned version id or None)`` of each live ``supersedes`` target of this item
+    live_supersedes: set[tuple[int, int | None]] = field(default_factory=set)
+    #: memory.raw carried ``superseded_by``: a current server's authoritative incoming view (no fallback)
+    server_incoming: bool = False
     current: bool = False  # verified current by memory.raw
     verified: bool = False  # memory.raw (body + links) was read completely
+    #: the server's own status (query hit ``superseded_by`` / raw ``superseded_by``): "whole", "part"
+    #: or None (not superseded, or an older server without the field)
+    superseded: str | None = None
 
     @property
     def handle(self) -> str:
@@ -91,12 +116,47 @@ def _vid(clue: Any) -> int | None:
     return int(head) if head.isdigit() and int(head) > 0 else None
 
 
+def _worst(a: str | None, b: str | None) -> str | None:
+    """The stronger of two supersession scopes (``whole`` > ``part`` > None)."""
+    order = {None: 0, "part": 1, "whole": 2}
+    return a if order.get(a, 2) >= order.get(b, 2) else b
+
+
+def hit_superseded(h: dict[str, Any]) -> str | None:
+    """The server's status of a ``memory.query`` hit: ``whole`` when a ``superseded_by`` entry is
+    whole-scope (or the flag has no usable entries), ``part`` when every entry is part-scope."""
+    if h.get("superseded") is not True:
+        return None
+    entries = [e for e in (h.get("superseded_by") or []) if isinstance(e, dict)]
+    if entries and all(e.get("scope") == "part" for e in entries):
+        return "part"
+    return "whole"
+
+
+def raw_superseded(entries: Any, now: datetime) -> str | None:
+    """The server's status of a ``memory.raw`` version: the strongest scope among its incoming
+    ``superseded_by`` entries that apply NOW (``valid_from <= now < valid_to``)."""
+    out: str | None = None
+    for e in entries if isinstance(entries, list) else []:
+        if not isinstance(e, dict):
+            continue
+        vf, vt = parse_ts(e.get("valid_from")), parse_ts(e.get("valid_to"))
+        if (vf is not None and vf > now) or (vt is not None and vt <= now):
+            continue
+        out = _worst(out, "part" if e.get("scope") == "part" else "whole")
+    return out
+
+
 def candidates(hits: list[dict[str, Any]], limit: int) -> list[Item]:
-    """One item per version (chunk hits deduplicated), newest ``valid_from`` first."""
+    """One item per version (chunk hits deduplicated, their supersession status merged), newest
+    ``valid_from`` first."""
     seen: dict[int, Item] = {}
     for h in hits:
         vid = _vid(h.get("clue"))
-        if vid is None or vid in seen:
+        if vid is None:
+            continue
+        if vid in seen:
+            seen[vid].superseded = _worst(seen[vid].superseded, hit_superseded(h))
             continue
         seen[vid] = Item(
             version_id=vid,
@@ -104,6 +164,7 @@ def candidates(hits: list[dict[str, Any]], limit: int) -> list[Item]:
             title=str(h.get("title") or ""),
             valid_from=parse_ts(h.get("valid_from")),
             tags=[str(t) for t in (h.get("tags") or [])],
+            superseded=hit_superseded(h),
         )
     floor = datetime.min.replace(tzinfo=UTC)
     ordered = sorted(seen.values(), key=lambda i: (i.valid_from or floor, i.version_id), reverse=True)
@@ -119,16 +180,59 @@ def _live(link: dict[str, Any], now: datetime) -> bool:
     return True
 
 
+def body_from_chunks(chunks: list[Any]) -> str | None:
+    """The text a version's ``chunks`` tile (``text == body[char_start:char_end]``; neighbouring
+    chunks overlap and must agree on the overlap), from the first chunk's start to the last one's
+    end; ``None`` when there is no chunk, one is malformed, two disagree or a gap lies between two
+    (never guessed). Leading/trailing whitespace outside the chunks is not part of it (the chunker
+    trims window edges)."""
+    spans: list[tuple[int, int, str]] = []
+    for c in chunks:
+        if not isinstance(c, dict):
+            return None
+        a, b, t = c.get("char_start"), c.get("char_end"), c.get("text")
+        if (
+            isinstance(a, bool)
+            or isinstance(b, bool)
+            or not isinstance(a, int)
+            or not isinstance(b, int)
+            or not isinstance(t, str)
+            or not 0 <= a < b
+            or len(t) != b - a
+        ):
+            return None
+        spans.append((a, b, t))
+    if not spans:
+        return None
+    spans.sort()
+    base, end, text = spans[0][0], spans[0][1], spans[0][2]
+    for a, b, t in spans[1:]:
+        if a > end:  # a gap: the text between is unknown
+            return None
+        known = text[a - base : min(b, end) - base]
+        if t[: len(known)] != known:
+            return None
+        if b > end:
+            text += t[end - a :]
+            end = b
+    return text
+
+
 async def read_raw(call: Call, project: str, item: Item, budget: int, now: datetime) -> None:
-    """memory.raw -> body, logical id, currency and live supersedes edges (all pages); raises on error."""
+    """memory.raw -> body, logical id, currency and live supersedes edges (all pages); raises on error.
+    A version without a verbatim request item (a D-118 mutation's) gets its body from its chunks
+    (``body_from_chunks``); when that fails too the item stays unverified."""
     args: dict[str, Any] = {"project": project, "version_id": item.version_id, "token_budget": budget}
     body: str | None = None
+    paged = False
     segments: list[str] = []
     links: list[dict[str, Any]] = []
+    chunks: list[Any] = []
     for _ in range(RAW_PAGES):
         r = await call("memory.raw", args)
         if body is None:
             pi = r.get("payload_item") or {}
+            paged = paged or pi.get("body_paged") is True
             if isinstance(pi.get("body"), str):
                 body = pi["body"]
             item.logical_id = r.get("logical_id") if isinstance(r.get("logical_id"), int) else None
@@ -137,28 +241,53 @@ async def read_raw(call: Call, project: str, item: Item, budget: int, now: datet
             item.current = (
                 (vt is None or vt > now) and (sa is None or sa > now) and r.get("kind") == item.kind
             )
+            # B3 (D-207 #5): the server's incoming view; when present it is authoritative (review 98)
+            item.server_incoming = item.server_incoming or isinstance(r.get("superseded_by"), list)
+            item.superseded = _worst(item.superseded, raw_superseded(r.get("superseded_by"), now))
         segments += [s.get("text", "") for s in (r.get("payload_body") or []) if isinstance(s, dict)]
         links += [x for x in (r.get("links") or []) if isinstance(x, dict)]
+        chunks += list(r.get("chunks") or [])
         cur = r.get("next_cursor")
         if not cur:
             item.verified = True
             break
         args = {**args, "cursor": cur}
+    if body is None and not paged and not segments:  # review 96 Sol #5: no request item of its own
+        body = body_from_chunks(chunks)
+        if body is None:
+            item.verified = False  # an unknown body is never shown (empty or partial)
     item.body = body if body is not None else "".join(segments)
+    # a link from the item to ITSELF is a span revision's record (D-118): it supersedes the item's
+    # OLD version, never the one read here (review 96 Sol #5: it hid every revised lesson)
     item.live_supersedes = {
-        int(x["dst_logical_id"])
+        (int(x["dst_logical_id"]), _pinned(x.get("dst_version_id")))
         for x in links
-        if x.get("rel") == "supersedes" and isinstance(x.get("dst_logical_id"), int) and _live(x, now)
+        if x.get("rel") == "supersedes"
+        and isinstance(x.get("dst_logical_id"), int)
+        and x["dst_logical_id"] != item.logical_id
+        and _live(x, now)
     }
 
 
-def superseded_pool_ids(pool: list[Item]) -> set[int]:
-    """Logical ids superseded by a LIVE ``supersedes`` link from any verified item of the pool."""
-    out: set[int] = set()
+def _pinned(v: Any) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def superseded_pool_ids(pool: list[Item]) -> set[tuple[int, int | None]]:
+    """The ``(logical id, pinned version id or None)`` targets of every LIVE ``supersedes`` link from
+    a verified item of the pool."""
+    out: set[tuple[int, int | None]] = set()
     for it in pool:
         if it.verified:
             out |= it.live_supersedes
     return out
+
+
+def pool_supersedes(it: Item, targets: set[tuple[int, int | None]]) -> bool:
+    """The older-server fallback: an unpinned target names every version of its item, a pinned one
+    (``dst_version_id``) only its own version (review 98 Sol #3)."""
+    lid = it.logical_id
+    return lid is not None and ((lid, None) in targets or (lid, it.version_id) in targets)
 
 
 async def _bounded(sem: asyncio.Semaphore, coro: Awaitable[Any]) -> Any:
@@ -228,7 +357,11 @@ async def gather_snapshot(call: Call, project: str, *, now: datetime | None = No
                 snap.excluded.append((it.handle, "unverified"))
             elif not it.current:
                 snap.excluded.append((it.handle, "not-current"))
-            elif it.logical_id is not None and it.logical_id in dead:
+            elif it.superseded == "whole":  # the server's own status (preferred)
+                snap.excluded.append((it.handle, "superseded"))
+            elif it.superseded == "part":
+                snap.excluded.append((it.handle, "superseded-part"))
+            elif not it.server_incoming and pool_supersedes(it, dead):  # older server only
                 snap.excluded.append((it.handle, "superseded"))
             elif it.logical_id is None:
                 snap.excluded.append((it.handle, "unverified"))

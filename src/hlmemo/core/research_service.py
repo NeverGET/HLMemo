@@ -747,6 +747,8 @@ class _Run:
             scopes=mm.view_scopes(fresh),
             valid_at=at,
             known_at=at,
+            # review 96 Astra #1: a pinned link (and its quote) only for the version read
+            version_of=read_service.version_of([(lid, vid) for vid, lid in lid_of.items()]),
         )
         if not links:
             return

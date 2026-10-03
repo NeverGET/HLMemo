@@ -25,13 +25,20 @@ reviewed by the owner. "as of" = newest `recorded_at` among the items read.
 
 - Read-only: only `memory.query` and `memory.raw` are called. No writes, no LLM, no relay (the capture
   relay runs `claude -p`; it cannot fit the budget, so with no device token the hook says nothing).
-- Superseded or non-current items are excluded (see `src/hlmemo/brief/fetch.py`, `read_raw` and
-  `superseded_pool_ids`). `memory.query` hits carry no superseded flag (D-207 defect #5), so the brief
-  reads `memory.raw` of each candidate and drops it when any candidate-pool item has a LIVE `supersedes`
-  link to its `logical_id` (or its own version is expired/superseded, or `memory.raw` failed).
-  Known gaps: a superseder outside the pool (newest 8 session notes + 14 lessons) is not seen; `scope=part`
-  links look whole (excluded as a whole); decisions are bullets inside a note, so a later note that reverses
-  an earlier decision without a link is not detected.
+- Superseded or non-current items are excluded (see `src/hlmemo/brief/fetch.py`). The brief PREFERS the
+  server's own status (B3, closing D-207 defect #5): a `memory.query` hit flagged `superseded` and the
+  INCOMING `superseded_by` of `memory.raw` (live links whose superseder the device can see, whatever its
+  kind or age). A whole-scope entry excludes the item as `superseded`, part-scope entries only as
+  `superseded-part` (the brief cannot tell whether the line it would show is the outdated statement).
+  The old pool fallback stays as a second check (and for an older server): an item is also dropped when a
+  candidate-pool item has a LIVE outgoing `supersedes` link to its `logical_id`. An item is also dropped
+  when its own version is expired/superseded or `memory.raw` failed. A span revision's link from an item
+  to ITSELF never hides it (it supersedes the old version). A version a D-118 update or its reversal
+  wrote has no request item of its own: its body is rebuilt from its chunks' exact offsets, and an item
+  whose body cannot be rebuilt is dropped as unverified (never shown empty).
+  Known gaps: on an older server a superseder outside the pool (newest 8 session notes + 14 lessons) is not
+  seen and `scope=part` links look whole; decisions are bullets inside a note, so a later note that
+  reverses an earlier decision without a link is not detected.
 - Fail-open: unmapped project, kill switch, bad input, no token, unreachable server, any exception, an
   empty result or the 4 s wall clock (a watchdog thread, `os._exit(0)`) print nothing and exit 0.
 

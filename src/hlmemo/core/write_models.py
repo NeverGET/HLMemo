@@ -12,7 +12,15 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from hlmemo.core.errors import ToolError
 
@@ -109,6 +117,31 @@ class SourceSpec(_Strict):
         return _ts_or_none(v, "source.commit_date")
 
 
+UPDATES_MAX = 8  # D-118: items[].updates per item
+UPDATE_SPAN_MAX = 2000  # D-118: old_span limit (the wire schema carries types only, G-SURF)
+UPDATE_REPLACEMENT_MAX = 1000  # D-118 = revise.MAX_REPLACEMENT (the D-110 length sanity)
+
+
+class UpdateSpec(_Strict):
+    """D-118: the carrying item corrects a memory the writer read. ``item`` is that memory's clue
+    (``v<version_id>[.<ordinal>]``: the logical item AND the expected version) or an integer
+    logical id with ``expected_version``. Shape only here; every semantic rule is judged per update
+    in ``core/write_updates.py`` (a rejected update never fails the write)."""
+
+    item: int | str
+    expected_version: int | None = Field(default=None, ge=1)
+    old_span: str = Field(min_length=1, max_length=UPDATE_SPAN_MAX)
+    mode: Literal["revise", "supersede"]
+    replacement: str | None = Field(default=None, min_length=1, max_length=UPDATE_REPLACEMENT_MAX)
+
+    @field_validator("item", mode="before")
+    @classmethod
+    def _item_shape(cls, v: Any) -> Any:
+        if isinstance(v, bool) or not isinstance(v, int | str):
+            raise ValueError("item must be a clue string (v<version_id>) or an integer logical id")
+        return v
+
+
 class Item(_Strict):
     kind: Kind
     logical_id: int | None = Field(default=None, ge=1)
@@ -132,6 +165,9 @@ class Item(_Strict):
     # (invalidate, never delete). Revisions only; None (not False) when unset so resolved.write of
     # ordinary items is unchanged.
     close: bool | None = None
+    # D-118: write-time supersession of memories the writer read (None when unset, so resolved.write
+    # of an item without updates is unchanged)
+    updates: list[UpdateSpec] | None = Field(default=None, max_length=UPDATES_MAX)
 
     _device_scope = field_validator("device_scope")(canonical_device_scope)
 
@@ -263,11 +299,39 @@ class BudgetOut(BaseModel):
     tokenizer: Literal["o200k_base"] = "o200k_base"
 
 
+class UpdateAck(BaseModel):
+    """D-118: the outcome of one ``items[index].updates[update]`` (``applied`` / ``linked`` /
+    ``rejected``); unset fields are omitted on the wire."""
+
+    index: int
+    update: int
+    status: Literal["applied", "linked", "rejected"]
+    mode: Literal["revise", "supersede"]
+    clue: str | None = None  # applied revise: the updated memory's new head
+    code: str | None = None
+    reason: str | None = None
+    hint: str | None = None
+    current_clue: str | None = None  # E_VERSION_CONFLICT: the memory's current head
+
+    @model_serializer(mode="wrap")
+    def _omit_unset(self, handler: Any) -> dict[str, Any]:
+        return {k: v for k, v in handler(self).items() if v is not None}
+
+
 class WriteResult(BaseModel):
     request_id: str
     replayed: bool
     versions: list[VersionAck]
     budget: BudgetOut
+    #: D-118: present only when the request carried updates (a plain write's ack is unchanged)
+    updates: list[UpdateAck] | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_no_updates(self, handler: Any) -> dict[str, Any]:
+        out = handler(self)
+        if out.get("updates") is None:
+            out.pop("updates", None)
+        return out
 
 
 class CloseResult(WriteResult):
@@ -338,6 +402,9 @@ __all__ = [
     "LinkSpec",
     "Rel",
     "SourceSpec",
+    "UPDATES_MAX",
+    "UpdateAck",
+    "UpdateSpec",
     "VersionAck",
     "WriteRequest",
     "WriteResult",
