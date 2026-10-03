@@ -73,4 +73,6 @@ Updated 2026-09-23. Source of each item in parentheses.
   superseder chunk that holds the link's declaration, and follow the supersedes chain to its newest head. Ceiling first: regrade fresh
   packets with 2 blind readers, bar 80% under the stricter rule. The $0 estimate on the D-241 packets is about 79-84%.
 - Risk judge: make the fast profile primary, or raise the 4 s cap after a G-LIVE-C re-check, and log judge outcomes (see above).
+- Registration limiter: key IPv6 clients by /64 like the body admission already does (middleware.py:174-182). Today it keys by
+  single address (devices.py:97). Dormant while registration is closed; do it before registration opens.
 
