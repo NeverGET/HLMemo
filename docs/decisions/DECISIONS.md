@@ -2062,3 +2062,28 @@ hlm review release:
   - the terminal path is left for the owner's first batch.
 
 Watch: the risk judge timed out in the risk-check gate on both post-B3 deploys (retrieval-only verdict; the gate still passes). To be investigated before R4.3.
+D-240 | 2026-10-03 | ACCEPTED (owner: "Apply all 24", "Plan the real fix") | **Curated supersession links, round 1: 24 part-scope links are live in prod (event 5023). The auto-memory notes and `docs/research/jev` are in the self-memory. The IPv6 shared-limiter risk is confirmed in prod, and its fix is planned.**
+
+Links:
+- Method: a mapping pass found 13 areas where an old item still states a replaced fact. Three Sonnet drafting agents worked offline on an `hlm export` of prod memory. Then:
+  - a deterministic gate checked verbatim, unique quotes, current heads, and no duplicate pairs or cycles; it reproduces prod's 371 live links;
+  - two independent Sonnet verifiers dropped 4 records that were dated measurements, not standing claims, and narrowed 5 spans so still-true text is not flagged;
+  - the owner approved the list;
+  - `hlm links backfill` ran: the preview passed 24/24 with counts unchanged; the apply was one event, links 377 → 401, live backfill 119 → 143.
+- Areas: budget caps 5, writer choice 4, release state 2, temporal layer 6, resolved status words (PROPOSED / pending / PAUSED) 5, other 2.
+- Read check: the caps query flags D-121 as superseded in part by D-198, D-173 and D-128.
+- The explicit parser never resolves decision → decision declarations in prod ("D-042 supersedes D-040"). Decisions are imported one item per decision, and `decision_rows` needs at least 2 rows in an item. Indexing single rows would add only 7 links, 1 of them false. The ceiling is too low, so it is not built; curated links are the path.
+- Rollback: `hlm links backfill --revert` is project-wide and also closes R4's 119 links. A round-1 rollback is therefore revert, then re-apply R4's approved set with refreshed heads.
+
+Import (owner-approved; prod memory is private, so only secret checks apply):
+- The auto-memory notes and `docs/research/jev`: 199 items written (163 markdown + 36 auto-memory), 0 failed.
+- gitleaks 0 findings. The dry run matched the apply exactly, and a re-run changes only files edited afterwards.
+- Spend: the librarian used $0.29 for 199 jobs. The Sonnet agents ran on the subscription.
+
+IPv6:
+- AAAA has been advertised since D-202, but the frontend bridge has `EnableIPv6=false` and `docker-proxy` publishes `::`. So all IPv6 clients share one limiter key, including the owner's client, whose IPv4 route still times out.
+- Next: rehearse the RUNBOOK native-IPv6 procedure locally, then a maintenance window with the owner's OK. RUNBOOK and BACKLOG record the status.
+
+Also:
+- STATUS.md is refreshed to 2026-10-03.
+- R4.3 WS-2: a second blind reader (codex astra-low) agrees 21/22 with the first. 2a ships; 2d-i/ii and 2b stay cut.

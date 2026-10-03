@@ -9,6 +9,9 @@ Updated 2026-09-23. Source of each item in parentheses.
 - Gate lookup has no client-side timeout on a TCP-level DB stall → can hold a per-client slot (consults/28).
 - Readiness: model loaded before hash check; a bad-but-loadable file is never rebuilt (consults/28).
 - IPv6 through docker userland proxy: all IPv6 clients share one limiter key; withhold AAAA or enable IPv6 on the compose network (consults/26, RUNBOOK).
+  **OPEN in production (checked 2026-10-03):** AAAA is advertised (D-202). The frontend bridge has `EnableIPv6=false`, with docker-proxy on `::`.
+  The owner's client uses IPv6 only, because its IPv4 route still times out. So it shares the IPv6 bucket with every IPv6 client.
+  Fix: the RUNBOOK native-IPv6 procedure (maintenance window). Owner decision.
 - Caddy keeps the client socket open until the next body write after the API's 408 (API budget is freed on time) (closing/recheck 4a).
 - `::ffff:a.b.c.d` mapped addresses collapse to one /64 bucket (consults/26, Low).
 - XFF junk entry makes the limiter fall back to the proxy IP (consults/20, Low).

@@ -360,6 +360,13 @@ The two observed sources must match the clients' distinct public IPv6 addresses.
 these to the API; do not trust client-supplied forwarding headers as a workaround. Until this is
 verified, withhold AAAA and treat IPv6 registration and auth/body admission as shared buckets.
 
+**Production status (checked 2026-10-03): the shared-bucket condition holds, and AAAA is advertised.**
+- AAAA has been published since 2026-09-30 (D-202), because the owner's client lost its IPv4 route. That bypassed the rule above.
+- The prod frontend bridge reports `EnableIPv6=false`, and `docker-proxy` listens on `::`. Every IPv6 client therefore reaches
+  Caddy from the bridge gateway, and all IPv6 clients share one registration bucket and the auth/body slots.
+- Open item, owner decision: either run the native-IPv6 procedure above in a maintenance window, or withdraw AAAA once the
+  owner's IPv4 route works again (BACKLOG).
+
 ## First deploy and admin bootstrap
 
 Install all five completed private env files, with `HLM_BACKUP_DIR=/var/backups/hlmemo` in `backup.env`:
