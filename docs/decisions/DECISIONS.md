@@ -2133,3 +2133,22 @@ Owner's home IPv4:
   - no host or provider firewall rule matches.
 - The cause is upstream, between the home ISP's carrier-grade NAT and the provider edge. The owner takes it to provider support (the details are private).
 - Access by name (`ssh root@mcp.hlmemo.com`) uses IPv6 and works. AAAA stays: it is normal dual-stack, and the IPv6 limiter flaw is now fixed.
+D-243 | 2026-10-03 | ACCEPTED (owner: "Close without deploy") | **R4.3 is closed without a deploy. The release review found 5 reproducible HIGH false-keeps in the notation rule 2a, and the URL rule 2d-iii rejects supported claims. Branch `r4.3` (2f4c358) stays as a reference and is not merged.**
+
+- **Review** (consult 104, astra-low + gpt-5.6-sol xhigh, round 1): both NO-GO.
+  - 2a HIGH reproducers:
+    - a shell pipe read as a path (`cat /etc/passwd|wc` supports `/etc/wc`);
+    - path bytes normalized (`+`, case, dashes);
+    - a code span assembled from two unrelated commands;
+    - literal brackets treated as optional;
+    - a markdown-wrapped authority expanded.
+  - 2d-iii MEDIUMs: markdown link destinations and root URLs (`/` vs empty path) rejected although supported; attribution ignores the URL rule.
+  - LOW: a verification-line prefix satisfies "resolved".
+  - Confirmed clean: env-absent = main, cut-rule names fail at startup, prompt and schema unchanged, no migration.
+- **Why close rather than fix:** the measured gain is 3 recovered claims in 287 answers. The failure class is unsupported literals passing the last truth gate. The WS-2 trace audit (3/3 supported, 0 harmful) covered only the inputs that happened to occur.
+- **Lesson** (project hlmemo, v2011): a rule that loosens a truth gate needs an adversarial reproducer search before release; literal comparisons stay byte-exact; one whole source token supports one whole answer token.
+- **Live demo on prod (memory.ask, $0.022):**
+  - the caps question is answered correctly (3/8/60 from D-198; 1/2/10 superseded, with the chain explained);
+  - the hour and day lines were dropped by the literal check, which is the true-claim loss 2a targeted.
+  - R4.4 may address that with byte-exact table and value matching only.
+- **Next:** R4.4. The superseder pull-in redesign (D-241) goes ceiling first; the lesson-verification small item moves along with its LOW fix.
