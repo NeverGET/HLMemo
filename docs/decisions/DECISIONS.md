@@ -1971,3 +1971,9 @@ B3 write-time updates, round 2 (consult 98):
   - forward-only data: a rollback restores the pre-upgrade dump and loses later writes. If R4.2 ships first, B3 ships as a combined artifact with a replay + restore rehearsal.
 D-232 | 2026-10-03 | ACCEPTED (owner: "lets do the todo list as is, in order") | **The owner accepts R4.2s's residual risk and approves its deploy. The owner approves the order of the remaining items: B3 as a combined release with a rehearsal, the lesson drafts review, transcript-archive access, transcript retention.**
 - D-062 (5) is amended for opted-in profiles only: a 503/529 whose body exactly matches the profile-declared provider error envelope (no usage, no output, unique keys) settles at $0. Only the two Google Gemini profiles opt in, per Google's "failed requests are not charged" policy. Everything else stays worst case.
+D-233 | 2026-10-03 | ACCEPTED (owner-approved release, D-232) | **R4.2s is LIVE in production (aa5b8b1): spend/robustness fixes.**
+- Hostinger snapshot 386427 (05:51:56Z, expires 10-04).
+- deploy.sh over IPv6 (this Mac's IPv4 route to the VPS is still down): exit 0, no migration.
+- remote_gates 11/11 PASS, incl. WAN p95 175 ms and the backup-restore drill (36 s). probe-writer 200.
+- Smoke: the question that hit Google's 503 on 10-01 now answers from Gemini with 0 fallbacks, $0.017, 13.9 s. The freshness line shows ("records end on 2026-10-01").
+- Rollback: `deploy.sh --rollback` returns to fda8fa0 from the server's local checkout.
