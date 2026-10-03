@@ -32,7 +32,8 @@ LESSONS
 CLOSE
 - Once per session: memory.call_the_day with fresh UUIDs. notes = what changed + why + pointers,
   then "## Open". decisions = one line each with its reason.
-  card_update only to fix a card line your session made false (<= 420 tokens, expected_version_id = current).
+  card_update only to fix a card line your session made false, or to create the card if none exists
+  (<= 420 tokens; expected_version_id = current, omitted for a new card).
 CATCH-UP / MIGRATE: on "do the HLMemo catch-up" or a migration request, load the `hlmemo` skill and follow it.
 NEVER (operator/owner only)
 - memory.answer, hlm review, hlm curate --apply/--execute, hlm links, ops librarian *, hlm_ops.sh,

@@ -1,4 +1,4 @@
-> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-03, source sha256 c6cead6857f4e948f1277b8cd3bf872083a5b95bf977b69696279a39a94881b2. If the two differ, the source file wins.
+> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-03, source sha256 91928a435468cdb59a2808a0e453a24598a2fd986b665b4f892f0cd292abe078. If the two differ, the source file wins.
 
 # HLMemo protocol v1: the hard rules for project writers
 
@@ -166,7 +166,8 @@ decision records its removal.
 `notes` = what changed, why, pointers (files, commits, D-ids, clues), then `## Open` bullets. `decisions` = one
 line each with its reason. Leave `lessons` empty: it skips R15's schema. Write every lesson with
 `memory.register_lesson`. `card_update` only to fix a card line your session made false: a minimal edit,
-`expected_version_id` = the current card version, ≤ 420 tokens. Never tag `auto-capture` or write
+`expected_version_id` = the current card version, ≤ 420 tokens. If the project has no card yet, write the initial card
+(present-tense lines backed by what you read; omit `expected_version_id`, which creates it: `core/write_models.py:233`). Never tag `auto-capture` or write
 "AUTO-CAPTURED": those mark the hook's unreviewed notes (`brief/fetch.py:85`).
 *Why:* the note feeds the next brief; the card is the canonical current state. *Enforced by:* **server today**:
 once per project (`E_SESSION_CLOSED`, `core/write_service.py:776-780`); card head and size (`:783-789`,
@@ -272,7 +273,9 @@ the project's current state. Write only into this project's slug, under R1–R21
 5. **Add what is missing (R5, R6, R8).** Write one claim per item, with evidence and dates from the source.
    Write lessons via `register_lesson` (R15), and project scope only. Cross-project candidates go into the
    session note's "Promotion candidates".
-6. **Fix the card** if a card line is now false (R17: a minimal `card_update`).
+6. **Fix or create the card** (R17). If a card line is now false, make a minimal `card_update`. If the
+   project has no card yet (the brief has no "Now" section and `memory_query` returns no card), write the
+   initial card: present-tense lines only, ≤ 420 tokens, every line backed by an item or file you read.
 7. **Close** with `call_the_day`. The notes hold counts (corrected, added, lessons), the clues written, and
    `## Open` for anything the chat could not decide.
 8. **Report to the owner:** the counts, and the questions the owner must answer. The operator checks the
@@ -375,10 +378,8 @@ path uses it); present-tense detection or mandatory When/Do/Avoid headings (no c
 3. **Writer reach.** D-246 keeps the review queue and global lessons away from writers. But `memory.answer`
    works with the device bearer, and the owner's device was granted `hlm-global:write` (D-234). One bearer per device
    also means the server cannot enforce "own slug only".
-4. **Install status.** `docs/brief/README.md` and `docs/capture/README.md` still say "Install (NOT done)";
-   D-228/D-218 record both as installed for the HLMemo project.
-5. **Tool names.** `docs/USAGE.md:125` says tools appear as `mcp__hlm__memory.query`. Claude Code exposes
-   `mcp__hlm__memory_query`, as `docs/capture/README.md` already writes it.
+4. **Install status.** RESOLVED 2026-10-03 (brief-digest): the brief and capture READMEs now state what is installed.
+5. **Tool names.** RESOLVED 2026-10-03: `docs/USAGE.md` now uses `mcp__hlm__memory_query`, etc.
 
 ## 6. Injected digest ("HLMemo mode")
 
@@ -417,7 +418,8 @@ LESSONS
 CLOSE
 - Once per session: memory.call_the_day with fresh UUIDs. notes = what changed + why + pointers,
   then "## Open". decisions = one line each with its reason.
-  card_update only to fix a card line your session made false (<= 420 tokens, expected_version_id = current).
+  card_update only to fix a card line your session made false, or to create the card if none exists
+  (<= 420 tokens; expected_version_id = current, omitted for a new card).
 CATCH-UP / MIGRATE: on "do the HLMemo catch-up" or a migration request, load the `hlmemo` skill and follow it.
 NEVER (operator/owner only)
 - memory.answer, hlm review, hlm curate --apply/--execute, hlm links, ops librarian *, hlm_ops.sh,

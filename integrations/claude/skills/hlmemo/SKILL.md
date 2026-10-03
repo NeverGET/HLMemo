@@ -186,7 +186,8 @@ checks for secrets, raw `supersedes` links, blank text and more (PV-1 to PV-5); 
 
 **CLOSE**
 - **R17 (server, in part).** Close once with `call_the_day`: notes, `## Open`, decisions with reasons; `card_update`
-  only to fix a card line your session made false. Never tag `auto-capture` or write "AUTO-CAPTURED". *Why:* the
+  only to fix a card line your session made false, or to create the card when the project has none yet
+  (present-tense lines backed by what you read, ≤ 420 tokens, no `expected_version_id`). Never tag `auto-capture` or write "AUTO-CAPTURED". *Why:* the
   note feeds the next brief, and the card is the canonical current state.
 
 **NEVER**
@@ -290,7 +291,10 @@ the project's current state. You write only into this project's slug, under R1�
    and a verbatim `old_span`: `revise` for one changed statement, `supersede` for a wholly outdated item.
 5. **Add what is missing** (R5, R6, R8): one claim per item, with evidence and dates from the source. Lessons via
    `register_lesson`, project scope only; cross-project ones become "Promotion candidates" in the session note.
-6. **Fix the card** if a card line is now false: a minimal `card_update` (R17).
+6. **Fix or create the card** (R17). If a card line is now false, make a minimal `card_update`. If the project has
+   no card yet (the brief has no "Now" section), write the initial card in `call_the_day` `card_update`: present-tense
+   lines only (what the project is, its stack, its production state, its current work and conventions), ≤ 420 tokens,
+   every line backed by an item or file you read, with no `expected_version_id`.
 7. **Close** with `call_the_day`: the counts (corrected, added, lessons), the clues written, and `## Open` for
    anything you could not decide.
 8. **Report to the owner**, then stop. The operator checks the result in the next library session.
