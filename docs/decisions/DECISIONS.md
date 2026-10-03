@@ -2190,3 +2190,22 @@ D-245 | 2026-10-03 | ACCEPTED (owner: "Deploy + withdraw now") | **R4.4a is LIVE
 - **Drill finding (operator error):** `remote_gates.sh` runs the backup/restore drill by default, and it restores over LIVE data. It ran on prod after every release on 09-30, 10-01 and 10-03.
   - Audit of all 8 windows (8-30 s each), using the pre-restore safety dumps (metadata only): the only events wiped were the drill's own `judge-probe` marker write and, twice, its librarian note. **0 real data lost.**
   - Fixes: the prod gate command always uses `--no-drill`; a lesson in hlmemo (v2340); a BACKLOG item to make the drill opt-in.
+D-246 | 2026-10-03 | ACCEPTED (owner) | **Hybrid memory model. Project chats write under hard, server-enforced rules. The orchestrator acts as the library operator in owner-triggered sessions. The Gemini librarian is demoted to a candidate flagger plus `memory.ask`. A reliable autonomous librarian (an Opus + Sonnet agentic system) is a future-of-future feature.**
+
+- **Why:** the measurements show the server librarian cannot act alone. Its contradiction label was right 2/277 and its relations about 51% (D-224, D-244). The verified pipeline (candidates → 2 verifier agents → gate → owner) works but needs strong models, and running them continuously costs too much. Strong agents run on the subscription; the server enforces simple rules.
+- **Roles:**
+  - **Project writers:** every Claude chat in a registered project. They read before acting, write durable facts, decisions and lessons, supersede (B3 `updates`) rather than duplicate, and close with `call_the_day`.
+  - **Library operator:** the orchestrator, in owner-triggered sessions ("let's manage the library"). It runs `hlm curate`, the review queue, card refresh, lesson consolidation and promotion, stale-chain cleanup, the doc→memory sync and migration verification. One-way doors still go to the owner.
+  - **Server librarian:** observer only. It flags candidates for the operator and keeps answering `memory.ask`.
+- **Hard rules, enforced in layers:**
+  1. server validation in `memory.write` and related tools, for every rule a machine can check;
+  2. an injected "HLMemo mode" protocol (hook) plus the SessionStart brief;
+  3. a short per-project CLAUDE.md pointer.
+  Operator-only tools (links backfill, withdraw, role changes, imports into other slugs) stay out of writers' reach. Only the operator role is elastic.
+- **Migrations:** a project's own chat may migrate its memory via a fixed `/hlm-migrate` procedure (TEMPLATE/D-215: inventory → secret check → dry run → curated batches → apply), into its own slug only. The operator verifies with a blind check and a curate pass before sign-off. Prod writes need the owner's OK.
+- **Build order:**
+  1. protocol v1 spec + server validation (a release with review);
+  2. HLMemo-mode injection + CLAUDE.md snippet;
+  3. `/hlm-library` operator skill;
+  4. `/hlm-migrate` skill;
+  5. a pilot project named by the owner.
