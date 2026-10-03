@@ -794,7 +794,9 @@ bash deploy/scripts/hlm_ops.sh --state "$STATE" probe-writer   # {"ok","profile"
 ```
 
 **Curated links** (prod data change, plan §4.6; `--proposals` must name a file INSIDE the api
-container, and `docker compose cp` cannot write into its `/tmp` tmpfs, so the file is streamed in):
+container, and `docker compose cp` cannot write into its `/tmp` tmpfs, so the file is streamed in).
+`hlm curate --run-dir <run> --apply --state "$STATE"` writes this exact procedure for a curated run as
+`<run>/apply/apply.sh preview|apply` (docs/USAGE.md "Curating supersession links"):
 
 The preview is `--dry-run` (it runs every check under the locks, then rolls back; `applied` stays 0
 in its output). A stale or foreign record anywhere in the file rejects the whole apply: exit 65,
