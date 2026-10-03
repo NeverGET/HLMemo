@@ -12,6 +12,7 @@ hlm claude|codex|agy [--task ...] [--ask] [--budget N] [--no-preflight] [--headl
 hlm bench [--profile|--model] [--suite v1|v2] [--runs N] [--max-usd X] [--compare A B] | rescore | leaderboard
 hlm links explicit --project P [--dry-run] [--revert] [--dsn DSN]   (operator, direct DB; D-184)
 hlm links backfill --project P --apply|--dry-run --proposals F | --revert [--dry-run]   (R4, LLM-free)
+hlm curate --project P (--candidates F | --map) [--run-dir D] | --run-dir D --apply --state S   (local)
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ from hlmemo.cli.client_config import (
     os_string,
     resolve_client_config,
 )
+from hlmemo.cli.curate import curate_command
 from hlmemo.cli.http_client import HlmHttp, HlmHttpError
 from hlmemo.cli.launch import CLIS, build_argv, exec_cli
 from hlmemo.cli.links import links_app
@@ -97,6 +99,7 @@ app.add_typer(project_app, name="project")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(bench_app, name="bench")  # W2f: hlm bench (heavy imports are inside the commands)
 app.add_typer(links_app, name="links")  # D-184: hlm links explicit (operator, direct DB)
+app.command("curate")(curate_command)  # D-244: local supersession curation (agents + gate)
 
 
 # --------------------------------------------------------------------------- shared state / helpers
