@@ -9,7 +9,8 @@ undone (prod data, global knowledge, the public repo); only the owner opens one.
 
 **Project writers.** Every Claude chat in a registered project. A project is registered when its folder is mapped
 to a slug on the owner's machine (`[projects]` in `~/.config/hlm/capture.toml`, read by the SessionStart brief
-hook). The injected "HLMemo mode" header names the slug. Project repositories get no HLMemo files. Writers read before acting, write durable facts, decisions and lessons into their own project, correct
+hook). The injected "HLMemo mode" header names the slug. Project repositories get no HLMemo files: the owner's global
+CLAUDE.md section and the SessionStart hook replace the per-project CLAUDE.md pointer that D-246 planned. Writers read before acting, write durable facts, decisions and lessons into their own project, correct
 what they read with write-time `updates` (B3, D-118) instead of duplicating it, and close each session with
 `memory.call_the_day`. The server checks what a machine can (section 5). The rest reaches writers through the
 injected digest (section 6), the SessionStart brief (D-228) and a CLAUDE.md pointer.
@@ -111,7 +112,9 @@ outdated, give the new item `updates`:
 - `mode: supersede` when the whole memory is outdated.
 
 Read the ack: each update is `applied`, `linked` or `rejected` (with a code and hint). On
-`E_VERSION_CONFLICT`, drill `current_clue` and decide again.
+`E_VERSION_CONFLICT`, drill `current_clue` and decide again. To retry a rejected update, never resend the
+write (the `request_id` replays the same ack). Write a revision of YOUR new item (its `logical_id` and
+`expected_version_id`) that carries the corrected `updates`.
 *Why:* a duplicate leaves the stale item ranking as current (D-057, D-118). *Enforced by:* **server today**:
 shapes `core/write_models.py:120-142`; clue parse `core/write_updates.py:118-138`; guards
 `core/write_updates.py:147-197`, `librarian/revise.py:33-36,170-186`; per-update validation
@@ -159,7 +162,8 @@ decision records its removal.
 
 **R17. Close each session once with `memory.call_the_day`** (fresh UUIDs for `request_id` and `session_id`).
 `notes` = what changed, why, pointers (files, commits, D-ids, clues), then `## Open` bullets. `decisions` = one
-line each with its reason. `card_update` only to fix a card line your session made false: a minimal edit,
+line each with its reason. Leave `lessons` empty: it skips R15's schema. Write every lesson with
+`memory.register_lesson`. `card_update` only to fix a card line your session made false: a minimal edit,
 `expected_version_id` = the current card version, ≤ 420 tokens. Never tag `auto-capture` or write
 "AUTO-CAPTURED": those mark the hook's unreviewed notes (`brief/fetch.py:85`).
 *Why:* the note feeds the next brief; the card is the canonical current state. *Enforced by:* **server today**:
@@ -415,5 +419,5 @@ CLOSE
 CATCH-UP / MIGRATE: on "do the HLMemo catch-up" or a migration request, load the `hlmemo` skill and follow it.
 NEVER (operator/owner only)
 - memory.answer, hlm review, hlm curate --apply/--execute, hlm links, ops librarian *, hlm_ops.sh,
-  imports, prod deploys. A refused prod write: stop and ask the owner; never route around it.
+  imports outside a /hlm-migrate run, prod deploys. A refused prod write: stop and ask the owner; never route around it.
 ```
