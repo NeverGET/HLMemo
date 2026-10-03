@@ -6,9 +6,10 @@
 Commands, in order (see eval/active/restore.md for the database):
 
     build --exp E0|E1|E2|E3|all [--dry-run-dir DIR]   packets from the restored hlm_al_ceiling (read-only)
+    build --exp E4|E4B|E4C                             lessons v2(b/c): episodes -> E5 clusters -> packets
     mustknow-kit                                       inputs for the independent must-know writer (E2)
     estimate                                           Gemini cost per experiment from the packet sizes
-    prereg [--force]                                   PREREG.md + PREREG.sha256 (before ANY arm)
+    prereg [--force] [--exp E4]                        PREREG.md (E4: PREREG-E4.md) + .sha256 (before ANY arm)
     run --exp E1|E2|E3 --arm gemini|opus [--run N] [--packets ID,ID] [--retry-failed]
         [--retry-reason ProviderUnavailable|budget_stop|...]   (repeatable; only packets whose final
                                                                 status is that reason; history kept)
@@ -20,6 +21,9 @@ Commands, in order (see eval/active/restore.md for the database):
     status                                             what exists, spend so far
 
 Private outputs go to $HLM_AL_PRIVATE_DIR (default docs/private/active-librarian/, gitignored).
+E4 is a separate suite (config-e4.json, READER-INSTRUCTIONS-E4.md, PREREG-E4.md): its private
+directory is $HLM_AL_E4_PRIVATE_DIR (default docs/private/lessons-v2/e4/); E4 is never part of "all".
+$HLM_AL_ENV_FILE overrides the provider key file (e.g. the main checkout's .env from a worktree).
 The database is $HLM_AL_DSN (default postgresql://hlm:hlm@127.0.0.1:55432/hlm_al_ceiling).
 """
 
@@ -44,6 +48,11 @@ def _print(obj: Any) -> None:
 
 def _exps(value: str, allowed: tuple[str, ...]) -> list[str]:
     exps = list(allowed) if value == "all" else [x.strip().upper() for x in value.split(",") if x.strip()]
+    asked = [x.strip().upper() for x in value.split(",")]
+    lesson = [x for x in asked if x in C.LESSON_EXPS]
+    if lesson and len(asked) != 1:
+        raise C.HarnessError(f"{lesson[0]} is a separate suite: run it alone (--exp {lesson[0]})")
+    allowed = (*allowed, *C.LESSON_EXPS)
     bad = [e for e in exps if e not in allowed]
     if bad:
         raise C.HarnessError(f"unknown experiment(s) {bad}; one of {allowed}")
@@ -53,6 +62,14 @@ def _exps(value: str, allowed: tuple[str, ...]) -> list[str]:
 async def cmd_build(args: argparse.Namespace) -> int:
     import al_packets as P
 
+    if args.exp.strip().upper() in C.LESSON_EXPS:
+        import al_e4
+
+        exp = args.exp.strip().upper()
+        packets = al_e4.build_e4(C.load_config_for(exp), exp=exp)
+        summary = C.read_json(al_e4.clusters_path())["summary"]
+        _print({"exp": exp, "packets": len(packets), **summary})
+        return 0
     cfg = C.load_config()
     conn = await C.connect_ro(args.dsn)
     try:
@@ -91,20 +108,21 @@ def cmd_mustknow_kit(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_estimate(_args: argparse.Namespace) -> int:
+def cmd_estimate(args: argparse.Namespace) -> int:
     import al_arms as A
     import al_packets as P
 
     from hlmemo.core.budget import Meter
     from hlmemo.librarian.profiles import named_profile
 
-    cfg = C.load_config()
+    suite = C.suite_of(args.exp.strip().upper() if args.exp else None)
+    cfg = C.load_config_for(suite.exps[0])
     prof = named_profile(cfg["arms"]["gemini"]["profile"])
     runs = int(cfg["arms"]["gemini"]["runs"])
     meter = Meter()
     out: dict[str, Any] = {"profile": prof.name, "runs": runs, "experiments": {}}
     total_exp = total_worst = Decimal(0)
-    for exp in C.ARM_EXPERIMENTS:
+    for exp in suite.arm_exps:
         packets = P.load_packets(exp)
         spec = A.task_spec(exp, cfg)
         tin = sum(meter.count_text(spec.system) + meter.count_text(p["user"]) + 11 for p in packets)
@@ -133,7 +151,7 @@ def cmd_estimate(_args: argparse.Namespace) -> int:
 def cmd_prereg(args: argparse.Namespace) -> int:
     import al_prereg as R
 
-    path, digest = R.write(force=args.force)
+    path, digest = R.write(force=args.force, suite=C.suite_of(args.exp.strip().upper() if args.exp else None))
     _print({"prereg": str(path), "sha256": digest})
     return 0
 
@@ -141,7 +159,8 @@ def cmd_prereg(args: argparse.Namespace) -> int:
 def cmd_amend(args: argparse.Namespace) -> int:
     import al_prereg as R
 
-    path, digest = R.amend(args.field, args.value, args.reason)
+    suite = C.suite_of(args.exp.strip().upper() if args.exp else None)
+    path, digest = R.amend(args.field, args.value, args.reason, suite=suite)
     _print({"amendment": str(path), "sha256": digest})
     return 0
 
@@ -160,7 +179,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
 
     exp = _exps(args.exp, C.ARM_EXPERIMENTS)[0]
     record = _verified(exp)  # refuses without a matching pre-registration
-    cfg = C.load_config()
+    cfg = C.load_config_for(exp)
     packets = P.load_packets(exp)
     if args.packets:
         wanted = {x.strip() for x in args.packets.split(",")}
@@ -197,14 +216,15 @@ def cmd_check(args: argparse.Namespace) -> int:
     import al_grounding as GR
     import al_packets as P
 
-    cfg = C.load_config()
     for exp in _exps(args.exp, C.ARM_EXPERIMENTS):
+        cfg = C.load_config_for(exp)
         record = _verified(exp)
         packets = P.load_packets(exp)
+        card_tokens = int(cfg["selection"].get("E2", {}).get("card_tokens", 512))
         for label in G.run_labels(record):
             if not (C.private_dir() / "outputs" / exp / label).is_dir():
                 continue
-            res = GR.check_run(exp, label, packets, card_tokens=int(cfg["selection"]["E2"]["card_tokens"]))
+            res = GR.check_run(exp, label, packets, card_tokens=card_tokens)
             C.write_json(C.pdir("checks", exp) / f"{label}.json", res)
             _print({"exp": exp, "run": label, **res["totals"]})
     return 0
@@ -244,8 +264,14 @@ def cmd_status(_args: argparse.Namespace) -> int:
     import al_arms as A
 
     base = C.private_dir()
-    out: dict[str, Any] = {"private_dir": str(base), "prereg": (base / "PREREG.md").is_file()}
-    for exp in C.EXPERIMENTS:
+    out: dict[str, Any] = {
+        "private_dir": str(base),
+        "prereg": (base / "PREREG.md").is_file(),
+        "prereg_e4": (base / C.E4_SUITE.prereg).is_file(),
+        "prereg_e4b": (base / C.E4B_SUITE.prereg).is_file(),
+        "prereg_e4c": (base / C.E4C_SUITE.prereg).is_file(),
+    }
+    for exp in C.ALL_EXPERIMENTS:
         m = base / "packets" / exp / "manifest.json"
         out[exp] = {"packets": m.is_file()}
         od = base / "outputs" / exp
@@ -269,9 +295,11 @@ def parser() -> argparse.ArgumentParser:
     b.add_argument("--dsn", default=None)
     b.add_argument("--dry-run-dir", default=None, help="dry-run capture payloads (*.json) to add to E1")
     sub.add_parser("mustknow-kit")
-    sub.add_parser("estimate")
+    e = sub.add_parser("estimate")
+    e.add_argument("--exp", default="")
     p = sub.add_parser("prereg")
     p.add_argument("--force", action="store_true")
+    p.add_argument("--exp", default="", help="E4: the separate E4 pre-registration")
     r = sub.add_parser("run")
     r.add_argument("--exp", required=True)
     r.add_argument("--arm", required=True, choices=("gemini", "opus"))
@@ -283,13 +311,15 @@ def parser() -> argparse.ArgumentParser:
     a.add_argument("--field", required=True)
     a.add_argument("--value", required=True)
     a.add_argument("--reason", required=True)
+    a.add_argument("--exp", default="", help="E4: amend config-e4.json under PREREG-E4")
     for name in ("check", "kit", "split"):
         s = sub.add_parser(name)
         s.add_argument("--exp", required=True)
     s = sub.add_parser("score")
     s.add_argument("--exp", required=True)
     s.add_argument("--allow-incomplete", action="store_true")
-    sub.add_parser("status")
+    st = sub.add_parser("status")
+    st.add_argument("--exp", default="")
     return ap
 
 
@@ -309,6 +339,9 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status,
     }
     try:
+        exp_arg = str(getattr(args, "exp", "") or "").strip().upper()
+        if exp_arg in C.LESSON_EXPS:
+            C.use_lesson_private(exp_arg)  # a lesson suite never shares another suite's private dir
         res = handlers[args.cmd](args)
         return asyncio.run(res) if asyncio.iscoroutine(res) else int(res)
     except C.HarnessError as exc:

@@ -6,7 +6,9 @@ An arm's output for one packet is split into gradeable UNITS (``units_of``):
   supersession (it would hide or close an existing item);
 * E2: one ``card_line`` unit per line of "now"/"decisions", one ``merge`` unit (``hiding``) per merge
   proposal, and one ``card`` unit per card (the E2 coverage check against the must-know facts);
-* E3: one ``experience`` unit per cross-project experience.
+* E3: one ``experience`` unit per cross-project experience;
+* E4: one ``lesson`` unit per packet that did not abstain (checked by ``al_e4.check_lesson``: quotes
+  inside one evidence quote of the cited episode, group/recurrence/date recount, cross-project rule).
 
 ``check_unit`` then verifies, without any model:
 
@@ -57,6 +59,13 @@ GROUNDING_FLAGS = frozenset(
         "merge_unknown_item",
         "merge_under_evidenced",
         "under_evidenced",
+        "invented_version",
+        "group_count_mismatch",
+        "recurrence_mismatch",
+        "dates_mismatch",
+        "era_mismatch",
+        "status_unsupported",
+        "scope_target_mismatch",
     }
 )
 
@@ -341,6 +350,13 @@ def check_unit(unit: dict[str, Any], idx: PacketIndex, *, card_tokens: int = 512
 
 
 def check_output(packet: dict[str, Any], output: dict[str, Any], *, card_tokens: int = 512) -> list[dict]:
+    if packet["exp"] in C.LESSON_EXPS:
+        import al_e4
+
+        return [
+            {**unit, "check": al_e4.check_lesson(unit, packet)}
+            for unit in al_e4.lesson_units(packet["packet_id"], output)
+        ]
     idx = PacketIndex(packet)
     return [
         {**unit, "check": check_unit(unit, idx, card_tokens=card_tokens)}

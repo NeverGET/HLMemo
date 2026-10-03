@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "spend_cap_usd": "1.50",
+  "arms": {
+    "gemini": {
+      "kind": "provider",
+      "profile": "google-gemini38-flash-medium",
+      "runs": 2,
+      "timeout_s": 240,
+      "env_file": ".env"
+    },
+    "opus": {
+      "kind": "claude_cli",
+      "cli": "claude",
+      "model": "opus",
+      "effort": "high",
+      "runs": 1,
+      "timeout_s": 1200
+    }
+  },
+  "max_tokens": {
+    "E4C": 12000
+  },
+  "expected_output_tokens": {
+    "E4C": 3000
+  },
+  "selection": {
+    "E4C": {
+      "embedding": "lesson (when, do, avoid) + symptom, pinned E5, query prefix",
+      "linkage": "average",
+      "center": true,
+      "max_cluster_share": 0.5,
+      "min_cross_episodes": 3,
+      "min_cross_groups": 2,
+      "min_local_episodes": 4,
+      "exclude_covered": true,
+      "current_era": "claude-opus-5-5",
+      "status_rule": "episode: resolved only when its transcript shows the fix verified (a verification quote), else unknown; lesson: resolved = every cited episode resolved; historical = no cited episode of the current era; active = an episode recurs after another cited one was resolved; unknown always allowed",
+      "threshold": 0.85,
+      "threshold_source": "E4c design: the largest threshold of a 0.40-1.00 sweep (step 0.05) on the E4b pool with max cluster <= 20 and >= 8 eligible clusters (rule declared before any cluster content was read; holds before and after the covered exclusion); approved by the coordinator",
+      "scope_target": true,
+      "scope_rule": "cross-project packet -> scope_target global (the >= 2 independence groups evidence rule applies); project-local packet -> scope_target project:<slug> of a cited episode's project (no 2-group rule; never the global store)"
+    }
+  },
+  "grading": {
+    "seed": 4245,
+    "readers": [
+      "A",
+      "B"
+    ],
+    "split_reader": "C"
+  },
+  "bars": {
+    "grounded_min": 0.95,
+    "correct_min": 0.9,
+    "useful_min": {
+      "E4C": 0.5
+    },
+    "harmful_max": 0,
+    "overgeneralized_max_rate": 0.1,
+    "opus_margin_max": 0.1,
+    "opus_margin_metrics": [
+      "correct",
+      "grounded",
+      "useful"
+    ]
+  },
+  "rules": {
+    "split": "stricter label of readers A and B (correct/grounded/useful need both true; harmful/overgeneralized count when either is true); reader C (split units only) is reported, never used for the bar",
+    "grounded": "the deterministic E4 check (every quote inside ONE evidence quote of the cited episode; group count, recurrence count and first/last seen recomputed by code from the cited episodes; the lesson's model eras recounted and its status allowed only with its evidence; its scope target matching the packet type; a cross-project lesson cites >= 2 independence groups) AND both readers' grounded label",
+    "packet_types": "cross-project and project-local units are pooled for the bars; each type is also reported per arm",
+    "abstain": "a packet answered with 'no lesson' gives no unit; abstentions are reported per run",
+    "gemini_runs": "pooled over both runs; each run also reported",
+    "failed_output": "a packet without a schema-valid output after the provider's retry counts as an arm failure, reported, no units",
+    "no_units": "an arm with 0 gradeable units cannot be GO",
+    "verdict": "GO-Gemini when Gemini passes every bar and Opus is at most opus_margin_max better on each margin metric; GO-Opus-only (owner call) when only Opus passes the absolute bars; else NO-GO",
+    "already_covered": "an eligible cluster whose members all belong to one E4 packet whose lesson was imported is excluded (reported as already in memory)",
+    "scope_target": "a cross-project lesson targets the global lesson store; a project-local lesson targets that project only"
+  }
+}
