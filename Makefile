@@ -28,7 +28,8 @@ down-v:
 migrate: db      ## apply phase0 migrations from the host against the compose db
 	HLM_DB_DSN=$${HLM_DB_DSN:-postgresql://hlm:hlm@127.0.0.1:$${HLM_DB_PORT:-5432}/hlm} $(UV) run alembic upgrade main@head
 
-test:            ## integration tests (starts compose db if needed)
+test:            ## integration tests against HLM_TEST_DSN (a dedicated database; no compose fallback, D-236)
+	@test -n "$(HLM_TEST_DSN)" || { echo 'Set HLM_TEST_DSN to a dedicated test database (never hlm); there is no fallback' >&2; exit 2; }
 	$(UV) run pytest -q tests/integration
 
 test-compose:    ## integration tests inside the `test` image against the compose stack

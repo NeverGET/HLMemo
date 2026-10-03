@@ -1,11 +1,11 @@
 """Shared test infrastructure (PHASE0-SPEC §7): session-scoped Postgres + migrated schema.
 
-Database selection:
-  1. `HLM_TEST_DSN` set  -> use it as-is (CI / `compose --profile test`).
-  2. else                -> `docker compose up -d --wait db` and use a dedicated `hlm_test`
-                            database on it (created if missing), never the dev database `hlm`.
-Tests truncate every table, so a DSN naming a protected database (the dev stack's `hlm`) is refused.
-In both cases `alembic upgrade main@head` is applied once per session (idempotent).
+Database selection: `HLM_TEST_DSN` names the database, always (CI / `compose --profile test` /
+`make test`). Without it the session stops at the first test that needs a database, with a usage
+error (exit code 4): there is NO fallback to any compose database (D-236 lesson "never fall back to
+the dev DB": a fallback once ran the suite against a shared stack). Tests truncate every table, so a
+DSN naming a protected database (the dev stack's `hlm`) is refused too.
+`alembic upgrade main@head` is applied once per session (idempotent).
 Between tests every table is truncated except `devices` row 1 (reserved admin, §2).
 """
 
@@ -36,9 +36,6 @@ ROOT = Path(__file__).resolve().parents[1]
 # (the G-L gates use scripted in-process stubs; recording is a manual, keyed step).
 os.environ.setdefault("HLM_LLM_MODE", "replay")
 os.environ.setdefault("HLM_LLM_CASSETTE_DIR", str(ROOT / "tests" / "cassettes" / "w2a"))
-COMPOSE_DB_USER = "hlm"
-COMPOSE_DB_PASSWORD = "hlm"
-COMPOSE_DB_NAME = "hlm_test"
 # Databases the suite must never truncate (the dev stack's live data). D-056.
 PROTECTED_DB_NAMES = frozenset({"hlm"})
 
@@ -53,27 +50,6 @@ def _release_standalone_native_dependencies():
 
     _deps_for.cache_clear()
     gc.collect()
-
-
-def _compose(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", "compose", *args], cwd=ROOT, text=True, capture_output=True, check=check)
-
-
-def _compose_db_dsn() -> tuple[str, bool]:
-    """Ensure the compose `db` service is healthy; return (dsn, started_by_us)."""
-    already = _compose("ps", "-q", "--status", "running", "db", check=False).stdout.strip()
-    _compose("up", "-d", "--wait", "db")
-    port_line = _compose("port", "db", "5432").stdout.strip()  # e.g. 0.0.0.0:5432
-    host, _, port = port_line.rpartition(":")
-    host = "127.0.0.1" if host in ("0.0.0.0", "", "[::]") else host
-    admin = f"postgresql://{COMPOSE_DB_USER}:{COMPOSE_DB_PASSWORD}@{host}:{port}/postgres"
-    _wait_for_postgres(admin)
-    with psycopg.connect(admin, autocommit=True) as conn:
-        exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (COMPOSE_DB_NAME,)).fetchone()
-        if exists is None:
-            conn.execute(f'CREATE DATABASE "{COMPOSE_DB_NAME}"')
-    dsn = f"postgresql://{COMPOSE_DB_USER}:{COMPOSE_DB_PASSWORD}@{host}:{port}/{COMPOSE_DB_NAME}"
-    return dsn, not already
 
 
 def _refuse_protected(dsn: str) -> None:
@@ -114,19 +90,29 @@ def _migrate(dsn: str) -> str:
     return proc.stderr + proc.stdout
 
 
+MISSING_DSN = (
+    "HLM_TEST_DSN is not set: the test suite needs an explicit, dedicated database "
+    "(e.g. postgresql://hlm:hlm@127.0.0.1:<port>/hlm_test on your own compose project). "
+    "There is no fallback to any compose database."
+)
+
+
+def _require_test_dsn() -> str:
+    """``HLM_TEST_DSN`` or a session stop (``pytest.exit``, exit code 4) before any database work."""
+    dsn = os.environ.get("HLM_TEST_DSN", "").strip()
+    if not dsn:
+        pytest.exit(MISSING_DSN, returncode=pytest.ExitCode.USAGE_ERROR)
+    return dsn
+
+
 @pytest.fixture(scope="session")
 def db_dsn() -> str:
     """Migrated Postgres DSN for the whole session."""
-    dsn = os.environ.get("HLM_TEST_DSN")
-    started_by_us = False
-    if not dsn:
-        dsn, started_by_us = _compose_db_dsn()
+    dsn = _require_test_dsn()
     _refuse_protected(dsn)
     _wait_for_postgres(dsn)
     _migrate(dsn)
-    yield dsn
-    if started_by_us and os.environ.get("HLM_TEST_KEEP_DB") != "1":
-        _compose("stop", "db", check=False)
+    return dsn
 
 
 @pytest.fixture(scope="session")
