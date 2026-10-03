@@ -65,6 +65,7 @@ GROUNDING_FLAGS = frozenset(
         "dates_mismatch",
         "era_mismatch",
         "status_unsupported",
+        "scope_target_mismatch",
     }
 )
 

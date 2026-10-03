@@ -92,7 +92,7 @@ def e4_inputs(suite_name: str = C.E4) -> dict[str, Any]:
     import al_e4
 
     files = [("episodes", al_e4.episodes_path()), ("clusters", al_e4.clusters_path())]
-    if suite_name == C.E4B:
+    if suite_name != C.E4:
         files.append(("covered", al_e4.covered_path()))
     out: dict[str, Any] = {}
     for name, f in files:
@@ -213,7 +213,11 @@ def render(record: dict[str, Any], rubric: str) -> str:
 
 def render_e4(record: dict[str, Any], rubric: str, suite: C.Suite = C.E4_SUITE) -> str:
     bars, clu = record["bars"], record.get("clustering") or {}
-    title = "Lessons v2 (E4)" if suite.name == C.E4 else "Lessons v2b (E4B: status + model era)"
+    title = {
+        C.E4: "Lessons v2 (E4)",
+        C.E4B: "Lessons v2b (E4B: status + model era)",
+        C.E4C: "Lessons v2c (E4C: re-swept threshold, status + model era + scope target)",
+    }[suite.name]
     lines = [
         f"# {title} ceiling experiment: pre-registration",
         "",

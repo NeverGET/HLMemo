@@ -69,6 +69,7 @@ E4_FLAGS = frozenset(
         "dates_mismatch",
         "era_mismatch",
         "status_unsupported",
+        "scope_target_mismatch",
     }
 )
 
@@ -260,6 +261,7 @@ def e4_packet(
     redactor: Any = None,
     exp: str = C.E4,
     current_era: str | None = None,
+    scope_targets: bool = False,
 ) -> dict[str, Any]:
     red = redactor or _redactor()
     srcs = []
@@ -319,6 +321,10 @@ def e4_packet(
     }
     if current_era is not None:
         p["context"]["current_era"] = current_era
+    if scope_targets:  # E4C: cross-project -> the global store; project-local -> that project only
+        p["context"]["scope_targets"] = (
+            ["global"] if packet_type == CROSS else sorted({f"project:{s['project']}" for s in srcs})
+        )
     p["user"] = render_user(p)
     p["user_sha256"] = C.sha256_text(p["user"])
     return p
@@ -335,6 +341,11 @@ def render_user(packet: dict[str, Any]) -> str:
         f" (experiment {packet['exp']}, packet {packet['packet_id']})",
         f"PACKET TYPE: {kind}",
         *([f"CURRENT AGENT MODEL ERA: {ctx['current_era']}"] if ctx.get("current_era") else []),
+        *(
+            [f"SCOPE TARGET (set scope_target to one of): {', '.join(ctx['scope_targets'])}"]
+            if ctx.get("scope_targets")
+            else []
+        ),
         f"EPISODES: {ctx['episodes']} · INDEPENDENCE GROUPS ({ctx['group_count']}):"
         f" {', '.join(ctx['groups'])}",
         f"SEEN: {ctx['first_seen']} to {ctx['last_seen']}",
@@ -428,6 +439,7 @@ def build_e4(
                     cluster=ci,
                     exp=exp,
                     current_era=current_era,
+                    scope_targets=bool(sel.get("scope_target")),
                 )
             )
         rows.append(row)
@@ -544,6 +556,12 @@ def check_lesson(unit: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]
             flags.add("era_mismatch")
         if not status_supported(str(les.get("status")), [src[h] for h in sorted(cited)], current_era):
             flags.add("status_unsupported")
+    targets = packet["context"].get("scope_targets")
+    if targets is not None:  # E4C: a project-local lesson never targets the global store
+        tgt = str(les.get("scope_target", ""))
+        cited_projects = {f"project:{src[h]['project']}" for h in cited}
+        if tgt not in targets or (tgt != "global" and tgt not in cited_projects):
+            flags.add("scope_target_mismatch")
     idx = PacketIndex(packet)
     free = "\n".join(
         [

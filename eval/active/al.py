@@ -6,7 +6,7 @@
 Commands, in order (see eval/active/restore.md for the database):
 
     build --exp E0|E1|E2|E3|all [--dry-run-dir DIR]   packets from the restored hlm_al_ceiling (read-only)
-    build --exp E4|E4B                                 lessons v2(b): episodes -> E5 clusters -> packets
+    build --exp E4|E4B|E4C                             lessons v2(b/c): episodes -> E5 clusters -> packets
     mustknow-kit                                       inputs for the independent must-know writer (E2)
     estimate                                           Gemini cost per experiment from the packet sizes
     prereg [--force] [--exp E4]                        PREREG.md (E4: PREREG-E4.md) + .sha256 (before ANY arm)
@@ -269,6 +269,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
         "prereg": (base / "PREREG.md").is_file(),
         "prereg_e4": (base / C.E4_SUITE.prereg).is_file(),
         "prereg_e4b": (base / C.E4B_SUITE.prereg).is_file(),
+        "prereg_e4c": (base / C.E4C_SUITE.prereg).is_file(),
     }
     for exp in C.ALL_EXPERIMENTS:
         m = base / "packets" / exp / "manifest.json"

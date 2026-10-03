@@ -41,6 +41,7 @@ PROMPTS = {
     "E3": ("e3_lessons.md", "e3.schema.json"),
     "E4": ("e4_lessons.md", "e4.schema.json"),
     "E4B": ("e4b_lessons.md", "e4b.schema.json"),
+    "E4C": ("e4c_lessons.md", "e4c.schema.json"),
 }
 #: E4 (lessons v2, D-222/D-225) is a SEPARATE suite: its own config, reader instructions,
 #: pre-registration file and private directory (its packets come from mined episodes, not the DB)
@@ -56,9 +57,20 @@ E4B_CONFIG_PATH = HERE / "config-e4b.json"
 E4B_READER_TEMPLATE = HERE / "READER-INSTRUCTIONS-E4b.md"
 E4B_PRIVATE_ENV = "HLM_AL_E4B_PRIVATE_DIR"
 E4B_DEFAULT_PRIVATE = ROOT / "docs" / "private" / "lessons-v2" / "e4b"
-LESSON_EXPS = (E4, E4B)
+#: E4C: E4B at the re-swept threshold, plus a scope target (global vs one project) per lesson
+E4C = "E4C"
+E4C_CONFIG_PATH = HERE / "config-e4c.json"
+E4C_READER_TEMPLATE = HERE / "READER-INSTRUCTIONS-E4c.md"
+E4C_PRIVATE_ENV = "HLM_AL_E4C_PRIVATE_DIR"
+E4C_DEFAULT_PRIVATE = ROOT / "docs" / "private" / "lessons-v2" / "e4c"
+LESSON_EXPS = (E4, E4B, E4C)
+_LESSON_PRIVATE = {
+    E4: (E4_PRIVATE_ENV, E4_DEFAULT_PRIVATE),
+    E4B: (E4B_PRIVATE_ENV, E4B_DEFAULT_PRIVATE),
+    E4C: (E4C_PRIVATE_ENV, E4C_DEFAULT_PRIVATE),
+}
 ENV_FILE_ENV = "HLM_AL_ENV_FILE"  # the provider key file (e.g. the main checkout's .env from a worktree)
-ALL_EXPERIMENTS = (*("E0", "E1", "E2", "E3"), E4, E4B)
+ALL_EXPERIMENTS = (*("E0", "E1", "E2", "E3"), *LESSON_EXPS)
 
 
 class HarnessError(RuntimeError):
@@ -79,34 +91,35 @@ class Suite:
 
     @property
     def config_path(self) -> Path:
-        return {E4: E4_CONFIG_PATH, E4B: E4B_CONFIG_PATH}.get(self.name, CONFIG_PATH)
+        return {E4: E4_CONFIG_PATH, E4B: E4B_CONFIG_PATH, E4C: E4C_CONFIG_PATH}.get(self.name, CONFIG_PATH)
 
     @property
     def reader_template(self) -> Path:
-        return {E4: E4_READER_TEMPLATE, E4B: E4B_READER_TEMPLATE}.get(self.name, READER_TEMPLATE)
+        return {E4: E4_READER_TEMPLATE, E4B: E4B_READER_TEMPLATE, E4C: E4C_READER_TEMPLATE}.get(
+            self.name, READER_TEMPLATE
+        )
 
 
 MAIN_SUITE = Suite("main", "PREREG.md", "PREREG.sha256", ("E0", "E1", "E2", "E3"), ("E1", "E2", "E3"))
 E4_SUITE = Suite(E4, "PREREG-E4.md", "PREREG-E4.sha256", (E4,), (E4,))
 E4B_SUITE = Suite(E4B, "PREREG-E4b.md", "PREREG-E4b.sha256", (E4B,), (E4B,))
+E4C_SUITE = Suite(E4C, "PREREG-E4c.md", "PREREG-E4c.sha256", (E4C,), (E4C,))
 
 
 def suite_of(exp: str | None) -> Suite:
-    return {E4: E4_SUITE, E4B: E4B_SUITE}.get(str(exp or "").upper(), MAIN_SUITE)
+    return {E4: E4_SUITE, E4B: E4B_SUITE, E4C: E4C_SUITE}.get(str(exp or "").upper(), MAIN_SUITE)
 
 
 def use_lesson_private(exp: str = E4) -> Path:
     """Point this process's private directory at the lesson suite's own one (E4:
     ``HLM_AL_E4_PRIVATE_DIR``, default ``docs/private/lessons-v2/e4``; E4B: ``HLM_AL_E4B_PRIVATE_DIR``,
     default ``.../e4b``): a lesson suite never shares another suite's registration, ledger or kit."""
-    env, default = (
-        (E4B_PRIVATE_ENV, E4B_DEFAULT_PRIVATE) if exp == E4B else (E4_PRIVATE_ENV, E4_DEFAULT_PRIVATE)
-    )
+    env, default = _LESSON_PRIVATE[exp]
     target = Path(os.environ.get(env) or default).expanduser().resolve()
     others = {(ROOT / "docs" / "private" / "active-librarian").resolve()}
-    other_env = E4_PRIVATE_ENV if exp == E4B else E4B_PRIVATE_ENV
-    other_default = E4_DEFAULT_PRIVATE if exp == E4B else E4B_DEFAULT_PRIVATE
-    others.add(Path(os.environ.get(other_env) or other_default).expanduser().resolve())
+    for other, (o_env, o_default) in _LESSON_PRIVATE.items():
+        if other != exp:
+            others.add(Path(os.environ.get(o_env) or o_default).expanduser().resolve())
     if target in others:
         raise HarnessError(f"{exp} must not use another suite's private directory")
     os.environ[PRIVATE_ENV] = str(target)
@@ -296,6 +309,8 @@ __all__ = [
     "E4",
     "E4B",
     "E4B_SUITE",
+    "E4C",
+    "E4C_SUITE",
     "E4_SUITE",
     "LESSON_EXPS",
     "use_lesson_private",

@@ -549,3 +549,82 @@ def test_lesson_suites_never_share_a_private_dir(monkeypatch, tmp_path):
     assert C.use_lesson_private(C.E4B) == (tmp_path / "b").resolve()
     with pytest.raises(C.HarnessError):
         al._exps("E4,E4B", C.ARM_EXPERIMENTS)
+
+
+# --------------------------------------------------------------------------- E4C (scope target)
+def e4c_packet(kind: str) -> dict:
+    eps = [{**e, "status": "unknown", "model_era": "m-now"} for e in EPS]
+    if kind == E.LOCAL:
+        eps = [{**e, "group": "G1"} for e in eps]
+    return E.e4_packet(
+        "E4C-01",
+        kind,
+        eps,
+        cluster=1,
+        redactor=Identity(),
+        exp=C.E4C,
+        current_era="m-now",
+        scope_targets=True,
+    )
+
+
+def e4c_check(kind: str, **over) -> dict:
+    pk = e4c_packet(kind)
+    les = lesson(model_era=["m-now"], status="unknown", **over)
+    if kind == E.LOCAL:
+        les["group_count"] = 1
+    unit = E.lesson_units("E4C-01", {"abstain": False, "lesson": les})[0]
+    return E.check_lesson(unit, pk)
+
+
+def test_e4c_scope_target_cross_project_goes_global_only():
+    assert "SCOPE TARGET (set scope_target to one of): global" in e4c_packet(E.CROSS)["user"]
+    assert e4c_check(E.CROSS, scope_target="global")["grounded_det"]
+    assert "scope_target_mismatch" in e4c_check(E.CROSS, scope_target="project:proj-a")["grounding_flags"]
+
+
+def test_e4c_scope_target_project_local_never_global_and_names_a_cited_project():
+    pk = e4c_packet(E.LOCAL)
+    assert pk["context"]["scope_targets"] == ["project:proj-a", "project:proj-b", "project:proj-c"]
+    ok = e4c_check(E.LOCAL, scope_target="project:proj-a")  # e1 (proj-a) is cited
+    assert ok["grounded_det"], ok["grounding_flags"]  # the 2-group rule does not apply to project-local
+    assert "scope_target_mismatch" in e4c_check(E.LOCAL, scope_target="global")["grounding_flags"]
+    # proj-b is in the packet but no cited episode belongs to it
+    assert "scope_target_mismatch" in e4c_check(E.LOCAL, scope_target="project:proj-b")["grounding_flags"]
+
+
+def test_e4c_schema_requires_a_scope_target():
+    import jsonschema
+
+    schema = json.loads((AL_DIR / "prompts" / "e4c.schema.json").read_text())
+    base = lesson(model_era=["m"], status="unknown")
+    jsonschema.validate(
+        {"abstain": False, "abstain_reason": "", "lesson": {**base, "scope_target": "global"}}, schema
+    )
+    jsonschema.validate(
+        {"abstain": False, "abstain_reason": "", "lesson": {**base, "scope_target": "project:some-app"}},
+        schema,
+    )
+    for bad in (None, "everywhere", "project:"):
+        les = dict(base) if bad is None else {**base, "scope_target": bad}
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"abstain": False, "abstain_reason": "", "lesson": les}, schema)
+
+
+def test_e4c_build_sets_scope_targets_per_packet_type(e4b_env, monkeypatch):
+    cfg = C.load_config_for(C.E4C)
+    assert cfg["selection"]["E4C"]["threshold"] == 0.85 and cfg["spend_cap_usd"] == "1.50"
+    (e4b_env / "covered.json").write_text(json.dumps({"packets": {}}))
+    packets = E.build_e4(cfg, exp=C.E4C, embed=fake_embed)
+    targets = {p["packet_id"]: p["context"]["scope_targets"] for p in packets}
+    assert targets == {"E4C-X01": ["global"], "E4C-L01": ["project:p9"]}
+
+
+def test_three_lesson_suites_never_share_a_private_dir(monkeypatch, tmp_path):
+    for env, name in ((C.E4_PRIVATE_ENV, "a"), (C.E4B_PRIVATE_ENV, "b"), (C.E4C_PRIVATE_ENV, "b")):
+        monkeypatch.setenv(env, str(tmp_path / name))
+    with pytest.raises(C.HarnessError):
+        C.use_lesson_private(C.E4C)
+    monkeypatch.setenv(C.E4C_PRIVATE_ENV, str(tmp_path / "c"))
+    assert C.use_lesson_private(C.E4C) == (tmp_path / "c").resolve()
+    assert C.suite_of("E4C").prereg == "PREREG-E4c.md"
