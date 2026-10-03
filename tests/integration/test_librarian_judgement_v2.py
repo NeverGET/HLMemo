@@ -25,12 +25,13 @@ import pytest
 
 from hlmemo.core.read_service import query
 from hlmemo.db.replay import rebuild_projections
-from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+from hlmemo.librarian.roles import record_batch_decision
 from tests.integration._librarian_fixtures import (
     ScriptedLLM,
     lib_settings,
     make_provider,
     make_worker,
+    promote,
     seed_reserved,
 )
 from tests.integration._read_fixtures import embedder, read_deps  # noqa: F401 - fixtures by import
@@ -68,7 +69,7 @@ async def _drain(db_dsn, connect, oracle: Any, role: str = "observer", **kw: Any
 
 async def _role(connect, world: World, role: str) -> None:  # noqa: ANN001
     async with await connect() as conn:
-        await record_role_decision(conn, role=role, decided_by=world.ctx_admin, decision="D-test")
+        await promote(conn, role=role, decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
 
 

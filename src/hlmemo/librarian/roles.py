@@ -6,7 +6,9 @@ per-batch approval. The deployment role is ``HLM_LIBRARIAN_ROLE``; a role above 
 honoured only while the latest deployment-level role decision event (``librarian`` event, op
 ``set_role``, recorded by the owner's device) names exactly that role: the worker refuses to start
 otherwise, and a later decision demotes a running worker at its next job. A per-project override
-(decision event with a project, or ``projects.policy.librarian_role``) can only be lower.
+(decision event with a project, or ``projects.policy.librarian_role``) can only be lower. A decision
+that would let the librarian apply pending (``approved``/``accepted_pending``) questions is recorded
+only with their exact count (``release_pending``, the D-244 promotion guard).
 """
 
 from __future__ import annotations
@@ -64,13 +66,20 @@ async def record_role_decision(
     decided_by: AuthContext,
     decision: str,
     project_id: int | None = None,
+    release_pending: int | None = None,
 ) -> int:
     """Record an owner role decision (``hlm.ops librarian role …``; a D-entry is the ``decision``).
 
     D-074: a promotion (assistant+) releases the ``accepted_pending`` answers recorded under
     observer to the normal batch path: the same event enqueues one ``apply_batch`` job per batch
     holding such questions whose project is assistant+ after this decision (``resolved.jobs``,
-    replayed as-is). The job applies them with the full recheck (TTL, staleness, capabilities)."""
+    replayed as-is). The job applies them with the full recheck (TTL, staleness, capabilities).
+
+    Promotion guard (D-244): under the EXCLUSIVE role-order lock, before anything is recorded, the
+    questions this decision would let the librarian apply are counted (``promotion_release``). If
+    there are any, the decision is refused (``E_VERSION_CONFLICT``, the counts per project in
+    ``details``) unless ``release_pending`` equals that exact total; a ``release_pending`` that differs
+    from the total (0 included) is refused too. An accepted count is recorded in ``request``."""
     if role not in _RANK:
         raise ToolError("E_INVALID_ARG", f"unknown librarian role {role!r}")
     if project_id is None and not decided_by.is_admin:
@@ -78,6 +87,22 @@ async def record_role_decision(
     if project_id is not None and not decided_by.has(project_id, Role.ADMIN):
         raise ToolError("E_FORBIDDEN_PROJECT", "project role override needs admin on the project")
     await lock_role_order(conn, exclusive=True)
+    release = await release_summary(conn, await promotion_release(conn, role, project_id))
+    total = release["total"]
+    if (release_pending is None and total) or (release_pending is not None and release_pending != total):
+        shown = ", ".join(
+            f"{slug}: accepted_pending {c['accepted_pending']}, approved {c['approved']}"
+            for slug, c in release["by_project"].items()
+        )
+        what = f"would release {total} pending librarian question(s)" + (f" ({shown})" if shown else "")
+        message = (
+            f"--release-pending {release_pending} does not match: this {role} decision {what};"
+            " nothing recorded"
+            if release_pending is not None
+            else f"this {role} decision {what}: withdraw or verify them first (ops librarian withdraw),"
+            f" or confirm the exact count with --release-pending {total}; nothing recorded"
+        )
+        raise ToolError("E_VERSION_CONFLICT", message, would_release=release, release_pending=release_pending)
     at = await q.clock_now(conn)
     (event_id,) = await q.allocate_ids(conn, "events", 1)
     jobs = await pending_apply_jobs(conn, role, project_id, event_id)
@@ -85,6 +110,9 @@ async def record_role_decision(
     resolved: dict[str, Any] = {"recorded_at": fmt_ts(at)}
     if jobs:
         resolved["jobs"] = jobs
+    request: dict[str, Any] = {"actor": CLIENT, "op": "set_role", "role": role, "decision": decision[:200]}
+    if release_pending is not None:
+        request["release_pending"] = release_pending
     event_id = await insert_system_event(
         conn,
         kind="librarian",
@@ -92,7 +120,7 @@ async def record_role_decision(
         device_id=decided_by.device_id,
         client=decided_by.client,
         request_id=uuid.uuid4(),
-        request={"actor": CLIENT, "op": "set_role", "role": role, "decision": decision[:200]},
+        request=request,
         resolved=resolved,
         at=at,
         event_id=event_id,
@@ -132,6 +160,58 @@ async def pending_apply_jobs(
         return await _role_after(conn, role, decision_project, pid)
 
     return await releasable(conn, role_of, f":promo{event_id}")
+
+
+async def promotion_release(
+    conn: AsyncConnection, role: str, decision_project: int | None
+) -> dict[int, dict[str, int]]:
+    """The promotion guard's count (D-244): per home project, the ``approved`` and
+    ``accepted_pending`` questions the librarian may apply once this decision is recorded.
+
+    ``releasable``'s rule, per QUESTION: every unexpired one (not ``widen_scope``, which only an
+    owner's ``memory.answer`` applies) whose touched projects NOW (home, recorded ``project_ids``,
+    the actions' current projects) are all above observer after the decision. An ``accepted_pending``
+    answer is released by the jobs this decision (or the sweeper) queues; an ``approved`` one by the
+    ``apply_batch`` job its batch decision queued, which a worker above observer then runs. A
+    demotion releases nothing. The apply path still rechecks each one (TTL, staleness, authority)."""
+    if role == "observer":
+        return {}
+    from hlmemo.librarian.tasks.apply_batch import proposal_actions
+
+    roles: dict[int, str] = {}
+    cur = await conn.execute(
+        """
+        SELECT project_id, status, project_ids, proposal FROM librarian_questions
+         WHERE status IN ('approved', 'accepted_pending') AND kind <> 'widen_scope'
+           AND (expires_at IS NULL OR expires_at > clock_timestamp())
+         ORDER BY project_id, question_id
+        """
+    )
+    out: dict[int, dict[str, int]] = {}
+    for home, status, pids, proposal in await cur.fetchall():
+        actions = proposal_actions(proposal)
+        if any(a.get("op") == "widen_scope" for a in actions):
+            continue  # D-086 §1: never released by the batch path
+        touched = {int(home), *(int(x) for x in pids)} | await action_projects(conn, actions)
+        for p in sorted(touched - roles.keys()):
+            roles[p] = await _role_after(conn, role, decision_project, p)
+        if all(roles[p] != "observer" for p in touched):
+            counts = out.setdefault(int(home), {"accepted_pending": 0, "approved": 0})
+            counts[status] += 1
+    return out
+
+
+async def release_summary(conn: AsyncConnection, counts: dict[int, dict[str, int]]) -> dict[str, Any]:
+    """``promotion_release`` for the operator: ``{total, by_project: {slug: {accepted_pending,
+    approved}}}``."""
+    slugs: dict[int, str] = {}
+    if counts:
+        cur = await conn.execute(
+            "SELECT project_id, slug FROM projects WHERE project_id = ANY(%s)", (sorted(counts),)
+        )
+        slugs = {int(p): s for p, s in await cur.fetchall()}
+    by_project = {slugs.get(p, str(p)): c for p, c in sorted(counts.items())}
+    return {"total": sum(sum(c.values()) for c in counts.values()), "by_project": by_project}
 
 
 async def releasable(
@@ -389,8 +469,10 @@ __all__ = [
     "lower",
     "lowest_role",
     "pending_apply_jobs",
+    "promotion_release",
     "record_batch_decision",
     "release_now",
+    "release_summary",
     "releasable",
     "record_role_decision",
 ]

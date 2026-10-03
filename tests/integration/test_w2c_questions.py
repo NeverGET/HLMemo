@@ -28,6 +28,7 @@ from tests.integration._librarian_fixtures import (
     lib_settings,
     make_provider,
     make_worker,
+    promote,
     seed_reserved,
 )
 from tests.integration._read_fixtures import embedder, read_deps  # noqa: F401 - fixtures by import
@@ -113,10 +114,8 @@ async def _answer(connect, ctx: AuthContext, args: dict[str, Any], role: str | N
 
 async def _promote(connect, world: World, role: str = "assistant") -> dict[str, Any]:  # noqa: ANN001
     """The owner's set_role decision; returns its recorded ``resolved``."""
-    from hlmemo.librarian.roles import record_role_decision
-
     async with await connect() as conn:
-        event_id = await record_role_decision(conn, role=role, decided_by=world.ctx_admin, decision="D-test")
+        event_id = await promote(conn, role=role, decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
         cur = await conn.execute("SELECT payload->'resolved' FROM events WHERE event_id = %s", (event_id,))
         return (await cur.fetchone())[0]
@@ -278,9 +277,7 @@ async def test_sol49_cross_project_action_waits_for_every_touched_project(
     released = await _promote(connect, world)  # deployment assistant: both projects promoted
     assert [j["payload"]["op"] for j in released["jobs"]] == ["apply_batch"]
     async with await connect() as conn:  # ... but B is demoted again before the job runs
-        from hlmemo.librarian.roles import record_role_decision
-
-        await record_role_decision(
+        await promote(
             conn, role="observer", decided_by=world.ctx_admin, decision="D-b", project_id=world.other_id
         )
         await conn.commit()
@@ -299,9 +296,7 @@ async def test_sol49_cross_project_action_waits_for_every_touched_project(
     resolved = await _promote(connect, world)  # a deployment decision alone does not lift B's override
     assert "jobs" not in resolved
     async with await connect() as conn:  # promoting B itself releases it
-        from hlmemo.librarian.roles import record_role_decision
-
-        event_id = await record_role_decision(
+        event_id = await promote(
             conn, role="assistant", decided_by=world.ctx_admin, decision="D-b2", project_id=world.other_id
         )
         await conn.commit()
@@ -368,8 +363,6 @@ async def test_sol50_promotion_selects_by_the_actions_current_projects(
     promoted — the recorded question projects ({MAIN}) no longer filter the selection. The apply's
     recheck then finds the widened (revised) subject and supersedes it: never stranded. A project
     decision on a project the action does not touch releases nothing. Replay identical."""
-    from hlmemo.librarian.roles import record_role_decision
-
     old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
     assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
     async with await connect() as conn:  # project C (+ an unrelated D), dev-a may write in C
@@ -383,9 +376,7 @@ async def test_sol50_promotion_selects_by_the_actions_current_projects(
             " VALUES (%s, %s, 'write', 1)",
             (world.dev_a, c_id),
         )
-        await record_role_decision(
-            conn, role="observer", decided_by=world.ctx_admin, decision="D-c", project_id=c_id
-        )
+        await promote(conn, role="observer", decided_by=world.ctx_admin, decision="D-c", project_id=c_id)
         await conn.commit()
     ctx_a = AuthContext(
         world.dev_a, "personal", False, 1, {**world.ctx_a.grants, c_id: Role.WRITE}, "pytest/0"
@@ -410,7 +401,7 @@ async def test_sol50_promotion_selects_by_the_actions_current_projects(
     released = await _promote(connect, world)  # deployment assistant: C is still observer
     assert "jobs" not in released
     async with await connect() as conn:  # an unrelated project's promotion releases nothing
-        event_id = await record_role_decision(
+        event_id = await promote(
             conn, role="assistant", decided_by=world.ctx_admin, decision="D-d", project_id=d_id
         )
         await conn.commit()
@@ -418,7 +409,7 @@ async def test_sol50_promotion_selects_by_the_actions_current_projects(
             "SELECT payload->'resolved' ? 'jobs' FROM events WHERE event_id = %s", (event_id,)
         )
         assert (await cur.fetchone())[0] is False
-        event_id = await record_role_decision(  # promoting C re-queues it (the old SQL filter missed it)
+        event_id = await promote(  # promoting C re-queues it (the old SQL filter missed it)
             conn, role="assistant", decided_by=world.ctx_admin, decision="D-c2", project_id=c_id
         )
         await conn.commit()
@@ -485,7 +476,6 @@ async def test_sol56_scope_churn_never_strands_an_answer(
     import dataclasses
 
     from hlmemo.core.write_service import default_deps
-    from hlmemo.librarian.roles import record_role_decision
 
     old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
     assert (await _answer(connect, world.ctx_a, _args(qid, "accept")))["status"] == "accepted_pending"
@@ -499,9 +489,7 @@ async def test_sol56_scope_churn_never_strands_an_answer(
             " VALUES (%s, %s, 'write', 1)",
             (world.dev_a, c_id),
         )
-        await record_role_decision(
-            conn, role="observer", decided_by=world.ctx_admin, decision="D-c", project_id=c_id
-        )
+        await promote(conn, role="observer", decided_by=world.ctx_admin, decision="D-c", project_id=c_id)
         await conn.commit()
     ctx_a = AuthContext(
         world.dev_a, "personal", False, 1, {**world.ctx_a.grants, c_id: Role.WRITE}, "pytest/0"
@@ -511,30 +499,30 @@ async def test_sol56_scope_churn_never_strands_an_answer(
         lib_settings(db_dsn, librarian_role="assistant", librarian_embed_wait_s=0), provider, connect
     )
 
-    async def promote(project_id: int | None = None) -> None:
+    async def promote_to(project_id: int | None = None) -> None:
         async with await connect() as conn:
-            await record_role_decision(
+            await promote(
                 conn, role="assistant", decided_by=world.ctx_admin, decision="D-p", project_id=project_id
             )
             await conn.commit()
 
     await _rescope(connect, ctx_a, old, [MAIN, "g6-third"])  # the action now touches C (observer)
     if order == "promote_then_narrow":
-        await promote()
+        await promote_to()
         await worker.drain()
         await _rescope(connect, ctx_a, old, [MAIN])
     elif order == "narrow_then_promote":
         await _rescope(connect, ctx_a, old, [MAIN])
         await worker.drain()  # the release job: the deployment is still observer, nothing yet
-        await promote()
+        await promote_to()
     elif order == "narrow_promote_c_then_deployment":
         await _rescope(connect, ctx_a, old, [MAIN])
         await worker.drain()
-        await promote(c_id)  # C is no longer touched; the deployment is still observer
+        await promote_to(c_id)  # C is no longer touched; the deployment is still observer
         await worker.drain()
-        await promote()
+        await promote_to()
     else:  # sweeper
-        await promote()
+        await promote_to()
         await worker.drain()
         silent = dataclasses.replace(default_deps(), librarian_enqueue=False)  # no release job
         await _rescope(connect, ctx_a, old, [MAIN], deps=silent)
@@ -1045,7 +1033,7 @@ async def test_sol44_conflicting_batch_questions(db_dsn, connect, world: World, 
     chains: the dependency order applies the EARLIEST cut first, and the second question is
     rebased instead of dropped — its redundant close is skipped, its links apply; OLD is closed
     exactly once, at June."""
-    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+    from hlmemo.librarian.roles import record_batch_decision
 
     s2 = ("Deploy host moved again", "Production later moved to a second Hostinger VPS in Vilnius.")
     (old,) = await write_items(connect, world.ctx_a, MAIN, [item(*OLD, valid_from=D_OLD)])
@@ -1066,7 +1054,7 @@ async def test_sol44_conflicting_batch_questions(db_dsn, connect, world: World, 
         )
         (batch,) = await cur.fetchone()
         await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
-        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await promote(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
     await make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect).drain()
     await provider.aclose()
@@ -1149,7 +1137,7 @@ async def test_sol46_handed_back_approvals_can_be_decided_again(
 ) -> None:  # noqa: ANN001
     """After an observer hand-back the SAME owner approves again (round 1: its own answer request
     ids and apply job key) and, once promoted, the approval really applies (Sol 46 #7)."""
-    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+    from hlmemo.librarian.roles import record_batch_decision
 
     old, _new, _rows = await _propose(db_dsn, connect, world, embedder)
     async with await connect() as conn:
@@ -1163,7 +1151,7 @@ async def test_sol46_handed_back_approvals_can_be_decided_again(
     async with await connect() as conn:
         again = await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
         assert again["accepted"] == 1
-        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await promote(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
         cur = await conn.execute("SELECT status FROM librarian_questions")
         assert await cur.fetchall() == [("approved",)]
@@ -1194,14 +1182,14 @@ async def test_sol46_approved_question_past_ttl_expires_at_apply(
 ) -> None:  # noqa: ANN001
     """The TTL bounds every not-yet-applied proposal: an approved question whose expires_at passed
     before its apply job ran is ``expired`` and nothing is applied (Sol 46 #2)."""
-    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+    from hlmemo.librarian.roles import record_batch_decision
 
     _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
     async with await connect() as conn:
         cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
         (batch,) = await cur.fetchone()
         await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
-        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await promote(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
         await conn.execute(
             "UPDATE librarian_questions SET expires_at = now() - interval '1 second' WHERE question_id = %s",
             (qid,),
@@ -1228,14 +1216,14 @@ async def test_sol47_ttl_is_checked_after_the_lock_wait(db_dsn, connect, world: 
     import asyncio
 
     from hlmemo.auth.resolve import lock_device_access
-    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+    from hlmemo.librarian.roles import record_batch_decision
 
     _old, _new, [(qid, _)] = await _propose(db_dsn, connect, world, embedder)
     async with await connect() as conn:
         cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
         (batch,) = await cur.fetchone()
         await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
-        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await promote(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
     provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
     worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
@@ -1334,14 +1322,14 @@ async def test_sol46_apply_batch_takes_the_device_lock_before_item_locks(
     import asyncio
 
     from hlmemo.auth.resolve import lock_device_access
-    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+    from hlmemo.librarian.roles import record_batch_decision
 
     old, _new, _rows = await _propose(db_dsn, connect, world, embedder)
     async with await connect() as conn:
         cur = await conn.execute("SELECT batch_id::text FROM librarian_questions")
         (batch,) = await cur.fetchone()
         await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
-        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await promote(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
     provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
     worker = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)

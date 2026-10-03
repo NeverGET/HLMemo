@@ -72,11 +72,11 @@ async def _insert_version(
 async def test_migration_applies_and_device1_reserved(connect) -> None:
     async with await connect() as conn:
         cur = await conn.execute("SELECT version_num FROM alembic_version ORDER BY version_num")
-        # main@head is 0010_billing_outcome (0005_w0_access carries the `main` label,
-        # D-061/D-062/D-069: 0007_import -> 0008_librarian_tasks -> 0009_memory_map, D-136);
-        # the hnsw branch must NOT be applied.
+        # main@head is 0011_question_withdrawn (0005_w0_access carries the `main` label,
+        # D-061/D-062/D-069: 0007_import -> 0008_librarian_tasks -> 0009_memory_map, D-136
+        # -> 0010_billing_outcome, D-212 -> 0011_question_withdrawn); the hnsw branch must NOT be applied.
         heads = [r[0] for r in await cur.fetchall()]
-        assert main_head() == "0010_billing_outcome"
+        assert main_head() == "0011_question_withdrawn"
         assert heads == [main_head()], "hnsw branch must NOT be applied"
         cur = await conn.execute(
             "SELECT indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
