@@ -2102,3 +2102,34 @@ D-241 | 2026-10-03 | ACCEPTED (owner: "Cut it, ship the rest") | **R4.3 is cut t
   - The cut rules (2b, 2d-i, 2d-ii) are removed.
   - The deterministic items ship on the $0 evidence of the WS-2 audit (the plan's cut order, step 5). The $7 paid paired run is skipped, which keeps the shared balance for prod.
   - G3 still applies: dual review of at most 2 rounds, a rehearsal, a snapshot, gates and a prod smoke.
+D-242 | 2026-10-03 | ACCEPTED (owner: "go"; "just let the ssh auth normally") | **Prod now sees real client IPv6 addresses: a dual-stack `edge` network for Caddy only is live. Root SSH login by key is restored. The owner's home IPv4 problem is upstream, not the server.**
+
+IPv6 edge network (follows up D-240):
+- Design: Caddy alone joins a new `edge` bridge (enable_ipv6, a pinned IPv4 /24 plus a ULA /64, `gw_priority`). Docker DNATs IPv6 clients natively instead of the userland proxy relaying them. `frontend` stays IPv4-only, inside `HLM_TRUSTED_PROXY_IPS`. No app container changes.
+  - The rejected alternative, IPv6 on `outbound`, recreates api/worker/librarian/caddy (156 s outage) and gives the apps IPv6 egress.
+- Rehearsed on a Lima VM with prod's versions (Ubuntu 26.04, Docker 29.8.1, compose 5.5.1).
+  - The tool arms a dead-man revert, a root systemd timer.
+  - Two review rounds (astra-low): round 1 NO-GO (HIGH: a hung apply could block the revert, plus 3 MEDIUM); round 2 GO-with-fixes (3 MEDIUM).
+  - Every finding was fixed and re-rehearsed, including a kill in the middle of a real recreate.
+- Prod run, 12:54-12:59Z: Hostinger snapshot → preflight → stage → dead-man armed (20 min) → apply (Caddy healthy in 8 s) → local verify PASS.
+  - The verify included proxy trust through the API's own `trusted_client_ip()`: Caddy's frontend address is trusted, spoofed XFF is ignored, and the IPv6 bucket is /64.
+- External checks:
+  - the owner's new IPv6 SSH works; IPv6 /ready 200;
+  - 3 held connections from 3 distinct client IPv6 addresses show as 3 distinct peers in Caddy's socket table;
+  - IPv4 hairpin /ready 200; external IPv4 7/8 OK;
+  - the static IPv6 route, ufw and frontend IPv4-only are unchanged.
+- Then the dead-man was cancelled, and remote gates passed 11/11 (the risk check was judged this time).
+- The change is main 44d5f38. The live checkout carries it as a tracked edit until the next release (RUNBOOK). Every later release must contain it; R4.3 is rebased onto it before its deploy.
+
+SSH:
+- bootstrap's `PermitRootLogin no` had locked the owner out of `ssh root@…`. Repeated refused root logins then tripped OpenSSH's per-source penalties and showed as `kex_exchange_identification` resets.
+- At the owner's request, prod is set to `PermitRootLogin prohibit-password` (key login; passwords stay off), and fail2ban is unbanned. Root key login is verified.
+- The bootstrap default for new installs is unchanged (product hardening). Re-running bootstrap on prod would restore `no`.
+
+Owner's home IPv4:
+- The packets never reach the VM. This is verified:
+  - a server-side capture saw 0 of the owner's SYNs;
+  - in a positive control, 11/12 external locations, including 2 in the same country, connect, and their SYNs are captured;
+  - no host or provider firewall rule matches.
+- The cause is upstream, between the home ISP's carrier-grade NAT and the provider edge. The owner takes it to provider support (the details are private).
+- Access by name (`ssh root@mcp.hlmemo.com`) uses IPv6 and works. AAAA stays: it is normal dual-stack, and the IPv6 limiter flaw is now fixed.

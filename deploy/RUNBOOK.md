@@ -304,68 +304,69 @@ and passwordless sudo membership make `hlmdeploy` a privileged operator despite 
 
 ### IPv6 client addresses and request limits
 
-The shipped Compose bridges are IPv4-only. Docker's default userland proxy can translate incoming
-IPv6 connections to IPv4, making Caddy see the bridge gateway; registration limits and the 16 concurrent auth/body slots then share one
-bucket across IPv6 clients. Slow bodies can therefore deny other IPv6 clients admission. Publishing `::` alone does not fix this. Before advertising AAAA,
-configure native IPv6 on the production Linux host. This procedure requires Docker Engine 27+
-and a maintenance window; it has not been validated against a live VPS. See Docker's
-[port publishing behavior](https://docs.docker.com/engine/network/port-publishing/),
-[IPv6 networking](https://docs.docker.com/engine/daemon/ipv6/) and
-[Engine 27 network defaults](https://docs.docker.com/engine/release-notes/27/).
+Caddy must see each client's own address. The API keys its body admission on it (16 concurrent auth/body reads and a byte budget,
+with IPv6 grouped per /64) and keys its registration limit on it too. Caddy publishes its ports from the dual-stack `edge` bridge
+(`enable_ipv6: true`, a pinned IPv4 /24 and a ULA /64, `gw_priority` on Caddy's attachment). Docker then DNATs IPv6 clients
+natively with ip6tables, and the client's source address reaches Caddy unchanged.
 
-Merge these exact keys into `/etc/docker/daemon.json`, preserving unrelated settings:
+**Why this is needed.** On an IPv4-only bridge, Docker's userland proxy accepts IPv6 connections and relays them to Caddy from the bridge
+gateway. Every IPv6 client then shares one bucket, and slow bodies from one client can deny the others admission.
+Publishing `::` alone does not fix this.
 
-```json
-{
-  "ip6tables": true,
-  "userland-proxy": false,
-  "default-network-opts": {
-    "bridge": { "com.docker.network.enable_ipv6": "true" }
-  }
-}
-```
+Requirements and invariants:
+- Docker Engine 28+ (for `gw_priority`) and Compose 2.33+. `ip6tables` is on by default since Engine 27; leave `userland-proxy` at its default.
+  Do not add daemon-wide `default-network-opts`.
+- **Only `edge` has IPv6.** If `frontend` had IPv6, Caddy could reach the API over IPv6 from outside `HLM_TRUSTED_PROXY_IPS`. The API would
+  then treat Caddy as the client, and all clients would share one bucket again.
+  Keep `gateway_mode_ipv6` at its default `nat`. In `routed` mode the host's IPv6 ports are not published at all.
+- `outbound` stays on Caddy: `check_edge.py`'s TLS client-IP gate reaches Caddy from the worker over it.
+- **Host.** Creating `edge` makes Docker set `net.ipv6.conf.{all,default}.forwarding=1`, and it does so again on every daemon start.
+  Linux then ignores Router Advertisements on interfaces with `accept_ra=1`.
+  The host's IPv6 default route must therefore be static (`accept_ra=0`, netplan `routes`), or the uplink must use `accept_ra=2`.
+  Check this before the first deploy: `ip -6 route show default` must not say `proto ra`.
+  UFW rules for the host are unaffected; Docker's FORWARD rules accept only its own bridges.
+- Pick an `edge` IPv4 /24 that no other host network uses. The ULA comes from a random RFC 4193 global ID. Neither needs anything from the provider.
 
-This daemon default gives **new** user-defined bridges native IPv6 with automatically allocated
-ULA subnets. It also applies to other new bridge networks on this host. The equivalent Compose
-network setting is `enable_ipv6: true` on both `frontend` and `outbound`; daemon configuration
-keeps the deployment checkout unchanged across upgrades. Enabling only the default `docker0`
-bridge with `"ipv6": true` does not configure these Compose networks.
-
-For an existing production stack, back up first, stop containers and remove their old networks
-without deleting volumes, then restart Docker and recreate the stack:
+New hosts get `edge` on the first deploy. On an existing host, the first release that contains `edge` recreates only Caddy,
+for a few seconds of downtime. Before AAAA is advertised, or after that release, run the source-IP check:
 
 ```sh
-cd /opt/hlmemo/app
 export HLM_ENV_FILE=/etc/hlmemo/prod.env
-bash deploy/backup/backup.sh
-sudo dockerd --validate --config-file=/etc/docker/daemon.json
-bash deploy/scripts/stack.sh down       # NEVER add -v on a production host
-sudo systemctl restart docker
-bash deploy/scripts/stack.sh up -d --wait
-docker network inspect hlmemo-prod_frontend hlmemo-prod_outbound --format '{{.Name}} IPv6={{.EnableIPv6}}'
+docker network inspect hlmemo-prod_edge hlmemo-prod_frontend --format '{{.Name}} IPv6={{.EnableIPv6}}'   # true, false (adjust names if HLM_COMPOSE_PROJECT differs)
+cid=$(bash deploy/scripts/stack.sh ps -q caddy)
+pid=$(docker inspect --format '{{.State.Pid}}' "$cid")
+# Addresses only: SYN packets, bounded count, no payload or headers.
+sudo nsenter -t "$pid" -n timeout 60 tcpdump -n -q -l -i any -c 2 'ip6 and tcp dst port 443 and ip6[53] & 2 != 0'
+# Meanwhile, from two external IPv6 sources (e.g. two of one workstation's own global addresses):
+curl -6 -sS -o /dev/null -w '%{http_code}\n' --interface ADDR_1 https://YOUR_DOMAIN/ready
+curl -6 -sS -o /dev/null -w '%{http_code}\n' --interface ADDR_2 https://YOUR_DOMAIN/ready
 ```
 
-Adjust network names if `HLM_COMPOSE_PROJECT` differs. Both must report `IPv6=true`. Verify host
-IPv6 routing and Docker's IPv6 firewall rules, then issue `curl -6 https://YOUR_DOMAIN/ready`
-from two external IPv6 clients. With host `tcpdump` installed, inspect addresses **inside Caddy's
-network namespace**, not merely the host's public interface:
+The two `In IP6` sources must be ADDR_1 and ADDR_2. A `172.x.0.1` source means IPv6 is still relayed through the userland proxy.
+Never trust client-supplied forwarding headers as a workaround.
 
-```sh
-container=$(bash deploy/scripts/stack.sh ps -q caddy)
-pid=$(docker inspect --format '{{.State.Pid}}' "$container")
-sudo nsenter -t "$pid" -n tcpdump -n -i any 'ip6 and (tcp dst port 443 or udp dst port 443)'
-```
+**If IPv6 is your only admin path**, arm a dead-man's switch before the release. The switch is a root systemd transient timer that restores the
+previous compose file, runs `stack.sh up -d --wait --no-deps caddy`, removes the `edge` network and restores the forwarding sysctls.
+It fires unless it is cancelled after the checks above pass. Keep the provider's console as the fallback.
+Rehearsed on Ubuntu 26.04 with Docker 29.8 and compose 5.5, the switch must meet these conditions:
+- every docker/compose call is time-bounded, and the apply runs in its own unit with `TimeoutStartSec`, so a hung apply can never block the revert;
+- the revert stops a running apply before it takes the shared lock;
+- cancel and revert share that lock, and cancel refuses once a revert has started;
+- the revert writes success only after it re-verifies compose, Caddy's networks, the removal of `edge`, the sysctls and `/ready`.
+  A docker query that fails or times out counts as a failed check, never as "absent";
+- one shared deadline, below the unit's own timeout, bounds the whole revert. Running out, or a stop signal, ends in an explicit failed state, never in a half-finished one.
 
-The two observed sources must match the clients' distinct public IPv6 addresses. Caddy forwards
-these to the API; do not trust client-supplied forwarding headers as a workaround. Until this is
-verified, withhold AAAA and treat IPv6 registration and auth/body admission as shared buckets.
+Before cancelling, also prove the API's proxy trust: run the running API's own `trusted_client_ip()` against Caddy's live `frontend`
+address and the effective `HLM_TRUSTED_PROXY_IPS`. `/ready` passes even when that CIDR is wrong.
 
-**Production status (checked 2026-10-03): the shared-bucket condition holds, and AAAA is advertised.**
-- AAAA has been published since 2026-09-30 (D-202), because the owner's client lost its IPv4 route. That bypassed the rule above.
-- The prod frontend bridge reports `EnableIPv6=false`, and `docker-proxy` listens on `::`. Every IPv6 client therefore reaches
-  Caddy from the bridge gateway, and all IPv6 clients share one registration bucket and the auth/body slots.
-- Open item, owner decision: either run the native-IPv6 procedure above in a maintenance window, or withdraw AAAA once the
-  owner's IPv4 route works again (BACKLOG).
+**Production status:** \<date\>: `edge` live, two distinct client IPv6 addresses observed at Caddy (D-2xx).
+
+**Production status:** live since 2026-10-03 (D-242). Three held connections from three distinct client IPv6 addresses
+showed up in Caddy's socket table as three distinct peers. The gates pass 11/11.
+The live checkout carries the change as a tracked edit until the next release: run
+`git -C /opt/hlmemo/app checkout -- deploy/compose.prod.yaml` right before that deploy. NEVER deploy a release that lacks the
+`edge` network (main 44d5f38 or later): Caddy would move back to the shared IPv6 bucket.
+
 
 ## First deploy and admin bootstrap
 
