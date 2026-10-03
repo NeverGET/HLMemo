@@ -36,7 +36,7 @@ def _tables(conn: psycopg.Connection) -> set[str]:
 
 
 def test_migration_0009_creates_only_the_cache_and_round_trips(fresh_dsn: str) -> None:  # noqa: F811
-    assert main_head() == "0010_billing_outcome"
+    assert main_head() == "0011_question_withdrawn"
     _alembic(fresh_dsn, "upgrade", "0008_librarian_tasks")
     with psycopg.connect(fresh_dsn) as conn:
         before = _tables(conn)

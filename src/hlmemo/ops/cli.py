@@ -9,7 +9,7 @@ Run inside the api container (it has the app DSN), normally through `deploy/scri
     python -m hlmemo.ops project policy show SLUG | policy set SLUG librarian_cross_project include|exclude
     python -m hlmemo.ops status [--json]
     python -m hlmemo.ops probe-writer    (R4, R-14: one authenticated 16-token writer call; ops/probe.py)
-    python -m hlmemo.ops librarian audit|questions list|approve-batch|role set|expire|revert-update
+    python -m hlmemo.ops librarian audit|questions list|approve-batch|role set|withdraw|expire|revert-update
         (ops/librarian.py)
 
 `device mint` and `device rotate` print ONLY the token on stdout (so it can be piped into
@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="R4: one authenticated minimal call of the prose writer with this process's settings; "
         'prints only {"ok","profile","status","latency_ms"}, exit 1 on failure',
     )
-    librarian.add_parser(sub)  # W2b/W2c: librarian audit|questions|approve-batch|role|expire
+    librarian.add_parser(sub)  # W2b/W2c: librarian audit|questions|approve-batch|role|withdraw|expire
     return ap
 
 

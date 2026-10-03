@@ -78,4 +78,7 @@ Updated 2026-09-23. Source of each item in parentheses.
   (every eligible batch, every project, no preview or subset). Needed BEFORE any promotion: an evented `ops librarian withdraw|resolve`
   (per question: reject, or mark superseded by a curated link), and a promotion pre-check that refuses while unverified accepted_pending
   rows exist. `hlm review` should show the librarian's own doubts (verifier kind and direction flags) next to each proposal.
+  Built on branch `r4.4-librarian-queue` (awaiting dual review, then deploy + the RUNBOOK withdraw run): `ops librarian withdraw`
+  (status `withdrawn`, migration 0011, `--resolved-by-link` as metadata), the `role set` guard (`--release-pending N`, `--dry-run`)
+  and the review card's `verifier`/`flags` lines.
 

@@ -11,7 +11,18 @@ librarian's proposals. Runs in the ops transaction (``ops/cli.py``); nothing pri
         question (the ops actor, device 1, with the owner's device name in ``client``); approved
         ones are applied by the librarian only in role ``assistant``+ (the ``apply_batch`` job);
     librarian role set observer|assistant|autonomous --decision D-NNN [--project P]
-        the D-062 ``set_role`` event (a ``librarian`` event); a per-project role can only lower;
+                       [--release-pending N] [--dry-run]
+        the D-062 ``set_role`` event (a ``librarian`` event); a per-project role can only lower.
+        Promotion guard (D-244): a decision that would let the librarian apply pending questions
+        (``approved``/``accepted_pending``) is refused with the counts per project unless
+        ``--release-pending`` names that exact total; ``--dry-run`` prints the counts and the apply
+        jobs it would queue and records nothing;
+    librarian withdraw --project P (--question-ids Q1,Q2 | --ids-file F|-) --reason TEXT
+                       [--resolved-by-link LINK] [--owner NAME] [--dry-run] [--json]
+        moves open/approved/accepted_pending questions of P to the terminal ``withdrawn`` by ONE
+        ``librarian`` event (op ``withdraw``); all or nothing: refused with the offending ids for
+        unknown ids, another project, applied questions, other statuses or a running apply
+        (``librarian/withdraw.py``);
     librarian expire
         expires open questions older than 30 days now (the worker also sweeps periodically);
     librarian backfill --project P [--device REF] [--limit N]
@@ -31,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -71,6 +83,34 @@ def add_parser(sub: Any) -> None:
     rs.add_argument("role", choices=ROLES)
     rs.add_argument("--decision", required=True, help="the D-entry that authorizes the role")
     rs.add_argument("--project")
+    rs.add_argument(
+        "--release-pending",
+        type=int,
+        metavar="N",
+        help="confirm that the promotion releases exactly N pending questions (the count it reports)",
+    )
+    rs.add_argument(
+        "--dry-run", action="store_true", help="show what the decision would release; record nothing"
+    )
+    wd = lsub.add_parser(
+        "withdraw", help="retract open/approved/accepted_pending questions of one project (never applied)"
+    )
+    wd.add_argument("--project", required=True)
+    ids = wd.add_mutually_exclusive_group(required=True)
+    ids.add_argument("--question-ids", metavar="Q1,Q2", help="comma-separated question ids")
+    ids.add_argument(
+        "--ids-file", metavar="FILE", help="one question id per line ('-': stdin; blank and # lines skipped)"
+    )
+    wd.add_argument("--reason", required=True, help="why (recorded in the event; redacted)")
+    wd.add_argument(
+        "--resolved-by-link",
+        type=int,
+        metavar="LINK_ID",
+        help="metadata: the live curated link that implemented the relation (must join the subjects)",
+    )
+    wd.add_argument("--owner", default="owner", help="the owner's device name, recorded in the event")
+    wd.add_argument("--dry-run", action="store_true", help="every check under the locks; record nothing")
+    wd.add_argument("--json", action="store_true")
     lsub.add_parser("expire", help="expire questions past their 30 days now")
     bf = lsub.add_parser("backfill", help="enqueue the W2b review for history written before the librarian")
     bf.add_argument("--project", required=True)
@@ -333,6 +373,38 @@ def _print(obj: Any) -> None:
     sys.stdout.write(json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n")
 
 
+def _withdraw_ids(args: argparse.Namespace) -> list[str]:
+    """``--question-ids`` (comma-separated) or ``--ids-file`` (one per line, ``-`` = stdin; blank lines
+    and ``#`` comments skipped). Validation is ``withdraw.parse_ids``'s."""
+    if args.question_ids is not None:
+        return args.question_ids.split(",")
+    try:
+        text = sys.stdin.read() if args.ids_file == "-" else Path(args.ids_file).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HlmError("E_INVALID_ARG", f"--ids-file: cannot read {args.ids_file}: {exc.strerror}") from None
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+async def role_preview(conn: AsyncConnection, role: str, project_id: int | None) -> dict[str, Any]:
+    """``role set --dry-run``: what the decision would release (the guard's count) and the
+    ``apply_batch`` jobs its event would queue; records nothing."""
+    from hlmemo.librarian.roles import (
+        lock_role_order,
+        pending_apply_jobs,
+        promotion_release,
+        release_summary,
+    )
+
+    await lock_role_order(conn, exclusive=False)
+    release = await release_summary(conn, await promotion_release(conn, role, project_id))
+    jobs = await pending_apply_jobs(conn, role, project_id, 0)
+    return {
+        "would_release": release,
+        "apply_jobs": len(jobs),
+        "needs": f"--release-pending {release['total']}" if release["total"] else None,
+    }
+
+
 async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
     action = args.action
     try:
@@ -378,12 +450,43 @@ async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
             return 0
         if action == "role":
             project_id = await _project_id(conn, args.project) if args.project else None
+            out: dict[str, Any] = {"role": args.role, "project": args.project, "decision": args.decision}
+            if args.dry_run:
+                _print({**out, "dry_run": True, **await role_preview(conn, args.role, project_id)})
+                return 0
             event_id = await record_role_decision(
-                conn, role=args.role, decided_by=_ops_ctx(), decision=args.decision, project_id=project_id
+                conn,
+                role=args.role,
+                decided_by=_ops_ctx(),
+                decision=args.decision,
+                project_id=project_id,
+                release_pending=args.release_pending,
             )
-            _print(
-                {"role": args.role, "project": args.project, "decision": args.decision, "event_id": event_id}
+            _print({**out, "event_id": event_id, "release_pending": args.release_pending})
+            return 0
+        if action == "withdraw":
+            from hlmemo.librarian.withdraw import withdraw
+
+            res = await withdraw(
+                conn,
+                project=args.project,
+                question_ids=_withdraw_ids(args),
+                reason=args.reason,
+                by=_ops_ctx(args.owner),
+                dry_run=args.dry_run,
+                resolved_by_link=args.resolved_by_link,
             )
+            if args.json:
+                _print(res)
+            else:
+                counts = ", ".join(f"{s} {n}" for s, n in res["by_status"].items())
+                sys.stdout.write(
+                    f"DRY-RUN: would withdraw {res['withdrawn']} question(s) of {res['project']} ({counts});"
+                    " nothing written\n"
+                    if res["dry_run"]
+                    else f"withdrew {res['withdrawn']} question(s) of {res['project']} ({counts})"
+                    f" in event {res['event_id']}\n"
+                )
             return 0
         if action == "backfill":
             _print(await backfill(conn, args.project, device=args.device, limit=args.limit))

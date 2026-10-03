@@ -39,6 +39,7 @@ from tests.integration._librarian_fixtures import (
     lib_settings,
     make_provider,
     make_worker,
+    promote,
     seed_reserved,
     stub_chain,
 )
@@ -415,10 +416,8 @@ async def _user_rows(connect) -> list[Any]:  # noqa: ANN001
 
 
 async def _promote(connect, world: World) -> None:  # noqa: ANN001
-    from hlmemo.librarian.roles import record_role_decision
-
     async with await connect() as conn:
-        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
+        await promote(conn, role="assistant", decided_by=world.ctx_admin, decision="D-test")
         await conn.commit()
 
 

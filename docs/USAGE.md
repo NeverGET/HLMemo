@@ -70,7 +70,9 @@ uv run hlm device whoami && uv run hlm mcp add claude
 
 Without a pipe, `hlm device login --name my-mac` asks for the token with a hidden prompt. Operator
 commands (all `python -m hlmemo.ops` in the api container): `device mint|list|revoke|rotate|grant|ungrant`,
-`project create|list`, `status [--json]`. Rotation: `$OPS device rotate my-mac | uv run hlm device
+`project create|list`, `status [--json]`, and `librarian audit|questions list|approve-batch|role set|withdraw|expire|backfill|revert-update`
+(`python -m hlmemo.ops librarian <command> --help`; `withdraw` and the promotion guard of `role set`:
+RUNBOOK "Librarian pending queue: withdraw and the promotion guard"). Rotation: `$OPS device rotate my-mac | uv run hlm device
 login --name my-mac --token-stdin`, then `hlm mcp add ...` again. A device can revoke itself with
 `hlm device revoke --self`; revoking another device is `$OPS device revoke <name|id>`. Expired
 devices (`--expires`) are rejected like revoked ones; renew with `$OPS device rotate --expires`.
@@ -196,7 +198,7 @@ server and `--admin` on the client; in production it is disabled (D-061).
 | `hlm query "<q>" [--budget N] [--kind K ...] [--valid-at TS] [--known-at TS] [--include-archived]` | prints the compact, sorted JSON of `memory.query` |
 | `hlm close --notes ".." \| --notes-file F [--decision ..]* [--lesson "title::body"]* [--card FILE --card-version ID] [--session-id UUID] [--budget N]` | `memory.call_the_day`; `request_id` is a fresh UUID; `HLM_SESSION_ID` env sets the session id |
 | `hlm curate --project P (--candidates F \| --map) [--export DIR] [--run-dir D]` · `hlm curate --run-dir D [--apply --state S [--execute preview\|apply]]` | local, owner-run supersession curation: agents verify candidates, a deterministic gate checks every quote, refuters try to break each link, and the result is a preview bundle; prod is touched only by the printed RUNBOOK commands. `--map` is experimental. See [Curating supersession links](#curating-supersession-links) |
-| `hlm review [--project P] [--batch N] [--kind K] [--cursor C] [--dry-run] [--decisions FILE [--yes]]` · `hlm review --set-owner-token` | LLM-free batch review of the librarian's open questions (a/r/s/o/q; `memory.answer` per decision). The full listing (`hlm.questions`) is owner-only: the owner token comes from the keychain (`--set-owner-token`), is read only when stdin and stdout are terminals and is never taken from the environment; otherwise the newest notices are listed. Setup, rotation and threat model: `docs/review/README.md` |
+| `hlm review [--project P] [--batch N] [--kind K] [--cursor C] [--dry-run] [--decisions FILE [--yes]]` · `hlm review --set-owner-token` | LLM-free batch review of the librarian's open questions (a/r/s/o/q; `memory.answer` per decision). Each card shows the librarian's own doubts: its verifier (kind and verdict) and its guard flags. The full listing (`hlm.questions`) is owner-only: the owner token comes from the keychain (`--set-owner-token`), is read only when stdin and stdout are terminals and is never taken from the environment; otherwise the newest notices are listed. Setup, rotation and threat model: `docs/review/README.md` |
 
 Error output for HTTP/tool errors is `error <CODE>: <message>` on stderr (+ the JSON envelope when
 details exist). Exit codes: `E_AUTH`/`E_DEVICE_PENDING`/`E_FORBIDDEN*` → 77, `E_UNAVAILABLE` → 69,

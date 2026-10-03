@@ -234,6 +234,19 @@ async def seed_reserved(conn: psycopg.AsyncConnection) -> ReservedIds:
     return ids
 
 
+async def promote(
+    conn: psycopg.AsyncConnection, *, role: str, project_id: int | None = None, **kw: Any
+) -> int:
+    """``record_role_decision`` for the gates that promote WITH pending questions on purpose (that
+    release is what they test): it confirms the promotion guard's exact count (D-244, the operator's
+    ``--release-pending N``). The guard itself is gated in ``test_librarian_withdraw.py``."""
+    from hlmemo.librarian.roles import promotion_release, record_role_decision
+
+    counts = await promotion_release(conn, role, project_id)
+    n = sum(sum(c.values()) for c in counts.values())
+    return await record_role_decision(conn, role=role, project_id=project_id, release_pending=n, **kw)
+
+
 async def enqueue_pair(
     conn: psycopg.AsyncConnection,
     *,
@@ -345,7 +358,7 @@ async def add_new_kind_events(connect: Any, db_dsn: str, world: Any, deps: Any) 
     from hlmemo.librarian.actor import apply_mutations
     from hlmemo.librarian.events import insert_system_event
     from hlmemo.librarian.jobs import assign_job_ids, insert_recorded_jobs
-    from hlmemo.librarian.roles import record_batch_decision, record_role_decision
+    from hlmemo.librarian.roles import record_batch_decision
     from tests.integration._write_fixtures import MAIN, item, write_req
 
     async with await connect() as conn:
@@ -393,7 +406,7 @@ async def add_new_kind_events(connect: Any, db_dsn: str, world: Any, deps: Any) 
         )
         (batch_id,) = await cur.fetchone()
         await record_batch_decision(conn, batch_id=batch_id, approver=world.ctx_a, decision="accept")
-        await record_role_decision(conn, role="assistant", decided_by=world.ctx_admin, decision="D-g6")
+        await promote(conn, role="assistant", decided_by=world.ctx_admin, decision="D-g6")
         await conn.commit()
     assistant = make_worker(lib_settings(db_dsn, librarian_role="assistant"), provider, connect)
     assert await assistant.drain() == 1

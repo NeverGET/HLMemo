@@ -39,7 +39,7 @@ def _insert(conn: psycopg.Connection, outcome: str) -> None:
 
 
 def test_migration_0010_widens_the_outcome_check_and_round_trips(fresh_dsn: str) -> None:  # noqa: F811
-    assert main_head() == "0010_billing_outcome"
+    assert main_head() == "0011_question_withdrawn"
     _alembic(fresh_dsn, "upgrade", "0009_memory_map")
     with psycopg.connect(fresh_dsn) as conn:
         for o in OLD_OUTCOMES:

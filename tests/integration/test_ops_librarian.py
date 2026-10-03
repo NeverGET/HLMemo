@@ -8,6 +8,7 @@ and closes the batch (``decided``); the ``apply_batch`` job applies it only in `
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -36,6 +37,8 @@ NEW = ("Worker threads raised", "The embed worker now runs with 4 intra-op threa
 
 def _ops(db_dsn: str, *args: str) -> subprocess.CompletedProcess[str]:
     env = {"PATH": "/usr/bin:/bin", "HLM_DB_DSN": db_dsn, "HLM_API_PORT": "9"}
+    if os.environ.get("PYTHONPATH"):  # a checkout run (worktree): the subprocess imports the same code
+        env["PYTHONPATH"] = os.environ["PYTHONPATH"]
     return subprocess.run(
         [sys.executable, "-m", "hlmemo.ops", "librarian", *args],
         env=env,

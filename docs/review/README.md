@@ -9,6 +9,12 @@ addition to the device bearer.
 Without the owner token, `hlm review` still works. It lists only the newest ≤ 3 notices from
 `memory.query`, with no reason, quotes, age or paging, and the header says why.
 
+Each card also shows the librarian's own doubts next to the proposal: its verifier, which is the
+kind and verdict of the second opinion (for example `verifier  supersede (disagrees)`), and its
+guard flags (for example `flags     supersedes_against_time · verifier_direction_disputed`). They come
+from the read-only `hlm.questions` fields `verifier_kind`, `verified` and `flags`; the owner-token
+rules below are unchanged.
+
 ## Threat model
 
 Every agent on the owner's machine holds the same device bearer as the `hlm` CLI. The bearer is

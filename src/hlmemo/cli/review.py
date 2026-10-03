@@ -5,6 +5,9 @@ the real-usage precision. Nothing here calls a model.
 
 * **Listing** (read-only): the OWNER-ONLY client tool ``hlm.questions`` (oldest first, with the
   subjects' titles, body heads, the proposal's verbatim quotes, reason and pending counts per kind).
+  Each card also shows the librarian's own doubts: its verifier (kind and agreement, e.g.
+  ``verifier  supersede (disagrees)``) and its guard flags (``supersedes_against_time``,
+  ``verifier_direction_disputed``, ...).
   The server dispatches it only with the owner client token in the ``X-HLM-Owner-Token`` header next
   to the device bearer. The CLI reads that token from the keychain only (``hlm review
   --set-owner-token``), only when stdin and stdout are terminals, and sends it only on the
@@ -485,14 +488,25 @@ def render_card(q: dict[str, Any], index: int, total: int, *, now: datetime, wid
         lines += _wrap("notice", clean(q["notice"]), width)
     if q.get("reason"):
         lines += _wrap("reason", clean(q["reason"]), width)
+    if verifier := verifier_text(q):
+        lines += _wrap("verifier", verifier, width)
     flags = [clean(f) for f in q.get("flags") or []]
-    if q.get("verified") is not None:
-        flags.append("verifier agreed" if q["verified"] else "verifier disagreed")
     if q.get("cross_project"):
         flags.append("cross-project")
     if flags:
         lines += _wrap("flags", " · ".join(flags), width)
     return "\n".join(lines)
+
+
+def verifier_text(q: dict[str, Any]) -> str | None:
+    """The librarian's second opinion (D-244: its own doubts next to the proposal):
+    ``supersede (disagrees)``; ``None`` when no verifier was asked. A server without
+    ``verifier_kind`` shows the agreement only."""
+    if q.get("verified") is None and not q.get("verifier_kind"):
+        return None
+    verdict = {True: "agrees", False: "disagrees"}.get(q.get("verified"), "no verdict")
+    kind = clean(q.get("verifier_kind") or "")
+    return f"{kind} ({verdict})" if kind else verdict
 
 
 def header_text(project: str, listing: Listing, opts: ReviewOptions) -> str:
