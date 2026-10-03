@@ -2008,3 +2008,23 @@ Prod smoke, in the disposable project:
 - A refused update does not fail the rest of the write; the ack reports it per update.
 
 Read side on real data: old facts that later decisions replaced are now flagged `superseded` with a pointer. In one query all top hits were superseded and the current values were only in the card; pulling superseders into query hits is an R4.3 candidate.
+D-236 | 2026-10-03 | ACCEPTED (owner) | **Second lesson round: 5 HLMemo project lessons, 1 more global lesson and 3 global revisions, decided by the owner with the era rule anchored on the owner's model switch to Opus 5.5 on 2026-09-22.**
+
+Era rule:
+- A lesson's era comes from its episode dates and the transcripts' model ids: claude-opus-5 before 09-22, claude-opus-5-5 (or fable) from 09-22.
+- Older prompt-only episodes have no model id and are labelled pre-Opus-5.5. The era is never guessed.
+- Fresh post-switch evidence re-activates a lesson.
+
+New lessons:
+- Five HLMemo-scoped, Opus 5.5 era:
+  - never fall back to the dev DB: ACTIVE; it recurred on 10-01;
+  - keep provider and budget errors out of quality scores;
+  - private text stays private: resolved by the prepush owner-terms gate;
+  - measure how many true claims a validation check rejects: resolved;
+  - audit a striking headline result before reporting it.
+- One global, historical: minimal admin features.
+
+Global revisions:
+- "Deploy end-to-end" is ACTIVE again (fresh Opus 5.5 evidence dated 09-30).
+- Two others gained evidence and scope tags and stay resolved.
+- Drafts that either blind reader judged harmful were excluded before the owner review.
