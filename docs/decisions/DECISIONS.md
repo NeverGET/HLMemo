@@ -2028,3 +2028,8 @@ Global revisions:
 - "Deploy end-to-end" is ACTIVE again (fresh Opus 5.5 evidence dated 09-30).
 - Two others gained evidence and scope tags and stay resolved.
 - Drafts that either blind reader judged harmful were excluded before the owner review.
+D-237 | 2026-10-03 | ACCEPTED (owner) | **R4.3 plan adopted (docs/decisions/R4.3-PLAN.md), with the owner's answers to its 4 questions.**
+- Gemini is funded from the shared test balance with a hard cap of $7 and paced with a prod reserve.
+- Pulled superseders: the old hit stays visible and flagged, with the superseder right after it.
+- The F4 clip and the rerank-preview filter are deferred.
+- Ship rule: tightening ships on no regression; loosening (notation variants, extractive repair) ships only with a measured gain and 0 harmful.
