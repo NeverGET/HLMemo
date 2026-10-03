@@ -6,7 +6,7 @@
 Commands, in order (see eval/active/restore.md for the database):
 
     build --exp E0|E1|E2|E3|all [--dry-run-dir DIR]   packets from the restored hlm_al_ceiling (read-only)
-    build --exp E4                                     lessons v2: episodes -> E5 clusters -> packets
+    build --exp E4|E4B                                 lessons v2(b): episodes -> E5 clusters -> packets
     mustknow-kit                                       inputs for the independent must-know writer (E2)
     estimate                                           Gemini cost per experiment from the packet sizes
     prereg [--force] [--exp E4]                        PREREG.md (E4: PREREG-E4.md) + .sha256 (before ANY arm)
@@ -48,9 +48,11 @@ def _print(obj: Any) -> None:
 
 def _exps(value: str, allowed: tuple[str, ...]) -> list[str]:
     exps = list(allowed) if value == "all" else [x.strip().upper() for x in value.split(",") if x.strip()]
-    if C.E4 in [x.strip().upper() for x in value.split(",")] and value.strip().upper() != C.E4:
-        raise C.HarnessError("E4 is a separate suite: run it alone (--exp E4)")
-    allowed = (*allowed, C.E4)
+    asked = [x.strip().upper() for x in value.split(",")]
+    lesson = [x for x in asked if x in C.LESSON_EXPS]
+    if lesson and len(asked) != 1:
+        raise C.HarnessError(f"{lesson[0]} is a separate suite: run it alone (--exp {lesson[0]})")
+    allowed = (*allowed, *C.LESSON_EXPS)
     bad = [e for e in exps if e not in allowed]
     if bad:
         raise C.HarnessError(f"unknown experiment(s) {bad}; one of {allowed}")
@@ -60,12 +62,13 @@ def _exps(value: str, allowed: tuple[str, ...]) -> list[str]:
 async def cmd_build(args: argparse.Namespace) -> int:
     import al_packets as P
 
-    if args.exp.strip().upper() == C.E4:
+    if args.exp.strip().upper() in C.LESSON_EXPS:
         import al_e4
 
-        packets = al_e4.build_e4(C.load_config_for(C.E4))
+        exp = args.exp.strip().upper()
+        packets = al_e4.build_e4(C.load_config_for(exp), exp=exp)
         summary = C.read_json(al_e4.clusters_path())["summary"]
-        _print({"exp": C.E4, "packets": len(packets), **summary})
+        _print({"exp": exp, "packets": len(packets), **summary})
         return 0
     cfg = C.load_config()
     conn = await C.connect_ro(args.dsn)
@@ -265,6 +268,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
         "private_dir": str(base),
         "prereg": (base / "PREREG.md").is_file(),
         "prereg_e4": (base / C.E4_SUITE.prereg).is_file(),
+        "prereg_e4b": (base / C.E4B_SUITE.prereg).is_file(),
     }
     for exp in C.ALL_EXPERIMENTS:
         m = base / "packets" / exp / "manifest.json"
@@ -334,8 +338,9 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status,
     }
     try:
-        if str(getattr(args, "exp", "") or "").strip().upper() == C.E4:
-            C.use_e4_private()  # E4 never shares the E0-E3 private directory, PREREG or ledger
+        exp_arg = str(getattr(args, "exp", "") or "").strip().upper()
+        if exp_arg in C.LESSON_EXPS:
+            C.use_lesson_private(exp_arg)  # a lesson suite never shares another suite's private dir
         res = handlers[args.cmd](args)
         return asyncio.run(res) if asyncio.iscoroutine(res) else int(res)
     except C.HarnessError as exc:

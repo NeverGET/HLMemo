@@ -86,12 +86,16 @@ def packet_hashes(exp: str) -> dict[str, str]:
     return {row["file"]: C.sha256_file(d / row["file"]) for row in manifest["packets"]}
 
 
-def e4_inputs() -> dict[str, Any]:
-    """E4's extra inputs: the episode file the clusters were built from and the clustering record."""
+def e4_inputs(suite_name: str = C.E4) -> dict[str, Any]:
+    """A lesson suite's extra inputs: the episode file the clusters were built from and the clustering
+    record; E4B also the covered-lessons file (E4's shape stays as registered)."""
     import al_e4
 
+    files = [("episodes", al_e4.episodes_path()), ("clusters", al_e4.clusters_path())]
+    if suite_name == C.E4B:
+        files.append(("covered", al_e4.covered_path()))
     out: dict[str, Any] = {}
-    for name, f in (("episodes", al_e4.episodes_path()), ("clusters", al_e4.clusters_path())):
+    for name, f in files:
         out[f"{name}_sha256"] = C.sha256_file(f) if f.is_file() else None
     return out
 
@@ -100,15 +104,17 @@ def inputs(cfg_path: Path | None = None, suite: C.Suite = C.MAIN_SUITE) -> dict[
     """Every hashed input, as it is NOW."""
     cfg_path = cfg_path or suite.config_path
     cfg = C.load_config(cfg_path)
-    if suite.name == C.E4:
-        md, schema = C.prompt_files(C.E4)
+    if suite.name in C.LESSON_EXPS:
+        md, schema = C.prompt_files(suite.name)
         pf = profile_file(cfg["arms"]["gemini"]["profile"])
         return {
             "config_sha256": C.sha256_file(cfg_path),
             "reader_instructions_sha256": C.sha256_file(suite.reader_template),
-            "prompts": {C.E4: {"prompt_sha256": C.sha256_file(md), "schema_sha256": C.sha256_file(schema)}},
-            "packets": {C.E4: packet_hashes(C.E4)},
-            "e4": e4_inputs(),
+            "prompts": {
+                suite.name: {"prompt_sha256": C.sha256_file(md), "schema_sha256": C.sha256_file(schema)}
+            },
+            "packets": {suite.name: packet_hashes(suite.name)},
+            "e4": e4_inputs(suite.name),
             "profile_sha256": C.sha256_file(pf) if pf else None,
         }
     out: dict[str, Any] = {
@@ -205,18 +211,20 @@ def render(record: dict[str, Any], rubric: str) -> str:
     return "\n".join(lines)
 
 
-def render_e4(record: dict[str, Any], rubric: str) -> str:
+def render_e4(record: dict[str, Any], rubric: str, suite: C.Suite = C.E4_SUITE) -> str:
     bars, clu = record["bars"], record.get("clustering") or {}
+    title = "Lessons v2 (E4)" if suite.name == C.E4 else "Lessons v2b (E4B: status + model era)"
     lines = [
-        "# Lessons v2 (E4) ceiling experiment: pre-registration",
+        f"# {title} ceiling experiment: pre-registration",
         "",
-        f"Written {record['written_at']} before any arm ran. The sha256 of this file is in PREREG-E4.sha256;",
+        f"Written {record['written_at']} before any arm ran."
+        f" The sha256 of this file is in {suite.prereg_sha};",
         "every runner and the scorer verify it and every input hash below, and refuse on a difference.",
         "",
         "## Go/no-go bars (D-222)",
         "",
         f"- grounded >= {bars['grounded_min']}, correct >= {bars['correct_min']},"
-        f" useful >= {bars['useful_min']['E4']}",
+        f" useful >= {bars['useful_min'][suite.name]}",
         f"- harmful: at most {bars['harmful_max']};"
         f" overgeneralized rate <= {bars['overgeneralized_max_rate']}",
         f"- Opus at most {bars['opus_margin_max']} better on {', '.join(bars['opus_margin_metrics'])}",
@@ -224,10 +232,11 @@ def render_e4(record: dict[str, Any], rubric: str) -> str:
         "## Clustering (frozen before this registration)",
         "",
         f"- E5 embeddings of lesson + symptom; agglomerative, {clu.get('linkage')} linkage, cosine distance",
-        f"- threshold {clu.get('threshold')} tuned once on a held-out {clu.get('holdout_frac')} split"
-        f" (seed {clu.get('seed')}, criterion {clu.get('criterion')}), then frozen",
+        f"- threshold {clu.get('threshold')} ({clu.get('threshold_source', 'tuned on the held-out split')};"
+        f" held-out {clu.get('holdout_frac')}, seed {clu.get('seed')}, criterion {clu.get('criterion')})",
         f"- episodes {clu.get('episodes')}, clusters {clu.get('clusters')}, cross-project packets"
-        f" {clu.get('cross_project')}, project-local packets {clu.get('project_local')}",
+        f" {clu.get('cross_project')}, project-local packets {clu.get('project_local')},"
+        f" already covered by imported lessons {clu.get('already_covered', 0)}",
         f"- eligibility: {clu.get('eligibility')}",
         "",
         "## Rules",
@@ -262,11 +271,11 @@ def _write_e4(target: Path, suite: C.Suite) -> tuple[Path, str]:
 
     cfg = C.load_config(suite.config_path)
     ins = inputs(suite=suite)
-    if not ins["packets"][C.E4] or not ins["e4"]["clusters_sha256"]:
-        raise C.HarnessError("build the E4 packets first (al.py build --exp E4)")
+    if not ins["packets"][suite.name] or not ins["e4"]["clusters_sha256"]:
+        raise C.HarnessError(f"build the {suite.name} packets first (al.py build --exp {suite.name})")
     clusters = C.read_json(al_e4.clusters_path())
     record = {
-        "schema": "al-prereg-e4/1",
+        "schema": f"al-prereg-{suite.name.lower()}/1",
         "written_at": datetime.now(UTC).isoformat(),
         "harness": _git_head(),
         "bars": cfg["bars"],
@@ -277,7 +286,7 @@ def _write_e4(target: Path, suite: C.Suite) -> tuple[Path, str]:
         "arms": arm_config(cfg),
         "inputs": ins,
     }
-    text = render_e4(record, suite.reader_template.read_text(encoding="utf-8"))
+    text = render_e4(record, suite.reader_template.read_text(encoding="utf-8"), suite)
     C.write_text(target, text)
     digest = C.sha256_file(target)
     C.write_text(C.private_dir() / suite.prereg_sha, f"{digest}  {suite.prereg}\n")
@@ -290,7 +299,7 @@ def write(*, force: bool = False, suite: C.Suite = C.MAIN_SUITE) -> tuple[Path, 
     target = C.ensure_private(C.private_dir() / suite.prereg)
     if target.is_file() and not force:
         raise C.HarnessError(f"{target} exists (pass --force to rewrite it; no arm has run yet)")
-    if suite.name == C.E4:
+    if suite.name in C.LESSON_EXPS:
         return _write_e4(target, suite)
     cfg = C.load_config()
     ins = inputs()
@@ -443,7 +452,7 @@ def amend(field: str, value: str, reason: str, suite: C.Suite = C.MAIN_SUITE) ->
         raise C.HarnessError(f"--value {value!r} is not a decimal") from exc
     if not new.is_finite() or new <= 0:
         raise C.HarnessError("--value must be a positive decimal")
-    _record, digest = verify(suite.exps[0] if suite.name == C.E4 else None)  # intact registration
+    _record, digest = verify(suite.exps[0] if suite.name in C.LESSON_EXPS else None)  # intact registration
     chain = _amendment_chain(digest)
     text = suite.config_path.read_text(encoding="utf-8")
     old = str(C.load_config(suite.config_path)[field])
@@ -501,7 +510,7 @@ def verify(exp: str | None = None) -> tuple[dict[str, Any], str]:
         for k in ("config_sha256", "reader_instructions_sha256", "profile_sha256")
         if then.get(k) != now.get(k)
     ]
-    if suite.name == C.E4 and then.get("e4") != now.get("e4"):
+    if suite.name in C.LESSON_EXPS and then.get("e4") != now.get("e4"):
         diffs.append("e4 episodes/clusters")
     chain = _amendment_chain(digest)
     record["_amendments"] = [

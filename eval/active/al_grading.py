@@ -33,7 +33,7 @@ STRICT_TRUE = ("correct", "grounded", "useful")  # the stricter value of these i
 
 
 def labels_for(exp: str) -> tuple[str, ...]:
-    return E0_LABELS if exp == "E0" else E4_LABELS if exp == C.E4 else LABELS
+    return E0_LABELS if exp == "E0" else E4_LABELS if exp in C.LESSON_EXPS else LABELS
 
 
 def grading_dir(exp: str) -> Path:
@@ -329,7 +329,7 @@ def metrics_e4(codes: list[str], key: dict[str, Any], final: dict[str, dict[str,
     }
 
 
-def passes_e4(m: dict[str, Any], bars: dict[str, Any]) -> tuple[bool, list[str]]:
+def passes_e4(m: dict[str, Any], bars: dict[str, Any], exp: str = C.E4) -> tuple[bool, list[str]]:
     fails = []
     if not m["units"]:
         return False, ["no units"]
@@ -341,7 +341,7 @@ def passes_e4(m: dict[str, Any], bars: dict[str, Any]) -> tuple[bool, list[str]]
         fails.append(f"grounded {m['grounded']}")
     if m["correct"] < bars["correct_min"]:
         fails.append(f"correct {m['correct']}")
-    if m["useful"] < bars["useful_min"][C.E4]:
+    if m["useful"] < bars["useful_min"][exp]:
         fails.append(f"useful {m['useful']}")
     return not fails, fails
 
@@ -372,8 +372,8 @@ def _rate_f(values: list[float]) -> float | None:
 def passes(
     m: dict[str, Any], bars: dict[str, Any], exp: str, cov: float | None = None
 ) -> tuple[bool, list[str]]:
-    if exp == C.E4:
-        return passes_e4(m, bars)
+    if exp in C.LESSON_EXPS:
+        return passes_e4(m, bars, exp)
     fails = []
     if not m["units"]:
         fails.append("no units")
@@ -442,7 +442,7 @@ def score(exp: str, record: dict[str, Any], *, allow_incomplete: bool = False) -
             groups.setdefault(m["arm"], []).append(code)
             if m.get("packet_type"):
                 groups.setdefault(f"{m['arm']}|{m['packet_type']}", []).append(code)
-        measure = metrics_e4 if exp == C.E4 else metrics
+        measure = metrics_e4 if exp in C.LESSON_EXPS else metrics
         out["by_group"] = {name: measure(codes, key, final) for name, codes in sorted(groups.items())}
         if exp == "E2":
             cov_readers = [read_coverage(exp, r) for r in g["readers"]]
@@ -518,7 +518,7 @@ def _split_report(
 
 def render_score(res: dict[str, Any]) -> str:
     lines = [f"# {res['exp']} score", ""]
-    if res["exp"] == C.E4:
+    if res["exp"] in C.LESSON_EXPS:
         lines.append(
             "| group | units | correct | grounded | grounded_det | useful | harmful | overgeneralized |"
         )

@@ -63,6 +63,8 @@ GROUNDING_FLAGS = frozenset(
         "group_count_mismatch",
         "recurrence_mismatch",
         "dates_mismatch",
+        "era_mismatch",
+        "status_unsupported",
     }
 )
 
@@ -347,7 +349,7 @@ def check_unit(unit: dict[str, Any], idx: PacketIndex, *, card_tokens: int = 512
 
 
 def check_output(packet: dict[str, Any], output: dict[str, Any], *, card_tokens: int = 512) -> list[dict]:
-    if packet["exp"] == C.E4:
+    if packet["exp"] in C.LESSON_EXPS:
         import al_e4
 
         return [

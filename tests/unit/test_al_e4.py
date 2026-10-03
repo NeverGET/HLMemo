@@ -418,3 +418,134 @@ def test_e4_labels_stricter_rules_and_bars():
     assert G.passes(good, bars, C.E4) == (True, [])
     ok, fails = G.passes({**good, "overgeneralized_rate": 0.2, "harmful": 1}, bars, C.E4)
     assert not ok and any("overgeneralized" in f for f in fails) and any("harmful" in f for f in fails)
+
+
+# --------------------------------------------------------------------------- E4B (status + model era)
+@pytest.mark.parametrize(
+    ("members", "want"),
+    [
+        ([{"a"}, {"b"}], "P1"),  # every member is an episode of one imported packet
+        ([{"new1", "a"}, {"b"}], "P1"),  # a new episode merged into an old one still maps to it
+        ([{"a"}, {"new2"}], None),  # one member is new information
+        ([{"a"}, {"c"}], None),  # old episodes of two different packets: a new grouping
+        ([], None),
+    ],
+)
+def test_covered_by_matches_member_episode_ids(members, want):
+    assert E.covered_by(members, {"P1": ["a", "b"], "P2": ["c"]}) == want
+
+
+def src(era: str, status: str, d0: str, d1: str) -> dict:
+    return {"model_era": era, "status": status, "valid_from": d0, "last_seen": d1}
+
+
+def test_status_needs_its_evidence():
+    res = src("m-old", "resolved", "2026-01-01", "2026-01-02")
+    unk = src("m-old", "unknown", "2026-01-05", "2026-01-05")
+    cur = src("m-now", "unknown", "2026-02-01", "2026-02-01")
+    assert E.status_supported("unknown", [unk], "m-now")
+    assert E.status_supported("resolved", [res], "m-now") and not E.status_supported(
+        "resolved", [res, unk], "m-now"
+    )
+    assert E.status_supported("historical", [res, unk], "m-now") and not E.status_supported(
+        "historical", [cur], "m-now"
+    )
+    assert E.status_supported("active", [res, cur], "m-now")  # recurred after a verified fix
+    assert not E.status_supported("active", [unk, cur], "m-now")  # never active without a resolved one
+    assert not E.status_supported("resolved", [], "m-now")
+
+
+def e4b_packet() -> dict:
+    eps = [
+        {**EPS[0], "status": "resolved", "model_era": "m-old"},
+        {**EPS[1], "status": "unknown", "model_era": "m-old"},
+        {**EPS[2], "status": "unknown", "model_era": "m-now"},
+    ]
+    return E.e4_packet(
+        "E4B-X01", E.CROSS, eps, cluster=1, redactor=Identity(), exp=C.E4B, current_era="m-now"
+    )
+
+
+def test_e4b_check_recounts_eras_and_checks_status():
+    pk = e4b_packet()
+    assert (
+        "CURRENT AGENT MODEL ERA: m-now" in pk["user"] and "status resolved · model era m-old" in pk["user"]
+    )
+    good = lesson(model_era=["m-now", "m-old"], status="active")  # e1 resolved, e3 starts later: recurred
+    unit = E.lesson_units("E4B-X01", {"abstain": False, "lesson": good})[0]
+    res = E.check_lesson(unit, pk)
+    assert res["grounded_det"], res["grounding_flags"]
+    assert res["recount"]["eras"] == ["m-now", "m-old"]
+    bad = E.check_lesson({**unit, "content": {**good, "model_era": ["m-old"], "status": "resolved"}}, pk)
+    assert {"era_mismatch", "status_unsupported"} <= set(bad["grounding_flags"])
+    hist = E.check_lesson({**unit, "content": {**good, "status": "historical"}}, pk)
+    assert "status_unsupported" in hist["grounding_flags"]  # e3 is of the current era
+
+
+def test_e4b_schema_requires_status_and_era():
+    import jsonschema
+
+    schema = json.loads((AL_DIR / "prompts" / "e4b.schema.json").read_text())
+    jsonschema.validate(
+        {"abstain": False, "abstain_reason": "", "lesson": lesson(model_era=["m"], status="unknown")}, schema
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"abstain": False, "abstain_reason": "", "lesson": lesson()}, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(
+            {"abstain": False, "abstain_reason": "", "lesson": lesson(model_era=["m"], status="maybe")},
+            schema,
+        )
+
+
+@pytest.fixture
+def e4b_env(monkeypatch, tmp_path):
+    priv = tmp_path / "e4b"
+    monkeypatch.setenv(C.PRIVATE_ENV, str(priv))
+    monkeypatch.setattr(E, "_redactor", Identity)
+    monkeypatch.setattr(R, "_claude_version", lambda cli: "test-cli 0")
+    priv.mkdir()
+    eps = synthetic_episodes()
+    eps[0]["merged_ids"] = ["old-a0"]  # a new episode merged into an imported one
+    with (priv / "episodes.jsonl").open("w") as fh:
+        for e in eps:
+            fh.write(json.dumps({**e, "status": "unknown", "model_era": "m-now"}) + "\n")
+    covered = {"E4-X01": ["old-a0", "a1", "a2", "a3"]}  # the alpha cluster is already imported
+    (priv / "covered.json").write_text(json.dumps({"packets": covered}))
+    return priv
+
+
+def test_e4b_build_uses_the_frozen_threshold_and_excludes_covered_clusters(e4b_env):
+    cfg = C.load_config_for(C.E4B)
+    assert cfg["selection"]["E4B"]["threshold"] == 1.0 and cfg["spend_cap_usd"] == "1.50"
+    packets = E.build_e4(cfg, exp=C.E4B, embed=fake_embed)
+    rec = json.loads(E.clusters_path().read_text())
+    assert rec["grid"] == [] and rec["summary"]["threshold"] == 1.0
+    kinds = {tuple(sorted(r["episodes"])): r for r in rec["clusters"]}
+    alpha = kinds[("a0", "a1", "a2", "a3")]
+    assert alpha["eligibility"] == E.COVERED and alpha["covered_by"] == "E4-X01"
+    assert [p["packet_id"] for p in packets] == ["E4B-L01"] and packets[0]["exp"] == C.E4B
+    assert packets[0]["context"]["current_era"] == "claude-opus-5-5"
+    assert rec["summary"]["already_covered"] == 1
+
+
+def test_e4b_prereg_is_separate_from_e4(e4b_env):
+    E.build_e4(C.load_config_for(C.E4B), exp=C.E4B, embed=fake_embed)
+    path, digest = R.write(suite=C.E4B_SUITE)
+    assert path.name == "PREREG-E4b.md" and not (e4b_env / "PREREG-E4.md").exists()
+    record, again = R.verify(C.E4B)
+    assert again == digest and record["inputs"]["e4"]["covered_sha256"]
+    (e4b_env / "covered.json").write_text(json.dumps({"packets": {}}))
+    with pytest.raises(C.HarnessError, match="e4 episodes/clusters"):
+        R.verify(C.E4B)
+
+
+def test_lesson_suites_never_share_a_private_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv(C.E4_PRIVATE_ENV, str(tmp_path / "same"))
+    monkeypatch.setenv(C.E4B_PRIVATE_ENV, str(tmp_path / "same"))
+    with pytest.raises(C.HarnessError):
+        C.use_lesson_private(C.E4B)
+    monkeypatch.setenv(C.E4B_PRIVATE_ENV, str(tmp_path / "b"))
+    assert C.use_lesson_private(C.E4B) == (tmp_path / "b").resolve()
+    with pytest.raises(C.HarnessError):
+        al._exps("E4,E4B", C.ARM_EXPERIMENTS)

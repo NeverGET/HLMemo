@@ -40,6 +40,7 @@ PROMPTS = {
     "E2": ("e2_card.md", "e2.schema.json"),
     "E3": ("e3_lessons.md", "e3.schema.json"),
     "E4": ("e4_lessons.md", "e4.schema.json"),
+    "E4B": ("e4b_lessons.md", "e4b.schema.json"),
 }
 #: E4 (lessons v2, D-222/D-225) is a SEPARATE suite: its own config, reader instructions,
 #: pre-registration file and private directory (its packets come from mined episodes, not the DB)
@@ -48,8 +49,16 @@ E4_CONFIG_PATH = HERE / "config-e4.json"
 E4_READER_TEMPLATE = HERE / "READER-INSTRUCTIONS-E4.md"
 E4_PRIVATE_ENV = "HLM_AL_E4_PRIVATE_DIR"
 E4_DEFAULT_PRIVATE = ROOT / "docs" / "private" / "lessons-v2" / "e4"
+#: E4B (lessons v2b): the same machinery with status + model-era fields, a frozen threshold and the
+#: exclusion of clusters already covered by imported lessons; again its own suite and private dir
+E4B = "E4B"
+E4B_CONFIG_PATH = HERE / "config-e4b.json"
+E4B_READER_TEMPLATE = HERE / "READER-INSTRUCTIONS-E4b.md"
+E4B_PRIVATE_ENV = "HLM_AL_E4B_PRIVATE_DIR"
+E4B_DEFAULT_PRIVATE = ROOT / "docs" / "private" / "lessons-v2" / "e4b"
+LESSON_EXPS = (E4, E4B)
 ENV_FILE_ENV = "HLM_AL_ENV_FILE"  # the provider key file (e.g. the main checkout's .env from a worktree)
-ALL_EXPERIMENTS = (*("E0", "E1", "E2", "E3"), E4)
+ALL_EXPERIMENTS = (*("E0", "E1", "E2", "E3"), E4, E4B)
 
 
 class HarnessError(RuntimeError):
@@ -70,30 +79,42 @@ class Suite:
 
     @property
     def config_path(self) -> Path:
-        return E4_CONFIG_PATH if self.name == E4 else CONFIG_PATH
+        return {E4: E4_CONFIG_PATH, E4B: E4B_CONFIG_PATH}.get(self.name, CONFIG_PATH)
 
     @property
     def reader_template(self) -> Path:
-        return E4_READER_TEMPLATE if self.name == E4 else READER_TEMPLATE
+        return {E4: E4_READER_TEMPLATE, E4B: E4B_READER_TEMPLATE}.get(self.name, READER_TEMPLATE)
 
 
 MAIN_SUITE = Suite("main", "PREREG.md", "PREREG.sha256", ("E0", "E1", "E2", "E3"), ("E1", "E2", "E3"))
 E4_SUITE = Suite(E4, "PREREG-E4.md", "PREREG-E4.sha256", (E4,), (E4,))
+E4B_SUITE = Suite(E4B, "PREREG-E4b.md", "PREREG-E4b.sha256", (E4B,), (E4B,))
 
 
 def suite_of(exp: str | None) -> Suite:
-    return E4_SUITE if exp == E4 else MAIN_SUITE
+    return {E4: E4_SUITE, E4B: E4B_SUITE}.get(str(exp or "").upper(), MAIN_SUITE)
+
+
+def use_lesson_private(exp: str = E4) -> Path:
+    """Point this process's private directory at the lesson suite's own one (E4:
+    ``HLM_AL_E4_PRIVATE_DIR``, default ``docs/private/lessons-v2/e4``; E4B: ``HLM_AL_E4B_PRIVATE_DIR``,
+    default ``.../e4b``): a lesson suite never shares another suite's registration, ledger or kit."""
+    env, default = (
+        (E4B_PRIVATE_ENV, E4B_DEFAULT_PRIVATE) if exp == E4B else (E4_PRIVATE_ENV, E4_DEFAULT_PRIVATE)
+    )
+    target = Path(os.environ.get(env) or default).expanduser().resolve()
+    others = {(ROOT / "docs" / "private" / "active-librarian").resolve()}
+    other_env = E4_PRIVATE_ENV if exp == E4B else E4B_PRIVATE_ENV
+    other_default = E4_DEFAULT_PRIVATE if exp == E4B else E4B_DEFAULT_PRIVATE
+    others.add(Path(os.environ.get(other_env) or other_default).expanduser().resolve())
+    if target in others:
+        raise HarnessError(f"{exp} must not use another suite's private directory")
+    os.environ[PRIVATE_ENV] = str(target)
+    return target
 
 
 def use_e4_private() -> Path:
-    """Point this process's private directory at the E4 one (``HLM_AL_E4_PRIVATE_DIR``, default
-    ``docs/private/lessons-v2/e4``): E4 never shares the E0-E3 pre-registration, ledger or kit."""
-    target = Path(os.environ.get(E4_PRIVATE_ENV) or E4_DEFAULT_PRIVATE).expanduser().resolve()
-    main = (ROOT / "docs" / "private" / "active-librarian").resolve()
-    if target == main:
-        raise HarnessError("E4 must not use the E0-E3 private directory")
-    os.environ[PRIVATE_ENV] = str(target)
-    return target
+    return use_lesson_private(E4)
 
 
 # --------------------------------------------------------------------------- paths
@@ -273,7 +294,11 @@ __all__ = [
     "ALL_EXPERIMENTS",
     "ARM_EXPERIMENTS",
     "E4",
+    "E4B",
+    "E4B_SUITE",
     "E4_SUITE",
+    "LESSON_EXPS",
+    "use_lesson_private",
     "MAIN_SUITE",
     "Suite",
     "load_config_for",
