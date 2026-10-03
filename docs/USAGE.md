@@ -195,6 +195,7 @@ server and `--admin` on the client; in production it is disabled (D-061).
 | `hlm project create <slug> [--name N]` · `list` | `create` needs device 1 (`--admin`) |
 | `hlm query "<q>" [--budget N] [--kind K ...] [--valid-at TS] [--known-at TS] [--include-archived]` | prints the compact, sorted JSON of `memory.query` |
 | `hlm close --notes ".." \| --notes-file F [--decision ..]* [--lesson "title::body"]* [--card FILE --card-version ID] [--session-id UUID] [--budget N]` | `memory.call_the_day`; `request_id` is a fresh UUID; `HLM_SESSION_ID` env sets the session id |
+| `hlm curate --project P (--candidates F \| --map) [--export DIR] [--run-dir D]` · `hlm curate --run-dir D [--apply --state S [--execute preview\|apply]]` | local, owner-run supersession curation: agents verify candidates, a deterministic gate checks every quote, refuters try to break each link, and the result is a preview bundle; prod is touched only by the printed RUNBOOK commands. See [Curating supersession links](#curating-supersession-links) |
 | `hlm review [--project P] [--batch N] [--kind K] [--cursor C] [--dry-run] [--decisions FILE [--yes]]` · `hlm review --set-owner-token` | LLM-free batch review of the librarian's open questions (a/r/s/o/q; `memory.answer` per decision). The full listing (`hlm.questions`) is owner-only: the owner token comes from the keychain (`--set-owner-token`), is read only when stdin and stdout are terminals and is never taken from the environment; otherwise the newest notices are listed. Setup, rotation and threat model: `docs/review/README.md` |
 
 Error output for HTTP/tool errors is `error <CODE>: <message>` on stderr (+ the JSON envelope when
@@ -287,6 +288,86 @@ hlm import markdown export/ --project hlmemo                  # re-import maps f
   `unchanged`). A card file revises only the skeleton card or a card imported from the same export.
 - The report lists new/changed/unchanged/closed/skipped/rejected, remapped, duplicate groups, missing
   (kept) and an o200k token estimate.
+
+## Curating supersession links
+
+`hlm curate` turns the D-240/D-244 curation into one repeatable command. It finds OLD memory items
+that still state a replaced fact, and it proposes part-scope `supersedes` links from the NEWER item.
+The reader then flags only the stale span.
+
+The command is LOCAL tooling:
+- it runs on the owner's machine and needs no server release;
+- it writes nothing to prod by itself;
+- the agent passes run whatever worker command you configure, and everything else is deterministic Python.
+
+```sh
+export HLM_CURATE_AGENT_CMD='claude -p --model sonnet --allowedTools "Read,Grep,Glob,Write,Bash(grep:*)" --add-dir {export}'
+# librarian proposals (fetched over SSH: python -m hlmemo.ops librarian audit --project P --json > props.json)
+hlm curate --project hlmemo --candidates props.json
+# or let agents find the candidates themselves
+hlm curate --project hlmemo --map
+# resume or retry (completed stages are skipped; only failed slices run again)
+hlm curate --run-dir docs/private/curate/hlmemo-20261003-140000      # or: --resume --project hlmemo
+# after reading REVIEW.md: print the prod commands, then run them
+hlm curate --run-dir <run> --apply --state deploy/.local/<host>
+hlm curate --run-dir <run> --apply --state deploy/.local/<host> --execute preview   # then --execute apply
+```
+
+**Stages.** Each stage writes into the run directory and records the sha256 of its inputs. A re-run skips
+every complete stage whose inputs are unchanged. `--stop-after STAGE` stops early, and `--redo STAGE`
+forgets that stage and every later one.
+
+| stage | what it does |
+|---|---|
+| `export` | `hlm export --project P` into `export/items/` (or `--export DIR`, copied). Its fingerprint is checked before every later stage, so a worker that writes into the export aborts the run (exit 65). |
+| `map` (`--map` only) | N workers each scan a slice of export files for present-tense stale statements and name the newer item: `{"pairs": [...]}`. |
+| `candidates` | Normalizes the librarian audit (its `link_insert` actions) or the pairs into unordered pairs of two current heads. It skips pairs that are not in the export, duplicates, self pairs and proposals without a link action. `--librarian-status S` filters the audit. |
+| `pass1` | N workers (`--workers`, default 3) each verify a slice. The verdict is CONTRADICTION, SUPERSESSION, REFINES_OK, NO_CONFLICT or UNCLEAR, with `direction_ok`, the newer/older ids, and verbatim `older_span`/`newer_quote` for a supersession. |
+| `build` | One `hlm links backfill` record per SUPERSESSION: `src` = the newer item, `scope: part`, plus the labels `model` (`--model-label`), `profile`, `prompt_version` and `generator`. One record per pair. |
+| `gate1` | The deterministic gate. Both quotes must be verbatim and unique in the CURRENT head bodies and 20–300 characters long; both vids must be heads (never the project card). It rejects a self link, a duplicate (the first clean record wins), a pair in both directions, a cycle with the other records or the export's live links, and a pair that is already linked. A src whose `valid_from` is older than the dst's gets a WARN. |
+| `pass2` | Refuters (`--refuters`, default 2) apply the 5 tests STALE, CURRENT, SAME FACT, SPAN PRECISION and NOT HARMFUL, and answer KEEP, FIX or DROP. With `--pass2-mode split` (default, as on 2026-10-03) the records are split between the refuters. With `cross`, every refuter sees every record. |
+| `refine` | Combines the verdicts, precision first: any DROP drops the record, FIXes are applied, and of two nested spans the shorter wins. Disagreeing FIXes are held as `pass2_conflict`. A record whose refuter slice failed is held as `pass2_incomplete`. |
+| `gate2` | The same gate over the kept and fixed records. A FIX that breaks it is held as `fix_failed_gate`. |
+| `authority` | The owner's authority filter (D-244): only a src whose `source.path` (without its `#anchor`) matches the allowlist is applied. The default allowlist is `docs/decisions/DECISIONS.md`, `docs/decisions/*`, `deploy/RUNBOOK.md`, `docs/USAGE.md` and `CLAUDE.md`; change it with `--authority GLOB` (repeatable) or `HLM_CURATE_AUTHORITY=glob,glob`. Everything else is held for re-anchoring as `authority`. |
+| `bundle` | Writes `final.jsonl`, `held.jsonl`, `REVIEW.md` and `summary.json`. |
+
+**Run directory.** The default is `docs/private/curate/<project>-<UTC timestamp>/`, which is gitignored. The command refuses a run directory inside a git work tree that is not ignored, because the run holds owner data.
+
+```
+config.json   input/candidates.json   export/{items/,export.json}
+map/ pass1/ pass2/      one dir per worker: slice.json, prompt-N.md, agent-N.log, out.json, status.json
+candidates/ build/ gate1/ refine/ gate2/ authority/   stage.json + the stage's jsonl files
+final.jsonl  held.jsonl  REVIEW.md  summary.json      the preview bundle
+apply/apply.sh  apply/preview.json  apply/apply.json  written by --apply
+```
+
+**Agents (D-017: configuration, not code).** `HLM_CURATE_AGENT_CMD` or `--agent-cmd` is a shell-style template.
+- It runs once per slice, without a shell, with the worker's own directory as its cwd.
+- The rendered brief goes on **STDIN**; CLI arguments get swallowed by some agents.
+- These placeholders are replaced inside the arguments: `{export}`, `{workdir}`, `{slice}`, `{out}`. The same values are in `HLM_CURATE_EXPORT`, `HLM_CURATE_WORKDIR`, `HLM_CURATE_SLICE` and `HLM_CURATE_OUT`, with `HLM_CURATE_STAGE` and `HLM_CURATE_ATTEMPT`.
+- A worker needs read access to the export and its slice, and write access only to `out.json`. Grant exactly that with your agent's own flags, for example Claude Code's `--allowedTools`/`--add-dir`, or codex `exec -s workspace-write ... -` (the trailing `-` reads the prompt from STDIN).
+- The tool checks the result: the export fingerprint must be unchanged, and extra files in a worker dir are reported.
+- Every output is validated against a JSON Schema and must cover its slice exactly. A failing worker is retried once, with the errors appended to its prompt. After that its slice is marked failed: it shows in `summary.json` and `REVIEW.md`, its candidates count as unverified or its records are held, and the command exits 75. It is never dropped silently. Re-run the same command to retry only the failed slices.
+- The command itself is not stored (only its sha256), so set it again when you resume a run.
+- The briefs are package resources (`src/hlmemo/curate/briefs/`) with placeholders for the project, the export, the slice, the output file and today's date. `--reference DIR` names read-only reference directories in them, such as this repo checkout.
+
+**Owner policies.**
+- **History policy (D-244).** Only text that reads as a present-tense state or instruction is flagged, for example "still OPEN", "Prod runs R3" or "resume here". Dated findings, measurements and review records stay as history. The rule is verbatim in every brief.
+- **Authority.** Only decision, plan, RUNBOOK, USAGE and CLAUDE.md sources may supersede (see the authority stage).
+- **Precision over recall.** "Half-learning is worse than not knowing."
+
+**Preview and apply.** Read `REVIEW.md`: one section per link, with the stale span, the current quote, why, the pass-1 and pass-2 verdicts, any fix and the gate warnings. It also lists the held links, the dropped links, the records the gate rejected and the failed slices. To leave a link out, delete its line from `final.jsonl`.
+
+`--apply` re-gates `final.jsonl` against the run's export, then writes `apply/apply.sh` and prints its commands. The script follows the RUNBOOK "Curated links" procedure:
+- it refuses a `final.jsonl` that changed after the script was written (sha256 and count);
+- it streams the file into the api container;
+- it runs `hlm links backfill --dry-run`, which must PASS with exactly the approved count and unchanged event/link counts;
+- in `apply` mode only, it then applies the links as ONE librarian event;
+- it removes the temp file.
+
+The `ssh` options are `--state` (`HLM_CURATE_STATE`), `--ssh-config` (default `<state>/ssh_config`), `--ssh-host`, `--remote-app` and `--remote-env`. Nothing runs against prod unless you pass `--execute preview|apply` or run the script yourself. Heads that moved in prod after the export make the preview fail; take a fresh export with `--redo export`. Rollback: `hlm links backfill --revert` is project-wide (RUNBOOK).
+
+**Costs.** The tool makes no LLM API call; only the worker command does. With subscription agents (Claude Code or codex CLI) a run costs $0 in API spend and uses subscription quota. For scale, the 2026-10-03 run covered 298 librarian proposals: 3 pass-1 workers, about 100 candidates each, and 2 refuters over the 106 records that passed the gate. The deterministic stages take seconds.
 
 ## Troubleshooting
 
