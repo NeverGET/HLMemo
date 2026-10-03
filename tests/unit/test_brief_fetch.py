@@ -66,7 +66,11 @@ class FakeServer:
                 raise RuntimeError("boom")
             kind = args["kinds"][0]
             hits = [
-                hit(v["vid"], v["kind"], v["title"], v["day"], v["tags"])
+                {
+                    **hit(v["vid"], v["kind"], v["title"], v["day"], v["tags"]),
+                    # B3: a current server flags a superseded hit (absent otherwise)
+                    **({"superseded": True, "superseded_by": v["hit_sup"]} if v.get("hit_sup") else {}),
+                }
                 for v in self.versions.values()
                 if v["kind"] == kind
             ]
@@ -81,14 +85,18 @@ class FakeServer:
         v = self.versions[vid]
         page = int(args.get("cursor") or 0)
         more = page + 1 < v["pages"]
-        return {
+        out = {
             "version_id": vid, "logical_id": v["lid"], "kind": v["kind"],
             "recorded_at": f"2026-09-{v['day']:02d}T11:00:00.000000Z",
             "valid_to": v["valid_to"], "superseded_at": v["superseded_at"],
-            "payload_item": {"body": v["body"]},
+            "payload_item": v.get("payload_item", {"body": v["body"]}),
+            "chunks": v.get("chunks", []) if (page + 1 == v["pages"]) else [],
             "links": v["links"] if (page + 1 == v["pages"]) else [],  # links ride on the LAST page
             "next_cursor": str(page + 1) if more else None,
         }  # fmt: skip
+        if "incoming" in v:  # B3: a current server's incoming view (an older one has no key)
+            out["superseded_by"] = v["incoming"]
+        return out
 
 
 def sup(dst_lid: int, **kw: Any) -> dict:
@@ -136,6 +144,85 @@ def test_superseded_by_live_link_is_excluded() -> None:
     snap = run(s)
     assert [i.version_id for i in snap.lessons] == [21]
     assert ("v20", "superseded") in snap.excluded
+
+
+def incoming(lid: int, scope: str = "whole", **kw: Any) -> dict:
+    return {"logical_id": lid, "version_id": lid - 1000, "scope": scope,
+            "valid_from": "2026-09-27T00:00:00.000000Z", "valid_to": None, **kw}  # fmt: skip
+
+
+def test_superseder_outside_the_pool_is_excluded_via_raw_superseded_by() -> None:
+    """B3: the server's incoming view names a superseder the pool never saw (the old gap 1)."""
+    s = server_with_notes()
+    s.versions[20]["incoming"] = [incoming(9999)]  # an item of another kind, outside the pool
+    for v in (10, 11, 21):
+        s.versions[v]["incoming"] = []
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [21]
+    assert ("v20", "superseded") in snap.excluded
+
+
+def test_a_superseded_query_hit_is_excluded_even_without_raw_entries() -> None:
+    s = server_with_notes()
+    s.versions[20]["hit_sup"] = [{"clue": "v8999", "scope": "whole"}]
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [21]
+    assert ("v20", "superseded") in snap.excluded
+
+
+def test_part_scope_is_excluded_with_its_own_reason() -> None:
+    s = server_with_notes()
+    s.versions[20]["hit_sup"] = [{"clue": "v8999", "scope": "part"}]
+    s.versions[10]["incoming"] = [incoming(9998, "part", quote="d10")]
+    snap = run(s)
+    assert ("v20", "superseded-part") in snap.excluded and ("v10", "superseded-part") in snap.excluded
+    assert [i.version_id for i in snap.sessions] == [11] and [i.version_id for i in snap.lessons] == [21]
+
+
+@pytest.mark.parametrize(
+    "extra", [{"valid_to": "2026-09-30T00:00:00.000000Z"}, {"valid_from": "2026-10-05T00:00:00.000000Z"}]
+)
+def test_a_raw_entry_that_does_not_apply_now_does_not_exclude(extra: dict) -> None:
+    s = server_with_notes()
+    s.versions[20]["incoming"] = [incoming(9999, **extra)]
+    assert [i.version_id for i in run(s).lessons] == [21, 20]
+
+
+def test_a_current_server_superseded_by_is_trusted_over_the_pool_fallback() -> None:
+    """Review 98 Sol #3: a server whose raw carries ``superseded_by`` (empty here) is authoritative;
+    a pool item's OUTGOING link does not override it (the logical-id fallback is for older servers)."""
+    s = server_with_notes()
+    for v in s.versions.values():
+        v["incoming"] = []
+    s.versions[21]["links"] = [sup(s.versions[20]["lid"])]
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [21, 20] and snap.excluded == []
+
+
+def test_r98_sol3_a_pinned_link_to_an_old_version_never_hides_the_current_one() -> None:
+    """The reproducer: the current v21 (logical id 1021) has ``superseded_by=[]`` from the server, but
+    another lesson holds a link PINNED to the old v7 of logical id 1021. v21 stays in the brief."""
+    s = server_with_notes()
+    s.add(22, "lesson", "Lesson newer", "rule newer", 27, links=[sup(1021, dst_version_id=7)])
+    for v in s.versions.values():
+        v["incoming"] = []
+    assert s.versions[21]["lid"] == 1021
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [22, 21, 20]
+    assert ("v21", "superseded") not in snap.excluded and snap.excluded == []
+
+
+@pytest.mark.parametrize(("pinned", "hidden"), [(7, False), (21, True), (None, True)])
+def test_r98_sol3_the_older_server_fallback_respects_the_pinned_version(
+    pinned: int | None, hidden: bool
+) -> None:
+    """An older server (no ``superseded_by``): the pool fallback still runs, but a link pinned to
+    another version of the item does not hide this one; one pinned to it, or an unpinned one, does."""
+    s = server_with_notes()
+    s.add(22, "lesson", "Lesson newer", "rule newer", 27, links=[sup(1021, dst_version_id=pinned)])
+    snap = run(s)
+    assert (21 not in [i.version_id for i in snap.lessons]) is hidden
+    assert (("v21", "superseded") in snap.excluded) is hidden
 
 
 def test_cross_kind_superseder_in_pool_excludes() -> None:
@@ -253,3 +340,57 @@ def test_card_date_unknown_when_raw_fails_or_no_card() -> None:
     s2 = server_with_notes()
     s2.card = None
     assert run(s2).card_date is None
+
+
+# --------------------------------------------------------------------------- review 96 Sol #5
+def chunk(a: int, text: str, ordinal: int = 0) -> dict:
+    return {"ordinal": ordinal, "char_start": a, "char_end": a + len(text), "text": text}
+
+
+BODY = "Lesson: measure the cache first.\nRule: never tune blind; the mistake was tuning blind."
+
+
+def test_body_from_chunks_tiles_overlapping_chunks_and_never_guesses() -> None:
+    a, b = BODY[:40], BODY[30:]  # overlap [30, 40)
+    assert F.body_from_chunks([chunk(30, b, 1), chunk(0, a)]) == BODY  # any order
+    assert F.body_from_chunks([chunk(0, BODY)]) == BODY
+    assert F.body_from_chunks([chunk(2, BODY[2:20])]) == BODY[2:20]  # trimmed edges stay trimmed
+    assert F.body_from_chunks([chunk(0, BODY[:30]), chunk(31, BODY[31:])]) is None  # a gap
+    assert F.body_from_chunks([chunk(0, a), chunk(30, "X" + b[1:])]) is None  # the overlap disagrees
+    assert F.body_from_chunks([]) is None
+    for bad in (
+        {"char_start": 0, "char_end": 3, "text": "ab"},  # length mismatch
+        {"char_start": True, "char_end": 2, "text": "ab"},
+        {"char_start": 2, "char_end": 2, "text": ""},
+        "not a chunk",
+    ):
+        assert F.body_from_chunks([bad]) is None
+
+
+def test_a_mutation_version_without_a_request_item_gets_its_body_from_its_chunks() -> None:
+    """A span revision's new version (or a reversal's restored copy) has ``payload_item == {}``: the
+    brief rebuilds its body from the chunks (on the LAST page here) instead of showing it empty."""
+    s = server_with_notes()
+    s.versions[21].update(payload_item={}, pages=2, chunks=[chunk(0, BODY[:40]), chunk(30, BODY[30:], 1)])
+    snap = run(s)
+    (got,) = [i for i in snap.lessons if i.version_id == 21]
+    assert got.body == BODY
+
+
+def test_a_body_that_cannot_be_rebuilt_is_unverified_never_empty() -> None:
+    s = server_with_notes()
+    s.versions[21].update(payload_item={}, chunks=[chunk(0, BODY[:30]), chunk(31, BODY[31:])])
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [20]
+    assert ("v21", "unverified") in snap.excluded
+    s.versions[21].update(chunks=[])  # no chunk at all
+    assert ("v21", "unverified") in run(s).excluded
+
+
+def test_a_span_revision_self_link_never_hides_the_revised_item() -> None:
+    """D-118: a revised item holds a LIVE supersedes link to ITSELF (it pins the old version); the
+    pool fallback must not read it as the item superseding its current version."""
+    s = server_with_notes()
+    s.versions[21]["links"] = [sup(s.versions[21]["lid"], dst_version_id=7)]
+    snap = run(s)
+    assert [i.version_id for i in snap.lessons] == [21, 20]

@@ -28,6 +28,7 @@ Updated 2026-09-23. Source of each item in parentheses.
 - Writes accepted between the live pre-upgrade dump and `dc stop` are lost if that snapshot is restored (documented in RUNBOOK).
 - bootstrap.sh re-run with a changed --admin-cidr may stop before 80/443 under set -e; provider "allow 22" rules make --admin-cidr ineffective (consults/23, Low).
 - middleware.py docstring says register is "gated" (it is checked only post-body).
+- Writer 503 follow-up (consults/93 #4, NOT in the unbilled-503 settlement change): an opt-in, measured single retry of the research writer after a fast, verified-unbilled 503 (per-profile flag; jitter; honour `Retry-After`; re-reserve its worst case; skip it unless the fallback keeps a protected time share); tests for deadline/cancellation and at most two attempts.
 ## Retrieval / embeddings (D-042)
 - Embedder provider interface + async query embedding; gemini-embedding-2 / pplx-embed-v1-4b as opt-in profiles after RRF re-tuning and latency measured from the VPS.
 - int8-quantized e5 ONNX to cut RAM/CPU.
@@ -50,3 +51,9 @@ Updated 2026-09-23. Source of each item in parentheses.
 - Drill budget vs D-055 "drill the top 5" guidance: on corpus B, 53 of 80 top-5 drilldowns hit the 4000-token drilldown budget and were truncated. Raise the default drill budget for multi-clue calls, or split the budget fairly per clue. Small, pre-librarian; measure on corpus A + B dev.
 - W0a /ready detail gating trusts the raw socket peer (loopback = details). This is safe while Caddy reaches the API over the docker network, but a reverse proxy running inside the API's own network namespace would expose details to the public. If the topology ever changes, gate the details on a separate loopback-only listener or an ops token (verifier note, 2026-09-23).
 - [FIXED ab4b790] W2e synthesis fallback is ineffective under the 6 s cap: the provider retries the primary with 1/2/4/8 s backoff before trying the fallback, so an outage or stall of the primary times out before the fallback runs (found by gpt-5.6-sol in the D-084 bake-off). Fix: a synthesis-specific attempt budget (one bounded primary attempt, then the fallback within the deadline) + a timeout/503 failover test. The same applies to risk_judge (4 s cap).
+
+## R4.3 candidates (2026-10-03)
+- memory.query: when a hit is flagged `superseded`, pull its superseder into the hit list (as memory.ask's `superseders_pulled` does). On 10-03 a "production budget caps" query returned 4/4 superseded hits, while the current values were only in the card.
+- memory.ask answer quality: a same-DB comparison vs main with ≥ 3 samples per arm; extractive (verbatim-only) main-sentence repair; the round-2 findings of consult 99 (URL non-path parts, the alternation bracket guard, the dangling-drop word lists, the preview filter).
+- The literal check's pre-existing weaknesses (hyphen parts, nested brackets, digit-less URLs): tighten with a measured before/after.
+- Lessons harness: the status-evidence rule let a "resolved" lesson through without a verification quote (caught by a reader in E4C).

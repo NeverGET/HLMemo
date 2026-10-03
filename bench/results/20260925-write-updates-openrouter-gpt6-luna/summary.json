@@ -1,0 +1,140 @@
+{
+  "profile": "openrouter-gpt6-luna",
+  "scenarios": {
+    "updates": 30,
+    "controls": 10
+  },
+  "reps": 3,
+  "complete": true,
+  "variants": {
+    "shipped": {
+      "all": {
+        "calls": 120,
+        "errors": 0,
+        "item_precision": 0.937,
+        "item_recall": 0.989,
+        "span_precision": 0.937,
+        "span_recall": 0.989,
+        "abstention": 0.833,
+        "server_apply_rate": 0.989,
+        "revise_mode_rate": 0.989,
+        "predicted_updates": 95,
+        "usd": 0.01791107,
+        "latency_p50_s": 2.29,
+        "latency_p95_s": 2.88
+      },
+      "per_rep": [
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.909,
+          "item_recall": 1.0,
+          "span_precision": 0.909,
+          "span_recall": 1.0,
+          "abstention": 0.7,
+          "server_apply_rate": 1.0,
+          "revise_mode_rate": 1.0,
+          "predicted_updates": 33,
+          "usd": 0.01010415,
+          "latency_p50_s": 2.33,
+          "latency_p95_s": 2.81
+        },
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.935,
+          "item_recall": 0.967,
+          "span_precision": 0.935,
+          "span_recall": 0.967,
+          "abstention": 0.9,
+          "server_apply_rate": 0.967,
+          "revise_mode_rate": 0.967,
+          "predicted_updates": 31,
+          "usd": 0.00385196,
+          "latency_p50_s": 2.21,
+          "latency_p95_s": 2.61
+        },
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.968,
+          "item_recall": 1.0,
+          "span_precision": 0.968,
+          "span_recall": 1.0,
+          "abstention": 0.9,
+          "server_apply_rate": 1.0,
+          "revise_mode_rate": 1.0,
+          "predicted_updates": 31,
+          "usd": 0.00395496,
+          "latency_p50_s": 2.34,
+          "latency_p95_s": 2.92
+        }
+      ]
+    },
+    "short": {
+      "all": {
+        "calls": 120,
+        "errors": 0,
+        "item_precision": 0.798,
+        "item_recall": 0.833,
+        "span_precision": 0.798,
+        "span_recall": 0.833,
+        "abstention": 0.8,
+        "server_apply_rate": 0.833,
+        "revise_mode_rate": 0.833,
+        "predicted_updates": 94,
+        "usd": 0.01981062,
+        "latency_p50_s": 2.06,
+        "latency_p95_s": 4.63
+      },
+      "per_rep": [
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.812,
+          "item_recall": 0.867,
+          "span_precision": 0.812,
+          "span_recall": 0.867,
+          "abstention": 0.8,
+          "server_apply_rate": 0.867,
+          "revise_mode_rate": 0.867,
+          "predicted_updates": 32,
+          "usd": 0.0108155,
+          "latency_p50_s": 2.1,
+          "latency_p95_s": 4.07
+        },
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.8,
+          "item_recall": 0.8,
+          "span_precision": 0.8,
+          "span_recall": 0.8,
+          "abstention": 0.8,
+          "server_apply_rate": 0.8,
+          "revise_mode_rate": 0.8,
+          "predicted_updates": 30,
+          "usd": 0.00455356,
+          "latency_p50_s": 2.21,
+          "latency_p95_s": 4.93
+        },
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.781,
+          "item_recall": 0.833,
+          "span_precision": 0.781,
+          "span_recall": 0.833,
+          "abstention": 0.8,
+          "server_apply_rate": 0.833,
+          "revise_mode_rate": 0.833,
+          "predicted_updates": 32,
+          "usd": 0.00444156,
+          "latency_p50_s": 2.01,
+          "latency_p95_s": 4.63
+        }
+      ]
+    }
+  },
+  "usd_total": 0.03772169
+}

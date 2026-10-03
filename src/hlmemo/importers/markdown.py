@@ -19,13 +19,16 @@ from hlmemo.importers.common import SECTION_CHARS, GitInfo, ParseResult, git_top
 
 SYSTEM = "markdown"
 SUFFIXES = (".md", ".markdown")
+#: directories whose files are decision records (ADRs): imported as ``fact``, one per decision row
+#: (D-113: a write-time update never rewrites them, ``librarian/revise.decision_record``)
+ADR_DIRS = ("decisions", "adr", "adrs")
 
 
 def kind_for(rel: str, meta: dict[str, Any], text: str) -> str:
     low = rel.lower()
     dirs = low.split("/")[:-1]
     name = low.rsplit("/", 1)[-1]
-    if any(d in ("decisions", "adr", "adrs") for d in dirs):
+    if any(d in ADR_DIRS for d in dirs):
         return "fact"
     if any(d in ("consults", "reviews", "sessions", "journal") for d in dirs):
         return "episode"

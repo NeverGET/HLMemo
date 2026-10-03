@@ -4,7 +4,9 @@ profile, and the per-task fallback overrides.
 The primary profile is what ``Settings`` resolved (profile file < hlm.toml < ``HLM_*`` env), so a
 deployment can override the model or key by env. A fallback profile is loaded from its own file
 only (``profiles/<name>.toml`` or an inline ``[profiles.<name>]``): env overrides of ``HLM_LLM_*``
-never leak into it. Nothing outside a profile names a vendor, model id or price.
+never leak into it. Nothing outside a profile names a vendor, model id or price. A profile's
+spend-settlement policy (``unbilled_errors``) is read from its FILE only, for the primary too: it is
+release state through the image (no env, ``[hlm]`` or inline override exists).
 
 Per-task fallbacks (D-094): ``HLM_FALLBACK_PROFILE`` is every task's fallback unless the task has
 its own ``HLM_FALLBACK_PROFILE__<TASK>`` (task name upper-cased; ``Settings.task_fallback_profiles``).
@@ -28,9 +30,31 @@ from decimal import Decimal
 from typing import Any
 
 from hlmemo.config import TASK_FALLBACK_ENV, Settings, _strip_prefix, expand_env, load_profile
-from hlmemo.librarian.errors import LlmConfigError
+from hlmemo.librarian.errors import LlmConfigError, ProfilePolicyError
 
 FALLBACK_ENV = "HLM_FALLBACK_PROFILE"
+
+#: how an unbilled error's object may be wrapped: ``list`` = ``[{"error": {...}}]`` (exactly one
+#: element), ``object`` = ``{"error": {...}}``
+UNBILLED_WRAPPERS = frozenset({"list", "object"})
+
+
+@dataclass(frozen=True, slots=True)
+class UnbilledError:
+    """(Proposed D-062 (5) amendment, id assigned at merge) ONE HTTP 5xx error that the profile's
+    provider documents as never billed (the profile file cites the document). Opt-in: a profile
+    without ``unbilled_errors`` settles every 5xx at the worst case. The provider settles a response
+    at $0 only when its body is EXACTLY this envelope (``provider.is_unbilled_error``): no duplicate
+    key at any depth, the declared wrapper, an object whose only key is ``error``, an error object
+    whose keys are exactly ``error``'s keys plus a non-empty string ``message``, every declared value
+    equal (type included). Nothing else can be in such a body, so no usage or output can either."""
+
+    http_status: int
+    #: subset of ``UNBILLED_WRAPPERS``
+    wrappers: frozenset[str]
+    #: the error object's exact fields besides ``message`` (e.g. ``code`` = the HTTP status and the
+    #: provider's ``status`` string); scalar values only
+    error: Mapping[str, str | int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +88,9 @@ class LlmProfile:
     #: R4 (R-5): the last day (UTC) its prices hold (``price_valid_until = "YYYY-MM-DD"``); after it the
     #: profile is unusable for live calls (``Provider`` skips it, counted, and falls back)
     price_valid_until: date | None = None
+    #: (proposed D-062 (5) amendment) the provider's documented never-billed 5xx errors, OPT-IN per
+    #: profile file (``unbilled_errors``); empty (the default): every 5xx settles at the worst case
+    unbilled_errors: tuple[UnbilledError, ...] = ()
 
     def price_expired(self, today: date | None = None) -> bool:
         """R4 (R-5): today (UTC) is past ``price_valid_until``."""
@@ -149,7 +176,54 @@ def _build(name: str, raw: dict[str, Any], disabled: frozenset[str] = frozenset(
         json_mode=_flag(raw.get("json_mode"), True),
         usage_reasoning=_usage_reasoning(name, raw.get("usage_reasoning")),
         price_valid_until=_valid_until(name, raw.get("price_valid_until")),
+        unbilled_errors=_unbilled_errors(name, raw.get("unbilled_errors")),
     )
+
+
+_UNBILLED_KEYS = frozenset({"http_status", "wrappers", "error"})
+
+
+def _scalar(v: Any) -> bool:
+    return isinstance(v, str | int) and not isinstance(v, bool)
+
+
+def _unbilled_errors(name: str, value: Any) -> tuple[UnbilledError, ...]:
+    """``unbilled_errors``: a TOML array of ``{http_status, wrappers, error}`` tables in the profile
+    file. Absent or ``[]``: none (every 5xx settles at the worst case). Anything else that is not
+    exactly that (``false``, ``0``, ``{}``, a string, a malformed entry) is a ``ProfilePolicyError``
+    (startup fails fast), never a silent "off" nor a silently wider match."""
+
+    def bad(why: str) -> ProfilePolicyError:
+        return ProfilePolicyError(f"profile {name!r}: unbilled_errors {why}")
+
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise bad(f"must be an array of {{http_status, wrappers, error}} tables ([] = none): {value!r}")
+    out: list[UnbilledError] = []
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != _UNBILLED_KEYS:
+            raise bad(f"entry must have exactly the keys {sorted(_UNBILLED_KEYS)}: {entry!r}")
+        status, wrappers, error = entry["http_status"], entry["wrappers"], entry["error"]
+        if not (isinstance(status, int) and not isinstance(status, bool) and 500 <= status <= 599):
+            raise bad(f"http_status must be a 5xx status (a 4xx is never billed anyway): {status!r}")
+        if any(u.http_status == status for u in out):
+            raise bad(f"declares http_status {status} twice")
+        if (
+            not isinstance(wrappers, list)
+            or not wrappers
+            or not all(isinstance(w, str) for w in wrappers)
+            or not set(wrappers) <= UNBILLED_WRAPPERS
+        ):
+            raise bad(f"wrappers must be a non-empty subset of {sorted(UNBILLED_WRAPPERS)}: {wrappers!r}")
+        if not isinstance(error, dict) or not error or not all(_scalar(v) for v in error.values()):
+            raise bad(f"error must be a non-empty table of string/integer fields: {error!r}")
+        if "message" in error:
+            raise bad("error must not declare 'message' (it is the free text: present and non-empty)")
+        if "code" in error and error["code"] != status:
+            raise bad(f"error.code {error['code']!r} must equal http_status {status}")
+        out.append(UnbilledError(status, frozenset(wrappers), dict(error)))
+    return tuple(out)
 
 
 def _valid_until(name: str, value: Any) -> date | None:
@@ -178,6 +252,13 @@ def _usage_reasoning(name: str, value: Any) -> str:
     return v
 
 
+def profile_unbilled_errors(name: str) -> Any:
+    """The raw ``unbilled_errors`` of a profile FILE (validated by ``_build``): the primary's policy
+    too comes from its file alone, never from ``Settings`` (consult 94 #5: an env or ``[hlm]`` value is
+    outside the release's fingerprint and manifest)."""
+    return _strip_prefix(load_profile(name)).get("unbilled_errors")
+
+
 def primary_profile(settings: Settings) -> LlmProfile:
     return _build(
         settings.profile,
@@ -194,6 +275,7 @@ def primary_profile(settings: Settings) -> LlmProfile:
             "json_mode": settings.json_mode,
             "usage_reasoning": settings.usage_reasoning,
             "price_valid_until": settings.price_valid_until,
+            "unbilled_errors": profile_unbilled_errors(settings.profile),
         },
         profile_disabled_tasks(settings.profile),
     )
@@ -204,7 +286,9 @@ def named_profile(name: str) -> LlmProfile:
     raw = load_profile(name)
     if not raw:
         raise LlmConfigError(f"profile {name!r} not found")
-    return _build(name, {k: expand_env(v) for k, v in _strip_prefix(raw).items()})
+    # the spend-settlement policy is the file's literal value: never an ``env:``/``${}`` reference
+    fields = _strip_prefix(raw)
+    return _build(name, {k: v if k == "unbilled_errors" else expand_env(v) for k, v in fields.items()})
 
 
 def task_fallback_var(task: str) -> str:
@@ -219,11 +303,12 @@ def task_fallback_names(settings: Any) -> dict[str, str]:
 
 
 def _fallback(var: str, name: str) -> LlmProfile:
-    """``named_profile`` with an error that names the setting (startup fails fast on a typo)."""
+    """``named_profile`` with an error that names the setting (startup fails fast on a typo); a
+    ``ProfilePolicyError`` keeps its class."""
     try:
         return named_profile(name)
     except LlmConfigError as exc:
-        raise LlmConfigError(f"{var}={name!r}: {exc} (profiles/<name>.toml)") from None
+        raise type(exc)(f"{var}={name!r}: {exc} (profiles/<name>.toml)") from None
 
 
 def for_task(chain: Sequence[LlmProfile], task: str) -> list[LlmProfile]:
@@ -321,7 +406,9 @@ def describe_chains(settings: Settings) -> dict[str, Any]:
 
 __all__ = [
     "FALLBACK_ENV",
+    "UNBILLED_WRAPPERS",
     "LlmProfile",
+    "UnbilledError",
     "check_chains",
     "describe_chains",
     "for_task",
@@ -330,6 +417,7 @@ __all__ = [
     "primary_profile",
     "profile_chain",
     "profile_disabled_tasks",
+    "profile_unbilled_errors",
     "task_fallback_names",
     "task_fallback_var",
 ]

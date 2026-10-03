@@ -17,6 +17,12 @@ class LlmConfigError(LibrarianError):
     """A profile cannot be used as configured (no model, no key, no prices for a live call)."""
 
 
+class ProfilePolicyError(LlmConfigError):
+    """A profile's spend-settlement policy (``unbilled_errors``) is malformed. It is never skipped
+    or replaced by another profile (as an unresolvable writer profile is): the api and the librarian
+    refuse to start, and a lazy resolution raises."""
+
+
 class LlmDisabled(LibrarianError):
     """``HLM_LLM_MODE=off``: no provider call is ever made (replay, maintenance)."""
 
@@ -68,6 +74,11 @@ class AuthorityLost(LibrarianError):
     """The apply-time capability recheck failed (CC-3)."""
 
 
+class RevisionRefused(LibrarianError):
+    """A span revision (D-118 ``version_revise``) cannot be built at its cut (e.g. the cut is not
+    inside the head's validity): nothing is applied; the write-time update is rejected."""
+
+
 class PrivacyDenied(LibrarianError):
     """The privacy gate denied an item of the prompt immediately before a provider attempt."""
 
@@ -97,7 +108,9 @@ __all__ = [
     "LlmDisabled",
     "NotReady",
     "PrivacyDenied",
+    "ProfilePolicyError",
     "ProviderUnavailable",
+    "RevisionRefused",
     "RoleNotAuthorized",
     "SchemaFail",
 ]

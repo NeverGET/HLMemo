@@ -925,6 +925,29 @@ present, `HLM_LLM_BUDGET_DISABLED=false`, month at most 10 and day/hour at most 
 may edit the caps and the key in `/etc/hlmemo/llm.env` by hand (then re-run `install_llm_env.sh`,
 which keeps them and recreates both services).
 
+### B3 release (D-118 write-time updates): forward-only data
+
+B3 adds no migration and no table, but it writes NEW event content: a `memory.write` event can carry
+`resolved.updates[].mutations` (span revisions, closes and `supersedes` links of the writer's own
+updates), and a reversal is a `librarian` event with op `revert_write_update`. Only B3+ code knows
+these records. That makes the data **forward-only** once the first update has been written:
+
+- **The supported rollback** (`deploy.sh --rollback`) restores the quiesced pre-upgrade dump. It is
+  safe, but EVERY write after the B3 deploy is lost (updates, reversals and ordinary memories alike),
+  exactly like the R4 "Full" rollback above.
+- **Never run pre-B3 code on a database that holds B3 events.** The old replay
+  (`rebuild_projections`) skips a write's `resolved.updates`, so a rebuild silently drops every
+  revision, close and `supersedes` link an update made (projections and events disagree), and it
+  cannot apply a reversal's `version_reopen` at all (`unknown mutation`). Old read code also does not
+  know the self-links and pinned links the updates leave behind. Rolling back the image while keeping
+  the data is therefore NOT a recovery path.
+- **Recovery after B3 rolls forward:** fix the defect on B3+ code, or undo one update with its
+  compensating event (`python -m hlmemo.ops librarian revert-update EVENT --item I --update K
+  --reason TEXT`), which keeps the history replayable.
+
+Decide the release with this in mind: after the first update has been written, the only way back to
+pre-B3 code is the pre-upgrade dump, at the price of every later write.
+
 ### Application releases
 
 Before an upgrade, verify recent off-host backup and disk headroom. Deploy a reviewed immutable

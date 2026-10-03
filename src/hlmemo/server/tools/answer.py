@@ -21,8 +21,8 @@ DESCRIPTION = (
     "observer, records it as accepted_pending; reject discards it, custom records your note and asks "
     "the librarian to re-plan. Idempotent per request_id."
 )
+# no ``$schema`` key: 2020-12 is the MCP default dialect for ``inputSchema`` (B3/G-SURF)
 INPUT_SCHEMA: dict[str, Any] = {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$defs": {k: DEFS[k] for k in ("Slug", "Uuid", "Budget")},
     "type": "object",
     "properties": {

@@ -209,6 +209,9 @@ class Settings(BaseSettings):
     # R4 (R-5): the last day (UTC) the profile's prices hold; after it the profile is unusable for
     # live calls (the provider skips it and falls back). Set in the profile file.
     price_valid_until: date | None = None
+    # NOT a setting: a profile's never-billed 5xx policy (``unbilled_errors``, proposed D-062 (5)
+    # amendment) is read from the profile FILE only (librarian.profiles.profile_unbilled_errors), so
+    # no env or [hlm] value outside the release's fingerprint and manifest can change it.
     # Model quirks live only here (D-017): {task: {"system_append": str}}.
     prompt_overrides: dict[str, Any] = Field(default_factory=dict)
 
@@ -230,6 +233,11 @@ class Settings(BaseSettings):
     # W2b (D-067): who gives the second opinion on high-impact proposals: "cross" = the other
     # profile of the chain (primary <-> fallback), "self" = the answering profile again.
     librarian_verifier: str = Field(default="cross", pattern="^(cross|self)$")
+    # D-113 (owner) / D-118: the item kinds a span revision or a close may change — living
+    # knowledge. Historical records keep their text (episodes/session logs, and decision/ADR records
+    # of any kind: librarian/revise.decision_record); a write-time update of one only adds a
+    # supersedes link. Comma-separated kinds; enforced at write time (librarian/revise.revisable).
+    librarian_revise_kinds: str = "fact,lesson,doc_chunk"
     # e2e #7: jobs processed concurrently by ONE librarian process (each with its own connection,
     # lease keeper and fenced done; spend guard + lineage ceiling are atomic in the database).
     librarian_concurrency: int = Field(default=3, ge=1, le=16)
@@ -400,6 +408,24 @@ class Settings(BaseSettings):
                 return None
             return json.loads(v)
         return v
+
+    @field_validator("librarian_revise_kinds", mode="before")
+    @classmethod
+    def _revise_kinds(cls, v: Any) -> Any:
+        """``HLM_LIBRARIAN_REVISE_KINDS``: a comma-separated (or JSON list) subset of the item kinds;
+        an unknown kind is a configuration error (fail fast)."""
+        from typing import get_args
+
+        from hlmemo.core.write_models import Kind
+
+        items = (
+            v if isinstance(v, list | tuple) else str(v or "").replace("[", "").replace("]", "").split(",")
+        )
+        kinds = [str(k).strip().strip("'\"").lower() for k in items if str(k).strip().strip("'\"")]
+        unknown = sorted(set(kinds) - set(get_args(Kind)))
+        if unknown:
+            raise ValueError(f"HLM_LIBRARIAN_REVISE_KINDS: unknown kind(s) {unknown}")
+        return ",".join(dict.fromkeys(kinds))
 
     @field_validator("task_fallback_profiles", mode="before")
     @classmethod

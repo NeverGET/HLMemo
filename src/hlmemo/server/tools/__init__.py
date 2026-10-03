@@ -49,7 +49,11 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "memory.write",
         "Append 1..50 memory items (new items or revisions with expected_version_id) in one "
-        "transaction, idempotent per request_id. Returns the version ids and chunk counts.",
+        "transaction, idempotent per request_id. Returns the version ids and chunk counts. "
+        "If an item corrects a memory you read (not just adds to it), give it updates: item = that "
+        "memory's clue (e.g. v123.0), old_span = the outdated text quoted verbatim, mode revise or "
+        "supersede; a revise replacement must occur verbatim in body. Results: applied, linked, "
+        "rejected.",
         schemas.WRITE_INPUT,
         handlers.memory_write,
     ),

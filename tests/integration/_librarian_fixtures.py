@@ -79,7 +79,8 @@ class ScriptedLLM:
     """Answers per request from ``script`` (a list consumed in order, then ``default``).
 
     A script entry is a dict (JSON answer), a str (raw content), an int (HTTP status), a
-    ``("stall", seconds, entry)`` tuple, or a callable ``(request_json) -> entry``.
+    ``("stall", seconds, entry)`` tuple, a ready ``httpx.Response`` (sent as is), or a callable
+    ``(request_json) -> entry``.
     """
 
     script: list[Any] = field(default_factory=list)
@@ -106,6 +107,8 @@ class ScriptedLLM:
                 entry = entry[2]
                 continue
             break
+        if isinstance(entry, httpx.Response):
+            return entry
         if entry == "connect_error":
             raise httpx.ConnectError("scripted transport failure")
         if isinstance(entry, tuple) and entry and entry[0] == "http":  # ("http", status, json body)
