@@ -28,6 +28,7 @@ Updated 2026-09-23. Source of each item in parentheses.
 - Writes accepted between the live pre-upgrade dump and `dc stop` are lost if that snapshot is restored (documented in RUNBOOK).
 - bootstrap.sh re-run with a changed --admin-cidr may stop before 80/443 under set -e; provider "allow 22" rules make --admin-cidr ineffective (consults/23, Low).
 - middleware.py docstring says register is "gated" (it is checked only post-body).
+- Writer 503 follow-up (consults/93 #4, NOT in the unbilled-503 settlement change): an opt-in, measured single retry of the research writer after a fast, verified-unbilled 503 (per-profile flag; jitter; honour `Retry-After`; re-reserve its worst case; skip it unless the fallback keeps a protected time share); tests for deadline/cancellation and at most two attempts.
 ## Retrieval / embeddings (D-042)
 - Embedder provider interface + async query embedding; gemini-embedding-2 / pplx-embed-v1-4b as opt-in profiles after RRF re-tuning and latency measured from the VPS.
 - int8-quantized e5 ONNX to cut RAM/CPU.

@@ -20,3 +20,14 @@ price_valid_until = "2026-12-31"
 usage_reasoning = "excluded"
 supports_json_schema = false
 disabled_tasks = ["risk_judge"]
+# Proposed D-062 (5) amendment (id assigned at merge), OPT-IN: a profile without this key settles
+# every 5xx at the worst case. Google's billing doc, "Am I charged for failed requests?"
+# (https://ai.google.dev/gemini-api/docs/billing#am-i-charged-for-failed-requests): a request that
+# fails with a 400 or 500 error is not charged for its tokens (it still counts against the quota).
+# Only the 503 "high demand" refusal is declared, in the exact form this OpenAI-compatible endpoint
+# sent in prod (2026-10-01, tests/fixtures/provider/google_openai_503_unavailable.json):
+# [{"error": {"code": 503, "message": "...", "status": "UNAVAILABLE"}}]. Any other shape, or any
+# usage/output evidence in the body, keeps the worst case.
+unbilled_errors = [
+  { http_status = 503, wrappers = ["list"], error = { code = 503, status = "UNAVAILABLE" } },
+]

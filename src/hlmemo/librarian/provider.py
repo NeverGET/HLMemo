@@ -27,7 +27,14 @@ whose file lists the task in ``disabled_tasks`` is never used for it. Per profil
   each failed half-open trial up to 15 min; an open breaker costs a ``breaker_open`` ledger row
   and no network;
 * before every network attempt the worst case is reserved atomically (``budget``) and the
-  per-job call ceiling is checked; after it the reservation is settled at the actual cost.
+  per-job call ceiling is checked; after it the reservation is settled EXACTLY ONCE at the actual
+  cost. A 4xx settles at $0 (rejected before generation); D-062 (5): any 5xx, timeout or transport
+  error at the worst case, unless (proposed amendment, id assigned at merge) the PROFILE opts in to
+  $0 for a 5xx its provider documents as never billed and the body is exactly that declared envelope
+  (``is_unbilled_error``; ``LlmProfile.unbilled_errors``, default none). Anything else raised after
+  the reservation and before its settlement (a body httpx cannot decode, e.g. a corrupt gzip; a body
+  this code cannot read) means billing is uncertain: the worst case, an ``http_error`` row and a
+  transient failure (consult 94 #1; never an open reservation).
 
 Attempt policies (``complete(attempt_policy=)``):
 
@@ -74,7 +81,7 @@ import re
 import time
 import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -102,7 +109,7 @@ from hlmemo.librarian.errors import (
     SchemaFail,
 )
 from hlmemo.librarian.ledger import DbLedger, Ledger, LedgerRow
-from hlmemo.librarian.profiles import LlmProfile, for_task, profile_chain
+from hlmemo.librarian.profiles import LlmProfile, UnbilledError, for_task, profile_chain
 from hlmemo.librarian.prompts import TaskSpec
 from hlmemo.librarian.redact import Redactor
 
@@ -139,6 +146,65 @@ _RATE_LIMIT = re.compile(
 )
 #: WEAK: a billing/quota word that is billing only when nothing says it is a rate limit
 _WEAK_BILLING = re.compile(r"(?<![a-z0-9])(?:resource_exhausted|quota|billing)(?![a-z0-9])")
+
+
+class _DuplicateKey(ValueError):
+    """A JSON object repeats a key (consult 94 #4: ``json.loads`` would keep only the LAST value)."""
+
+
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``object_pairs_hook``: an object with a duplicate key is rejected (at every depth: the hook
+    runs for every object of the document)."""
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise _DuplicateKey(key)
+        out[key] = value
+    return out
+
+
+def _same(value: Any, declared: str | int) -> bool:
+    """Equal AND of the same JSON type (``true`` is not ``1``, ``503.0`` is not ``503``)."""
+    return type(value) is type(declared) and value == declared
+
+
+def is_unbilled_error(policies: Sequence[UnbilledError], status: int, body: bytes | None) -> bool:
+    """(Proposed D-062 (5) amendment, id assigned at merge) True only when the PROFILE declares
+    ``status`` as never billed (``LlmProfile.unbilled_errors``: opt-in, citing the provider's billing
+    document; none by default) and ``body`` is EXACTLY that declared envelope: JSON with no duplicate
+    key at any depth; the declared wrapper (a one-element list or a bare object) around an object
+    whose only key is ``error``; the error object's keys are exactly the declared fields plus
+    ``message``; every declared value is equal (type included); the message is a non-empty string.
+    Anything else (an undeclared status or profile, an empty, non-JSON, duplicate-key or otherwise
+    different body) keeps D-062's worst-case settlement.
+
+    D-017 (consult 94 #2): no field NAME is shared code. A matching body holds nothing but the
+    profile's declared scalars and one message string (the duplicate-key rejection makes the parsed
+    tree the whole body), so usage or output evidence (an OpenAI ``usage``/``choices``, a Google
+    ``usageMetadata``/``candidates``, any token count, under any name) has nowhere to be; a separate
+    scan for evidence names could only veto a field the profile itself declared."""
+    policy = next((p for p in policies if p.http_status == status), None)
+    if policy is None or not body:
+        return False
+    try:
+        parsed = json.loads(body, object_pairs_hook=_unique_keys)
+    except (ValueError, RecursionError):  # _DuplicateKey is a ValueError
+        return False
+    if isinstance(parsed, list):
+        if "list" not in policy.wrappers or len(parsed) != 1:
+            return False
+        parsed = parsed[0]
+    elif "object" not in policy.wrappers:
+        return False
+    if not isinstance(parsed, dict) or set(parsed) != {"error"}:
+        return False
+    err = parsed["error"]
+    if not isinstance(err, dict) or set(err) != {*policy.error, "message"}:
+        return False
+    message = err["message"]
+    if not isinstance(message, str) or not message.strip():
+        return False
+    return all(_same(err[k], v) for k, v in policy.error.items())
 
 
 def is_billing_or_quota(
@@ -1111,25 +1177,92 @@ class Provider:
                 exc, httpx.ConnectTimeout | httpx.PoolTimeout
             )
             return _Attempt("transient", timeout=True, cut=cut)
-        except httpx.TransportError:
-            # the request may have reached the provider: billing is uncertain -> worst case
-            await _finalize(self.budget.settle(call_id, None))
-            await _finalize(
-                self.ledger.record(
-                    self._row(
-                        profile,
-                        task,
-                        job_id,
-                        "http_error",
-                        call_id=call_id,
-                        request_sha256=request_sha,
-                        reserved_usd=worst,
-                        cost_usd=worst,
-                        latency_ms=_ms(t0),
-                    )
+        except Exception as exc:
+            # a transport error, a body httpx received but could not decode (``DecodingError``,
+            # e.g. a corrupt gzip: not a TransportError, consult 94 #1) or any other request error:
+            # the request may have reached the provider, billing is uncertain -> worst case
+            return await self._uncertain(profile, task, job_id, call_id, request_sha, worst, t0, exc)
+        settled = False
+
+        async def settle(actual: Decimal | None) -> None:
+            nonlocal settled
+            settled = True  # before the await: a settlement that fails or is cancelled is never redone
+            await _finalize(self.budget.settle(call_id, actual))
+
+        try:
+            return await self._read(
+                profile, task, job_id, key, messages, params, resp, call_id, request_sha, worst, t0, settle
+            )
+        except BaseException as exc:
+            if settled:
+                raise  # exactly once: settled already (e.g. the ledger write after it failed)
+            # consult 94 #1: the answer could not be read before its settlement -> billing uncertain
+            att = await self._uncertain(
+                profile, task, job_id, call_id, request_sha, worst, t0, exc, raw=resp.content
+            )
+            if isinstance(exc, Exception):
+                return att
+            raise
+
+    async def _uncertain(
+        self,
+        profile: LlmProfile,
+        task: TaskSpec,
+        job_id: int | None,
+        call_id: uuid.UUID,
+        request_sha: str,
+        worst: Decimal,
+        t0: float,
+        exc: BaseException,
+        *,
+        raw: bytes | None = None,
+    ) -> _Attempt:
+        """An attempt that went out and whose answer could not be read (a transport error, a body httpx
+        could not decode, a body this code could not process): billing is uncertain, so its
+        reservation is settled once at the worst case, an ``http_error`` row is written (to completion
+        even when cancelled) and the attempt is a transient failure (a retry, or the next profile)."""
+        if not isinstance(exc, httpx.TransportError):  # the type only: never a body in the log
+            log.warning(
+                "profile %s: %s after the send, billing uncertain: settled at the worst case",
+                profile.name,
+                type(exc).__name__,
+            )
+        await _finalize(self.budget.settle(call_id, None))
+        await _finalize(
+            self.ledger.record(
+                self._row(
+                    profile,
+                    task,
+                    job_id,
+                    "http_error",
+                    call_id=call_id,
+                    request_sha256=request_sha,
+                    response_sha256=_sha(raw) if raw is not None else None,
+                    reserved_usd=worst,
+                    cost_usd=worst,
+                    latency_ms=_ms(t0),
                 )
             )
-            return _Attempt("transient")
+        )
+        return _Attempt("transient")
+
+    async def _read(
+        self,
+        profile: LlmProfile,
+        task: TaskSpec,
+        job_id: int | None,
+        key: str,
+        messages: list[dict[str, str]],
+        params: dict[str, Any],
+        resp: httpx.Response,
+        call_id: uuid.UUID,
+        request_sha: str,
+        worst: Decimal,
+        t0: float,
+        settle: Callable[[Decimal | None], Awaitable[None]],
+    ) -> _Attempt:
+        """The response of an attempt that went out: its reservation is settled through ``settle``
+        (exactly once, ``_attempt``), its row is written and the attempt is classified."""
         latency = _ms(t0)
         raw_bytes = resp.content
         data: dict[str, Any] | None = None
@@ -1144,9 +1277,14 @@ class Provider:
             (data.get("error") and not data.get("choices")) or choice.get("finish_reason") == "error"
         )
         if resp.status_code != 200 or data is None or provider_error:
-            # Only a 4xx is a definitive no-charge answer (rejected before generation). A 5xx,
-            # an unparseable 200 or a mid-generation provider error may have been billed.
-            no_charge = 400 <= resp.status_code < 500
+            # A 4xx is a definitive no-charge answer (rejected before generation), and so is a 5xx
+            # the PROFILE opts in to as documented never billed, when the body is exactly its
+            # declared envelope (proposed D-062 (5) amendment). Any other 5xx, an unparseable 200
+            # or a mid-generation provider error may have been billed: worst case. (No retry is
+            # added here: a measured, opt-in single retry is a follow-up.)
+            no_charge = 400 <= resp.status_code < 500 or is_unbilled_error(
+                profile.unbilled_errors, resp.status_code, raw_bytes
+            )
             charged = Decimal(0) if no_charge else worst
             err_status = resp.status_code
             if err_status == 200 and isinstance((data or {}).get("error"), dict):
@@ -1157,7 +1295,7 @@ class Provider:
                 data if data is not None else raw_bytes,
                 resp.headers.get("retry-after"),
             )
-            await _finalize(self.budget.settle(call_id, charged))
+            await settle(charged)
             await self.ledger.record(
                 self._row(
                     profile,
@@ -1190,13 +1328,13 @@ class Provider:
         usage = data.get("usage") or {}
         norm = normalize_usage(usage, reasoning=profile.usage_reasoning, max_tokens=task.max_tokens)
         actual = self._actual_cost(profile, usage, norm)
-        await _finalize(self.budget.settle(call_id, actual))
         att = self._response(
             profile, task, job_id, data, request_sha, worst, latency, replay=False, raw=raw_bytes
         )
         assert att.row is not None
         att.row.call_id = call_id
         att.row.cost_usd = worst if actual is None else actual
+        await settle(actual)  # last: everything that reads this body ran before it (consult 94 #1)
         return att
 
     def _redacted_response(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -1291,6 +1429,7 @@ __all__ = [
     "AttemptAffordable",
     "AttemptGuard",
     "Provider",
+    "is_unbilled_error",
     "lineage_scope",
     "parse_json_object",
 ]
