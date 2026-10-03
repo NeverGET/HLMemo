@@ -1,4 +1,51 @@
 # STATUS — HLMemo (read this first when resuming)
+Updated: 2026-10-03. The project is ACTIVE. The direction is GOAL-PLAN (D-206) with the librarian in ASSIST mode (D-225).
+
+## Where we are (2026-10-03)
+- **Prod runs ee89c86** (D-239) on the single production VM. It contains:
+  - R4.1 (D-221): truncation marker, budget default 6000, list renumbering, the "as of" freshness line;
+  - R4.2s (D-233): spend/robustness fixes, unbilled Google 503s settle at $0, settle-once reservations;
+  - B3 (D-235): write-time updates and superseded status on reads, forward-only data;
+  - `hlm review` (D-238/D-239): the owner-only `hlm.questions` tool behind the owner token.
+
+  The `memory.ask` writer is Gemini 3.8 Flash MEDIUM with the luna fallback (D-203 KEEP). The spend caps are HOUR 3 / DAY 8 / MONTH 60 USD (D-198), and the gates pass 11/11. The owner's Mac reaches the server over IPv6, because Mac IPv4 has been broken since 2026-09-30 (D-202). Deploy and gate commands therefore need the IPv6 SSH config from the state dir (D-221).
+- **Memory content:**
+  - Project `hlmemo` holds HLMemo's own memory: the re-sync of D-132..D-238 (D-239), plus on 2026-10-03 the auto-memory notes and `docs/research/jev`, for 1,032 current items.
+  - The automatic doc→memory sync is designed (D-238) but not built. Until it is, re-import with `hlm import markdown ... --keep-missing` after a dry run.
+  - The first migration of owner projects is live in private per-project slugs (D-215/D-216); the details are private. The second migration's blind check failed on the answer path (D-226) and waits for R4.3.
+  - The global lessons (D-234/D-236) live in `hlm-global` as resolved/historical lessons with an era tag.
+- **Librarian:** ASSIST mode (D-225). It proposes and the owner reviews (`hlm review`); nothing is applied automatically. The active-librarian ceiling was NO-GO for every job (D-224). The open review queue is in the hundreds; drain it with `hlm review --project hlmemo --batch 10`.
+- **Agent-side hooks (HLMemo project only):** B1 session capture (D-218) and the AL5 SessionStart brief (D-228, kill switch `HLM_BRIEF=off`).
+- **Supersession:** 371 live links (252 explicit + 119 curated) plus B3 write-time updates. A curated link round is in preparation for the stale chains (caps, release state, writer choice): Sonnet drafting agents → a deterministic quote gate → an independent verifier → owner approval → `hlm links backfill`.
+- **In flight: R4.3** (D-237, `docs/decisions/R4.3-PLAN.md`).
+  - WS-1 (superseder pull-in) is built on `r4.3-ws1`.
+  - WS-2 (answer-quality items 2a/2d-iii) is built on `r4.3-ws2`; 2b and 2d-i/ii are cut.
+  - Blind reader grading and the paid paired measurement (≥ 3 samples per arm, Gemini cap $7) are pending.
+- **Watch:** the risk judge timed out in the risk-check gate on both post-B3 deploys (retrieval-only verdict; the gate still passes), D-239.
+
+## Decisions since the 09-30 status (D-207 ... D-239)
+- D-207: B2 redesigned: no naive per-prompt injection; capture first, then the SessionStart brief + PreToolUse risk_check + gated injection.
+- D-208 ... D-217: migration template and curation; the importer secret filter is fixed (D-213); the first migration is live and signed off (D-215/D-216).
+- D-218: B1 capture installed (HLMemo only). D-219/D-221: R4.1 released and live.
+- D-220/D-223: the public repo carries HLMemo product content only; the history is scrubbed, and the repo was recreated.
+- D-222: lessons are a one-way door (permanent knowledge). D-224/D-225: active-librarian NO-GO → assist now + lessons v2.
+- D-226: the second migration's blind check failed (answer path). D-227: lessons v2 is better but still NO-GO at the strict bars; the owner reviews the drafts.
+- D-228: the SessionStart brief is installed. D-229 ... D-231: R4.2 is split; the answer-quality set moves to R4.3.
+- D-232/D-233: R4.2s is live. D-234/D-236: 7 global + 5 project lessons accepted, with status and era (Opus 5.5 switch on 2026-09-22).
+- D-235: B3 is live (forward-only). D-237: R4.3 plan adopted. D-238/D-239: self-memory re-synced; `hlm review` live.
+
+## Resume pointers
+1. `docs/decisions/GOAL-PLAN.md`, `docs/decisions/R4.3-PLAN.md`, then the end of `docs/decisions/DECISIONS.md`.
+2. Deploy and gates: `deploy/RUNBOOK.md`. Owner token and review: `docs/review/README.md`. Brief: `docs/brief/README.md`. Capture: `docs/capture/README.md`.
+3. Private working notes (owner data, spend ledgers, measurements) live in gitignored `docs/private/`; they are never pushed.
+4. Workers: Sonnet 5.5 agents; at most 2-3 workstreams; dual review only for one-way doors, at most 2 rounds (D-125).
+5. Test footguns:
+   - tests need their own `HLM_TEST_DSN` and fail fast without one, so never point them at the dev DB `hlm`;
+   - in a worktree, run Python with `PYTHONPATH=$PWD/src`;
+   - tests rewrite `HARDWARE.md`.
+
+# History (older status, kept as written)
+## Status of 2026-09-30 (kept as written)
 Updated: 2026-09-30 (GOAL-PLAN A2). The project is ACTIVE again (the D-196 pause ended with R4).
 
 ## Where we are (2026-09-30)
@@ -42,7 +89,6 @@ Updated: 2026-09-30 (GOAL-PLAN A2). The project is ACTIVE again (the D-196 pause
 4. Workers: Sonnet 5.5 agents; at most 2-3 workstreams; dual review only for one-way doors (D-125).
 5. Test footguns: run Python with `PYTHONPATH=$PWD/src` in a worktree; integration tests need their own `hlm_test_*` database; tests rewrite `HARDWARE.md`.
 
-# History (older status, kept as written)
 Updated: 2026-09-27 — PROJECT PAUSED by the owner (D-196). memory.ask candidate wf-memory-ask 372abdd: adjudicated correct .63, contradiction ~.06; gate (.80) not passed. RESUME: read docs/private/realdata-hlmemo/RESUME-2026-09-27.md (private). Prod unchanged: R3 c98ec0a live (D-129).
 
 ## Where we are
