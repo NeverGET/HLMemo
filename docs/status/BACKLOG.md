@@ -67,3 +67,10 @@ Updated 2026-09-23. Source of each item in parentheses.
 - memory.ask answer quality: a same-DB comparison vs main with ≥ 3 samples per arm; extractive (verbatim-only) main-sentence repair; the round-2 findings of consult 99 (URL non-path parts, the alternation bracket guard, the dangling-drop word lists, the preview filter).
 - The literal check's pre-existing weaknesses (hyphen parts, nested brackets, digit-less URLs): tighten with a measured before/after.
 - Lessons harness: the status-evidence rule let a "resolved" lesson through without a verification quote (caught by a reader in E4C).
+
+## R4.4 candidates
+- Superseder pull-in v2 (D-241). Pull a superseder only when the visible flagged chunk contains the link's stale span. Show the
+  superseder chunk that holds the link's declaration, and follow the supersedes chain to its newest head. Ceiling first: regrade fresh
+  packets with 2 blind readers, bar 80% under the stricter rule. The $0 estimate on the D-241 packets is about 79-84%.
+- Risk judge: make the fast profile primary, or raise the 4 s cap after a G-LIVE-C re-check, and log judge outcomes (see above).
+

@@ -2087,3 +2087,18 @@ IPv6:
 Also:
 - STATUS.md is refreshed to 2026-10-03.
 - R4.3 WS-2: a second blind reader (codex astra-low) agrees 21/22 with the first. 2a ships; 2d-i/ii and 2b stay cut.
+D-241 | 2026-10-03 | ACCEPTED (owner: "Cut it, ship the rest") | **R4.3 is cut to its deterministic items. The superseder pull-in (WS-1 item 1) fails G1 twice and moves to R4.4 as a redesign, ceiling first.**
+
+- G1 re-run on a fresh prod dump taken after D-239/D-240: 659 queries, 3 runs per arm, 30 blind packets, 2 readers (Sonnet + codex astra-low).
+  - 14/30 pulled superseders state the current value under the stricter-reader rule (46.7%; bar 80%).
+  - The readers agree 21/30 (kappa 0.47), and 26/30 on yes vs not-yes.
+  - The first run was also 14/30. The fuller memory did not move the rate, even though flagged top-5 hits without a visible superseder drop from 342 to 6.
+- Cause: links name whole items, but the visible flagged hit is often a later chunk of a long doc that is not the replaced part. Flagged first chunk: 11/17 yes; a later chunk: 3/13.
+- $0 ceiling on the same packets:
+  - pulling only when the flagged chunk contains the link's stale span keeps 19 pairs with 13 yes (68%) and removes 11 pairs with 1 yes;
+  - of the remaining 6 failures, 2 show the wrong chunk of the superseder (the link's declaration names the right one), 1 has an outdated superseder (the chain should be followed to its head), and 3 are reader splits.
+  - R4.4 redesign: span gate + declaration chunk + chain to the head, with an estimated ceiling of about 79-84%. It needs new graded packets before any build.
+- R4.3 ships: 2a (notation variants) and 2d-iii from WS-2, behind `HLM_RESEARCH_PROSE_RULES`, plus the "resolved lesson quotes a verification line" small item.
+  - The cut rules (2b, 2d-i, 2d-ii) are removed.
+  - The deterministic items ship on the $0 evidence of the WS-2 audit (the plan's cut order, step 5). The $7 paid paired run is skipped, which keeps the shared balance for prod.
+  - G3 still applies: dual review of at most 2 rounds, a rehearsal, a snapshot, gates and a prod smoke.
