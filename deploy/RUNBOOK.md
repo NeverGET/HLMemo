@@ -369,9 +369,12 @@ The live checkout carries the change as a tracked edit until the next release: r
 
 
 > **Librarian role promotion: DO NOT** run `ops librarian role set assistant|autonomous` while the project has
-> `accepted_pending` proposals that were not independently verified (2026-10-03: 298 pending, of which only 2 are real contradictions).
+> `accepted_pending` proposals that were not independently verified (2026-10-03: 298 pending; the reviewed verdicts keep 18 and withdraw 280, D-244).
 > A promotion mass-applies every eligible pending batch in every project. Check first with
 > `ops librarian audit --project <slug> --status accepted_pending --json`. See BACKLOG "Librarian pending-queue hazard".
+> From the release with migration `0011_question_withdrawn` on, `role set` refuses such a promotion by itself, and
+> `ops librarian withdraw` takes unverified proposals off the queue: see "Librarian pending queue: withdraw and the
+> promotion guard" below.
 
 ## First deploy and admin bootstrap
 
@@ -571,6 +574,96 @@ librarian`: `... idling`). The same `llm.env` is mounted into the **api**, becau
 `memory.risk_check` judge (W2d) and the enqueue of `librarian_write` jobs run there; the key never
 reaches db, worker, migrate or caddy (`tests/deploy/test_compose_isolation.py`). A role above
 `observer` needs an owner decision event (D-062), else the librarian refuses to start.
+
+### Librarian pending queue: withdraw and the promotion guard
+
+Needs the release with migration `0011_question_withdrawn`. The migration adds the terminal question
+status `withdrawn` and changes no data. An older release's apply logic ignores withdrawn rows, but an
+older release does NOT run on this schema: its readiness check expects its own alembic head (0010).
+Rolling back to it therefore means restoring the pre-upgrade dump (`deploy.sh --rollback`), which loses
+ALL writes made after that dump, withdraws included. A schema downgrade refuses while any question is
+`withdrawn`; never run one by hand.
+
+**`ops librarian withdraw`** moves `open`, `approved` and `accepted_pending` questions of ONE project to
+`withdrawn`. Nothing in user memory changes. It writes ONE `librarian` event (operator device 1, client
+`hlm-ops/<version> (owner:NAME)`, op `withdraw`; the request holds the ids and the redacted reason;
+`resolved.question_status` holds one record per question, keeping the prior status and the owner's
+prior answer). Replay rebuilds it exactly. A withdrawn question is never applied: not by a queued
+`apply_batch` job, the sweeper, `release_pending`, a later promotion or `memory.answer`.
+
+It is all or nothing. Under the apply path's locks (role-order lock shared, then the question rows), it
+refuses with exit 1, writes nothing and lists the offending ids per reason (stderr JSON
+`details.refused`) for any of these:
+- `unknown`: the id does not exist;
+- `other_project`: the question belongs to another project;
+- `applied`: the question was already applied;
+- `not_pending`: the question has another status (`rejected`, `withdrawn`, ...), listed per status;
+- `running_apply`: its batch has a RUNNING `apply_batch` job; re-run once the job is done;
+- `link_not_live` / `link_mismatch`: with `--resolved-by-link`, the link is not live or does not join
+  the question's subjects. The link id is metadata only.
+
+Malformed ids, an unreadable `--ids-file` or an empty `--reason` exit 2. `--ids-file -` reads stdin
+(one id per line; blank lines and `#` comments are skipped).
+
+Withdraw the D-244 queue from the operator workstation. The reviewed verdicts (D-244, private) are
+the only input: 298 `accepted_pending` questions in `hlmemo`, of which 18 are kept (verified correct)
+and 280 are withdrawn. Write the two id files from those verdicts, one id per line: `KEEP_FILE` with
+the 18 to keep and `WITHDRAW_FILE` with the 280 to withdraw.
+
+Save the block as a file and run it with `bash` (not pasted into a shell): `set -euo pipefail` stops it
+at the first failed check, and nothing is withdrawn unless every count matches. Step 1 aborts unless
+the live pending set is exactly 298, the keep file exactly 18 and the withdraw file exactly 280 ids,
+the two files are disjoint, and together they are exactly the live pending set. The id file travels
+on the ssh stdin; `hlm_ops.sh` closes stdin, so the script uses plain ssh.
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+STATE=deploy/.local/153.92.1.166
+KEEP_FILE=/path/to/reviewed/keep-ids.txt           # the reviewed verdicts: the questions to keep
+WITHDRAW_FILE=/path/to/reviewed/withdraw-ids.txt   # the reviewed verdicts: the questions to withdraw
+EXPECT_PENDING=298 EXPECT_KEEP=18 EXPECT_WITHDRAW=280
+REASON='D-244: verified; not applied as labeled (supersessions handled by curated links, the rest no conflict)'
+OPS='cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api python -m hlmemo.ops librarian'
+# 1. the live pending set (read-only) against the reviewed files: abort on any mismatch
+ssh -F "$STATE/ssh_config" hlm-deploy "$OPS audit --project hlmemo --status accepted_pending --json" </dev/null > "$STATE/pending.json"
+python3 -c 'import json,sys; P = {p["question_id"] for p in json.load(open(sys.argv[1]))["proposals"]}; K, W = (set(open(f).read().split()) for f in sys.argv[2:4]); n = [int(x) for x in sys.argv[4:7]]; ok = [len(P) == n[0], len(K) == n[1], len(W) == n[2], not K & W, (K | W) == P]; print("ids", "PASS" if all(ok) else "FAIL", "pending/keep/withdraw", len(P), len(K), len(W), "disjoint", not K & W, "cover", (K | W) == P); sys.exit(not all(ok))' \
+  "$STATE/pending.json" "$KEEP_FILE" "$WITHDRAW_FILE" "$EXPECT_PENDING" "$EXPECT_KEEP" "$EXPECT_WITHDRAW"
+# 2. dry run: every check under the locks, nothing written. PASS: withdrawn == EXPECT_WITHDRAW, all accepted_pending
+ssh -F "$STATE/ssh_config" hlm-deploy "$OPS withdraw --project hlmemo --ids-file - --reason '$REASON' --dry-run --json" \
+  < "$WITHDRAW_FILE" > "$STATE/withdraw-preview.json"
+python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); n = int(sys.argv[2]); ok = d["dry_run"] and d["withdrawn"] == n and d["by_status"] == {"accepted_pending": n}; print("preview", "PASS" if ok else "FAIL", d["withdrawn"], d["by_status"]); sys.exit(not ok)' \
+  "$STATE/withdraw-preview.json" "$EXPECT_WITHDRAW"
+# 3. withdraw: ONE event; the output records its event_id
+ssh -F "$STATE/ssh_config" hlm-deploy "$OPS withdraw --project hlmemo --ids-file - --reason '$REASON' --owner OWNER_DEVICE_NAME --json" \
+  < "$WITHDRAW_FILE" > "$STATE/withdraw.json"
+python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); ok = not d["dry_run"] and d["withdrawn"] == int(sys.argv[2]) and bool(d["event_id"]); print("withdraw", "PASS" if ok else "FAIL", d["withdrawn"], "event", d["event_id"]); sys.exit(not ok)' \
+  "$STATE/withdraw.json" "$EXPECT_WITHDRAW"
+# 4. what a promotion would release now (records nothing): exactly the kept questions, nothing else.
+#    PASS: total == EXPECT_KEEP, the only project is hlmemo, and its counts are exactly
+#    {accepted_pending: EXPECT_KEEP, approved: 0}
+ssh -F "$STATE/ssh_config" hlm-deploy "$OPS role set assistant --decision D-NNN --dry-run" </dev/null > "$STATE/role-preview.json"
+python3 -c 'import json,sys; r = json.load(open(sys.argv[1]))["would_release"]; n = int(sys.argv[2]); ok = r["total"] == n and set(r["by_project"]) == {"hlmemo"} and r["by_project"]["hlmemo"] == {"accepted_pending": n, "approved": 0}; print("kept", "PASS" if ok else "FAIL", r); sys.exit(not ok)' \
+  "$STATE/role-preview.json" "$EXPECT_KEEP"
+```
+
+A refused run (exit 1) wrote nothing: fix the file from `details.refused` and run the dry run again.
+For one question that a curated link already implements, add `--resolved-by-link LINK_ID` (one link
+per command; the link must join that question's subjects).
+
+**Promotion guard.** `ops librarian role set assistant|autonomous` first counts, under the exclusive
+role-order lock, the questions the decision would let the librarian apply. These are every unexpired
+`approved` and `accepted_pending` question (never `widen_scope`) whose home and recorded projects are
+all above observer after the decision, counted per project. The count is an upper bound: it ignores the
+projects the actions touch now, which a concurrent revision could change without the role-order
+lock. Batch approvals and `memory.answer` take that lock, so none can slip in between the count and
+the promotion. If there are any, the command exits 1, records
+nothing and prints the counts with `withdraw or verify them first`. Only `--release-pending N`, where
+N equals that exact total, records the promotion. A different N, 0 included, is refused, and the
+accepted N is stored in the event (`request.release_pending`). `--dry-run` prints `would_release`
+(total and per project), the `apply_batch` jobs the event would queue and the flag it `needs`, and
+records nothing. A demotion (`observer`) releases nothing, so it needs no flag; a per-project
+promotion is counted with the roles as they will stand after it.
 
 ### R2 release (librarian ON, observer)
 
@@ -1028,6 +1121,19 @@ migration entirely. Restoring the pre-upgrade dump discards writes after its sna
 writes between the live snapshot and writer shutdown. The in-progress dump is captured before downtime;
 the rollback markers are promoted only after successful internal deployment checks.
 Do not run blind `alembic downgrade`. This package has no point-in-time recovery/WAL archive.
+
+**After ANY rollback to a release older than main 44d5f38, re-apply the `edge` network (D-242).**
+This covers `--rollback` and the automatic recovery of a failed deploy. Both start the target
+release's own committed Compose model. A model without the dual-stack `edge` network puts Caddy back
+on the shared IPv6 bucket (see "IPv6 client addresses and request limits"). `--rollback` prints
+`WARNING: rollback target <sha> has no 'edge' network` in that case. Right after the rollback, on the
+host:
+1. Stage the rolled-back release's `deploy/compose.prod.yaml` with the two reviewed `edge` hunks
+   applied: `sudo /usr/local/sbin/hlm-ipv6-maint.sh stage <file>`.
+2. `arm` the dead-man's switch, then `apply`.
+3. `verify` must end `LOCAL VERIFY: PASS`. Then run the source-IP check of that section and `cancel`.
+
+The tool is the rehearsed one from the D-242 change; its refusals and phases are the same.
 
 ## TLS, routing and operational diagnosis
 

@@ -6,6 +6,7 @@ Revision graph (see alembic/versions/*):
                    -> 0007_import (W1.5, D-069) -> 0008_librarian_tasks (W2b/W2c, D-069)
                    -> 0009_memory_map (Memory Map L2 summary cache, D-136)
                    -> 0010_billing_outcome (llm_calls.outcome billing_or_quota, D-212)
+                   -> 0011_question_withdrawn (librarian_questions.status withdrawn)
                    -> applied by `alembic upgrade main@head`
                    (`main@head` also upgrades a database at 0001, 0004 or 0005;
                    `phase0@head` is the same head)

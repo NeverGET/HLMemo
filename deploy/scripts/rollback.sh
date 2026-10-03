@@ -160,6 +160,11 @@ case $previous_llm_env in
 esac
 previous_model=$(mktemp "$PWD/deploy/.compose-previous.XXXXXX")
 git show "$previous:deploy/compose.prod.yaml" > "$previous_model"
+# D-242 (review 107 #3): a target model without the dual-stack `edge` network puts Caddy back on the
+# shared IPv6 bucket. The rollback still runs that release's own model; edge is re-applied after it.
+if ! grep -q 'edge:' "$previous_model"; then
+  echo "WARNING: rollback target $previous has no 'edge' network in deploy/compose.prod.yaml (D-242): after this rollback Caddy sees every IPv6 client through ONE shared bucket again. Re-apply edge right after the rollback with /usr/local/sbin/hlm-ipv6-maint.sh (RUNBOOK: Rollback between W0+ releases)." >&2
+fi
 model=$(mktemp "$parent_dir/.rollback-compose.XXXXXX")
 HLM_LLM_ENV_FILE=$render_llm_env docker compose -p "$COMPOSE_PROJECT" -f "$previous_model" --env-file "$HLM_ENV_FILE" \
   config --format json > "$model"

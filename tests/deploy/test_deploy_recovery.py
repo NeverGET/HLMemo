@@ -201,6 +201,8 @@ elif "config" in args:
     elif llm_env_path().is_file():
         # D-116: every render inlines llm.env like Compose (the captured model runs what it says)
         rendered["services"]["api"]["environment"].update(dotenv(llm_env_path().read_text()))
+    if os.environ.get("RENDER_EDGE") == "1":  # D-242: a model with the dual-stack edge network
+        rendered["networks"] = {"edge": {"enable_ipv6": True}}
     print(json.dumps(rendered))
 elif "ps" in args:
     if os.environ.get("INITIAL") != "1": print("db-container")
@@ -448,6 +450,20 @@ class DeployRecoveryTest(unittest.TestCase):
         result.stderr += result.stdout
         rows = [json.loads(line) for line in events.read_text().splitlines()]
         return root, result, rows
+
+    def test_failed_deploy_recovery_warns_when_the_restored_model_lacks_edge(self):
+        """Reviews 107 #3 / 108 (D-242): the automatic recovery of a failed deploy warns, like
+        rollback.sh, when the rendered model it starts has no `edge` network, and points to the
+        RUNBOOK re-apply step; with `edge` it stays silent."""
+        for render_edge, warned in (("0", True), ("1", False)):
+            with self.subTest(render_edge=render_edge):
+                with patch.dict(os.environ, {"RENDER_EDGE": render_edge}):
+                    _root, result, _rows = self.run_deploy("migration")
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Previous stack restored", result.stderr)
+                warning = f"WARNING: rollback target {PREVIOUS} has no 'edge' network"
+                self.assertEqual(warned, warning in result.stderr, result.stderr[-2000:])
+                self.assertEqual(warned, "RUNBOOK: Rollback between W0+ releases" in result.stderr)
 
     def test_failed_build_release_then_restore_uses_previous_image_and_alembic(self):
         for failure in ("dump", "migration", "health"):

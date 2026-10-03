@@ -178,6 +178,9 @@ async def test_review_lists_dry_runs_and_applies_a_decisions_file(
                 assert by_kind["widen_scope"]["actions"][0]["add_projects"] == [MAIN]
                 card = render_card(contra, 1, 3, now=datetime.now(UTC), width=100)
                 assert "newer" in card and "older" in card and HOST_OLD[0] in card and "expires in" in card
+                # D-244: the librarian's own second opinion is on the card (kind + verdict)
+                assert contra["verifier_kind"] == "supersede" and isinstance(contra["verified"], bool)
+                assert f"verifier  supersede ({'agrees' if contra['verified'] else 'disagrees'})" in card
                 one = await fetch_listing(call, MAIN, limit=10, kind="link")
                 assert [q["kind"] for q in one.questions] == ["link"] and one.pending_total == 3
                 assert await _state(connect) == before  # no event, no access event
