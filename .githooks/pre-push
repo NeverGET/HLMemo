@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Local guard (2026-10-03): run the public-repo privacy gate before ANY push; block on failure (fail closed).
+set -u
+common=$(git rev-parse --git-common-dir); main=$(cd "$common/.." && pwd)   # the main checkout (holds docs/private)
+echo "pre-push: privacy gate (repo $main)" >&2
+refs=()
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ $local_sha == 0000000000000000000000000000000000000000 ]] && continue
+  refs+=("$local_sha")
+done
+((${#refs[@]})) || exit 0
+base=$(git -C "$main" rev-parse --verify -q origin/main || echo "")
+args=(--repo "$main"); [[ -n $base ]] && args+=(--base "$base")
+if ! bash "$main/deploy/scripts/prepush_check.sh" "${args[@]}" "${refs[@]}" >&2; then
+  echo "pre-push: BLOCKED by the privacy gate. Fix the findings; never bypass with --no-verify." >&2
+  exit 1
+fi
