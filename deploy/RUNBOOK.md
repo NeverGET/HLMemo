@@ -372,6 +372,9 @@ The live checkout carries the change as a tracked edit until the next release: r
 > `accepted_pending` proposals that were not independently verified (2026-10-03: 298 pending, of which only 2 are real contradictions).
 > A promotion mass-applies every eligible pending batch in every project. Check first with
 > `ops librarian audit --project <slug> --status accepted_pending --json`. See BACKLOG "Librarian pending-queue hazard".
+> From the release with migration `0011_question_withdrawn` on, `role set` refuses such a promotion by itself, and
+> `ops librarian withdraw` takes unverified proposals off the queue: see "Librarian pending queue: withdraw and the
+> promotion guard" below.
 
 ## First deploy and admin bootstrap
 
@@ -571,6 +574,73 @@ librarian`: `... idling`). The same `llm.env` is mounted into the **api**, becau
 `memory.risk_check` judge (W2d) and the enqueue of `librarian_write` jobs run there; the key never
 reaches db, worker, migrate or caddy (`tests/deploy/test_compose_isolation.py`). A role above
 `observer` needs an owner decision event (D-062), else the librarian refuses to start.
+
+### Librarian pending queue: withdraw and the promotion guard
+
+Needs the release with migration `0011_question_withdrawn` (adds the terminal question status
+`withdrawn`; backward compatible, no data change). Older code runs unchanged on that schema: it never
+applies a withdrawn question. A schema downgrade refuses while any question is `withdrawn`; the
+supported rollback stays the pre-upgrade dump (withdraws made after it are lost with it).
+
+**`ops librarian withdraw`** moves `open`, `approved` and `accepted_pending` questions of ONE project to
+`withdrawn`. Nothing in user memory changes. It writes ONE `librarian` event (operator device 1, client
+`hlm-ops/<version> (owner:NAME)`, op `withdraw`; the request holds the ids and the redacted reason;
+`resolved.question_status` holds one record per question, keeping the prior status and the owner's
+prior answer). Replay rebuilds it exactly. A withdrawn question is never applied: not by a queued
+`apply_batch` job, the sweeper, `release_pending`, a later promotion or `memory.answer`.
+
+It is all or nothing. Under the apply path's locks (role-order lock shared, then the question rows), it
+refuses with exit 1, writes nothing and lists the offending ids per reason (stderr JSON
+`details.refused`) for any of these:
+- `unknown`: the id does not exist;
+- `other_project`: the question belongs to another project;
+- `applied`: the question was already applied;
+- `not_pending`: the question has another status (`rejected`, `withdrawn`, ...), listed per status;
+- `running_apply`: its batch has a RUNNING `apply_batch` job; re-run once the job is done;
+- `link_not_live` / `link_mismatch`: with `--resolved-by-link`, the link is not live or does not join
+  the question's subjects. The link id is metadata only.
+
+Malformed ids, an unreadable `--ids-file` or an empty `--reason` exit 2. `--ids-file -` reads stdin
+(one id per line; blank lines and `#` comments are skipped).
+
+Withdraw the D-244 queue (298 `accepted_pending` in `hlmemo`) from the operator workstation. Keep out
+of the file every id the owner wants applied later (for example the 2 verified real contradictions):
+
+```sh
+STATE=deploy/.local/153.92.1.166
+OPS='cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api python -m hlmemo.ops librarian'
+# 1. the pending set (read-only) and the ids to withdraw (KEEP: one id per line, the ones to keep; may be empty)
+ssh -F "$STATE/ssh_config" hlm-deploy "$OPS audit --project hlmemo --status accepted_pending --json" </dev/null > "$STATE/pending.json"
+python3 -c 'import json,sys; keep = set(open(sys.argv[2]).read().split()); ids = [p["question_id"] for p in json.load(open(sys.argv[1]))["proposals"]]; print("\n".join(i for i in ids if i not in keep))' \
+  "$STATE/pending.json" "$STATE/keep.txt" > "$STATE/withdraw-ids.txt"
+wc -l < "$STATE/withdraw-ids.txt"          # expected: 298 minus the kept ids
+# 2. dry run: every check under the locks, nothing written. PASS: exit 0, withdrawn == the line count,
+#    by_status == {"accepted_pending": N}
+ssh -F "$STATE/ssh_config" hlm-deploy "$OPS withdraw --project hlmemo --ids-file - --reason 'D-244: verified; not applied as labeled (supersessions handled by curated links, the rest no conflict)' --dry-run --json" \
+  < "$STATE/withdraw-ids.txt" > "$STATE/withdraw-preview.json"
+python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); n = sum(1 for x in open(sys.argv[2]) if x.strip()); ok = d["dry_run"] and d["withdrawn"] == n and set(d["by_status"]) == {"accepted_pending"}; print("preview", "PASS" if ok else "FAIL", d["withdrawn"], d["by_status"]); sys.exit(not ok)' \
+  "$STATE/withdraw-preview.json" "$STATE/withdraw-ids.txt"
+# 3. withdraw: ONE event; record its event_id
+ssh -F "$STATE/ssh_config" hlm-deploy "$OPS withdraw --project hlmemo --ids-file - --reason 'D-244: verified; not applied as labeled (supersessions handled by curated links, the rest no conflict)' --owner OWNER_DEVICE_NAME --json" \
+  < "$STATE/withdraw-ids.txt" > "$STATE/withdraw.json"
+# 4. what a promotion would release now (records nothing): only the kept ids remain
+ssh -F "$STATE/ssh_config" hlm-deploy "$OPS role set assistant --decision D-NNN --dry-run" </dev/null
+```
+
+A refused run (exit 1) wrote nothing: fix the file from `details.refused` and run the dry run again.
+For one question that a curated link already implements, add `--resolved-by-link LINK_ID` (one link
+per command; the link must join that question's subjects).
+
+**Promotion guard.** `ops librarian role set assistant|autonomous` first counts, under the exclusive
+role-order lock, the questions the decision would let the librarian apply. These are every unexpired
+`approved` and `accepted_pending` question (never `widen_scope`) whose touched projects are all above
+observer after the decision, counted per project. If there are any, the command exits 1, records
+nothing and prints the counts with `withdraw or verify them first`. Only `--release-pending N`, where
+N equals that exact total, records the promotion. A different N, 0 included, is refused, and the
+accepted N is stored in the event (`request.release_pending`). `--dry-run` prints `would_release`
+(total and per project), the `apply_batch` jobs the event would queue and the flag it `needs`, and
+records nothing. A demotion (`observer`) releases nothing, so it needs no flag; a per-project
+promotion is counted with the roles as they will stand after it.
 
 ### R2 release (librarian ON, observer)
 
