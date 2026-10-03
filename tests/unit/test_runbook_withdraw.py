@@ -84,7 +84,16 @@ def test_the_preview_withdraw_and_kept_checks_fail_closed(tmp_path: Path) -> Non
     assert _run(withdraw, _write(tmp_path / "w.json", done), 280) == 0
     assert _run(withdraw, _write(tmp_path / "w.json", {**done, "event_id": None}), 280) != 0
     assert _run(withdraw, _write(tmp_path / "w.json", {**done, "dry_run": True}), 280) != 0
-    role = {"would_release": {"total": 18, "by_project": {"hlmemo": {"accepted_pending": 18, "approved": 0}}}}
-    assert _run(kept, _write(tmp_path / "r.json", role), 18) == 0
-    role["would_release"]["by_project"]["hlmemo"]["accepted_pending"] = 19
-    assert _run(kept, _write(tmp_path / "r.json", role), 18) != 0
+
+    def release(total: int, by_project: dict[str, dict[str, int]]) -> Path:
+        return _write(tmp_path / "r.json", {"would_release": {"total": total, "by_project": by_project}})
+
+    exact = {"hlmemo": {"accepted_pending": 18, "approved": 0}}
+    assert _run(kept, release(18, exact), 18) == 0
+    assert _run(kept, release(19, {"hlmemo": {"accepted_pending": 19, "approved": 0}}), 18) != 0
+    # review 108: hlmemo.accepted_pending == 18 alone is not enough
+    assert _run(kept, release(19, {"hlmemo": {"accepted_pending": 18, "approved": 1}}), 18) != 0
+    other = {**exact, "other-project": {"accepted_pending": 7, "approved": 0}}
+    assert _run(kept, release(25, other), 18) != 0
+    assert _run(kept, release(18, other), 18) != 0  # even with a matching total
+    assert _run(kept, release(18, {"other-project": {"accepted_pending": 18, "approved": 0}}), 18) != 0
