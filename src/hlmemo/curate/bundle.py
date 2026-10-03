@@ -1,10 +1,10 @@
 """The ``hlm curate`` preview bundle and the ``--apply`` script (deterministic).
 
 ``final.jsonl``  the records to apply (``hlm links backfill --proposals``)
-``held.jsonl``   records NOT applied, each with ``held_reason`` (authority | pass2_conflict |
+``held.jsonl``   records NOT applied, each with ``held_reason`` (authority | refuter_fix_conflict |
                  pass2_incomplete | fix_failed_gate)
 ``REVIEW.md``    one section per link: stale span, current quote, why, the verifiers' verdicts
-``summary.json`` counts per stage
+``summary.json`` counts per stage, plus ``pass2_agreement`` (how the refuters agreed per record)
 
 ``apply/apply.sh`` follows the RUNBOOK "Curated links" procedure: stream the file into the api
 container, a ``--dry-run`` preview whose link count must equal the approved count with the
@@ -20,6 +20,8 @@ import shlex
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from hlmemo.curate.gate import AGREEMENT_CLASSES
 
 if TYPE_CHECKING:
     from hlmemo.curate.pipeline import Run
@@ -138,6 +140,7 @@ def write_bundle(r: Run) -> dict[str, Any]:
         "held": held_by,
         "dropped": len(dropped),
         "failed_slices": failed_slices,
+        "pass2_agreement": stages.get("refine", {}).get("agreement"),
         "stages": stages,
     }
     (r.p("summary.json")).write_text(json.dumps(summary, indent=1, sort_keys=True) + "\n", encoding="utf-8")
@@ -168,6 +171,13 @@ def write_bundle(r: Run) -> dict[str, Any]:
         + ", ".join(f"`{a}`" for a in r.cfg.authority)
         + ".",
     ]
+    agree = summary["pass2_agreement"] or {}
+    if agree:
+        counts = ", ".join(f"{k} {agree.get(k, 0)}" for k in AGREEMENT_CLASSES)
+        lines.append(
+            f"- Pass-2 agreement ({agree.get('mode')}, {agree.get('refuters_per_record')} refuter(s) "
+            f"per record): {counts}."
+        )
     bad = {k: v for k, v in failed_slices.items() if v}
     if bad:
         lines.append(

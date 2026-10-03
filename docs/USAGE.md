@@ -195,7 +195,7 @@ server and `--admin` on the client; in production it is disabled (D-061).
 | `hlm project create <slug> [--name N]` · `list` | `create` needs device 1 (`--admin`) |
 | `hlm query "<q>" [--budget N] [--kind K ...] [--valid-at TS] [--known-at TS] [--include-archived]` | prints the compact, sorted JSON of `memory.query` |
 | `hlm close --notes ".." \| --notes-file F [--decision ..]* [--lesson "title::body"]* [--card FILE --card-version ID] [--session-id UUID] [--budget N]` | `memory.call_the_day`; `request_id` is a fresh UUID; `HLM_SESSION_ID` env sets the session id |
-| `hlm curate --project P (--candidates F \| --map) [--export DIR] [--run-dir D]` · `hlm curate --run-dir D [--apply --state S [--execute preview\|apply]]` | local, owner-run supersession curation: agents verify candidates, a deterministic gate checks every quote, refuters try to break each link, and the result is a preview bundle; prod is touched only by the printed RUNBOOK commands. See [Curating supersession links](#curating-supersession-links) |
+| `hlm curate --project P (--candidates F \| --map) [--export DIR] [--run-dir D]` · `hlm curate --run-dir D [--apply --state S [--execute preview\|apply]]` | local, owner-run supersession curation: agents verify candidates, a deterministic gate checks every quote, refuters try to break each link, and the result is a preview bundle; prod is touched only by the printed RUNBOOK commands. `--map` is experimental. See [Curating supersession links](#curating-supersession-links) |
 | `hlm review [--project P] [--batch N] [--kind K] [--cursor C] [--dry-run] [--decisions FILE [--yes]]` · `hlm review --set-owner-token` | LLM-free batch review of the librarian's open questions (a/r/s/o/q; `memory.answer` per decision). The full listing (`hlm.questions`) is owner-only: the owner token comes from the keychain (`--set-owner-token`), is read only when stdin and stdout are terminals and is never taken from the environment; otherwise the newest notices are listed. Setup, rotation and threat model: `docs/review/README.md` |
 
 Error output for HTTP/tool errors is `error <CODE>: <message>` on stderr (+ the JSON envelope when
@@ -301,10 +301,11 @@ The command is LOCAL tooling:
 - the agent passes run whatever worker command you configure, and everything else is deterministic Python.
 
 ```sh
+# the example worker command (Claude Code, subscription): read the export, grep it, write out.json
 export HLM_CURATE_AGENT_CMD='claude -p --model sonnet --allowedTools "Read,Grep,Glob,Write,Bash(grep:*)" --add-dir {export}'
 # librarian proposals (fetched over SSH: python -m hlmemo.ops librarian audit --project P --json > props.json)
 hlm curate --project hlmemo --candidates props.json
-# or let agents find the candidates themselves
+# EXPERIMENTAL (not yet measured on real data): let agents find the candidates themselves
 hlm curate --project hlmemo --map
 # resume or retry (completed stages are skipped; only failed slices run again)
 hlm curate --run-dir docs/private/curate/hlmemo-20261003-140000      # or: --resume --project hlmemo
@@ -320,13 +321,13 @@ forgets that stage and every later one.
 | stage | what it does |
 |---|---|
 | `export` | `hlm export --project P` into `export/items/` (or `--export DIR`, copied). Its fingerprint is checked before every later stage, so a worker that writes into the export aborts the run (exit 65). |
-| `map` (`--map` only) | N workers each scan a slice of export files for present-tense stale statements and name the newer item: `{"pairs": [...]}`. |
+| `map` (`--map` only, **experimental**: not yet measured on real data) | N workers each scan a slice of export files for present-tense stale statements and name the newer item: `{"pairs": [...]}`. |
 | `candidates` | Normalizes the librarian audit (its `link_insert` actions) or the pairs into unordered pairs of two current heads. It skips pairs that are not in the export, duplicates, self pairs and proposals without a link action. `--librarian-status S` filters the audit. |
 | `pass1` | N workers (`--workers`, default 3) each verify a slice. The verdict is CONTRADICTION, SUPERSESSION, REFINES_OK, NO_CONFLICT or UNCLEAR, with `direction_ok`, the newer/older ids, and verbatim `older_span`/`newer_quote` for a supersession. |
 | `build` | One `hlm links backfill` record per SUPERSESSION: `src` = the newer item, `scope: part`, plus the labels `model` (`--model-label`), `profile`, `prompt_version` and `generator`. One record per pair. |
 | `gate1` | The deterministic gate. Both quotes must be verbatim and unique in the CURRENT head bodies and 20–300 characters long; both vids must be heads (never the project card). It rejects a self link, a duplicate (the first clean record wins), a pair in both directions, a cycle with the other records or the export's live links, and a pair that is already linked. A src whose `valid_from` is older than the dst's gets a WARN. |
-| `pass2` | Refuters (`--refuters`, default 2) apply the 5 tests STALE, CURRENT, SAME FACT, SPAN PRECISION and NOT HARMFUL, and answer KEEP, FIX or DROP. With `--pass2-mode split` (default, as on 2026-10-03) the records are split between the refuters. With `cross`, every refuter sees every record. |
-| `refine` | Combines the verdicts, precision first: any DROP drops the record, FIXes are applied, and of two nested spans the shorter wins. Disagreeing FIXes are held as `pass2_conflict`. A record whose refuter slice failed is held as `pass2_incomplete`. |
+| `pass2` | Refuters (`--refuters`, default 2) apply the 5 tests STALE, CURRENT, SAME FACT, SPAN PRECISION and NOT HARMFUL, and answer KEEP, FIX or DROP. With `--pass2-mode cross` (the default) every refuter judges every record. With `split` (as on 2026-10-03) the records are divided among the refuters, so each record gets one refuter verdict. |
+| `refine` | Combines the verdicts, precision first (owner rule). A record survives only if every refuter says KEEP, or the refuters say KEEP and FIX with one identical fix, or they all give the same FIX; the fix is then applied. Any DROP drops the record. Two FIXes that differ in any field (even nested spans) hold the record as `refuter_fix_conflict`. A record a refuter did not judge (its slice failed) is held as `pass2_incomplete`, even if another refuter said DROP. `summary.json` reports `pass2_agreement`: per record `keep_keep`, `keep_fix`, `fix_identical`, `fix_conflict`, `drop_unanimous`, `drop_split` or `incomplete`. |
 | `gate2` | The same gate over the kept and fixed records. A FIX that breaks it is held as `fix_failed_gate`. |
 | `authority` | The owner's authority filter (D-244): only a src whose `source.path` (without its `#anchor`) matches the allowlist is applied. The default allowlist is `docs/decisions/DECISIONS.md`, `docs/decisions/*`, `deploy/RUNBOOK.md`, `docs/USAGE.md` and `CLAUDE.md`; change it with `--authority GLOB` (repeatable) or `HLM_CURATE_AUTHORITY=glob,glob`. Everything else is held for re-anchoring as `authority`. |
 | `bundle` | Writes `final.jsonl`, `held.jsonl`, `REVIEW.md` and `summary.json`. |
@@ -367,7 +368,7 @@ apply/apply.sh  apply/preview.json  apply/apply.json  written by --apply
 
 The `ssh` options are `--state` (`HLM_CURATE_STATE`), `--ssh-config` (default `<state>/ssh_config`), `--ssh-host`, `--remote-app` and `--remote-env`. Nothing runs against prod unless you pass `--execute preview|apply` or run the script yourself. Heads that moved in prod after the export make the preview fail; take a fresh export with `--redo export`. Rollback: `hlm links backfill --revert` is project-wide (RUNBOOK).
 
-**Costs.** The tool makes no LLM API call; only the worker command does. With subscription agents (Claude Code or codex CLI) a run costs $0 in API spend and uses subscription quota. For scale, the 2026-10-03 run covered 298 librarian proposals: 3 pass-1 workers, about 100 candidates each, and 2 refuters over the 106 records that passed the gate. The deterministic stages take seconds.
+**Costs.** The tool makes no LLM API call; only the worker command does. With subscription agents (Claude Code or codex CLI) a run costs $0 in API spend and uses subscription quota. For scale, the 2026-10-03 run covered 298 librarian proposals: 3 pass-1 workers, about 100 candidates each, and 2 refuters that split the 106 records that passed the gate. The default `cross` mode doubles the pass-2 work, because each refuter reads every record. The deterministic stages take seconds.
 
 ## Troubleshooting
 

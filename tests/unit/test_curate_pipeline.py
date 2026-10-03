@@ -99,7 +99,21 @@ def test_smoke_end_to_end(inp: dict[str, Path], tmp_path: Path) -> None:
         4,
         {"already_linked": 1},
     )
+    # cross mode by default: both refuters judge all 4 gated records
+    assert st["pass2"]["mode"] == "cross" and st["pass2"]["slices"] == 2
+    assert st["pass2"]["verdicts"] == {"DROP": 2, "FIX": 2, "KEEP": 4}
     assert st["refine"]["decisions"] == {"DROP": 1, "FIX": 1, "KEEP": 2}
+    assert s["pass2_agreement"] == {
+        "mode": "cross",
+        "refuters_per_record": 2,
+        "keep_keep": 2,
+        "keep_fix": 0,
+        "fix_identical": 1,
+        "fix_conflict": 0,
+        "drop_unanimous": 1,
+        "drop_split": 0,
+        "incomplete": 0,
+    }
     assert (st["authority"]["final"], st["authority"]["held"]) == (2, 1)
     assert s["failed_slices"] == {"pass1": 0, "pass2": 0}
 
@@ -116,6 +130,8 @@ def test_smoke_end_to_end(inp: dict[str, Path], tmp_path: Path) -> None:
     review = (run / "REVIEW.md").read_text()
     assert "### F1. v220 → v110" in review and "### F2. v440 → v330" in review
     assert "**Pass 2** (r1): FIX failed [4] (fix: older_span)" in review
+    assert "**Pass 2** (r2): FIX failed [4] (fix: older_span)" in review
+    assert "Pass-2 agreement (cross, 2 refuter(s) per record): keep_keep 2, keep_fix 0" in review
     assert "**HELD:** authority (src source: `notes.md#rule-1`)" in review
     assert "## Rejected by the gate (1)" in review and "already_linked" in review
     assert "| c0006 | v220 → v330 | pass2 |" in review
@@ -174,7 +190,9 @@ def test_failed_slices_are_held_and_retried(inp: dict[str, Path], tmp_path: Path
     res = new_run(inp, run)
     assert res.exit_code == 75, res.output
     s = json.loads((run / "summary.json").read_text())
-    assert s["failed_slices"]["pass2"] == 1 and s["held"] == {"authority": 1, "pass2_incomplete": 2}
+    # cross: refuter 2's verdicts alone never settle a record, not even its DROP (held, retried)
+    assert s["failed_slices"]["pass2"] == 1 and s["held"] == {"pass2_incomplete": 4}
+    assert s["pass2_agreement"]["incomplete"] == 4
     assert s["final"] == 0 and "WARNING: failed worker slices" in (run / "REVIEW.md").read_text()
     assert "## Failed worker slices" in (run / "REVIEW.md").read_text()
     # fixed agent: only the failed slice runs again
@@ -214,7 +232,7 @@ def test_mapping_pass(inp: dict[str, Path], tmp_path: Path) -> None:
     assert all(r["origin"] == "map" for r in jsonl(run / "final.jsonl"))
 
 
-def test_cross_mode_combines_refuters(inp: dict[str, Path], tmp_path: Path) -> None:
+def test_cross_default_is_strict(inp: dict[str, Path], tmp_path: Path) -> None:
     set_answers(
         inp["answers"],
         pass2_by_reviewer={
@@ -224,18 +242,51 @@ def test_cross_mode_combines_refuters(inp: dict[str, Path], tmp_path: Path) -> N
                     "verdict": "FIX",
                     "failed_tests": [4],
                     "reason": "other",
-                    "fix": {"older_span": "x" * 25},
+                    "fix": {"older_span": "the project is PAUSED"},  # nested, but not identical
                 },
             }
         },
     )
     run = tmp_path / "run"
-    res = new_run(inp, run, "--pass2-mode", "cross")
+    res = new_run(inp, run)  # no --pass2-mode: cross is the default
     assert res.exit_code == 0, res.output
     s = json.loads((run / "summary.json").read_text())
     assert s["stages"]["pass2"]["slices"] == 2 and s["stages"]["pass2"]["records"] == 4
-    assert s["stages"]["refine"]["decisions"] == {"CONFLICT": 1, "DROP": 2, "KEEP": 1}
-    assert s["final"] == 0 and s["held"] == {"authority": 1, "pass2_conflict": 1}
+    assert s["stages"]["refine"]["decisions"] == {"DROP": 2, "FIX_CONFLICT": 1, "KEEP": 1}
+    assert s["final"] == 0 and s["held"] == {"authority": 1, "refuter_fix_conflict": 1}
+    agree = s["pass2_agreement"]
+    assert (agree["drop_split"], agree["drop_unanimous"], agree["fix_conflict"], agree["keep_keep"]) == (
+        1,
+        1,
+        1,
+        1,
+    )
+    held = {h["src_logical_id"]: h["held_reason"] for h in jsonl(run / "held.jsonl")}
+    assert held == {40: "refuter_fix_conflict", 50: "authority"}
+
+
+def test_cross_keep_plus_fix_applies_the_fix(inp: dict[str, Path], tmp_path: Path) -> None:
+    keep = {"verdict": "KEEP", "failed_tests": [], "reason": "fine as drafted"}
+    set_answers(inp["answers"], pass2_by_reviewer={"r2": {"40-30": keep}})
+    run = tmp_path / "run"
+    assert new_run(inp, run).exit_code == 0
+    s = json.loads((run / "summary.json").read_text())
+    assert s["pass2_agreement"]["keep_fix"] == 1 and s["final"] == 2
+    fixed = [r for r in jsonl(run / "final.jsonl") if r["src_logical_id"] == 40]
+    assert fixed[0]["older_span"] == "the project is PAUSED by the owner" and fixed[0]["fixed"] is True
+
+
+def test_split_mode_still_available(inp: dict[str, Path], tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    res = new_run(inp, run, "--pass2-mode", "split")
+    assert res.exit_code == 0, res.output
+    s = json.loads((run / "summary.json").read_text())
+    assert s["stages"]["pass2"]["mode"] == "split" and s["stages"]["pass2"]["verdicts"] == {
+        "DROP": 1,
+        "FIX": 1,
+        "KEEP": 2,
+    }
+    assert s["pass2_agreement"]["refuters_per_record"] == 1 and s["final"] == 2
 
 
 def test_changed_export_is_refused(inp: dict[str, Path], tmp_path: Path) -> None:

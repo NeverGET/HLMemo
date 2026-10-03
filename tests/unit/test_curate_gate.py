@@ -257,36 +257,49 @@ def v(verdict: str, fix: dict[str, Any] | None = None, tests: list[int] | None =
 
 
 def test_combine_rules() -> None:
+    """Owner rule (cross mode): a record survives only on KEEP+KEEP, KEEP+FIX or identical FIXes."""
     assert g.combine([v("KEEP")], 1) == ("KEEP", None)
+    assert g.combine([v("KEEP"), v("KEEP")], 2) == ("KEEP", None)
     assert g.combine([], 1) == ("INCOMPLETE", None)
-    assert g.combine([v("KEEP")], 2) == ("INCOMPLETE", None)
+    assert g.combine([v("KEEP")], 2) == ("INCOMPLETE", None)  # one refuter's slice failed
     assert g.combine([v("KEEP"), v("DROP", tests=[1])], 2) == ("DROP", None)
     assert g.combine([v("FIX", {"older_span": "abc"}), v("DROP", tests=[1])], 2) == ("DROP", None)
-    assert g.combine([v("KEEP"), v("FIX", {"older_span": "the span"})], 2) == (
-        "FIX",
-        {"older_span": "the span"},
+    assert g.combine([v("DROP", tests=[1]), v("DROP", tests=[5])], 2) == ("DROP", None)
+    keep_fix = g.combine([v("KEEP"), v("FIX", {"older_span": "the span", "newer_quote": None})], 2)
+    assert keep_fix == ("FIX", {"older_span": "the span"})
+    same = g.combine(
+        [v("FIX", {"older_span": "the span"}), v("FIX", {"older_span": "the span", "newer_quote": ""})], 2
     )
+    assert same == ("FIX", {"older_span": "the span"})  # empty/null fields mean "no change"
 
 
-def test_combine_merges_nested_fixes_and_flags_conflicts() -> None:
-    nested = g.combine(
-        [v("FIX", {"older_span": "a long stale span"}), v("FIX", {"older_span": "stale span"})], 2
-    )
-    assert nested == ("FIX", {"older_span": "stale span"})  # the minimal one
-    both = g.combine(
-        [v("FIX", {"older_span": "x span", "newer_quote": None}), v("FIX", {"newer_quote": "q"})], 2
-    )
-    assert both == ("FIX", {"older_span": "x span", "newer_quote": "q"})
-    assert (
-        g.combine([v("FIX", {"older_span": "one span"}), v("FIX", {"older_span": "other"})], 2)[0]
-        == "CONFLICT"
-    )
+def test_combine_differing_fixes_are_a_conflict() -> None:
+    nested = [v("FIX", {"older_span": "a long stale span"}), v("FIX", {"older_span": "stale span"})]
+    assert g.combine(nested, 2) == ("FIX_CONFLICT", None)  # identical or held, never merged
+    halves = [v("FIX", {"older_span": "x span"}), v("FIX", {"newer_quote": "q"})]
+    assert g.combine(halves, 2) == ("FIX_CONFLICT", None)
     src = [v("FIX", {"src_logical_id": 1, "src_vid": 2}), v("FIX", {"src_logical_id": 3, "src_vid": 4})]
-    assert g.combine(src, 2)[0] == "CONFLICT"
-    assert g.combine([v("FIX", {"src_logical_id": 1, "src_vid": 2, "newer_quote": "q"})], 1) == (
-        "FIX",
-        {"newer_quote": "q", "src_logical_id": 1, "src_vid": 2},
-    )
+    assert g.combine(src, 2) == ("FIX_CONFLICT", None)
+    same_src = [v("FIX", {"src_logical_id": 1, "src_vid": 2, "newer_quote": "q"})] * 2
+    assert g.combine(same_src, 2) == ("FIX", {"newer_quote": "q", "src_logical_id": 1, "src_vid": 2})
+    assert g.HELD_REASONS["FIX_CONFLICT"] == "refuter_fix_conflict"
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "expected", "cls"),
+    [
+        ([v("KEEP"), v("KEEP")], 2, "keep_keep"),
+        ([v("KEEP"), v("FIX", {"older_span": "s"})], 2, "keep_fix"),
+        ([v("FIX", {"older_span": "s"}), v("FIX", {"older_span": "s"})], 2, "fix_identical"),
+        ([v("FIX", {"older_span": "s"}), v("FIX", {"older_span": "t"})], 2, "fix_conflict"),
+        ([v("DROP", tests=[1]), v("DROP", tests=[2])], 2, "drop_unanimous"),
+        ([v("KEEP"), v("DROP", tests=[1])], 2, "drop_split"),
+        ([v("KEEP")], 2, "incomplete"),
+        ([v("KEEP")], 1, "keep_keep"),
+    ],
+)
+def test_agreement_classes(verdicts: list[dict[str, Any]], expected: int, cls: str) -> None:
+    assert g.agreement(verdicts, expected) == cls and cls in g.AGREEMENT_CLASSES
 
 
 def test_apply_fix_then_regate(ex: exportdir.Export) -> None:

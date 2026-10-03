@@ -1,12 +1,15 @@
 """``hlm curate``: the owner-run, LOCAL supersession-curation pipeline (D-240, D-244).
 
     hlm curate --project P (--candidates FILE | --map) [--export DIR] [--run-dir DIR]
-               [--agent-cmd CMD] [--workers N] [--refuters R] [--pass2-mode split|cross]
+               [--agent-cmd CMD] [--workers N] [--refuters R] [--pass2-mode cross|split]
                [--authority GLOB ...] [--reference DIR ...] [--stop-after STAGE] [--redo STAGE]
     hlm curate --run-dir DIR | --resume --project P            # resume: completed stages are skipped
     hlm curate --run-dir DIR --apply --state DIR [--execute preview|apply]
 
 Stages: export, [map], candidates, pass1, build, gate1, pass2, refine, gate2, authority, bundle.
+``--map`` (agents find the candidates) is EXPERIMENTAL: not yet measured on real data. Pass 2 is
+``cross`` by default: every refuter judges every record, and a record survives only when every
+refuter says KEEP or FIX with an identical fix.
 The agent stages (map, pass1, pass2) run the configured agent command (``HLM_CURATE_AGENT_CMD``,
 the prompt on STDIN); everything else is deterministic. Nothing touches prod: ``--apply`` writes and
 prints the RUNBOOK commands, and only ``--apply --execute preview|apply`` runs them.
@@ -114,7 +117,10 @@ def curate_command(
         ),
     ] = None,
     map_: Annotated[
-        bool, typer.Option("--map", help="Find candidates with a mapping pass of agents")
+        bool,
+        typer.Option(
+            "--map", help="EXPERIMENTAL (unmeasured): find candidates with a mapping pass of agents"
+        ),
     ] = False,
     librarian_status: Annotated[
         str | None, typer.Option("--librarian-status", help="Only audit proposals with this status")
@@ -136,7 +142,10 @@ def curate_command(
     ] = None,
     pass2_mode: Annotated[
         str | None,
-        typer.Option("--pass2-mode", help="split: each record once; cross: every refuter sees all"),
+        typer.Option(
+            "--pass2-mode",
+            help="cross (default): every refuter judges every record; split: each record by one refuter",
+        ),
     ] = None,
     authority: Annotated[
         list[str] | None,

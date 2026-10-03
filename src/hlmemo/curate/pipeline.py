@@ -52,7 +52,7 @@ STAGES = (
     "bundle",
 )
 AGENT_STAGES = ("map", "pass1", "pass2")
-PASS2_MODES = ("split", "cross")
+PASS2_MODES = ("cross", "split")  # cross (default): every refuter judges every record
 
 
 class CurateError(Exception):
@@ -72,7 +72,7 @@ class Config:
     librarian_status: str | None = None
     workers: int = 3
     refuters: int = 2
-    pass2_mode: str = "split"
+    pass2_mode: str = "cross"
     authority: list[str] = field(default_factory=lambda: list(g.DEFAULT_AUTHORITY))
     references: list[str] = field(default_factory=list)
     worker_timeout_s: float = 1800.0
@@ -506,9 +506,11 @@ def _st_refine(r: Run) -> tuple[str, dict[str, Any]]:
     expected = r.cfg.refuters if r.cfg.pass2_mode == "cross" else 1
     kept, held, dropped = [], [], []
     decisions: Counter[str] = Counter()
+    agreement: Counter[str] = Counter({k: 0 for k in g.AGREEMENT_CLASSES})
     for i, rec in enumerate(recs):
         decision, fix = g.combine(by_i.get(i, []), expected)
         decisions[decision] += 1
+        agreement[g.agreement(by_i.get(i, []), expected)] += 1
         if decision == "KEEP":
             kept.append(rec)
         elif decision == "FIX":
@@ -517,7 +519,7 @@ def _st_refine(r: Run) -> tuple[str, dict[str, Any]]:
         elif decision == "DROP":
             dropped.append({**rec, "dropped_by": "pass2"})
         else:
-            held.append({**rec, "held_reason": f"pass2_{decision.lower()}"})
+            held.append({**rec, "held_reason": g.HELD_REASONS[decision]})
     write_jsonl(r.p("refine", "kept.jsonl"), kept)
     write_jsonl(r.p("refine", "held.jsonl"), held)
     write_jsonl(r.p("refine", "dropped.jsonl"), dropped)
@@ -526,6 +528,7 @@ def _st_refine(r: Run) -> tuple[str, dict[str, Any]]:
         "held": len(held),
         "dropped": len(dropped),
         "decisions": dict(sorted(decisions.items())),
+        "agreement": {"mode": r.cfg.pass2_mode, "refuters_per_record": expected, **agreement},
     }
 
 

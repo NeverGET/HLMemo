@@ -358,50 +358,66 @@ def gate(records: list[dict[str, Any]], export: Export, project: str) -> GateRes
 
 
 # ------------------------------------------------------------------ pass 2: combination + FIXes
-def _merge_text(values: list[str]) -> tuple[str | None, bool]:
-    """``(value, conflict)``: equal values merge; nested values take the SHORTER (the minimal span);
-    two different, non-nested values are a conflict."""
-    uniq = list(dict.fromkeys(values))
-    if not uniq:
-        return None, False
-    if len(uniq) == 1:
-        return uniq[0], False
-    shortest = min(uniq, key=len)
-    if all(shortest in u for u in uniq):
-        return shortest, False
-    return None, True
+FIX_KEYS = ("older_span", "newer_quote", "src_logical_id", "src_vid")
+# held_reason of a record the refuters did not settle
+HELD_REASONS = {"FIX_CONFLICT": "refuter_fix_conflict", "INCOMPLETE": "pass2_incomplete"}
+AGREEMENT_CLASSES = (
+    "keep_keep",
+    "keep_fix",
+    "fix_identical",
+    "fix_conflict",
+    "drop_unanimous",
+    "drop_split",
+    "incomplete",
+)
+
+
+def normalize_fix(fix: dict[str, Any] | None) -> dict[str, Any]:
+    """A FIX's comparable form: only the fields it sets (empty or null fields are "no change")."""
+    out: dict[str, Any] = {}
+    for k in FIX_KEYS:
+        value = (fix or {}).get(k)
+        if value is None or value == "":
+            continue
+        out[k] = int(value) if k in ("src_logical_id", "src_vid") else value
+    return out
 
 
 def combine(verdicts: list[dict[str, Any]], expected: int) -> tuple[str, dict[str, Any] | None]:
-    """Precision first. ``INCOMPLETE`` when fewer than ``expected`` reviewers answered (a failed
-    slice: held, never silently kept or dropped); any DROP -> ``DROP``; any FIX -> ``FIX`` with the
-    merged fix, or ``CONFLICT`` when the FIXes disagree; else ``KEEP``."""
+    """Precision first (owner rule for the cross mode, every refuter judges every record):
+
+    - fewer than ``expected`` verdicts (a failed refuter slice) -> ``INCOMPLETE``: held, never
+      silently kept or dropped;
+    - any DROP -> ``DROP``;
+    - all KEEP -> ``KEEP``;
+    - KEEPs and FIXes whose fixes are IDENTICAL -> ``FIX`` with that fix;
+    - two FIXes that differ in any field -> ``FIX_CONFLICT``: held as ``refuter_fix_conflict``.
+    """
     if len(verdicts) < expected:
         return "INCOMPLETE", None
     if any(v["verdict"] == "DROP" for v in verdicts):
         return "DROP", None
-    fixes = [v.get("fix") or {} for v in verdicts if v["verdict"] == "FIX"]
+    fixes = [normalize_fix(v.get("fix")) for v in verdicts if v["verdict"] == "FIX"]
     if not fixes:
         return "KEEP", None
-    merged: dict[str, Any] = {}
-    for key in ("older_span", "newer_quote"):
-        value, conflict = _merge_text([f[key] for f in fixes if f.get(key)])
-        if conflict:
-            return "CONFLICT", None
-        if value is not None:
-            merged[key] = value
-    srcs = list(
-        dict.fromkeys(
-            (int(f["src_logical_id"]), int(f["src_vid"]))
-            for f in fixes
-            if f.get("src_logical_id") is not None and f.get("src_vid") is not None
-        )
-    )
-    if len(srcs) > 1:
-        return "CONFLICT", None
-    if srcs:
-        merged["src_logical_id"], merged["src_vid"] = srcs[0]
-    return "FIX", merged
+    if any(f != fixes[0] for f in fixes[1:]):
+        return "FIX_CONFLICT", None
+    return "FIX", dict(fixes[0])
+
+
+def agreement(verdicts: list[dict[str, Any]], expected: int) -> str:
+    """How the refuters agreed on one record (``AGREEMENT_CLASSES``), for ``summary.json``."""
+    if len(verdicts) < expected:
+        return "incomplete"
+    kinds = [v["verdict"] for v in verdicts]
+    if "DROP" in kinds:
+        return "drop_unanimous" if all(k == "DROP" for k in kinds) else "drop_split"
+    decision, _ = combine(verdicts, expected)
+    if decision == "FIX_CONFLICT":
+        return "fix_conflict"
+    if decision == "KEEP":
+        return "keep_keep"
+    return "keep_fix" if "KEEP" in kinds else "fix_identical"
 
 
 def apply_fix(record: dict[str, Any], fix: dict[str, Any]) -> dict[str, Any]:
@@ -444,7 +460,10 @@ def authority_split(
 
 
 __all__ = [
+    "AGREEMENT_CLASSES",
     "DEFAULT_AUTHORITY",
+    "FIX_KEYS",
+    "HELD_REASONS",
     "PASS1_VERDICTS",
     "PASS2_VERDICTS",
     "REQUIRED",
@@ -452,6 +471,7 @@ __all__ = [
     "SPAN_MIN",
     "GateResult",
     "Labels",
+    "agreement",
     "apply_fix",
     "authority_split",
     "build_records",
@@ -459,6 +479,7 @@ __all__ = [
     "gate",
     "is_authoritative",
     "normalize_candidates",
+    "normalize_fix",
     "slices",
     "subject",
 ]
