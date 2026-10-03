@@ -1989,3 +1989,22 @@ Import:
 - Done by code with memory.write (kind lesson; tags lesson-v2, cross-project, resolved, historical, owner-accepted) into the reserved global project; a write grant was added for the owner's device.
 - Every quote was verified verbatim against its episode, and the recurrence and seen-date stats re-derive exactly.
 - Verified by query (top hit), by raw (bodies byte-identical) and by replay (no duplicates).
+D-235 | 2026-10-03 | ACCEPTED (owner-approved, D-232) | **B3 is LIVE in production (566fe8f): write-time updates (D-118) and superseded status on reads (D-207 #5). Forward-only data.**
+
+Release:
+- Rehearsed on a fresh prod copy (prod dump at 05:56Z):
+  - old events replay byte-identically under B3 before and after B3 writes;
+  - the dump-restore rollback is exact;
+  - main code cannot replay B3 events (forward-only confirmed);
+  - latency unchanged.
+- Snapshot 386427 at 06:47:43Z. deploy.sh over IPv6: exit 0, no migration. remote_gates 11/11 PASS. The risk judge timed out once (retrieval-only verdict); watch it.
+
+Prod smoke, in the disposable project:
+- revise via items[].updates is applied;
+- raw shows superseded_by (part, with the quote);
+- query does not return the old version as current;
+- an ambiguous span is refused (span_not_unique);
+- `ops librarian revert-update` restores the earlier version.
+- A refused update does not fail the rest of the write; the ack reports it per update.
+
+Read side on real data: old facts that later decisions replaced are now flagged `superseded` with a pointer. In one query all top hits were superseded and the current values were only in the card; pulling superseders into query hits is an R4.3 candidate.
