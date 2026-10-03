@@ -604,12 +604,14 @@ Malformed ids, an unreadable `--ids-file` or an empty `--reason` exit 2. `--ids-
 (one id per line; blank lines and `#` comments are skipped).
 
 Withdraw the D-244 queue (298 `accepted_pending` in `hlmemo`) from the operator workstation. Keep out
-of the file every id the owner wants applied later (for example the 2 verified real contradictions):
+of the file every id the owner wants applied later (for example the 2 verified real contradictions).
+The id file travels on the ssh stdin; `hlm_ops.sh` closes stdin, so these commands use plain ssh:
 
 ```sh
 STATE=deploy/.local/153.92.1.166
 OPS='cd /opt/hlmemo/app && HLM_ENV_FILE=/etc/hlmemo/prod.env bash deploy/scripts/stack.sh exec -T api python -m hlmemo.ops librarian'
-# 1. the pending set (read-only) and the ids to withdraw (KEEP: one id per line, the ones to keep; may be empty)
+# 1. the pending set (read-only) and the ids to withdraw ($STATE/keep.txt: the ids to keep, one per line;
+#    create it, empty when nothing is kept)
 ssh -F "$STATE/ssh_config" hlm-deploy "$OPS audit --project hlmemo --status accepted_pending --json" </dev/null > "$STATE/pending.json"
 python3 -c 'import json,sys; keep = set(open(sys.argv[2]).read().split()); ids = [p["question_id"] for p in json.load(open(sys.argv[1]))["proposals"]]; print("\n".join(i for i in ids if i not in keep))' \
   "$STATE/pending.json" "$STATE/keep.txt" > "$STATE/withdraw-ids.txt"

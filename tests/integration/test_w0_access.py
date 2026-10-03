@@ -583,7 +583,7 @@ def _live_route_check(db_dsn: str) -> subprocess.CompletedProcess[str]:
         "HLM_ADMIN_HTTP": "disabled",
         "HLM_API_HOST": "127.0.0.1",
         "HLM_API_PORT": str(port),
-        **{k: v for k, v in os.environ.items() if k in ("HLM_MODELS_DIR", "HOME")},
+        **{k: v for k, v in os.environ.items() if k in ("HLM_MODELS_DIR", "HOME", "PYTHONPATH")},
     }
     server = subprocess.Popen(
         [sys.executable, "-m", "hlmemo.server.app"],
