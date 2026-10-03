@@ -13,6 +13,8 @@ Updated 2026-09-23. Source of each item in parentheses.
   (deploy/llm.env.example:41-44). Prod logs show `outcome=ok` and no judge error line, so the timeout is invisible in ops.
   Next: probe each judge profile's latency ($0.001 each); log the judge outcome (judge/timeout/fallback) in the api; consider
   making the fast profile the judge's primary.
+  Probe 2026-10-03 (3 real `memory.risk_check` calls, prod routing confirmed): 2 judged ok and precise (the test-DSN warning
+  cited the right 2 lessons), 1 timed out → retrieval-only. Intermittent, about 1 in 3, consistent with luna latency near the cap.
 - IPv6 through docker userland proxy: all IPv6 clients share one limiter key; withhold AAAA or enable IPv6 on the compose network (consults/26, RUNBOOK).
   **OPEN in production (checked 2026-10-03):** AAAA is advertised (D-202). The frontend bridge has `EnableIPv6=false`, with docker-proxy on `::`.
   The owner's client uses IPv6 only, because its IPv4 route still times out. So it shares the IPv6 bucket with every IPv6 client.
