@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 
 from hlmemo.cli.curate import privacy_problem
 from hlmemo.cli.hlm import app
+from hlmemo.curate import bundle
 from hlmemo.ops import backfill_links as bf
 
 FAKE = Path(__file__).resolve().parents[1] / "fixtures" / "curate" / "fake_agent.py"
@@ -337,6 +338,74 @@ def test_privacy_guard(tmp_path: Path) -> None:
     assert privacy_problem(tmp_path / "outside") is None
     res = curate("--project", "demo", "--map", "--run-dir", str(repo / "runs" / "x"))
     assert res.exit_code == 64 and "NOT gitignored" in res.output
+
+
+def test_privacy_guard_needs_the_whole_run_dir_ignored_and_untracked(tmp_path: Path) -> None:
+    """Consult 105 #2: a ``*.json`` rule ignores summary.json but not REVIEW.md, final.jsonl or
+    export/items/*.md; and an ignore rule does not protect files git already tracks."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text("bench/results/*.json\ndocs/private/\ntracked/\n")
+    problem = privacy_problem(repo / "bench" / "results") or ""
+    assert "NOT gitignored" in problem and "the directory itself" in problem
+    (repo / "tracked" / "run").mkdir(parents=True)
+    (repo / "tracked" / "run" / "REVIEW.md").write_text("owner data\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-f", "tracked/run/REVIEW.md"], check=True)
+    assert "TRACKED" in (privacy_problem(repo / "tracked" / "run") or "")
+    assert "TRACKED" in (privacy_problem(repo) or "")  # the work tree itself
+    assert privacy_problem(repo / "docs" / "private" / "curate" / "demo-1") is None  # accepted
+    res = curate("--project", "demo", "--map", "--run-dir", str(repo / "tracked" / "run"))
+    assert res.exit_code == 64 and "TRACKED" in res.output
+
+
+HOSTILE = "/tmp/run\nprintf CURATE_INJECTION >&2\n#/apply"
+
+
+def test_apply_script_refuses_control_characters_and_quotes_every_byte(tmp_path: Path) -> None:
+    """Consult 105 #1: a newline in a path ended a comment line of apply.sh and ran as shell code."""
+    final = tmp_path / "final.jsonl"
+    final.write_text('{"x": 1}\n')
+    sshc = tmp_path / "ssh_config"
+    sshc.write_text("")
+    kw: dict[str, Any] = {
+        "run_name": "run",
+        "project": "demo",
+        "final": final,
+        "out": tmp_path / "apply",
+        "ssh_config": sshc,
+        "ssh_host": "hlm-deploy",
+        "remote_app": "/opt/hlmemo/app",
+        "remote_env": "/etc/hlmemo/prod.env",
+    }
+    for key, bad in (
+        ("out", Path(HOSTILE)),
+        ("final", Path(HOSTILE)),
+        ("ssh_config", Path("/a\rb")),
+        ("run_name", "r\0n"),
+    ):
+        with pytest.raises(ValueError, match="control character"):
+            bundle.apply_script(**{**kw, key: bad})
+    # odd but legal bytes: every value is $'...'-quoted, no input byte is raw in the script
+    odd = tmp_path / 'it\'s $(echo PWNED) `id` ünï \\ "q" ;x'
+    odd.mkdir()
+    text = bundle.apply_script(**{**kw, "out": odd})
+    assert str(odd) not in text and "$(echo PWNED)" not in text and "ünï" not in text
+    assert all("demo" not in ln and "@@" not in ln for ln in text.splitlines() if ln.startswith("#"))
+    # the reviewer's reproducer form: the script on stdin, an invalid mode
+    out = subprocess.run(
+        ["bash", "-s", "--", "invalid"], input=text, capture_output=True, text=True, check=False
+    )
+    assert out.returncode == 64 and "PWNED" not in out.stdout + out.stderr
+    for value in (str(odd), HOSTILE):
+        quoted = bundle.bash_quote(value)
+        assert "\n" not in quoted and "'" not in quoted[2:-1]
+        echo = subprocess.run(["bash", "-c", f'X={quoted}; printf %s "$X"'], capture_output=True, check=False)
+        assert echo.stdout == value.encode() and b"CURATE_INJECTION" not in echo.stderr
+    # the CLI refuses such a path at parse time, before anything is written
+    res = curate("--project", "demo", "--map", "--run-dir", str(tmp_path / "run\nprintf X >&2"))
+    assert res.exit_code == 64 and "control character" in res.output
+    assert not (tmp_path / "run\nprintf X >&2").exists()
 
 
 def test_relative_run_dir(inp: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

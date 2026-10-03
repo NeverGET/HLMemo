@@ -104,6 +104,22 @@ def test_gate_uniqueness(tmp_path: Path) -> None:
     assert errors(res) == ["newer_quote_ambiguous(2)"]
 
 
+def test_overlapping_quote_is_not_unique(tmp_path: Path) -> None:
+    """Consult 105 #3: ``str.count`` misses overlapping matches ("abcde"*4 in "abcde"*5 counts 1)."""
+    body, quote = "abcde" * 5, "abcde" * 4
+    assert body.count(quote) == 1  # what the old check saw
+    assert g.occurrences(body, quote) == 2 and g.is_unique(body, quote) is False
+    assert (
+        g.is_unique("x abcd y", "abcd") and g.occurrences("aaaa", "aa") == 3 and g.occurrences("ab", "") == 0
+    )
+    root = synth.make_export(tmp_path / "e")
+    f = next(root.rglob("d-010-*.md"))
+    f.write_text(f.read_text() + body + "\n", encoding="utf-8")
+    ex = exportdir.load(root)
+    res = g.gate([rec(20, 10, quote, CAPS_NEW, ex)], ex, synth.PROJECT)
+    assert errors(res) == ["older_span_ambiguous(2)"] and res.passed == []
+
+
 def test_gate_heads(ex: exportdir.Export) -> None:
     stale = rec(20, 10, CAPS_OLD, CAPS_NEW, ex)
     stale["dst_vid"] = 109

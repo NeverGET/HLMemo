@@ -59,19 +59,30 @@ def git_toplevel(path: Path) -> Path | None:
     return Path(res.stdout.strip()) if res.returncode == 0 and res.stdout.strip() else None
 
 
+# one probe per kind of file a run writes (consult 105 #2: a *.json rule alone is not enough)
+RUN_PROBES = ("REVIEW.md", "final.jsonl", "summary.json", "export/items/fact/probe.md", "pass1/w01/out.json")
+
+
 def privacy_problem(run_dir: Path) -> str | None:
-    """A run directory holds owner data: inside a git work tree it must be gitignored."""
+    """A run directory holds owner data. Inside a git work tree, the DIRECTORY ITSELF and every kind
+    of file the run writes must be gitignored, and nothing under it may be tracked."""
     top = git_toplevel(run_dir)
     if top is None:
         return None
-    probe = run_dir.resolve() / "summary.json"
-    res = _git(["check-ignore", "-q", "--no-index", str(probe)], top)
-    if res.returncode == 0:
-        return None
-    return (
-        f"run directory {run_dir} is inside the git work tree {top} and NOT gitignored; "
-        f"use {DEFAULT_SUBDIR}/ (ignored) or a directory outside the repo"
-    )
+    rd = run_dir.resolve()
+    hint = f"use {DEFAULT_SUBDIR}/ (ignored) or a directory outside the repo"
+    tracked = _git(["ls-files", "--", str(rd)], top)
+    if tracked.returncode != 0 or tracked.stdout.strip():
+        return f"run directory {run_dir} holds files TRACKED by the git work tree {top}; {hint}"
+    for probe in ("", *RUN_PROBES):
+        path = f"{rd}/" if not probe else str(rd / probe)
+        if _git(["check-ignore", "-q", path], top).returncode != 0:
+            what = probe or "the directory itself"
+            return (
+                f"run directory {run_dir} is inside the git work tree {top} and NOT gitignored "
+                f"({what}); {hint}"
+            )
+    return None
 
 
 def default_root(cwd: Path | None = None) -> Path:
@@ -197,6 +208,20 @@ def curate_command(
             _fail(f"{name} must be one of {', '.join(STAGES)}", EX_USAGE)
     if execute is not None and (execute not in ("preview", "apply") or not apply_):
         _fail("--execute needs --apply and is preview or apply", EX_USAGE)
+    # consult 105 #1: no control character (newline, NUL, ...) in any path or name the run uses
+    for name, value in (
+        ("--project", project),
+        ("--run-dir", run_dir),
+        ("--candidates", candidates),
+        ("--export", export),
+        ("--state", state),
+        ("--ssh-config", ssh_config),
+        *(("--reference", r) for r in reference or []),
+        *(("--authority", a) for a in authority or []),
+    ):
+        problem = bundle.control_problem(name, str(value)) if value is not None else None
+        if problem:
+            _fail(problem, EX_USAGE)
 
     if run_dir is None and resume:
         if not project:
@@ -236,7 +261,7 @@ def curate_command(
         )
     assert run_dir is not None
     run_dir = run_dir.resolve()  # workers run in their own cwd: every path they get is absolute
-    problem = privacy_problem(run_dir)
+    problem = bundle.control_problem("run directory", str(run_dir)) or privacy_problem(run_dir)
     if problem:
         _fail(problem, EX_USAGE)
     # explicit flags override the stored configuration (identity keys excepted, checked above)

@@ -263,6 +263,23 @@ class GateResult:
         }
 
 
+def occurrences(body: str, quote: str) -> int:
+    """How often ``quote`` occurs in ``body``, OVERLAPPING matches included (``str.count`` misses
+    them: consult 105 #3). The one uniqueness check of the gate: unique == exactly 1."""
+    if not quote:
+        return 0
+    n, i = 0, body.find(quote)
+    while i >= 0:
+        n += 1
+        i = body.find(quote, i + 1)
+    return n
+
+
+def is_unique(body: str, quote: str) -> bool:
+    """``find(q) >= 0`` and ``find(q, first + 1) == -1``, through the same helper."""
+    return occurrences(body, quote) == 1
+
+
 def _record_errors(r: dict[str, Any], export: Export, project: str) -> tuple[list[str], list[str]]:
     errs = [f"missing:{k}" for k in REQUIRED if k not in r]
     warns: list[str] = []
@@ -299,7 +316,7 @@ def _record_errors(r: dict[str, Any], export: Export, project: str) -> tuple[lis
             errs.append(f"{key}_len({len(q)})")
         it = heads[side]
         if it is not None:
-            n = it.body.count(q)
+            n = occurrences(it.body, q)
             if n == 0:
                 errs.append(f"{key}_not_verbatim")
             elif n > 1:
@@ -478,8 +495,10 @@ __all__ = [
     "combine",
     "gate",
     "is_authoritative",
+    "is_unique",
     "normalize_candidates",
     "normalize_fix",
+    "occurrences",
     "slices",
     "subject",
 ]
