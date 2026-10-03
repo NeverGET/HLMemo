@@ -1,8 +1,11 @@
 """``hlm.questions``: the read behind ``hlm review`` (``librarian/questions.py::review_list``).
 
 A client-protocol tool like ``hlm.export``: dispatched by ``tools/call`` but never advertised on
-``tools/list``, so the agent tool surface (CC-4, G-SURF) does not grow. Read-only (``read`` on the
-project; the notices' visibility rule per question); answering stays ``memory.answer``.
+``tools/list``, so the agent tool surface (CC-4, G-SURF) does not grow. Unlike ``hlm.export`` it
+is OWNER-ONLY (``ToolSpec.owner_only``): an agent's MCP call with its device bearer alone is refused
+(``E_FORBIDDEN``); the owner's CLI also sends the owner client token (``HLM_OWNER_TOKEN``,
+``server/mcp_server.require_owner_client``). Read-only (``read`` on the project; the notices'
+visibility rule per question); answering stays ``memory.answer``. Paging is a keyset ``cursor``.
 """
 
 from __future__ import annotations
@@ -17,8 +20,9 @@ from hlmemo.librarian import questions
 
 NAME = questions.REVIEW_TOOL
 DESCRIPTION = (
-    "hlm CLI only (hlm review): the project's open librarian questions, oldest first, with the "
-    "subjects' titles, body heads, the proposal's quotes, reason and actions; pending counts per kind."
+    "hlm CLI only (hlm review; owner client token required): the project's open librarian questions, "
+    "oldest first, with the subjects' titles, body heads, the proposal's quotes, reason and actions; "
+    "pending counts per kind; keyset paging by cursor."
 )
 INPUT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -33,7 +37,8 @@ INPUT_SCHEMA: dict[str, Any] = {
             "maxItems": questions.REVIEW_LIMIT_MAX,
         },
         "limit": {"type": "integer", "minimum": 1, "maximum": questions.REVIEW_LIMIT_MAX, "default": 10},
-        "offset": {"type": "integer", "minimum": 0, "maximum": 100000, "default": 0},
+        # keyset: a question's ``cursor`` / the listing's ``next_cursor``, for the same project+kind
+        "cursor": {"type": "string", "minLength": 1, "maxLength": questions.REVIEW_CURSOR_MAX},
         "token_budget": {
             "type": "integer",
             "minimum": 256,

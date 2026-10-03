@@ -44,6 +44,7 @@ answer, ``mutations``, ``jobs``); replay applies exactly that and never calls an
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Literal
@@ -595,12 +596,40 @@ QUOTE_CHARS = 300
 REASON_CHARS = 400
 
 
+#: keyset cursor ``<project>/<kind|*>/<created_at>/<question_id>``: the listing continues strictly
+#: after that question in (created_at, question_id) order, so questions answered or expiring between
+#: pages shift nothing (an OFFSET over the shrinking open set skipped them)
+_REVIEW_CURSOR_RE = re.compile(
+    r"^(?P<p>[a-z0-9][a-z0-9-]{1,63})/(?P<k>\*|[a-z_]{1,32})/"
+    r"(?P<t>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)/(?P<q>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$"
+)
+REVIEW_CURSOR_MAX = 160
+
+
+def review_cursor(project: str, kind: str | None, created_at: datetime, question_id: str) -> str:
+    """The position of one listed question, bound to the listing's project and kind filter (a
+    cursor from a ``kind=link`` listing must not skip the older questions of other kinds)."""
+    return f"{project}/{kind or '*'}/{fmt_ts(created_at)}/{question_id}"
+
+
+def parse_review_cursor(cursor: str, project: str, kind: str | None) -> tuple[datetime, str]:
+    m = _REVIEW_CURSOR_RE.fullmatch(cursor)
+    if m is None:
+        raise ToolError("E_INVALID_CURSOR", "malformed hlm.questions cursor")
+    if m["p"] != project or m["k"] != (kind or "*"):
+        raise ToolError("E_INVALID_CURSOR", "cursor belongs to another listing (project or kind differs)")
+    try:
+        return datetime.fromisoformat(m["t"].replace("Z", "+00:00")), str(uuid.UUID(m["q"]))
+    except ValueError:
+        raise ToolError("E_INVALID_CURSOR", "malformed hlm.questions cursor") from None
+
+
 class ReviewListRequest(_Strict):
     project: str = Field(pattern=SLUG_RE)
     kind: str | None = Field(default=None, pattern=r"^[a-z_]{1,32}$")
     question_ids: list[str] | None = Field(default=None, min_length=1, max_length=REVIEW_LIMIT_MAX)
     limit: int = Field(default=10, ge=1, le=REVIEW_LIMIT_MAX)
-    offset: int = Field(default=0, ge=0, le=100_000)
+    cursor: str | None = Field(default=None, min_length=1, max_length=REVIEW_CURSOR_MAX)
     token_budget: int | None = None
 
     @field_validator("question_ids")
@@ -646,15 +675,27 @@ def _review_action(a: dict[str, Any], slugs: dict[int, str]) -> dict[str, Any]:
 
 
 async def review_list(conn: AsyncConnection, ctx: AuthContext, req: dict[str, Any]) -> dict[str, Any]:
-    """``hlm.questions`` (the ``hlm review`` CLI only, never advertised): the project's OPEN,
-    unexpired questions the device can see (the notices' visibility rule), oldest first, with
-    what a reviewer needs and nothing internal: the subjects' titles and body heads, the
-    proposal's verbatim quotes (redacted at proposal time), relation, confidence, reason and the
-    proposed actions; plus the pending counts per kind. Read-only: no event, no access event (a
-    review read must not reset idleness, D-012), no job. ``question_ids`` narrows to those
-    questions (still only open + visible ones). Questions that do not fit ``token_budget`` are
-    dropped from the end (``omitted``)."""
+    """``hlm.questions`` (the owner's ``hlm review`` CLI only: never advertised, and dispatched
+    only with the owner client capability, ``server/mcp_server.require_owner_client``): the
+    project's OPEN, unexpired questions the device can see (the notices' visibility rule), oldest
+    first, with what a reviewer needs and nothing internal: the subjects' titles and body heads,
+    the proposal's verbatim quotes (redacted at proposal time), relation, confidence, reason and the
+    proposed actions; plus the pending counts per kind. The handler writes nothing: no event, no
+    access event (a review read must not reset idleness, D-012), no job (the HTTP layer still
+    refreshes ``devices.last_seen_at`` after every authenticated request, as for any tool).
+    ``question_ids`` narrows to those questions (still only open + visible ones).
+
+    Paging is a keyset: every question carries its ``cursor`` and ``next_cursor`` is the cursor of
+    the last RETURNED question while more remain; passing it back continues strictly after that
+    question in (created_at, question_id) order, so questions answered or expired in between
+    neither shift nor repeat the rest. Questions that do not fit ``token_budget`` are dropped from
+    the end (``omitted``) and come first on the next page."""
     request = parse_request(ReviewListRequest, req)
+    after_t, after_q = (
+        parse_review_cursor(request.cursor, request.project, request.kind)
+        if request.cursor is not None
+        else (None, None)
+    )
     try:
         budget = validate_budget(request.token_budget, default=REVIEW_DEFAULT_BUDGET)
     except BudgetError as exc:
@@ -677,8 +718,9 @@ async def review_list(conn: AsyncConnection, ctx: AuthContext, req: dict[str, An
             "readable": sorted(ctx.grants),
             "kind": request.kind,
             "qids": request.question_ids,
-            "lim": request.limit,
-            "off": request.offset,
+            "lim": request.limit + 1,  # one more: is there a next page?
+            "after_t": after_t,
+            "after_q": after_q,
         }
         cur = await conn.execute(
             f"SELECT kind, count(*) FROM librarian_questions lq WHERE {_VISIBLE} GROUP BY kind",  # noqa: S608
@@ -692,11 +734,15 @@ async def review_list(conn: AsyncConnection, ctx: AuthContext, req: dict[str, An
              WHERE {_VISIBLE}
                AND (%(kind)s::text IS NULL OR lq.kind = %(kind)s)
                AND (%(qids)s::uuid[] IS NULL OR lq.question_id = ANY(%(qids)s::uuid[]))
-             ORDER BY created_at, question_id LIMIT %(lim)s OFFSET %(off)s
+               AND (%(after_t)s::timestamptz IS NULL
+                    OR (lq.created_at, lq.question_id) > (%(after_t)s::timestamptz, %(after_q)s::uuid))
+             ORDER BY created_at, question_id LIMIT %(lim)s
             """,  # noqa: S608
             params,
         )
         rows = await cur.fetchall()
+        more = len(rows) > request.limit
+        rows = rows[: request.limit]
         vids = sorted({int(c[1:].split(".")[0]) for r in rows for c in r[2] if c.startswith("v")})
         versions: dict[int, tuple[Any, ...]] = {}
         if vids:
@@ -736,6 +782,7 @@ async def review_list(conn: AsyncConnection, ctx: AuthContext, req: dict[str, An
         item: dict[str, Any] = {
             "question_id": qid,
             "kind": kind,
+            "cursor": review_cursor(project.slug, request.kind, created_at, qid),
             "created_at": fmt_ts(created_at),
             "expires_at": fmt_ts(expires_at) if expires_at is not None else None,
             "subjects": [subject(c) for c in clues],
@@ -761,13 +808,17 @@ async def review_list(conn: AsyncConnection, ctx: AuthContext, req: dict[str, An
         "pending": {"total": sum(by_kind.values()), "by_kind": by_kind},
         "questions": questions,
         "omitted": 0,
+        "next_cursor": questions[-1]["cursor"] if more and questions else None,
     }
     meter = _meter()
     while meter.settle(envelope, budget) > budget:
-        if not envelope["questions"]:
-            raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold the listing")
+        # never an empty page while questions are open: it could not advance (no cursor)
+        if len(envelope["questions"]) <= 1:
+            raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold one question")
         envelope["questions"].pop()
         envelope["omitted"] += 1
+        # continue after the last RETURNED question: the dropped ones come first on the next page
+        envelope["next_cursor"] = envelope["questions"][-1]["cursor"]
     return envelope
 
 
@@ -780,7 +831,9 @@ __all__ = [
     "answer",
     "expire_due",
     "notice_text",
+    "parse_review_cursor",
     "pending_block",
+    "review_cursor",
     "review_list",
     "rule_text",
 ]

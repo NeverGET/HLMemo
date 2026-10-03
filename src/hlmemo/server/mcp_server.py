@@ -52,7 +52,7 @@ from starlette.requests import Request
 from hlmemo.auth.context import AuthContext
 from hlmemo.auth.errors import HlmError
 from hlmemo.auth.resolve import resolve
-from hlmemo.auth.tokens import parse_bearer
+from hlmemo.auth.tokens import constant_time_equal, parse_bearer
 from hlmemo.config import get_settings
 from hlmemo.core.budget import BudgetError, canonical
 from hlmemo.core.clues import InvalidClue
@@ -156,6 +156,35 @@ async def request_binding(
         await own.commit()
 
 
+# --------------------------------------------------------------------------- owner-only client tools
+
+#: the owner client capability (``Settings.owner_token``) travels in this header, never in the
+#: tool arguments: an agent's MCP client sends only the headers fixed at registration (the device
+#: bearer), so a prompt-injected agent cannot present it through ``tools/call``
+OWNER_HEADER = "x-hlm-owner-token"
+OWNER_TOKEN_MIN_CHARS = 32
+
+
+def require_owner_client(request: Any, tool: str) -> None:
+    """Refuse an ``owner_only`` tool unless the request carries the server's owner token.
+
+    The device bearer is not enough: every agent on the owner's device holds the same one, and
+    ``User-Agent`` / ``x-hlm-client`` are caller-chosen labels. Fails closed when the server has no
+    usable token (unset or < 32 chars). One message for every cause, so a caller learns nothing
+    about the server's configuration."""
+    settings = getattr(getattr(getattr(request, "app", None), "state", None), "settings", None)
+    secret_obj = getattr(settings, "owner_token", None)
+    secret = secret_obj.get_secret_value() if secret_obj is not None else ""
+    headers = getattr(request, "headers", None)
+    presented = (headers.get(OWNER_HEADER) if headers is not None else None) or ""
+    if len(secret) < OWNER_TOKEN_MIN_CHARS or not presented or not constant_time_equal(presented, secret):
+        raise HlmError(
+            "E_FORBIDDEN",
+            f"{tool} is an owner-only client tool: the owner's hlm CLI sends HLM_OWNER_TOKEN "
+            "(X-HLM-Owner-Token); a device bearer alone is not enough",
+        )
+
+
 # --------------------------------------------------------------------------- handlers
 
 
@@ -197,6 +226,8 @@ async def on_call_tool(
     try:
         async with request_binding(ctx) as (conn, auth):
             device_id = auth.device_id
+            if spec.owner_only:
+                require_owner_client(ctx.request, spec.name)  # before any read
             if spec.app_bound:
                 # W2d: the handler opens its own savepoints and may detach the request
                 # transaction (commit + return the connection, D-062) before a DB-free phase;

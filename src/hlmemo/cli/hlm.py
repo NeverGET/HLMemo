@@ -7,7 +7,7 @@ hlm mcp add claude|codex|agy
 hlm query "<q>" [--budget N]
 hlm import markdown|automemory|serena|context <paths> --project P [--dry-run] [--json] | hlm export --out DIR
 hlm close --notes ... [--decision ...] [--lesson "title::body"] [--card FILE]
-hlm review [--project P] [--batch N] [--kind K] [--offset N] [--dry-run] [--decisions FILE [--yes]]
+hlm review [--project P] [--batch N] [--kind K] [--cursor C] [--dry-run] [--decisions FILE [--yes]]
 hlm claude|codex|agy [--task ...] [--ask] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]
 hlm bench [--profile|--model] [--suite v1|v2] [--runs N] [--max-usd X] [--compare A B] | rescore | leaderboard
 hlm links explicit --project P [--dry-run] [--revert] [--dsn DSN]   (operator, direct DB; D-184)
@@ -143,12 +143,14 @@ class Ctx:
             cfg.server_url, token or self.bearer(admin=admin), timeout_s=max(cfg.timeout_s, 5.0), **kw
         )
 
-    def memory(self, *, timeout_s: float | None = None) -> MemoryClient:
+    def memory(
+        self, *, timeout_s: float | None = None, extra_headers: dict[str, str] | None = None
+    ) -> MemoryClient:
         cfg = self.config()
         token = self.bearer()
         if not token:
             raise CliError("no device token found; run `hlm device register` first", EX_NOPERM)
-        return MemoryClient(cfg.mcp, token, timeout_s=timeout_s or cfg.timeout_s)
+        return MemoryClient(cfg.mcp, token, timeout_s=timeout_s or cfg.timeout_s, extra_headers=extra_headers)
 
 
 def _ctx(ctx: typer.Context) -> Ctx:
@@ -893,9 +895,10 @@ def review(
     kind: Annotated[
         str | None, typer.Option("--kind", help="only this kind (contradiction | link | widen_scope | ...)")
     ] = None,
-    offset: Annotated[
-        int, typer.Option("--offset", min=0, help="start after the N oldest (e.g. past skipped ones)")
-    ] = 0,
+    cursor: Annotated[
+        str | None,
+        typer.Option("--cursor", help="continue after this question (the cursor a session prints)"),
+    ] = None,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="print the memory.answer calls it would send; send nothing")
     ] = False,
@@ -909,8 +912,16 @@ def review(
 
     Keys: a accept · r reject · s skip (stays open) · o open the full items · q quit. Every decision
     is one idempotent memory.answer; decisions are logged to ~/.local/state/hlm/review.log (0600).
+    The listing (hlm.questions) is owner-only: set HLM_OWNER_TOKEN to the server's owner token.
     """
-    from hlmemo.cli.review import ReviewOptions, load_decisions, run_review, tty_read_key
+    from hlmemo.cli.review import (
+        OWNER_HEADER,
+        OWNER_TOKEN_ENV,
+        ReviewOptions,
+        load_decisions,
+        run_review,
+        tty_read_key,
+    )
 
     c = _ctx(ctx)
     slug = project or c.config().require_project()
@@ -921,9 +932,17 @@ def review(
     kind = kind.strip().lower() if kind is not None else None
     if kind is not None and not kind.replace("_", "").isalpha():
         raise CliError("--kind expects a question kind such as contradiction, link or widen_scope", EX_USAGE)
-    memory = c.memory(timeout_s=max(c.config().timeout_s, REVIEW_TIMEOUT_S))
+    if cursor is not None:
+        cursor = cursor.strip()
+        if not cursor or len(cursor) > 160 or any(ch.isspace() for ch in cursor):
+            raise CliError("--cursor expects the cursor a previous `hlm review` printed", EX_USAGE)
+    owner = (os.environ.get(OWNER_TOKEN_ENV) or "").strip()
+    memory = c.memory(
+        timeout_s=max(c.config().timeout_s, REVIEW_TIMEOUT_S),
+        extra_headers={OWNER_HEADER: owner} if owner else None,
+    )
     opts = ReviewOptions(
-        project=slug, batch=batch, kind=kind, offset=offset, dry_run=dry_run, decisions=parsed, yes=yes
+        project=slug, batch=batch, kind=kind, cursor=cursor, dry_run=dry_run, decisions=parsed, yes=yes
     )
     # one MCP session per call (memory.call_async): the owner may think for minutes between keys
     session = asyncio.run(

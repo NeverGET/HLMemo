@@ -3,10 +3,14 @@
 The librarian proposes; the owner accepts or rejects in short batches, and that acceptance rate is
 the real-usage precision. Nothing here calls a model.
 
-* **Listing** (read-only): the client tool ``hlm.questions`` (oldest first, with the subjects'
-  titles, body heads, the proposal's verbatim quotes, reason and pending counts per kind). A server
-  without it answers ``unknown tool``; then the ``memory.query`` notices (the newest ≤ 3, no reason
-  or age) are shown, titled through ``hlm.export``. Both reads record no access event.
+* **Listing** (read-only): the OWNER-ONLY client tool ``hlm.questions`` (oldest first, with the
+  subjects' titles, body heads, the proposal's verbatim quotes, reason and pending counts per kind).
+  The server dispatches it only with the owner client token (``HLM_OWNER_TOKEN``, sent in the
+  ``X-HLM-Owner-Token`` header next to the device bearer). Paging is a keyset cursor: ``--cursor``
+  continues strictly after a question, so answering between pages skips or repeats nothing. A server
+  without the tool (``unknown tool``) or refusing it (no/wrong owner token) leaves the ``memory.query``
+  notices (the newest ≤ 3, no reason or age, no paging: ``--cursor`` is refused), titled through
+  ``hlm.export``. Both reads record no access event.
 * **Decisions**: ``a`` accept / ``r`` reject call ``memory.answer`` with exactly
   ``{project, request_id, question_id, decision}``. The request id is derived from
   (project, question, decision), so a retry or a re-run is replayed by the server, never applied
@@ -49,6 +53,9 @@ TOOL_ANSWER = "memory.answer"
 TOOL_QUERY = "memory.query"
 TOOL_DRILLDOWN = "memory.drilldown"
 TOOL_EXPORT = "hlm.export"
+#: the owner client capability: env on the owner's machine → header on every review request
+OWNER_TOKEN_ENV = "HLM_OWNER_TOKEN"
+OWNER_HEADER = "X-HLM-Owner-Token"
 #: request ids are uuid5(NS_REVIEW, "hlm-review/1:<project>:<question_id>:<decision>")
 NS_REVIEW = uuid.UUID("6d3c0f7e-2b8a-5c41-9e57-1f0a4b6c8d21")
 SENT = ("accept", "reject")
@@ -120,6 +127,15 @@ def _unknown_tool(exc: ToolCallError, tool: str) -> bool:
     return exc.code == "E_INVALID_ARG" and (
         exc.details.get("tool") == tool or f"unknown tool {tool!r}" in exc.message
     )
+
+
+def _fallback_reason(exc: ToolCallError) -> str | None:
+    """Why ``hlm.questions`` is not usable here (None: a real error to raise)."""
+    if _unknown_tool(exc, TOOL_LIST):
+        return "this server has no hlm.questions"
+    if exc.code == "E_FORBIDDEN":  # owner-only: E_FORBIDDEN_PROJECT (no read grant) still raises
+        return f"the server refused hlm.questions (owner-only: set {OWNER_TOKEN_ENV} to its owner token)"
+    return None
 
 
 def default_log_path() -> Path:
@@ -211,8 +227,12 @@ class Listing:
     pending_total: int | None = None
     by_kind: dict[str, int] | None = None
     omitted: int = 0
-    #: the server has no ``hlm.questions``: the memory.query notices (newest ≤ 3, no reason/age)
+    #: keyset cursor after the last returned question while more remain (``hlm.questions``)
+    next_cursor: str | None = None
+    #: ``hlm.questions`` unusable (old server / no owner token): the memory.query notices (newest
+    #: ≤ 3, no reason/age, no paging); ``degraded_reason`` says why
     degraded: bool = False
+    degraded_reason: str | None = None
 
 
 async def fetch_listing(
@@ -222,7 +242,7 @@ async def fetch_listing(
     limit: int,
     kind: str | None = None,
     question_ids: list[str] | None = None,
-    offset: int = 0,
+    cursor: str | None = None,
 ) -> Listing:
     if question_ids:  # chunks of BATCH_MAX ids; the pending counts are the project's either way
         merged = Listing([])
@@ -241,8 +261,8 @@ async def fetch_listing(
     args: dict[str, Any] = {"project": project, "limit": limit, "token_budget": LIST_BUDGET}
     if kind:
         args["kind"] = kind
-    if offset:
-        args["offset"] = offset
+    if cursor:
+        args["cursor"] = cursor
     return await _list_call(call, project, args, limit=limit, kind=kind)
 
 
@@ -252,17 +272,25 @@ async def _list_call(
     try:
         res = await call(TOOL_LIST, args)
     except ToolCallError as exc:
-        if not _unknown_tool(exc, TOOL_LIST):
+        reason = _fallback_reason(exc)
+        if reason is None:
             raise
-        return await notices_listing(
+        if args.get("cursor"):  # the notices cannot page: never silently restart at the newest
+            raise ToolCallError(
+                "E_INVALID_ARG", f"--cursor needs hlm.questions, but {reason}; the notices cannot page"
+            ) from None
+        listing = await notices_listing(
             call, project, limit=limit, kind=kind, question_ids=args.get("question_ids")
         )
+        listing.degraded_reason = reason
+        return listing
     pending = res.get("pending") or {}
     return Listing(
         questions=list(res.get("questions") or []),
         pending_total=pending.get("total"),
         by_kind=pending.get("by_kind"),
         omitted=int(res.get("omitted") or 0),
+        next_cursor=res.get("next_cursor") or None,
     )
 
 
@@ -445,8 +473,9 @@ def header_text(project: str, listing: Listing, opts: ReviewOptions) -> str:
     total = listing.pending_total
     if listing.degraded:
         line = (
-            f"{project}: {total if total is not None else '?'} open question(s); this server has no "
-            "hlm.questions, so only the newest ≤3 notices are shown (no reason, quotes or age)"
+            f"{project}: {total if total is not None else '?'} open question(s); "
+            f"{listing.degraded_reason or 'this server has no hlm.questions'}, so only the newest ≤3 "
+            "notices are shown (no reason, quotes, age or paging)"
         )
     else:
         kinds = " · ".join(f"{k} {n}" for k, n in sorted((listing.by_kind or {}).items()))
@@ -456,8 +485,8 @@ def header_text(project: str, listing: Listing, opts: ReviewOptions) -> str:
         line += f"; this batch: {len(listing.questions)}, oldest first"
         if opts.kind:
             line += f", kind={opts.kind}"
-        if opts.offset:
-            line += f", after the {opts.offset} oldest"
+        if opts.cursor:
+            line += ", continuing after the given cursor"
         if listing.omitted:
             line += f"; {listing.omitted} more did not fit one listing (use a smaller --batch)"
     if opts.dry_run:
@@ -494,7 +523,8 @@ class ReviewOptions:
     project: str
     batch: int = 10
     kind: str | None = None
-    offset: int = 0
+    #: ``--cursor``: continue strictly after that question (keyset; same project and kind)
+    cursor: str | None = None
     dry_run: bool = False
     #: ``--decisions``: [(question_id, accept|reject|skip)] in file order
     decisions: list[tuple[str, str]] | None = None
@@ -511,6 +541,10 @@ class Session:
     log: list[dict[str, Any]] = field(default_factory=list)
     aborted: bool = False
     pending_before: int | None = None
+    kind: str | None = None
+    #: the cursor of the last reviewed question, when a plain re-run would show questions this
+    #: session left open (skipped / dry-run / refused) before the ones after it
+    resume: str | None = None
 
     def counts(self) -> Counter[str]:
         c: Counter[str] = Counter()
@@ -657,6 +691,12 @@ def summary_text(session: Session, *, log_path: Path | None, pending_after: int 
             f"open questions now: {pending_after}"
             + (f" (was {session.pending_before})" if session.pending_before is not None else "")
         )
+    if session.resume:
+        kind = f" --kind {session.kind}" if session.kind else ""
+        lines.append(
+            "continue after the last reviewed question: "
+            f"hlm review --project {session.project}{kind} --cursor {session.resume}"
+        )
     return "\n".join(lines)
 
 
@@ -670,7 +710,7 @@ async def run_review(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Session:
     width = opts.width or max(60, min(110, shutil.get_terminal_size((100, 20)).columns))
-    session = Session(project=opts.project, dry_run=opts.dry_run)
+    session = Session(project=opts.project, dry_run=opts.dry_run, kind=opts.kind)
     log_path = opts.log_path or default_log_path()
     if opts.decisions is not None:
         await _apply_file(call, opts, session, confirm=confirm, echo=echo, now=now, width=width)
@@ -698,12 +738,43 @@ async def _interactive(
     now: Callable[[], datetime],
     width: int,
 ) -> None:
-    listing = await fetch_listing(call, opts.project, limit=opts.batch, kind=opts.kind, offset=opts.offset)
+    listing = await fetch_listing(call, opts.project, limit=opts.batch, kind=opts.kind, cursor=opts.cursor)
     session.pending_before = listing.pending_total
     echo(header_text(opts.project, listing, opts))
     if not listing.questions:
         echo("nothing to review")
         return
+    handled = await _interactive_cards(
+        call, opts, session, listing, read_key=read_key, echo=echo, now=now, width=width
+    )
+    _set_resume(session, listing, handled)
+
+
+def _set_resume(session: Session, listing: Listing, handled: int) -> None:
+    """A cursor hint only when it helps: this session left some reviewed question open (skip,
+    dry-run, refused) AND something comes after the last reviewed one (rest of the batch, the next
+    page); a plain re-run would show the left-open ones first."""
+    if listing.degraded or not handled:
+        return
+    left_open = any(r.get("status") in ("skipped", "dry_run", "error") for r in session.rows)
+    more_after = handled < len(listing.questions) or listing.next_cursor is not None
+    cursor = listing.questions[handled - 1].get("cursor")
+    if left_open and more_after and cursor:
+        session.resume = str(cursor)
+
+
+async def _interactive_cards(
+    call: Call,
+    opts: ReviewOptions,
+    session: Session,
+    listing: Listing,
+    *,
+    read_key: KeyReader,
+    echo: Echo,
+    now: Callable[[], datetime],
+    width: int,
+) -> int:
+    """The cards of one listing; returns how many were decided or skipped."""
     n = len(listing.questions)
     for i, q in enumerate(listing.questions, 1):
         echo("")
@@ -723,8 +794,9 @@ async def _interactive(
             break
         if action == "quit":
             echo(f"   quit; {n - i + 1} question(s) of this batch left open")
-            return
+            return i - 1
         await decide(call, session, q, action, echo=echo, now=now())
+    return n
 
 
 async def _apply_file(

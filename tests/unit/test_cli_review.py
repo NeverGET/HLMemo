@@ -26,6 +26,7 @@ from hlmemo.cli.review import (
     acceptance,
     answer_args,
     append_log,
+    fetch_listing,
     load_decisions,
     logged_acceptance,
     read_log,
@@ -144,16 +145,25 @@ def widen(qid: str = QW) -> dict[str, Any]:
 
 
 class FakeServer:
-    """The server side of the review protocol: ``hlm.questions`` (or ``unknown tool``),
-    ``memory.answer`` with per-request-id idempotency, drilldown, export and the query notices."""
+    """The server side of the review protocol: ``hlm.questions`` (or ``unknown tool``, or the
+    owner-only refusal), ``memory.answer`` with per-request-id idempotency, drilldown, export and
+    the query notices. The listing order is the insertion order (the server's (created_at,
+    question_id)); paging is a keyset over that order, like the server's."""
 
-    def __init__(self, questions: list[dict[str, Any]], *, has_list: bool = True) -> None:
+    def __init__(
+        self, questions: list[dict[str, Any]], *, has_list: bool = True, owner_ok: bool = True
+    ) -> None:
         self.questions = {q["question_id"]: q for q in questions}
+        self.position = {qid: i for i, qid in enumerate(self.questions)}
         self.status = {qid: "open" for qid in self.questions}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.answers: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         self.has_list = has_list
+        self.owner_ok = owner_ok
         self.timeout_after_commit = 0  # the next N answers commit, then the reply is lost
+
+    def cursor(self, project: str, kind: str | None, qid: str) -> str:
+        return f"{project}/{kind or '*'}/{self.position[qid]:06d}/{qid}"
 
     def tools(self) -> list[str]:
         return [t for t, _ in self.calls]
@@ -167,18 +177,29 @@ class FakeServer:
         if tool == "hlm.questions":
             if not self.has_list:
                 raise ToolCallError("E_INVALID_ARG", f"unknown tool {tool!r}", details={"tool": tool})
+            if not self.owner_ok:
+                raise ToolCallError("E_FORBIDDEN", "hlm.questions is an owner-only client tool")
+            kind = args.get("kind")
+            after = -1
+            if args.get("cursor"):
+                p_, k_, pos, _qid = args["cursor"].split("/")
+                if (p_, k_) != (args["project"], kind or "*"):
+                    raise ToolCallError("E_INVALID_CURSOR", "cursor belongs to another listing")
+                after = int(pos)
             sel = [
-                q
+                {**q, "cursor": self.cursor(args["project"], kind, q["question_id"])}
                 for q in open_qs
-                if (not args.get("kind") or q["kind"] == args["kind"])
+                if (not kind or q["kind"] == kind)
                 and (not args.get("question_ids") or q["question_id"] in args["question_ids"])
+                and self.position[q["question_id"]] > after
             ]
-            off = args.get("offset", 0)
+            page = sel[: args["limit"]]
             return {
                 "project": args["project"],
                 "pending": {"total": len(open_qs), "by_kind": dict(Counter(q["kind"] for q in open_qs))},
-                "questions": sel[off : off + args["limit"]],
+                "questions": page,
                 "omitted": 0,
+                "next_cursor": page[-1]["cursor"] if len(sel) > len(page) else None,
             }
         if tool == "memory.answer":
             rid = args["request_id"]
@@ -385,11 +406,11 @@ async def test_quit_and_interrupt_stop_the_session(tmp_path: Path) -> None:
     assert server.answer_calls() == [] and "quit; 1 question(s)" in out and session.rows == []
 
 
-async def test_batch_kind_and_offset_reach_the_listing(tmp_path: Path) -> None:
+async def test_batch_kind_and_cursor_reach_the_listing(tmp_path: Path) -> None:
     server = FakeServer([contradiction(), link(), widen()])
     await review(
         server,
-        ReviewOptions(project=P, batch=2, kind="link", offset=0, log_path=tmp_path / "l"),
+        ReviewOptions(project=P, batch=2, kind="link", log_path=tmp_path / "l"),
         read_key=keys("s"),
     )
     assert server.calls[0] == (
@@ -397,11 +418,70 @@ async def test_batch_kind_and_offset_reach_the_listing(tmp_path: Path) -> None:
         {"project": P, "limit": 2, "token_budget": 32000, "kind": "link"},
     )
     server = FakeServer([contradiction(), link(), widen()])
+    after_qc = server.cursor(P, None, QC)
     _s, out = await review(
-        server, ReviewOptions(project=P, offset=1, log_path=tmp_path / "l"), read_key=keys("q")
+        server, ReviewOptions(project=P, cursor=after_qc, log_path=tmp_path / "l"), read_key=keys("q")
     )
-    assert server.calls[0][1]["offset"] == 1 and "after the 1 oldest" in out
+    assert server.calls[0][1]["cursor"] == after_qc and "continuing after the given cursor" in out
     assert f"id {QL}" in out and f"id {QC}" not in out
+
+
+async def test_paging_by_cursor_skips_and_repeats_nothing_when_questions_are_answered_between_pages(
+    tmp_path: Path,
+) -> None:
+    """Review 101 (both reviewers, MEDIUM): an OFFSET over the shrinking open set skipped the
+    questions after an answered page. The keyset cursor continues after the last listed one."""
+    qids = [str(uuid.UUID(int=100 + i, version=4)) for i in range(7)]
+    server = FakeServer([link(q) for q in qids])
+    seen: list[str] = []
+    cursor = None
+    for _ in range(4):
+        listing = await fetch_listing(server, P, limit=3, cursor=cursor)
+        page = [q["question_id"] for q in listing.questions]
+        seen += page
+        for qid in page[:2]:  # answer some of the page (they leave the open set) before the next page
+            server.status[qid] = "rejected"
+        if listing.next_cursor is None:
+            break
+        cursor = listing.next_cursor
+    assert seen == qids  # every question once, in order: none skipped, none repeated
+    # a question answered by someone else before its page is simply not listed (and not skipped
+    # past others): answer qids[4] now and re-page from the start of the remaining set
+    server = FakeServer([link(q) for q in qids])
+    first = await fetch_listing(server, P, limit=3)
+    server.status[qids[3]] = "rejected"
+    server.status[qids[0]] = "rejected"
+    second = await fetch_listing(server, P, limit=3, cursor=first.next_cursor)
+    assert [q["question_id"] for q in second.questions] == qids[4:7]
+
+
+async def test_a_session_that_left_questions_open_prints_where_to_continue(tmp_path: Path) -> None:
+    server = FakeServer([contradiction(), link(), widen()])
+    session, out = await review(
+        server, ReviewOptions(project=P, batch=2, log_path=tmp_path / "l"), read_key=keys("s", "a")
+    )
+    # QC skipped (stays open, first on a plain re-run); QL accepted; QW is on the next page
+    assert session.resume == server.cursor(P, None, QL)
+    assert (
+        f"continue after the last reviewed question: hlm review --project {P} --cursor {session.resume}"
+        in out
+    )
+    _s, out = await review(
+        server, ReviewOptions(project=P, cursor=session.resume, log_path=tmp_path / "l"), read_key=keys("q")
+    )
+    assert f"id {QW}" in out and f"id {QC}" not in out
+    # nothing left open, or nothing after: no hint
+    server = FakeServer([contradiction(), link()])
+    session, out = await review(
+        server, ReviewOptions(project=P, log_path=tmp_path / "l"), read_key=keys("a", "s")
+    )
+    assert session.resume is None and "--cursor" not in out
+    # quit after a skip: the rest of the batch comes after the cursor, with the kind filter kept
+    server = FakeServer([link(QC), link(QL), link(QW)])
+    session, out = await review(
+        server, ReviewOptions(project=P, kind="link", log_path=tmp_path / "l"), read_key=keys("s", "q")
+    )
+    assert session.resume == server.cursor(P, "link", QC) and f"--kind link --cursor {session.resume}" in out
 
 
 async def test_empty_listing(tmp_path: Path) -> None:
@@ -522,6 +602,29 @@ async def test_decisions_need_confirmation(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- fallback (old server)
+async def test_owner_refusal_falls_back_to_the_notices_and_says_why(tmp_path: Path) -> None:
+    server = FakeServer([contradiction()], owner_ok=False)
+    _session, out = await review(
+        server, ReviewOptions(project=P, dry_run=True, log_path=tmp_path / "l"), read_key=keys("s")
+    )
+    assert "the server refused hlm.questions (owner-only: set HLM_OWNER_TOKEN" in out
+    assert "notice    contradiction: v812 vs v455" in out
+
+
+async def test_a_cursor_is_refused_when_the_listing_cannot_page(tmp_path: Path) -> None:
+    """Review 101 (Sol): the notices fallback silently ignored the paging and repeated the newest."""
+    for server in (
+        FakeServer([contradiction()], has_list=False),
+        FakeServer([contradiction()], owner_ok=False),
+    ):
+        with pytest.raises(ToolCallError) as ei:
+            await review(
+                server, ReviewOptions(project=P, cursor=f"{P}/*/000000/{QC}", log_path=tmp_path / "l")
+            )
+        assert ei.value.code == "E_INVALID_ARG" and "the notices cannot page" in ei.value.message
+        assert "memory.query" not in server.tools()
+
+
 async def test_without_hlm_questions_the_notices_are_reviewed(tmp_path: Path) -> None:
     server = FakeServer([contradiction()], has_list=False)
     session, out = await review(
@@ -609,12 +712,45 @@ class _Memory:
         self.call_async = server
 
 
-def _install(monkeypatch: pytest.MonkeyPatch, server: FakeServer, tmp_path: Path) -> Path:
+def _install(
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeServer,
+    tmp_path: Path,
+    seen: list[dict[str, Any]] | None = None,
+) -> Path:
     monkeypatch.setenv("HLM_DEVICE_TOKEN", "hlm_" + "b" * 43)
     monkeypatch.setenv("HLM_REVIEW_LOG", str(tmp_path / "review.log"))
-    monkeypatch.setattr(hlm_mod.Ctx, "memory", lambda self, **kw: _Memory(server))
+    monkeypatch.delenv("HLM_OWNER_TOKEN", raising=False)
+
+    def memory(self: Any, **kw: Any) -> _Memory:
+        if seen is not None:
+            seen.append(kw)
+        return _Memory(server)
+
+    monkeypatch.setattr(hlm_mod.Ctx, "memory", memory)
     write_toml(Path.cwd() / "hlm.toml")
     return tmp_path / "review.log"
+
+
+def test_cli_sends_the_owner_token_header_only_when_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[dict[str, Any]] = []
+    _install(monkeypatch, FakeServer([]), tmp_path, seen)
+    res = runner().invoke(app, ["review", "--dry-run"])
+    assert res.exit_code == 0, res.output
+    assert seen[-1].get("extra_headers") is None
+    monkeypatch.setenv("HLM_OWNER_TOKEN", "o" * 64)
+    res = runner().invoke(app, ["review", "--dry-run", "--cursor", f"{P}/*/000000/{QC}"])
+    assert res.exit_code == 0, res.output
+    assert seen[-1]["extra_headers"] == {"X-HLM-Owner-Token": "o" * 64}
+
+
+def test_the_agent_launcher_never_passes_the_owner_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hlmemo.cli.launch import child_env
+
+    env = child_env("hlm_" + "d" * 43, {"HLM_OWNER_TOKEN": "o" * 64, "PATH": "/bin"})
+    assert "HLM_OWNER_TOKEN" not in env and env["HLM_DEVICE_TOKEN"] == "hlm_" + "d" * 43
 
 
 def test_cli_dry_run_reads_keys_from_stdin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -655,3 +791,5 @@ def test_cli_usage_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert res.exit_code == EX_USAGE
     res = runner().invoke(app, ["review", "--batch", "51"])
     assert res.exit_code != 0 and server.calls == []
+    res = runner().invoke(app, ["review", "--cursor", "a b"])
+    assert res.exit_code == EX_USAGE and server.calls == []

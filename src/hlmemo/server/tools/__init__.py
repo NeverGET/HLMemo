@@ -25,6 +25,9 @@ class ToolSpec:
     app_bound: bool = False
     #: ``listed(settings)``: advertise the tool on tools/list only when true (None: always)
     listed: Callable[[Any], bool] | None = None
+    #: dispatched only with the owner client capability (``mcp_server.require_owner_client``): the
+    #: device bearer every agent on that device also holds is not enough
+    owner_only: bool = False
 
     def advertised(self, settings: Any) -> bool:
         return self.listed is None or bool(self.listed(settings))
@@ -78,8 +81,14 @@ CLIENT_TOOLS: tuple[ToolSpec, ...] = (
         export_service.INPUT_SCHEMA,
         handlers.hlm_export,
     ),
-    # `hlm review`: the open librarian questions with what a reviewer needs (read-only)
-    ToolSpec(questions.NAME, questions.DESCRIPTION, questions.INPUT_SCHEMA, questions.hlm_questions),
+    # `hlm review`: the open librarian questions with what a reviewer needs (read-only, owner-only)
+    ToolSpec(
+        questions.NAME,
+        questions.DESCRIPTION,
+        questions.INPUT_SCHEMA,
+        questions.hlm_questions,
+        owner_only=True,
+    ),
 )
 
 TOOL_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in (*TOOLS, *CLIENT_TOOLS)}

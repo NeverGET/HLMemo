@@ -3,6 +3,9 @@ real W2b pipeline (scripted model, observer role), listed through the unlisted c
 ``hlm.questions`` over the MCP wire, reviewed with ``--decisions`` and checked in the server state.
 
 * listing is read-only (no event, no access event) and authorized (``read`` on the project);
+* ``hlm.questions`` is owner-only (review 101 HIGH): an agent's standard ``tools/call`` with its
+  device bearer is refused; only the owner client token header unlocks it;
+* paging is a keyset cursor: answering questions between pages skips or repeats nothing;
 * ``--dry-run`` sends nothing (no answer event, no access event, ``o`` included);
 * the decisions file sends exactly ``memory.answer`` with the derived request ids: accept →
   ``accepted_pending`` (observer: zero user mutations), reject → ``rejected``, skip → still open;
@@ -42,7 +45,7 @@ from tests.integration._librarian_fixtures import (
     make_worker,
     seed_reserved,
 )
-from tests.integration._mcp_fixtures import bearer, running_app
+from tests.integration._mcp_fixtures import bearer, call_tool_raw, mcp_rpc, running_app
 from tests.integration._read_fixtures import embedder  # noqa: F401 - fixture by import
 from tests.integration._w2b_fixtures import Oracle, embed, write_items
 from tests.integration._write_fixtures import MAIN, OTHER, World, count, item, seed_world
@@ -50,6 +53,8 @@ from tests.integration._write_fixtures import MAIN, OTHER, World, count, item, s
 pytestmark = pytest.mark.integration
 
 TOKEN = "hlm_" + "R" * 43
+OWNER = "owner-" + "O" * 58  # the server's owner client token (HLM_OWNER_TOKEN)
+OWNER_HEADERS = {"X-HLM-Owner-Token": OWNER}
 D_OLD = datetime(2026, 1, 1, tzinfo=UTC).isoformat()
 D_NEW = datetime(2026, 6, 1, tzinfo=UTC).isoformat()
 HOST_OLD = ("Deploy host", "Production runs on the Hetzner CX33 host in Falkenstein.")
@@ -145,9 +150,11 @@ async def test_review_lists_dry_runs_and_applies_a_decisions_file(
 ) -> None:  # noqa: ANN001
     qids = await _seed_questions(db_dsn, connect, world, embedder)
     log = tmp_path / "state" / "hlm" / "review.log"
-    async with running_app(db_dsn) as client:
+    async with running_app(db_dsn, owner_token=OWNER) as client:
         http = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=client.app), base_url="http://test", headers=bearer(TOKEN)
+            transport=httpx.ASGITransport(app=client.app),
+            base_url="http://test",
+            headers={**bearer(TOKEN), **OWNER_HEADERS},
         )
         async with http:
             memory = MemoryClient(
@@ -274,6 +281,102 @@ async def test_listing_needs_read_on_the_project_and_hides_unreadable_subjects(
         assert res["pending"] == {"total": 2, "by_kind": {"contradiction": 1, "link": 1}}
         assert sorted(q["kind"] for q in res["questions"]) == ["contradiction", "link"]
         assert res["budget"]["used"] <= res["budget"]["limit"]
-        tiny = await review_list(conn, main_only, {"project": MAIN, "limit": 50, "token_budget": 400})
-        assert tiny["omitted"] >= 1 and len(tiny["questions"]) + tiny["omitted"] == 2
+        with pytest.raises(ToolError) as ei:  # never an empty page that cannot advance
+            await review_list(conn, main_only, {"project": MAIN, "limit": 50, "token_budget": 400})
+        assert ei.value.code == "E_BUDGET_TOO_SMALL"
+        cut = res["budget"]["used"] - 50  # not both questions (each is hundreds of tokens)
+        tiny = await review_list(conn, main_only, {"project": MAIN, "limit": 50, "token_budget": cut})
+        assert tiny["omitted"] == 1 and len(tiny["questions"]) == 1
+        # the trimmed ones come first on the next page: next_cursor is the last RETURNED question
+        assert tiny["next_cursor"] == tiny["questions"][-1]["cursor"]
+        rest = await review_list(
+            conn, main_only, {"project": MAIN, "limit": 50, "cursor": tiny["next_cursor"]}
+        )
+        assert len(rest["questions"]) == tiny["omitted"] and rest["next_cursor"] is None
         await conn.rollback()
+
+
+async def test_an_agent_cannot_call_hlm_questions_over_the_wire(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Review 101 HIGH (Astra 1) on the real wire: the device bearer (project read/write) with the
+    standard MCP ``tools/call`` is refused, whatever client it claims to be; the owner token is not
+    readable from a failed answer; only the owner client token header unlocks the listing."""
+    await _seed_questions(db_dsn, connect, world, embedder)
+    before = await _state(connect)
+    async with running_app(db_dsn, owner_token=OWNER) as client:
+        res = await call_tool_raw(client, TOKEN, "hlm.questions", {"project": MAIN})
+        assert res["isError"] is True
+        assert json.loads(res["content"][0]["text"])["code"] == "E_FORBIDDEN"
+        client.headers.update({"User-Agent": "hlm-cli", "x-hlm-client": "hlm-cli/1"})  # labels: no
+        res = await call_tool_raw(client, TOKEN, "hlm.questions", {"project": MAIN})
+        assert res["isError"] is True and OWNER not in json.dumps(res)
+        client.headers.update({"X-HLM-Owner-Token": "owner-" + "X" * 58})  # a wrong token: no
+        res = await call_tool_raw(client, TOKEN, "hlm.questions", {"project": MAIN})
+        assert json.loads(res["content"][0]["text"])["code"] == "E_FORBIDDEN"
+        # still unadvertised (G-SURF unchanged)
+        listed = await mcp_rpc(client, TOKEN, "tools/list", id=2)
+        assert "hlm.questions" not in {t["name"] for t in listed.json()["result"]["tools"]}
+        client.headers.update(OWNER_HEADERS)  # the owner's CLI
+        res = await call_tool_raw(client, TOKEN, "hlm.questions", {"project": MAIN})
+        assert res["isError"] is False
+        assert len(json.loads(res["content"][0]["text"])["questions"]) == 3
+    # the same tools/call against a server WITHOUT an owner token: refused for everyone
+    async with running_app(db_dsn) as client:
+        client.headers.update(OWNER_HEADERS)
+        res = await call_tool_raw(client, TOKEN, "hlm.questions", {"project": MAIN})
+        assert json.loads(res["content"][0]["text"])["code"] == "E_FORBIDDEN"
+    assert await _state(connect) == before
+
+
+async def test_paging_by_cursor_survives_answers_between_pages(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """Review 101 MEDIUM (both reviewers): with OFFSET, answering the first page shifted the open
+    set and the next page skipped questions. The keyset cursor neither skips nor repeats."""
+    await _seed_questions(db_dsn, connect, world, embedder)
+    async with running_app(db_dsn, owner_token=OWNER) as client:
+        http = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=client.app),
+            base_url="http://test",
+            headers={**bearer(TOKEN), **OWNER_HEADERS},
+        )
+        async with http:
+            memory = MemoryClient(
+                "http://test/mcp",
+                TOKEN,
+                timeout_s=30,
+                target=streamable_http_client("http://test/mcp", http_client=http),
+            )
+            async with memory.session() as call:
+                everything = [q["question_id"] for q in (await fetch_listing(call, MAIN, limit=10)).questions]
+                assert len(everything) == 3
+                seen: list[str] = []
+                cursor = None
+                while True:
+                    page = await fetch_listing(call, MAIN, limit=1, cursor=cursor)
+                    assert len(page.questions) == 1
+                    q = page.questions[0]
+                    seen.append(q["question_id"])
+                    # answer it before asking for the next page: it leaves the open set
+                    await call(
+                        "memory.answer",
+                        {
+                            "project": MAIN,
+                            "request_id": request_id_for(MAIN, q["question_id"], "reject"),
+                            "question_id": q["question_id"],
+                            "decision": "reject",
+                        },
+                    )
+                    if page.next_cursor is None:
+                        break
+                    assert page.next_cursor == q["cursor"]
+                    cursor = page.next_cursor
+                assert seen == everything  # none skipped, none repeated, oldest first
+                # a cursor is bound to its listing: another kind filter or project is refused
+                with pytest.raises(ToolCallError) as ei:
+                    await fetch_listing(call, MAIN, limit=1, kind="link", cursor=cursor)
+                assert ei.value.code == "E_INVALID_CURSOR"
+                with pytest.raises(ToolCallError) as ei:
+                    await fetch_listing(call, MAIN, limit=1, cursor="garbage")
+                assert ei.value.code in ("E_INVALID_CURSOR", "E_INVALID_ARG")
