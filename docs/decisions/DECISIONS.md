@@ -2045,3 +2045,20 @@ D-238 | 2026-10-03 | ACCEPTED (owner) | **Three owner decisions.**
 - Residual risk: an agent that deliberately fakes a terminal and reads the keychain. Such an agent already has owner-level access, and the tool shows only what the device can read anyway.
 
 (3) `hlm.export` stays callable with a device token, as is: it bulk-reads only what that device can read. This is accepted risk.
+D-239 | 2026-10-03 | ACCEPTED (owner-approved, D-238) | **HLMemo's self-memory is re-synced, and `hlm review` is LIVE (ee89c86).**
+
+Re-import (project hlmemo, the same source set and method as D-131/D-132, `--keep-missing`):
+- 368 items written (273 new, 95 revisions), 0 closed, 0 failed. D-132..D-238 are now memory items. The librarian processed them for $0.73 with 0 failures (98 open proposals).
+- Checks: gitleaks 0 over 283 files; owner-terms 0 in the repo files. The auto-memory source was held back (denylist hits in private memory files: owner's call).
+- A re-run is all-unchanged.
+- Gap: no supersedes link connects the current caps items (3/8/60) to the R3-era 1/2/10 items, so a caps query still ranks stale items first. An explicit link set needs owner approval.
+
+hlm review release:
+- Snapshot at 09:58Z; deploy exit 0; remote_gates 11/11 PASS.
+- The owner token was generated and installed on the API host, in the local secrets copy and in the owner's keychain by script, never printed. The API was recreated.
+- Verified:
+  - the device bearer alone gets E_FORBIDDEN on hlm.questions;
+  - a non-terminal run falls back to the notices (owner token not used);
+  - the terminal path is left for the owner's first batch.
+
+Watch: the risk judge timed out in the risk-check gate on both post-B3 deploys (retrieval-only verdict; the gate still passes). To be investigated before R4.3.
