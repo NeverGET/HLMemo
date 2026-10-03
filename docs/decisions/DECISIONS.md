@@ -1977,3 +1977,15 @@ D-233 | 2026-10-03 | ACCEPTED (owner-approved release, D-232) | **R4.2s is LIVE 
 - remote_gates 11/11 PASS, incl. WAN p95 175 ms and the backup-restore drill (36 s). probe-writer 200.
 - Smoke: the question that hit Google's 503 on 10-01 now answers from Gemini with 0 fallbacks, $0.017, 13.9 s. The freshness line shows ("records end on 2026-10-01").
 - Rollback: `deploy.sh --rollback` returns to fda8fa0 from the server's local checkout.
+D-234 | 2026-10-03 | ACCEPTED (owner) | **The first cross-project lessons are permanent knowledge: 6 owner-accepted lessons are imported into the global project as RESOLVED, HISTORICAL lessons.**
+
+- The owner accepted all 7 lesson-v2 drafts (D-227). Two drafts of the same lesson were merged, giving 6.
+- The owner's notes:
+  - the underlying incidents are fixed;
+  - the patterns date from an earlier agent-model era ("you are not doing these mistakes anymore but good to remember you used to").
+- Rule: every lesson carries a status (active / resolved / historical) and the model era in which it was observed. Resolved or historical lessons are reminders, never active warnings. Re-confirm a lesson with fresh evidence before making it active again.
+
+Import:
+- Done by code with memory.write (kind lesson; tags lesson-v2, cross-project, resolved, historical, owner-accepted) into the reserved global project; a write grant was added for the owner's device.
+- Every quote was verified verbatim against its episode, and the recurrence and seen-date stats re-derive exactly.
+- Verified by query (top hit), by raw (bodies byte-identical) and by replay (no duplicates).
