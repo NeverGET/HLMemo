@@ -799,6 +799,9 @@ async def review_list(conn: AsyncConnection, ctx: AuthContext, req: dict[str, An
             "cross_project": prop.get("cross_project"),
             "auto_class": prop.get("auto_class"),
             "verified": verification.get("agreed") if isinstance(verification, dict) else None,
+            # which second opinion was asked (supersede | widen | confirm): with ``verified`` and the
+            # guard ``flags`` the reviewer sees the librarian's own doubts (D-244)
+            "verifier_kind": verification.get("kind") if isinstance(verification, dict) else None,
             "flags": [str(f) for f in prop.get("flags") or []],
             "reason": _cut(prop.get("reason"), REASON_CHARS),
             "quotes": {k: _cut(quotes.get(k), QUOTE_CHARS) for k in ("new", "old") if quotes.get(k)},

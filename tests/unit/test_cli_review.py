@@ -79,6 +79,7 @@ def contradiction(qid: str = QC) -> dict[str, Any]:
         "confidence": "high",
         "tier": "question",
         "verified": True,
+        "verifier_kind": "supersede",
         "flags": [],
         "reason": "The newer item moves production\nto Hostinger.",
         "quotes": {"new": "Production moved to the Hostinger KVM 2 host", "old": "runs on the Hetzner CX33"},
@@ -315,8 +316,21 @@ def test_supersession_card_shows_newer_and_older_spans_with_handles() -> None:
         in card
     )
     assert "reason    The newer item moves production to Hostinger." in card
-    assert "flags     verifier agreed" in card
+    assert "verifier  supersede (agrees)" in card and "flags" not in card
     assert "\x1b" not in card and "‮" not in card  # terminal escapes and bidi overrides never printed
+
+
+def test_card_shows_the_librarians_own_doubts() -> None:
+    """D-244: the verifier's kind and verdict and the guard flags sit next to the proposal."""
+    q = contradiction()
+    q.update(verified=False, flags=["supersedes_against_time", "verifier_direction_disputed"])
+    card = render_card(q, 1, 1, now=NOW, width=100)
+    assert "verifier  supersede (disagrees)" in card
+    assert "flags     supersedes_against_time · verifier_direction_disputed" in card
+    q.pop("verifier_kind")  # an older server: the agreement only
+    assert "verifier  disagrees" in render_card(q, 1, 1, now=NOW, width=100)
+    q.pop("verified")  # no second opinion was asked: no verifier line
+    assert "verifier" not in render_card(q, 1, 1, now=NOW, width=100).replace("verifier_direction", "")
 
 
 def test_supersedes_old_swaps_the_sides() -> None:
