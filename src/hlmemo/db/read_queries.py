@@ -644,6 +644,237 @@ async def raw_links(
     return [RawLink(*r) for r in await cur.fetchall()]
 
 
+#: B3 (D-207 #5): at most this many incoming ``superseded_by`` entries on one ``memory.raw`` envelope
+#: (newest first; the envelope repeats on every page, so the list is bounded)
+SUPERSEDED_BY_MAX = 5
+#: a part-scope entry carries its quote (the outdated statement), cut to this many characters
+SUPERSEDED_QUOTE_CHARS = 160
+#: B3: at most this many ``superseded_by`` entries on one ``memory.query`` hit
+HIT_SUPERSEDED_BY_MAX = 3
+
+
+@dataclass(slots=True)
+class SupersededBy:
+    """One incoming live ``supersedes`` link of a version (``memory.raw``): the superseding item
+    and the version of it that stands for the link (the one valid at the link's start, else its
+    newest visible row), whole or part scope, the link's validity and quote."""
+
+    logical_id: int
+    version_id: int
+    part: bool
+    quote: str
+    valid_from: datetime
+    valid_to: datetime | None
+
+
+def pinned_copy(link: str, version: str) -> str:
+    """SQL predicate: ``version`` is the version the link ``link`` pins or a BODY-IDENTICAL copy of
+    it: its ``supersedes_version_id`` chain inside the item, every hop with the same body (a close or
+    revision cut survivor, a write-path survivor, a reversal's restored copy). The chain walks
+    strictly older ids, so it ends. No authorization: ``pinned_applies`` adds it."""
+    return f"""{link}.dst_version_id IN (
+            WITH RECURSIVE pc(version_id, sup) AS (
+                SELECT ph.version_id, ph.supersedes_version_id FROM memory_versions ph
+                 WHERE ph.version_id = {version}
+              UNION ALL
+                SELECT pp.version_id, pp.supersedes_version_id
+                  FROM pc
+                  JOIN memory_versions pp ON pp.version_id = pc.sup
+                  JOIN memory_versions ph ON ph.version_id = {version}
+                 WHERE pp.version_id < pc.version_id AND pp.logical_id = ph.logical_id
+                   AND pp.body = ph.body)
+            SELECT pc.version_id FROM pc)"""
+
+
+def pinned_part_carry(link: str, version: str) -> str:
+    """SQL predicate (review 98 #1): a pinned PART link from ANOTHER item still speaks about a LATER
+    version of its target item that still quotes the link's quote ("TTL 60. Owner Alice." → "TTL
+    60. Owner Bob."): the pair ``(version, link)`` is one ``part_carries`` approved, passed as
+    ``%(carry)s`` (``"<version id>:<link id>"``). No authorization: ``pinned_applies`` adds it (the
+    quote is the pinned version's text)."""
+    return f"(({version})::text || ':' || {link}.link_id::text) = ANY(%(carry)s::text[])"
+
+
+async def part_carries(
+    conn: AsyncConnection, version_ids: list[int | None], pid: int, scopes: list[str]
+) -> list[str]:
+    """Review 98 #1: the ``"<version id>:<link id>"`` pairs for ``pinned_part_carry``. A candidate is
+    a ``supersedes`` link passing §4.4 (a) as a row, of part scope with a non-empty quote, from
+    ANOTHER item (a span revision's self-link never carries; a whole link never does), pinned to an
+    OLDER version of the same item as ``version``; SQL only prefilters on the quote being in the
+    NFC body. The decision is the write path's own rule for a link-only target
+    (``write_updates.span_quoted_once``, the ``SPAN_GUARDS``): the quote occurs EXACTLY ONCE in the
+    NFC body, on word boundaries — "TTL 60" never carries to "TTL 600", nor to a body quoting it
+    twice."""
+    from hlmemo.core.write_updates import span_quoted_once
+
+    vids = sorted({int(v) for v in version_ids if v is not None})
+    if not vids:
+        return []
+    cur = await conn.execute(
+        f"""
+        SELECT pv.version_id, l.link_id, pv.body, l.props->>'quote'
+          FROM memory_versions pv
+          JOIN links l ON l.dst_logical_id = pv.logical_id
+         WHERE pv.version_id = ANY(%(vids)s)
+           AND l.rel = 'supersedes' AND {AUTHZ_L}
+           AND l.dst_version_id < pv.version_id
+           AND l.src_logical_id <> l.dst_logical_id
+           AND COALESCE(l.props->>'scope', 'whole') = 'part'
+           AND length(COALESCE(l.props->>'quote', '')) > 0
+           AND strpos(normalize(pv.body, NFC), l.props->>'quote') > 0
+        """,  # noqa: S608 - fixed fragments
+        {"vids": vids, "pid": pid, "scopes": scopes},
+    )
+    return [f"{v}:{lk}" for v, lk, body, quote in await cur.fetchall() if span_quoted_once(body, quote)]
+
+
+def pinned_applies(link: str, version: str) -> str:
+    """SQL predicate (review 96 Astra #1): does the link ``link`` (an alias) speak about the version
+    ``version`` (an SQL expression; NULL never matches a pinned link)? Needs ``%(pid)s``,
+    ``%(scopes)s`` and ``%(carry)s`` (``part_carries`` of the versions read).
+
+    * An UNPINNED link (no ``dst_version_id``) is about its item: true (the caller checks time).
+    * A PINNED link (a D-118 update, a span revision's self-link, any link pinned to a version) is
+      true only when the caller may read the pinned version (§4.4 (a): its quote is that version's
+      text) AND ``version`` is that version or a body-identical copy of it (``pinned_copy``), or, a
+      part link from another item, a later version of the item that still holds its quote verbatim
+      (``pinned_part_carry``, review 98 #1). Never a later revision that does not quote it exactly
+      once on word boundaries, nor
+      any later revision for a whole link (it may be public where the pinned one was private)."""
+    return f"""({link}.dst_version_id IS NULL OR (
+        EXISTS (SELECT 1 FROM memory_versions pd
+                 WHERE pd.version_id = {link}.dst_version_id AND {_authz("pd")})
+        AND ({pinned_copy(link, version)}
+             OR {pinned_part_carry(link, version)})))"""
+
+
+async def incoming_supersedes(
+    conn: AsyncConnection, version: ReadVersion, pid: int, scopes: list[str], known_at: datetime
+) -> list[SupersededBy]:
+    """B3 (D-207 #5): the INCOMING ``supersedes`` links of ``version``'s item that are live in
+    transaction time at ``known_at`` (a reverted link is gone; an as-of cursor keeps its view). The
+    link row and the superseding item must pass §4.4 (a): a superseder the caller cannot see is
+    never named, and its link is not reported at all.
+
+    Which links speak about THIS version (review 96 Astra #1 / Sol #4):
+
+    * an UNPINNED link (no ``dst_version_id``: about the item over its validity) from another item:
+      its valid time must overlap the version's (``link.valid_from < version.valid_to`` and
+      ``link.valid_to > version.valid_from``; touching intervals do not overlap);
+    * a PINNED link (a D-118 update, a span revision's self-link, any link pinned to a version): only
+      for a caller who may read the PINNED version (§4.4 (a); its quote is that version's text), and
+      only on that version or a body-identical copy of it, or (a part link from another item) a
+      later version that still holds its quote verbatim (``pinned_applies``) — never on a later
+      revision that lost the quote (it may be public where the pinned one was private). Its valid time
+      overlaps the version's, or the version is a body-identical copy that ends exactly where the
+      link starts (the cut survivor of the very close or revision the link records).
+
+    Newest first, at most ``SUPERSEDED_BY_MAX``."""
+    carry = await part_carries(conn, [version.version_id], pid, scopes)
+    cur = await conn.execute(
+        f"""
+        SELECT l.src_logical_id, s.version_id, COALESCE(l.props->>'scope', 'whole') = 'part',
+               COALESCE(l.props->>'quote', ''), l.valid_from, nullif(l.valid_to, 'infinity')
+          FROM links l
+          JOIN LATERAL (
+                SELECT s.version_id FROM memory_versions s
+                 WHERE s.logical_id = l.src_logical_id AND {_authz("s")}
+                   AND s.recorded_at <= %(known_at)s AND s.superseded_at > %(known_at)s
+                 ORDER BY (s.valid_from <= l.valid_from AND s.valid_to > l.valid_from) DESC,
+                          s.version_id DESC
+                 LIMIT 1) s ON true
+         WHERE l.rel = 'supersedes' AND l.dst_logical_id = %(lid)s AND {AUTHZ_L}
+           AND l.recorded_at <= %(known_at)s AND l.superseded_at > %(known_at)s
+           AND l.valid_to > %(valid_from)s
+           AND CASE WHEN l.dst_version_id IS NULL THEN
+                    l.src_logical_id <> l.dst_logical_id
+                    AND l.valid_from < coalesce(%(valid_to)s::timestamptz, 'infinity')
+               ELSE
+                    {pinned_applies("l", "%(vid)s::bigint")}
+                    AND (l.valid_from < coalesce(%(valid_to)s::timestamptz, 'infinity')
+                         OR (l.dst_version_id <> %(vid)s AND l.valid_from = %(valid_to)s::timestamptz
+                             AND {pinned_copy("l", "%(vid)s::bigint")}))
+               END
+         ORDER BY l.valid_from DESC, l.link_id DESC
+         LIMIT %(limit)s
+        """,  # noqa: S608 - fixed fragments
+        {
+            "lid": version.logical_id,
+            "vid": version.version_id,
+            "pid": pid,
+            "scopes": scopes,
+            "valid_from": version.valid_from,
+            "valid_to": version.valid_to,
+            "known_at": known_at,
+            "limit": SUPERSEDED_BY_MAX,
+            "carry": carry,
+        },
+    )
+    return [SupersededBy(int(a), int(b), bool(c), str(d), e, f) for a, b, c, d, e, f in await cur.fetchall()]
+
+
+async def superseded_hits(
+    conn: AsyncConnection,
+    version_ids: list[int],
+    *,
+    pid: int,
+    scopes: list[str],
+    valid_at: datetime,
+    known_at: datetime,
+    statuses: list[str],
+) -> dict[int, list[tuple[int, bool]]]:
+    """B3 (D-207 #5), ONE query: ``{hit version id: [(superseder's version id, part)]}`` over the
+    live ``supersedes`` links (valid and known at ``(valid_at, known_at)``, the link row passing
+    §4.4 (a)) that target the item of one of ``version_ids`` from ANOTHER item. The superseder must
+    be a live item of the caller's view (§4.4 (a) + the same temporal point and statuses as the
+    query): a hidden one is never named and does not flag the hit.
+
+    Review 96 Astra #1: never by logical id alone. An unpinned link flags any live version of its
+    item; a PINNED link flags a hit only when the caller may read the pinned version (§4.4 (a)) and
+    the hit is that version or a body-identical copy of it, or a later version still quoting a part
+    link verbatim (``pinned_applies``, the rule of ``incoming_supersedes``).
+    One entry per superseding item (a whole link wins over a part link of the same item); whole
+    entries first, then newest; at most ``HIT_SUPERSEDED_BY_MAX`` per hit."""
+    if not version_ids:
+        return {}
+    carry = await part_carries(conn, version_ids, pid, scopes)
+    cur = await conn.execute(
+        f"""
+        SELECT DISTINCT ON (h.version_id, l.src_logical_id)
+               h.version_id, s.version_id, COALESCE(l.props->>'scope', 'whole') = 'part'
+          FROM memory_versions h
+          JOIN links l ON l.dst_logical_id = h.logical_id
+          JOIN LATERAL (
+                SELECT s.version_id FROM memory_versions s
+                 WHERE s.logical_id = l.src_logical_id AND {_authz("s")} AND {_temporal("s")}
+                   AND s.status = ANY(%(statuses)s)
+                 ORDER BY s.version_id DESC LIMIT 1) s ON true
+         WHERE h.version_id = ANY(%(vids)s)
+           AND l.rel = 'supersedes' AND l.src_logical_id <> l.dst_logical_id AND {AUTHZ_L} AND {TEMPORAL_L}
+           AND {pinned_applies("l", "h.version_id")}
+         ORDER BY h.version_id, l.src_logical_id,
+                  COALESCE(l.props->>'scope', 'whole') = 'part', l.link_id DESC
+        """,  # noqa: S608 - fixed fragments
+        {
+            "vids": sorted(set(version_ids)),
+            "pid": pid,
+            "scopes": scopes,
+            "valid_at": valid_at,
+            "known_at": known_at,
+            "statuses": statuses,
+            "carry": carry,
+        },
+    )
+    out: dict[int, list[tuple[int, bool]]] = {}
+    for hit, vid, part in await cur.fetchall():
+        out.setdefault(int(hit), []).append((int(vid), bool(part)))
+    return {
+        hit: sorted(entries, key=lambda e: (e[1], -e[0]))[:HIT_SUPERSEDED_BY_MAX]
+        for hit, entries in out.items()
+    }
+
+
 async def endpoint_authz(
     conn: AsyncConnection, pid: int, scopes: list[str], *, logical_ids: list[int], version_ids: list[int]
 ) -> tuple[set[int], set[int]]:
@@ -731,6 +962,9 @@ async def record_access(
 
 __all__ = [
     "AUTHZ_MV",
+    "HIT_SUPERSEDED_BY_MAX",
+    "SUPERSEDED_BY_MAX",
+    "SUPERSEDED_QUOTE_CHARS",
     "TEMPORAL_MV",
     "TITLE_TSV",
     "Candidate",
@@ -741,14 +975,20 @@ __all__ = [
     "RawLink",
     "ReadVersion",
     "SourceEvent",
+    "SupersededBy",
     "card_version",
     "chunk_spans",
     "clock_now",
     "drilldown_links",
     "endpoint_authz",
     "hit_rows",
+    "incoming_supersedes",
     "indexing_pending",
     "lexical_candidates",
+    "part_carries",
+    "pinned_applies",
+    "pinned_copy",
+    "pinned_part_carry",
     "pinned_sources",
     "project_slugs",
     "raw_links",
@@ -756,6 +996,7 @@ __all__ = [
     "resolve_project",
     "set_trigram_threshold",
     "source_event",
+    "superseded_hits",
     "term_stats",
     "term_stats_key",
     "unseen_write_age",

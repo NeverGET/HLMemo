@@ -2,7 +2,7 @@
 
 Two deterministic rules, applied after RRF fusion and the §4.9 dedupe:
 
-1. **Linked supersession** (``db/librarian_queries.superseded_among``): when two hits are joined
+1. **Linked supersession** (``db/librarian_queries.supersession_among``): when two hits are joined
    by a live ``supersedes`` link (applied — a proposal is only a question row), the superseded one
    is removed from the hits. It stays reachable through drilldown/raw and at a ``valid_at`` before
    the link's ``valid_from``.

@@ -308,6 +308,16 @@ async def cross_project_excluded(
     return {int(pid) for pid, value in await cur.fetchall() if value == "exclude"}
 
 
+def _version_map(logical_ids: list[int], version_of: dict[int, int | None] | None) -> tuple[list, list]:
+    """``(logical ids, the version read for each or None)`` for ``read_queries.pinned_applies``: a
+    pinned link speaks only about the version the caller reads (its pinned version, a body-identical
+    copy, or a later version still quoting a part link verbatim); a
+    logical id without one version (none given, or several) matches no pinned link."""
+    lids = sorted(set(logical_ids))
+    vids = [(version_of or {}).get(lid) for lid in lids]
+    return lids, vids
+
+
 async def supersession_among(
     conn: AsyncConnection,
     logical_ids: list[int],
@@ -316,6 +326,7 @@ async def supersession_among(
     scopes: list[str],
     valid_at: datetime,
     known_at: datetime,
+    version_of: dict[int, int | None] | None = None,
 ) -> tuple[set[int], list[tuple[int, int, str]]]:
     """D-057 read side, ONE query: ``(hidden, partial)`` over the live ``supersedes`` links between
     two ids of ``logical_ids`` (the link row passes authz (a) and is live at ``(valid_at,
@@ -325,25 +336,37 @@ async def supersession_among(
     ``partial``: ``(superseding, superseded, quoted span)`` of fact-level links
     (``props.scope = part``, D-076): the superseded item still holds valid statements, so it is
     never hidden; it is ranked after the item that replaced the quoted statement only when the query
-    matched that statement (``core/supersession`` rule 3)."""
-    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L
+    matched that statement (``core/supersession`` rule 3).
+
+    Review 96 Astra #1: a PINNED link (``dst_version_id``) counts only for the superseded item's
+    version the caller reads (``version_of``: logical id → that hit's version) when it is the pinned
+    version, a body-identical copy, or (a part link, review 98) a later version still quoting it, and
+    the caller may read the pinned one (``read_queries.pinned_applies``); an unpinned link is
+    unchanged."""
+    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L, part_carries, pinned_applies
 
     if len(logical_ids) < 2:
         return set(), []
+    lids, vids = _version_map(logical_ids, version_of)
+    carry = await part_carries(conn, vids, pid, scopes)  # review 98 #1
     cur = await conn.execute(
         f"""
         SELECT DISTINCT l.src_logical_id, l.dst_logical_id, COALESCE(l.props->>'scope', 'whole') = 'part',
                COALESCE(l.props->>'quote', '')
           FROM links l
+          JOIN unnest(%(lids)s::bigint[], %(vids)s::bigint[]) AS hv(lid, vid) ON hv.lid = l.dst_logical_id
          WHERE l.rel = 'supersedes' AND l.src_logical_id = ANY(%(lids)s) AND l.dst_logical_id = ANY(%(lids)s)
            AND l.src_logical_id <> l.dst_logical_id AND {AUTHZ_L} AND {TEMPORAL_L}
+           AND {pinned_applies("l", "hv.vid")}
         """,  # noqa: S608 - fixed fragments
         {
-            "lids": sorted(set(logical_ids)),
+            "lids": lids,
+            "vids": vids,
             "pid": pid,
             "scopes": scopes,
             "valid_at": valid_at,
             "known_at": known_at,
+            "carry": carry,
         },
     )
     hidden: set[int] = set()
@@ -364,49 +387,42 @@ async def supersessions_of(
     scopes: list[str],
     valid_at: datetime,
     known_at: datetime,
+    version_of: dict[int, int | None] | None = None,
 ) -> list[tuple[int, int, bool, str]]:
     """D-184 read side: ``(superseding, superseded, is part-scope, quote)`` of every live
     ``supersedes`` link whose TARGET is one of ``logical_ids`` (its source may be any item: the
     caller resolves and authorizes it). The same authz (a) and temporal filter as
-    ``supersession_among``; newest link first."""
-    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L
+    ``supersession_among``, and the same review 96 rule for a PINNED link (it counts only for the
+    version ``version_of`` names, its quote only for a reader of the pinned version); newest link
+    first."""
+    from hlmemo.db.read_queries import AUTHZ_L, TEMPORAL_L, part_carries, pinned_applies
 
     if not logical_ids:
         return []
+    lids, vids = _version_map(logical_ids, version_of)
+    carry = await part_carries(conn, vids, pid, scopes)  # review 98 #1
     cur = await conn.execute(
         f"""
         SELECT l.src_logical_id, l.dst_logical_id, COALESCE(l.props->>'scope', 'whole') = 'part',
                COALESCE(l.props->>'quote', '')
           FROM links l
-         WHERE l.rel = 'supersedes' AND l.dst_logical_id = ANY(%(lids)s)
+          JOIN unnest(%(lids)s::bigint[], %(vids)s::bigint[]) AS hv(lid, vid) ON hv.lid = l.dst_logical_id
+         WHERE l.rel = 'supersedes'
            AND l.src_logical_id <> l.dst_logical_id AND {AUTHZ_L} AND {TEMPORAL_L}
+           AND {pinned_applies("l", "hv.vid")}
          ORDER BY l.valid_from DESC, l.link_id DESC
         """,  # noqa: S608 - fixed fragments
         {
-            "lids": sorted(set(logical_ids)),
+            "lids": lids,
+            "vids": vids,
             "pid": pid,
             "scopes": scopes,
             "valid_at": valid_at,
             "known_at": known_at,
+            "carry": carry,
         },
     )
     return [(int(s), int(d), bool(p), str(q)) for s, d, p, q in await cur.fetchall()]
-
-
-async def superseded_among(
-    conn: AsyncConnection,
-    logical_ids: list[int],
-    *,
-    pid: int,
-    scopes: list[str],
-    valid_at: datetime,
-    known_at: datetime,
-) -> set[int]:
-    """The hidden ids of ``supersession_among`` (whole-item supersession only)."""
-    hidden, _partial = await supersession_among(
-        conn, logical_ids, pid=pid, scopes=scopes, valid_at=valid_at, known_at=known_at
-    )
-    return hidden
 
 
 async def project_slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[int, str]:
@@ -434,7 +450,6 @@ __all__ = [
     "project_slugs",
     "readable_projects",
     "subject_vectors",
-    "superseded_among",
     "supersession_among",
     "supersessions_of",
     "vector_list",

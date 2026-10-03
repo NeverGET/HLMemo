@@ -1,0 +1,76 @@
+{
+  "profile": "openrouter-gpt6-luna",
+  "scenarios": {
+    "updates": 30,
+    "controls": 10
+  },
+  "reps": 3,
+  "complete": true,
+  "variants": {
+    "shipped": {
+      "all": {
+        "calls": 120,
+        "errors": 0,
+        "item_precision": 0.904,
+        "item_recall": 0.944,
+        "span_precision": 0.904,
+        "span_recall": 0.944,
+        "abstention": 0.867,
+        "server_apply_rate": 0.944,
+        "revise_mode_rate": 0.944,
+        "predicted_updates": 94,
+        "usd": 0.01900662,
+        "latency_p50_s": 1.78,
+        "latency_p95_s": 3.38
+      },
+      "per_rep": [
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.906,
+          "item_recall": 0.967,
+          "span_precision": 0.906,
+          "span_recall": 0.967,
+          "abstention": 0.8,
+          "server_apply_rate": 0.967,
+          "revise_mode_rate": 0.967,
+          "predicted_updates": 32,
+          "usd": 0.010536,
+          "latency_p50_s": 1.78,
+          "latency_p95_s": 3.08
+        },
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.9,
+          "item_recall": 0.9,
+          "span_precision": 0.9,
+          "span_recall": 0.9,
+          "abstention": 1.0,
+          "server_apply_rate": 0.9,
+          "revise_mode_rate": 0.9,
+          "predicted_updates": 30,
+          "usd": 0.00422056,
+          "latency_p50_s": 1.9,
+          "latency_p95_s": 3.76
+        },
+        {
+          "calls": 40,
+          "errors": 0,
+          "item_precision": 0.906,
+          "item_recall": 0.967,
+          "span_precision": 0.906,
+          "span_recall": 0.967,
+          "abstention": 0.8,
+          "server_apply_rate": 0.967,
+          "revise_mode_rate": 0.967,
+          "predicted_updates": 32,
+          "usd": 0.00425006,
+          "latency_p50_s": 1.77,
+          "latency_p95_s": 3.3
+        }
+      ]
+    }
+  },
+  "usd_total": 0.01900662
+}

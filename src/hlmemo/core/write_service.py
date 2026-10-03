@@ -22,6 +22,11 @@ Order inside the transaction (§3 *Authorization order* / *Transaction*):
    stored ``result``, supersede (every version *and every link segment* overlapping the new
    interval), insert versions / chunks / links / embed jobs.
 
+D-118 ``items[].updates`` (``core/write_updates.py``) ride along: targets resolved with §4.4 (a)
+before any lock and locked with the batch's items, validated after the locks (a rejected update
+never fails the batch), materialized at the write's clock, recorded in ``resolved.updates`` and
+applied after the batch's links (replay: the same point).
+
 The caller passes an *idle* connection; the service opens the transaction and commits it (an
 outer transaction, if any, turns it into a savepoint and the caller commits). The MCP handler
 passes the verbatim tool arguments as ``req`` (a dict is used as-is for hashing) or explicitly as
@@ -76,6 +81,7 @@ from hlmemo.core.write_models import (
     WriteResult,
     parse_request,
 )
+from hlmemo.core.write_updates import WriteUpdates, pessimistic_ack_entries
 from hlmemo.db import import_queries as iq
 from hlmemo.db import write_queries as q
 
@@ -690,7 +696,8 @@ async def _check_content(conn: AsyncConnection, deps: WriteDeps, plans: list[_Pl
 
 
 def _pessimistic_ack(batch: _Batch, deps: WriteDeps) -> None:
-    """§3 budget rule: the ack size is computed from the item count before any mutation."""
+    """§3 budget rule: the ack size is computed from the item count (and the D-118 update count)
+    before any mutation."""
     ack: dict[str, Any] = {
         "request_id": batch.request_id,
         "replayed": False,
@@ -707,6 +714,9 @@ def _pessimistic_ack(batch: _Batch, deps: WriteDeps) -> None:
     }
     if batch.kind == "call_the_day":
         ack["session_note_clue"] = f"v{_PESSIMISTIC_ID}"
+    n_updates = sum(len(it.updates or []) for it in batch.items)
+    if n_updates:
+        ack["updates"] = pessimistic_ack_entries(n_updates, deps.meter)
     used = deps.meter.settle(ack, batch.budget)
     if used > batch.budget:
         raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {batch.budget} cannot hold the ack", min=used)
@@ -724,14 +734,19 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
 
     # Hidden targets must fail before *any* contended key can disclose their existence.
     await _authorize_revisions(conn, ctx, batch, plans)
+    # D-118: update targets are resolved (§4.4 (a)) before any lock too; a hidden one is never locked
+    updates = WriteUpdates(batch.items) if batch.kind == "write" else None
+    update_lids = await updates.resolve(conn, ctx, home.project_id) if updates else []
     # Serialise same-key requests and revisions of the same logical items (§1.1 head check).
     await q.lock_request_key(conn, home.project_id, ctx.device_id, batch.request_id)
     if batch.session_id is not None:
         await q.lock_session_key(conn, home.project_id, batch.session_id)
+    # ONE sorted acquisition over every item the batch can change (J/D-095: items first)
     await q.lock_logical_ids(
         conn,
         [p.logical_id for p in plans if p.logical_id is not None]
-        + [lid for lid, _ in batch.expected_versions],
+        + [lid for lid, _ in batch.expected_versions]
+        + update_lids,
     )
 
     # Reload after waiting: scope/head may have changed while acquiring the locks.
@@ -792,6 +807,15 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     await _resolve_link_targets(conn, ctx, home, plans, cache)
     await _check_content(conn, deps, plans)
     _pessimistic_ack(batch, deps)
+    if updates:
+        # D-118, after the item locks: visibility, batch conflicts, capability, the D-083 policy
+        # (project rows FOR SHARE), the version, the kinds, the guards — per update, never fatal
+        await updates.validate(conn, ctx, home, plans)
+        if updates.has_pending():
+            from hlmemo.librarian.events import lock_event_refs
+
+            # the event's FK rows now, so nothing waits between the clock below and the event
+            await lock_event_refs(conn, home.project_id, ctx.device_id)
 
     # ---- temporal resolution -------------------------------------------------------------
     now = await q.clock_now(conn)
@@ -860,6 +884,8 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
                     (old, seg)
                     for seg in surviving_segments(old.valid_from, old.valid_to, p.interval.end, None)
                 )
+    if updates:  # D-118: the records at this clock (the span revision build / the close)
+        superseded_recorded.extend(await updates.materialize(conn, home, plans, now))
     T = select_T(now, *superseded_recorded)
 
     # ---- chunking + id allocation ---------------------------------------------------------
@@ -887,6 +913,8 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
         survivor_vids[p.index] = [version_ids.pop(0) for _ in p.survivors]
         p.version_id = version_ids.pop(0)
     by_index = {p.index: p for p in plans}
+    if updates:  # D-118: the carrying items' ids, the link ids, the event tags
+        await updates.finalize(conn, plans, event_id)
 
     # ---- build rows + resolved payload ---------------------------------------------------
     T_json = fmt_ts(T)
@@ -1094,6 +1122,8 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
             }
         )
 
+    if updates:
+        jobs.extend(updates.embed_jobs())  # the revised/closed rows re-embed through the outbox
     resolved: dict[str, Any] = {
         "hash_version": HASH_VERSION_VERBATIM,
         "recorded_at": T_json,
@@ -1111,6 +1141,8 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     }
     if batch.librarian_priority is not None:  # W2d/W1.5: replayable for the W2b enqueue
         resolved["librarian_priority"] = batch.librarian_priority
+    if updates:  # D-118: every update's outcome and its recorded mutations (replay applies them)
+        resolved["updates"] = updates.resolved()
 
     librarian_jobs = await _librarian_jobs(conn, ctx, deps, batch, plans, event_id)
     if librarian_jobs:  # W2b: recorded with the event; replay re-creates the rows
@@ -1132,6 +1164,8 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     }
     if batch.kind == "call_the_day":
         ack["session_note_clue"] = f"v{plans[0].version_id}"
+    if updates:
+        ack["updates"] = updates.ack()
     used = deps.meter.settle(ack, batch.budget)
     if used > batch.budget:  # cannot happen after _pessimistic_ack; belt and braces
         raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {batch.budget} cannot hold the ack", min=used)
@@ -1184,6 +1218,11 @@ async def _execute(conn: AsyncConnection, ctx: AuthContext, deps: WriteDeps, bat
     )
     for ln in links:
         await q.insert_link(conn, ln)
+    if updates and updates.records():
+        from hlmemo.librarian.actor import apply_mutations
+
+        # D-118: after the batch's versions and links (replay applies them at the same point)
+        await apply_mutations(conn, updates.records(), event_id, T)
     for job in jobs:
         await q.insert_job(
             conn,
