@@ -308,6 +308,24 @@ class W0DeployTest(unittest.TestCase):
         self.assertIn("records no previous release", output)
         self.assertFalse(any("stop" in r for r in rows))
 
+    def test_rollback_warns_when_the_target_model_lacks_the_edge_network(self):
+        """Review 107 #3 (D-242): a rollback to a release whose Compose model has no dual-stack `edge`
+        network warns loudly (Caddy falls back to the shared IPv6 bucket); with `edge` it does not."""
+        cases = (
+            ("# previous release model\nname: old\n", True),
+            ("name: old\nservices:\n  caddy:\n    networks:\n      edge: {}\nnetworks:\n  edge: {}\n", False),
+        )
+        for previous_model, warned in cases:
+            with self.subTest(warned=warned):
+                root, env = self.cutover()
+                (root / "app/deploy/compose.previous.yaml").write_text(previous_model)
+                result, output, _ = self.remote(root, env, "--rollback")
+                self.assertEqual(0, result.returncode, output)
+                self.assertEqual(
+                    warned, f"WARNING: rollback target {PREVIOUS} has no 'edge' network" in output
+                )
+                self.assertEqual(warned, "/usr/local/sbin/hlm-ipv6-maint.sh" in output)
+
     def test_rollback_to_pre_w0_release_is_refused_unconditionally(self):
         """D-065: W0a is a one-way door, whatever the env backups contain."""
         root, env = self.cutover()
