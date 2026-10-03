@@ -73,4 +73,9 @@ Updated 2026-09-23. Source of each item in parentheses.
 - Risk judge: make the fast profile primary, or raise the 4 s cap after a G-LIVE-C re-check, and log judge outcomes (see above).
 - Registration limiter: key IPv6 clients by /64 like the body admission already does (middleware.py:174-182). Today it keys by
   single address (devices.py:97). Dormant while registration is closed; do it before registration opens.
+- **Librarian pending-queue hazard (2026-10-03):** 298 owner-accepted proposals are `accepted_pending`; independent verification found
+  2 real contradictions, 139 supersessions and 141 no-conflicts. `role set assistant` would mass-apply ALL of them as `contradicts`/`refines`
+  (every eligible batch, every project, no preview or subset). Needed BEFORE any promotion: an evented `ops librarian withdraw|resolve`
+  (per question: reject, or mark superseded by a curated link), and a promotion pre-check that refuses while unverified accepted_pending
+  rows exist. `hlm review` should show the librarian's own doubts (verifier kind and direction flags) next to each proposal.
 

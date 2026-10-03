@@ -368,6 +368,11 @@ The live checkout carries the change as a tracked edit until the next release: r
 `edge` network (main 44d5f38 or later): Caddy would move back to the shared IPv6 bucket.
 
 
+> **Librarian role promotion: DO NOT** run `ops librarian role set assistant|autonomous` while the project has
+> `accepted_pending` proposals that were not independently verified (2026-10-03: 298 pending, of which only 2 are real contradictions).
+> A promotion mass-applies every eligible pending batch in every project. Check first with
+> `ops librarian audit --project <slug> --status accepted_pending --json`. See BACKLOG "Librarian pending-queue hazard".
+
 ## First deploy and admin bootstrap
 
 Install all five completed private env files, with `HLM_BACKUP_DIR=/var/backups/hlmemo` in `backup.env`:
