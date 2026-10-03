@@ -2209,3 +2209,18 @@ D-246 | 2026-10-03 | ACCEPTED (owner) | **Hybrid memory model. Project chats wri
   3. `/hlm-library` operator skill;
   4. `/hlm-migrate` skill;
   5. a pilot project named by the owner.
+D-247 | 2026-10-03 | ACCEPTED (owner: "Install all 4") | **"How to HLMemo" is installed on the owner's machine (D-246 steps 2-3). Every chat in a mapped project starts with the protocol digest plus its brief, and the `hlmemo` skill holds the full guide, including catch-up and migration.**
+
+- **Protocol v1** (`docs/protocol/HLMEMO-PROTOCOL.md`): 21 writer rules grounded in code; operator duties; migration (§4) and catch-up (§4b) procedures; an enforcement matrix with 5 planned server validations (PV-1 secret patterns, PV-2 no raw supersedes links, PV-3 blank text, PV-4 reserved project, PV-5 lesson status conflict); the injected digest (§6, 40 lines).
+- **Skill** `integrations/claude/skills/hlmemo` (SKILL.md, 360 lines, plus the bundled protocol copy). All 12 example calls validate against the server request models.
+- **Hook:** the SessionStart brief now injects the digest (slug filled in) and the brief for every mapped project. It still injects the digest when the brief fails. An unmapped folder is a no-op (about 33 ms); `-P` avoids modules shadowed by the session's folder.
+- **Installed:**
+  - `~/.claude/skills/hlmemo`, a symlink to the repo;
+  - 6 more `[projects]` mappings (7 projects) in `~/.config/hlm/capture.toml`;
+  - a global SessionStart hook in `~/.claude/settings.json`, with the server URL and device name in the command (not secrets; the token comes from the keychain);
+  - the HLMemo-local duplicate removed (capture stays HLMemo-only);
+  - an "HLMemo first, for registered projects" section at the top of `~/.claude/CLAUDE.md`, with NotebookLM-first kept for unregistered projects.
+  - Backups are in `~/.claude/backups/hlmemo-install-2026-10-03/`.
+- **Verified:** three migrated projects get the digest plus their brief; an unmapped folder gets nothing.
+- **Gap found:** the migrated projects have no project card. A catch-up may now create the initial card (the server already supports it: `card_update` without `expected_version_id`).
+- **Next:** the owner runs "do the HLMemo catch-up" per integrated project; the PV-1..PV-5 server-validation release; the `/hlm-library` operator skill; a migration pilot.
