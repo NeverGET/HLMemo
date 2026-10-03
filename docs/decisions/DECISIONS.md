@@ -2033,3 +2033,15 @@ D-237 | 2026-10-03 | ACCEPTED (owner) | **R4.3 plan adopted (docs/decisions/R4.3
 - Pulled superseders: the old hit stays visible and flagged, with the superseder right after it.
 - The F4 clip and the rerank-preview filter are deferred.
 - Ship rule: tightening ships on no regression; loosening (notation variants, extractive repair) ships only with a measured gain and 0 harmful.
+D-238 | 2026-10-03 | ACCEPTED (owner) | **Three owner decisions.**
+
+(1) HLMemo's memory of itself:
+- It stopped at D-131: the docs were imported once, ad hoc. They are re-imported into project hlmemo now, and an automatic doc→memory sync is designed so the docs never drift from memory again.
+- Evidence: the R4.3 superseder pull-in surfaced only stale R3 caps for the caps query, because no item held the current values.
+
+(2) `hlm review` is released, with its residual risk accepted after 2 review rounds (consults 101/102).
+- The owner-only `hlm.questions` read tool requires the owner token.
+- The CLI reads the token only from the keychain, and only in an interactive terminal.
+- Residual risk: an agent that deliberately fakes a terminal and reads the keychain. Such an agent already has owner-level access, and the tool shows only what the device can read anyway.
+
+(3) `hlm.export` stays callable with a device token, as is: it bulk-reads only what that device can read. This is accepted risk.
