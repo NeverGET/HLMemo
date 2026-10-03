@@ -168,12 +168,18 @@ async def promotion_release(
     """The promotion guard's count (D-244): per home project, the ``approved`` and
     ``accepted_pending`` questions the librarian may apply once this decision is recorded.
 
-    ``releasable``'s rule, per QUESTION: every unexpired one (not ``widen_scope``, which only an
-    owner's ``memory.answer`` applies) whose touched projects NOW (home, recorded ``project_ids``,
-    the actions' current projects) are all above observer after the decision. An ``accepted_pending``
-    answer is released by the jobs this decision (or the sweeper) queues; an ``approved`` one by the
-    ``apply_batch`` job its batch decision queued, which a worker above observer then runs. A
-    demotion releases nothing. The apply path still rechecks each one (TTL, staleness, authority)."""
+    An UPPER BOUND of ``releasable``'s rule, per QUESTION: every unexpired one (not ``widen_scope``,
+    which only an owner's ``memory.answer`` applies) whose home and recorded ``project_ids`` are all
+    above observer after the decision. The actions' CURRENT projects are deliberately not consulted
+    (review 107 #1): a concurrent project-scope revision can drop an observer project from them
+    without the role-order lock and so make an answer releasable after this count; those
+    projects only ever add an observer, so ignoring them can over-count, never under-count. An
+    ``accepted_pending`` answer is released by the jobs this decision (or the sweeper or a
+    ``release_pending`` job) queues; an ``approved`` one by the ``apply_batch`` job its batch decision
+    queued, which a worker above observer then runs. The status changes that make a question
+    releasable (``memory.answer``, a batch decision) hold the role-order lock SHARED, so under this
+    decision's EXCLUSIVE lock the count is complete. A demotion releases nothing. The apply path
+    still rechecks each one (TTL, staleness, authority, the actions' projects)."""
     if role == "observer":
         return {}
     from hlmemo.librarian.tasks.apply_batch import proposal_actions
@@ -189,10 +195,9 @@ async def promotion_release(
     )
     out: dict[int, dict[str, int]] = {}
     for home, status, pids, proposal in await cur.fetchall():
-        actions = proposal_actions(proposal)
-        if any(a.get("op") == "widen_scope" for a in actions):
+        if any(a.get("op") == "widen_scope" for a in proposal_actions(proposal)):
             continue  # D-086 §1: never released by the batch path
-        touched = {int(home), *(int(x) for x in pids)} | await action_projects(conn, actions)
+        touched = {int(home), *(int(x) for x in pids)}
         for p in sorted(touched - roles.keys()):
             roles[p] = await _role_after(conn, role, decision_project, p)
         if all(roles[p] != "observer" for p in touched):
@@ -388,6 +393,10 @@ async def record_batch_decision(
     """
     if decision not in ("accept", "reject"):
         raise ToolError("E_INVALID_ARG", "decision must be accept or reject")
+    # review 107 #1: an approval makes questions releasable, so it takes the role-order lock SHARED
+    # before the question rows (the apply path's order): a promotion (EXCLUSIVE) counts it wholly
+    # or not at all; an approval never commits between the promotion guard's count and its event
+    await lock_role_order(conn, exclusive=False)
     rows = await batch_questions(conn, batch_id, "open")
     if not rows:
         raise ToolError("E_NOT_FOUND", "batch not found")
