@@ -81,4 +81,8 @@ Updated 2026-09-23. Source of each item in parentheses.
   Built on branch `r4.4-librarian-queue` (awaiting dual review, then deploy + the RUNBOOK withdraw run): `ops librarian withdraw`
   (status `withdrawn`, migration 0011, `--resolved-by-link` as metadata), the `role set` guard (`--release-pending N`, `--dry-run`)
   and the review card's `verifier`/`flags` lines.
+- **remote_gates drill default (2026-10-03):** `remote_gates.sh` runs the backup/restore drill by DEFAULT, and the drill restores over
+  LIVE data. On 10-03 it ran on prod after every release; the audit of all 8 safety dumps found only the drill's own marker
+  and its librarian note in each window, so 0 real data was lost (D-245). Fix: make the drill opt-in (`--drill`, refused unless the
+  state dir or URL is marked non-prod or `--maintenance-window` is given) and keep `--no-drill` accepted as a no-op.
 

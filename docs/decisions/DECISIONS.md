@@ -2177,3 +2177,16 @@ D-244 | 2026-10-03 | ACCEPTED (owner: "Apply the 26 authoritative", "Only presen
   - a repeatable curate command: librarian candidates → 2 verifier agents → authority and quote gate → preview → apply part-scope `supersedes`;
   - measure it on a fresh batch before the doc→memory sync relies on it;
   - `hlm review` shows the librarian's own doubts (verifier kind, direction flags).
+D-245 | 2026-10-03 | ACCEPTED (owner: "Deploy + withdraw now") | **R4.4a is LIVE (e3ccb84): librarian `withdraw` (migration 0011), the promotion guard, and the review card shows the librarian's doubts. 280 verified-wrong proposals are withdrawn and 18 correct ones kept. The gates' restore drill had run on prod; an audit shows no real data lost.**
+
+- **Release path:** builder branch → 2 review rounds (consults 107/108, Astra low + Sol xhigh).
+  - Round 1, NO-GO: 2 HIGH (the guard under-counted a concurrent batch approval; a refused downgrade could leave a staged CHECK) plus 3 MEDIUM. Each was fixed with a regression test that failed on the old code.
+  - Round 2: GO-with-fixes; 2 MEDIUMs fixed (the edge warning also in the automatic failed-deploy recovery; an exact kept-check).
+- **Rehearsed twice** on restored prod dumps; the second dump held the owner's 298 accepts. Upgrade, the guard refusing 298, the fail-closed withdraw (exactly 280), the guard showing 18, replay identity (669 questions) and the downgrade refusal all PASS. Suites: unit 1516, integration 688, deploy 257, 0 failures.
+- **Deploy:** Hostinger snapshot 18:54Z; the live IPv6 compose edit was reset (byte-identical to the release); `deploy.sh --accept-compose-change=<the reviewed edge-compose sha>` ran.
+  - Result: alembic head `0011_question_withdrawn`; Caddy still on edge; 3 distinct client IPv6 peers verified; gates 11/11.
+- **Withdraw** (the RUNBOOK fail-closed script, verbatim plus placeholders): ids PASS (298 pending / 18 keep / 280 withdraw, disjoint and covering); preview PASS 280; withdraw PASS 280 in one event (5746). Kept PASS: a promotion would now release exactly 18 (hlmemo accepted_pending 18, approved 0).
+  - The librarian stays in observer mode. The 18 can only be applied by an explicit `role set … --release-pending 18`.
+- **Drill finding (operator error):** `remote_gates.sh` runs the backup/restore drill by default, and it restores over LIVE data. It ran on prod after every release on 09-30, 10-01 and 10-03.
+  - Audit of all 8 windows (8-30 s each), using the pre-restore safety dumps (metadata only): the only events wiped were the drill's own `judge-probe` marker write and, twice, its librarian note. **0 real data lost.**
+  - Fixes: the prod gate command always uses `--no-drill`; a lesson in hlmemo (v2340); a BACKLOG item to make the drill opt-in.
