@@ -195,6 +195,7 @@ server and `--admin` on the client; in production it is disabled (D-061).
 | `hlm project create <slug> [--name N]` · `list` | `create` needs device 1 (`--admin`) |
 | `hlm query "<q>" [--budget N] [--kind K ...] [--valid-at TS] [--known-at TS] [--include-archived]` | prints the compact, sorted JSON of `memory.query` |
 | `hlm close --notes ".." \| --notes-file F [--decision ..]* [--lesson "title::body"]* [--card FILE --card-version ID] [--session-id UUID] [--budget N]` | `memory.call_the_day`; `request_id` is a fresh UUID; `HLM_SESSION_ID` env sets the session id |
+| `hlm review [--project P] [--batch N] [--kind K] [--cursor C] [--dry-run] [--decisions FILE [--yes]]` · `hlm review --set-owner-token` | LLM-free batch review of the librarian's open questions (a/r/s/o/q; `memory.answer` per decision). The full listing (`hlm.questions`) is owner-only: the owner token comes from the keychain (`--set-owner-token`), is read only when stdin and stdout are terminals and is never taken from the environment; otherwise the newest notices are listed. Setup, rotation and threat model: `docs/review/README.md` |
 
 Error output for HTTP/tool errors is `error <CODE>: <message>` on stderr (+ the JSON envelope when
 details exist). Exit codes: `E_AUTH`/`E_DEVICE_PENDING`/`E_FORBIDDEN*` → 77, `E_UNAVAILABLE` → 69,

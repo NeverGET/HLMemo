@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hlmemo.core import export_service
-from hlmemo.server.tools import answer, ask, handlers, query, risk, schemas
+from hlmemo.server.tools import answer, ask, handlers, query, questions, risk, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
 
@@ -25,6 +25,9 @@ class ToolSpec:
     app_bound: bool = False
     #: ``listed(settings)``: advertise the tool on tools/list only when true (None: always)
     listed: Callable[[Any], bool] | None = None
+    #: dispatched only with the owner client capability (``mcp_server.require_owner_client``): the
+    #: device bearer every agent on that device also holds is not enough
+    owner_only: bool = False
 
     def advertised(self, settings: Any) -> bool:
         return self.listed is None or bool(self.listed(settings))
@@ -77,6 +80,14 @@ CLIENT_TOOLS: tuple[ToolSpec, ...] = (
         "hlm CLI only: page every item of a project at one bi-temporal point (manifest or full view).",
         export_service.INPUT_SCHEMA,
         handlers.hlm_export,
+    ),
+    # `hlm review`: the open librarian questions with what a reviewer needs (read-only, owner-only)
+    ToolSpec(
+        questions.NAME,
+        questions.DESCRIPTION,
+        questions.INPUT_SCHEMA,
+        questions.hlm_questions,
+        owner_only=True,
     ),
 )
 

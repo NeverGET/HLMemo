@@ -67,8 +67,15 @@ def build_argv(
     return argv
 
 
+#: defence in depth: the owner's CLI keeps the owner token in the keychain only (never env), but a
+#: server-side HLM_OWNER_TOKEN exported on the owner's machine by mistake (e.g. local dev) is still
+#: never handed to an agent this launcher starts
+OWNER_TOKEN_ENV_VAR = "HLM_OWNER_TOKEN"
+
+
 def child_env(token: str | None, base: dict[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ if base is None else base)
+    env.pop(OWNER_TOKEN_ENV_VAR, None)
     if token:
         env[TOKEN_ENV_VAR] = token
     return env

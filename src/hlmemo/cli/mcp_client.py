@@ -29,7 +29,7 @@ _STATUS_RE = re.compile(r"\b(401|403|404|429|5\d\d)\b")
 #: surface stays small). The SDK validates every result against the listed output schema; for an
 #: unlisted tool it re-lists the tools and warns "not listed by server" on EVERY call (e2e
 #: 2026-09-24 #10). There is no schema to validate against, so these are not validated.
-UNLISTED_TOOLS = frozenset({"hlm.export"})
+UNLISTED_TOOLS = frozenset({"hlm.export", "hlm.questions"})
 
 
 def _skip_unlisted_validation(client: Client) -> None:
@@ -67,8 +67,11 @@ class ToolCallError(Exception):
 class _BearerHttpTransport(AbstractAsyncContextManager):
     """`mcp.client.Transport` over streamable HTTP with a fixed Authorization header and timeout."""
 
-    def __init__(self, url: str, token: str | None, timeout_s: float) -> None:
+    def __init__(
+        self, url: str, token: str | None, timeout_s: float, extra_headers: dict[str, str] | None = None
+    ) -> None:
         self.url, self.token, self.timeout_s = url, token, timeout_s
+        self.extra_headers = dict(extra_headers or {})
         self._stack: AsyncExitStack | None = None
 
     async def __aenter__(self):
@@ -76,7 +79,7 @@ class _BearerHttpTransport(AbstractAsyncContextManager):
         from mcp.client.streamable_http import streamable_http_client
         from mcp.shared._httpx_utils import create_mcp_http_client
 
-        headers = {"User-Agent": CLIENT_NAME}
+        headers = {**self.extra_headers, "User-Agent": CLIENT_NAME}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         http = create_mcp_http_client(
@@ -158,11 +161,21 @@ def decode_result(result: Any) -> dict[str, Any]:
 
 
 class MemoryClient:
-    def __init__(self, url: str, token: str | None, *, timeout_s: float = 5.0, target: Any = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        token: str | None,
+        *,
+        timeout_s: float = 5.0,
+        target: Any = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         self.url = url
         self.token = token
         self.timeout_s = timeout_s
         self._target = target  # MCPServer / Transport injected for tests
+        #: sent on every request of this client (``hlm review``: the owner client token header)
+        self.extra_headers = dict(extra_headers or {})
 
     @classmethod
     def in_memory(cls, server: Any, *, timeout_s: float = 5.0) -> MemoryClient:
@@ -172,7 +185,7 @@ class MemoryClient:
         target = (
             self._target
             if self._target is not None
-            else _BearerHttpTransport(self.url, self.token, self.timeout_s)
+            else _BearerHttpTransport(self.url, self.token, self.timeout_s, self.extra_headers)
         )
         return Client(target, read_timeout_seconds=self.timeout_s)
 

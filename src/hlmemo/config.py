@@ -348,6 +348,12 @@ class Settings(BaseSettings):
 
     # --- server / auth (§2) ---
     admin_token: SecretStr | None = None
+    # Owner client capability (``hlm review``): owner-only client tools (``hlm.questions``) need it in
+    # the X-HLM-Owner-Token header ON TOP OF the device bearer, which every agent on that device
+    # also holds. Unset or shorter than 32 chars: those tools are refused for everyone (fail closed).
+    # SERVER side only (api.env). The owner's CLI keeps its copy in the keychain, never in the
+    # environment (`hlm review --set-owner-token`; docs/review/README.md).
+    owner_token: SecretStr | None = None
     registration_secret: SecretStr | None = None
     # W0a (D-052, D-061), fail-closed: only local compose.yaml and the test fixtures opt in.
     #   closed -> POST /devices/register answers 404 before any body byte is read;
@@ -436,7 +442,7 @@ class Settings(BaseSettings):
             return {str(k).strip().lower(): str(p).strip() for k, p in v.items() if p and str(p).strip()}
         return v
 
-    @field_validator("llm_api_key", "admin_token", "registration_secret", mode="before")
+    @field_validator("llm_api_key", "admin_token", "owner_token", "registration_secret", mode="before")
     @classmethod
     def _empty_secret_is_none(cls, v: Any) -> Any:
         if isinstance(v, str) and not v.strip():

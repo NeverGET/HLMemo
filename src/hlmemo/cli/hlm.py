@@ -7,6 +7,7 @@ hlm mcp add claude|codex|agy
 hlm query "<q>" [--budget N]
 hlm import markdown|automemory|serena|context <paths> --project P [--dry-run] [--json] | hlm export --out DIR
 hlm close --notes ... [--decision ...] [--lesson "title::body"] [--card FILE]
+hlm review [--project P] [--batch N] [--kind K] [--cursor C] [--dry-run] [--decisions FILE [--yes]]
 hlm claude|codex|agy [--task ...] [--ask] [--budget N] [--no-preflight] [--headless] [-- CLI_ARGS]
 hlm bench [--profile|--model] [--suite v1|v2] [--runs N] [--max-usd X] [--compare A B] | rescore | leaderboard
 hlm links explicit --project P [--dry-run] [--revert] [--dsn DSN]   (operator, direct DB; D-184)
@@ -15,6 +16,7 @@ hlm links backfill --project P --apply|--dry-run --proposals F | --revert [--dry
 
 from __future__ import annotations
 
+import asyncio
 import getpass
 import os
 import shutil
@@ -141,12 +143,14 @@ class Ctx:
             cfg.server_url, token or self.bearer(admin=admin), timeout_s=max(cfg.timeout_s, 5.0), **kw
         )
 
-    def memory(self) -> MemoryClient:
+    def memory(
+        self, *, timeout_s: float | None = None, extra_headers: dict[str, str] | None = None
+    ) -> MemoryClient:
         cfg = self.config()
         token = self.bearer()
         if not token:
             raise CliError("no device token found; run `hlm device register` first", EX_NOPERM)
-        return MemoryClient(cfg.mcp, token, timeout_s=cfg.timeout_s)
+        return MemoryClient(cfg.mcp, token, timeout_s=timeout_s or cfg.timeout_s, extra_headers=extra_headers)
 
 
 def _ctx(ctx: typer.Context) -> Ctx:
@@ -875,6 +879,137 @@ def close(
         token_budget=budget,
     )
     typer.echo(compact(res))
+
+
+# --------------------------------------------------------------------------- review (assist now)
+
+REVIEW_TIMEOUT_S = 30.0
+
+
+def _stdio_is_tty() -> bool:
+    """Owner presence for the owner token: stdin AND stdout are terminals. An agent's shell tool
+    (piped stdio) never qualifies, so it never makes the CLI read or send the owner token."""
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):  # closed or replaced streams
+        return False
+
+
+def _set_owner_token(c: Ctx) -> None:
+    """``hlm review --set-owner-token``: prompt (no echo) and store it in the keychain only."""
+    if not _stdio_is_tty():
+        raise CliError("--set-owner-token needs a terminal: it prompts for the token without echo", EX_USAGE)
+    token = getpass.getpass("owner token (input hidden): ").strip()
+    if (
+        len(token) < credentials.OWNER_TOKEN_MIN_CHARS
+        or not token.isascii()
+        or not token.isprintable()
+        or any(ch.isspace() for ch in token)
+    ):
+        raise CliError(
+            f"the owner token must be at least {credentials.OWNER_TOKEN_MIN_CHARS} printable ASCII "
+            "characters without spaces (e.g. openssl rand -hex 32)",
+            EX_USAGE,
+        )
+    server = c.config().server_url
+    if not credentials.store_owner_token(server, token):
+        raise CliError("no working keychain: the owner token is stored nowhere else", EX_UNAVAILABLE)
+    typer.echo(
+        f"stored the owner token for {base_url(server)} in the keychain (service "
+        f"{credentials.OWNER_SERVICE}); `hlm review` sends it only when run in a terminal"
+    )
+
+
+@app.command()
+@_guard
+def review(
+    ctx: typer.Context,
+    project: Annotated[str | None, typer.Option("--project", help="project slug")] = None,
+    batch: Annotated[int, typer.Option("--batch", min=1, max=50, help="questions in this session")] = 10,
+    kind: Annotated[
+        str | None, typer.Option("--kind", help="only this kind (contradiction | link | widen_scope | ...)")
+    ] = None,
+    cursor: Annotated[
+        str | None,
+        typer.Option("--cursor", help="continue after this question (the cursor a session prints)"),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="print the memory.answer calls it would send; send nothing")
+    ] = False,
+    decisions: Annotated[
+        Path | None,
+        typer.Option("--decisions", help="JSON {question_id: accept|reject|skip}: apply non-interactively"),
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", help="--decisions without the confirmation prompt")] = False,
+    set_owner_token: Annotated[
+        bool,
+        typer.Option(
+            "--set-owner-token",
+            help="store the server's owner token in the keychain (prompted, terminal only)",
+        ),
+    ] = False,
+) -> None:
+    """Review the librarian's open questions in a short batch, LLM-free.
+
+    Keys: a accept · r reject · s skip (stays open) · o open the full items · q quit. Every decision
+    is one idempotent memory.answer; decisions are logged to ~/.local/state/hlm/review.log (0600).
+    The full listing (hlm.questions) is owner-only: run in a terminal with the owner token stored by
+    `hlm review --set-owner-token`. Without a terminal (or without the token) only the newest notices
+    are listed. The owner token is never read from the environment (docs/review/README.md).
+    """
+    from hlmemo.cli.review import (
+        CURSOR_MAX,
+        OWNER_HEADER,
+        ReviewOptions,
+        load_decisions,
+        route_owner,
+        run_review,
+        tty_read_key,
+    )
+
+    c = _ctx(ctx)
+    if set_owner_token:
+        _set_owner_token(c)
+        return
+    slug = project or c.config().require_project()
+    try:
+        parsed = load_decisions(decisions) if decisions is not None else None
+    except ValueError as exc:
+        raise CliError(str(exc), EX_USAGE) from None
+    kind = kind.strip().lower() if kind is not None else None
+    if kind is not None and not kind.replace("_", "").isalpha():
+        raise CliError("--kind expects a question kind such as contradiction, link or widen_scope", EX_USAGE)
+    if cursor is not None:
+        cursor = cursor.strip()
+        if not cursor or len(cursor) > CURSOR_MAX or any(ch.isspace() for ch in cursor):
+            raise CliError("--cursor expects the cursor a previous `hlm review` printed", EX_USAGE)
+    timeout_s = max(c.config().timeout_s, REVIEW_TIMEOUT_S)
+    # the owner token: keychain only, read only with the owner at a terminal, sent only on the
+    # hlm.questions requests (route_owner); never an environment variable
+    owner_token, no_owner = None, None
+    if not _stdio_is_tty():
+        no_owner = "not a terminal, so the owner token is not used"
+    else:
+        owner_token = credentials.load_owner_token(c.config().server_url)
+        if not owner_token:
+            no_owner = "no owner token in the keychain (hlm review --set-owner-token)"
+    plain = c.memory(timeout_s=timeout_s)
+    owner = c.memory(timeout_s=timeout_s, extra_headers={OWNER_HEADER: owner_token}) if owner_token else None
+    call = route_owner(plain.call_async, owner.call_async if owner else None, reason=no_owner)
+    opts = ReviewOptions(
+        project=slug, batch=batch, kind=kind, cursor=cursor, dry_run=dry_run, decisions=parsed, yes=yes
+    )
+    # one MCP session per call (memory.call_async): the owner may think for minutes between keys
+    session = asyncio.run(
+        run_review(
+            call,
+            opts,
+            read_key=tty_read_key,
+            confirm=lambda msg: typer.confirm(msg, default=False),
+            echo=typer.echo,
+        )
+    )
+    raise typer.Exit(1 if session.errors or session.aborted else 0)
 
 
 # --------------------------------------------------------------------------- import / export (W1.5)

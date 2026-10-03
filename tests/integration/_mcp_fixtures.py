@@ -31,9 +31,9 @@ def bearer(token: str | None) -> dict[str, str]:
 
 @contextlib.asynccontextmanager
 async def running_app(
-    db_dsn: str, *, admin_token: str | None = ADMIN_TOKEN
+    db_dsn: str, *, admin_token: str | None = ADMIN_TOKEN, **overrides: Any
 ) -> AsyncIterator[httpx.AsyncClient]:
-    settings = get_settings(db_dsn=db_dsn, admin_token=admin_token, registration_secret=None)
+    settings = get_settings(db_dsn=db_dsn, admin_token=admin_token, registration_secret=None, **overrides)
     app = create_app(settings, register_rate_limit=None)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)

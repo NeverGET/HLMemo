@@ -4,6 +4,10 @@ OS keychain via `keyring`, else ~/.config/hlm/credentials.toml (mode 0600).
 
 Lookup order: `HLM_DEVICE_TOKEN` env (CI / smoke) > keychain > credentials file.
 The token is keyed by `<device_name>@<server base url>` so several servers/devices can coexist.
+
+The owner client token (`hlm review`, owner-only `hlm.questions`) is different: keychain ONLY,
+in its own generic-password item (service `hlm-owner-token`, account = server base url). Never
+an environment variable and never a file, so a process (an agent) does not inherit it by accident.
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ from hlmemo.cli.client_config import base_url, config_dir
 log = logging.getLogger("hlm.credentials")
 
 SERVICE = "hlmemo"
+OWNER_SERVICE = "hlm-owner-token"
+OWNER_TOKEN_MIN_CHARS = 32  # the server refuses shorter owner tokens (mcp_server.require_owner_client)
 TOKEN_ENV_VAR = "HLM_DEVICE_TOKEN"
 CREDENTIALS_FILE = "credentials.toml"
 
@@ -43,23 +49,23 @@ def _keyring():
     return keyring
 
 
-def _keyring_get(key: str) -> str | None:
+def _keyring_get(key: str, service: str = SERVICE) -> str | None:
     kr = _keyring()
     if kr is None:
         return None
     try:
-        return kr.get_password(SERVICE, key)
+        return kr.get_password(service, key)
     except Exception as exc:  # noqa: BLE001 - NoKeyringError, locked keychain, dbus missing, ...
         log.debug("keyring get failed (%s); falling back to file", exc)
         return None
 
 
-def _keyring_set(key: str, token: str) -> bool:
+def _keyring_set(key: str, token: str, service: str = SERVICE) -> bool:
     kr = _keyring()
     if kr is None:
         return False
     try:
-        kr.set_password(SERVICE, key, token)
+        kr.set_password(service, key, token)
         return True
     except Exception as exc:  # noqa: BLE001
         log.debug("keyring set failed (%s); falling back to file", exc)
@@ -154,6 +160,16 @@ def delete_token(server_url: str, device_name: str) -> bool:
         _write_file(tokens)
         removed = True
     return removed
+
+
+def load_owner_token(server_url: str) -> str | None:
+    """The owner client token for this server, from the keychain only (no env, no file)."""
+    return _keyring_get(base_url(server_url), OWNER_SERVICE) or None
+
+
+def store_owner_token(server_url: str, token: str) -> bool:
+    """Keychain only; False when no keychain backend works (nothing is written anywhere else)."""
+    return _keyring_set(base_url(server_url), token, OWNER_SERVICE)
 
 
 def redact(token: str | None) -> str:

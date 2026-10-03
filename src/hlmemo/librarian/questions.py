@@ -44,6 +44,7 @@ answer, ``mutations``, ``jobs``); replay applies exactly that and never calls an
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Literal
@@ -586,13 +587,255 @@ async def pending_block(
     return {"pending_questions": int(n), "notices": notices}
 
 
+# --------------------------------------------------------------------------- hlm.questions (review)
+REVIEW_TOOL = "hlm.questions"
+REVIEW_LIMIT_MAX = 50
+REVIEW_DEFAULT_BUDGET = 16000
+HEAD_CHARS = 240
+QUOTE_CHARS = 300
+REASON_CHARS = 400
+
+
+#: keyset cursor ``<project>/<kind|*>/<created_at>/<question_id>``: the listing continues strictly
+#: after that question in (created_at, question_id) order, so questions answered or expiring between
+#: pages shift nothing (an OFFSET over the shrinking open set skipped them)
+_REVIEW_CURSOR_RE = re.compile(
+    r"^(?P<p>[a-z0-9][a-z0-9-]{1,63})/(?P<k>\*|[a-z_]{1,32})/"
+    r"(?P<t>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)/(?P<q>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$"
+)
+#: the longest valid cursor: <slug ≤64>/<kind ≤32 | *>/<created_at 27>/<uuid 36> (162; a shorter cap
+#: rejected the cursor of a maximal project/kind on page two — review 102)
+REVIEW_CURSOR_MAX = 64 + 1 + 32 + 1 + len("2026-01-01T00:00:00.000000Z") + 1 + 36
+
+
+def review_cursor(project: str, kind: str | None, created_at: datetime, question_id: str) -> str:
+    """The position of one listed question, bound to the listing's project and kind filter (a
+    cursor from a ``kind=link`` listing must not skip the older questions of other kinds)."""
+    return f"{project}/{kind or '*'}/{fmt_ts(created_at)}/{question_id}"
+
+
+def parse_review_cursor(cursor: str, project: str, kind: str | None) -> tuple[datetime, str]:
+    m = _REVIEW_CURSOR_RE.fullmatch(cursor)
+    if m is None:
+        raise ToolError("E_INVALID_CURSOR", "malformed hlm.questions cursor")
+    if m["p"] != project or m["k"] != (kind or "*"):
+        raise ToolError("E_INVALID_CURSOR", "cursor belongs to another listing (project or kind differs)")
+    try:
+        return datetime.fromisoformat(m["t"].replace("Z", "+00:00")), str(uuid.UUID(m["q"]))
+    except ValueError:
+        raise ToolError("E_INVALID_CURSOR", "malformed hlm.questions cursor") from None
+
+
+class ReviewListRequest(_Strict):
+    project: str = Field(pattern=SLUG_RE)
+    kind: str | None = Field(default=None, pattern=r"^[a-z_]{1,32}$")
+    question_ids: list[str] | None = Field(default=None, min_length=1, max_length=REVIEW_LIMIT_MAX)
+    limit: int = Field(default=10, ge=1, le=REVIEW_LIMIT_MAX)
+    cursor: str | None = Field(default=None, min_length=1, max_length=REVIEW_CURSOR_MAX)
+    token_budget: int | None = None
+
+    @field_validator("question_ids")
+    @classmethod
+    def _uuids(cls, v: list[str] | None) -> list[str] | None:
+        return None if v is None else list(dict.fromkeys(str(uuid.UUID(x)) for x in v))
+
+
+def _cut(text: Any, n: int) -> str:
+    s = " ".join(str(text or "").split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _review_action(a: dict[str, Any], slugs: dict[int, str]) -> dict[str, Any]:
+    """An action as the owner reads it: logical ids → the assessed clues, project ids → slugs.
+    Never the capabilities or other internal fields."""
+    assessed = {str(k): int(v) for k, v in (a.get("assessed") or {}).items()}
+
+    def clue(lid: Any) -> str | None:
+        vid = assessed.get(str(lid))
+        return None if vid is None else f"v{vid}"
+
+    op = a.get("op")
+    out: dict[str, Any] = {"op": op}
+    if op == "link_insert":
+        props = a.get("props") or {}
+        out.update(rel=a.get("rel"), src=clue(a.get("src_logical_id")), dst=clue(a.get("dst_logical_id")))
+        for k in ("relation", "scope", "dup"):
+            if props.get(k) is not None:
+                out[k] = props[k]
+        if props.get("quote"):
+            out["quote"] = _cut(props["quote"], QUOTE_CHARS)
+    elif op == "version_close":
+        out.update(
+            target=f"v{int(a['version_id'])}" if a.get("version_id") else None, valid_to=a.get("valid_to")
+        )
+    elif op == "widen_scope":
+        out.update(
+            target=f"v{int(a['version_id'])}" if a.get("version_id") else None,
+            add_projects=[slugs.get(int(p), str(p)) for p in a.get("add_project_ids") or []],
+        )
+    return out
+
+
+async def review_list(conn: AsyncConnection, ctx: AuthContext, req: dict[str, Any]) -> dict[str, Any]:
+    """``hlm.questions`` (the owner's ``hlm review`` CLI only: never advertised, and dispatched
+    only with the owner client capability, ``server/mcp_server.require_owner_client``): the
+    project's OPEN, unexpired questions the device can see (the notices' visibility rule), oldest
+    first, with what a reviewer needs and nothing internal: the subjects' titles and body heads,
+    the proposal's verbatim quotes (redacted at proposal time), relation, confidence, reason and the
+    proposed actions; plus the pending counts per kind. The handler writes nothing: no event, no
+    access event (a review read must not reset idleness, D-012), no job (the HTTP layer still
+    refreshes ``devices.last_seen_at`` after every authenticated request, as for any tool).
+    ``question_ids`` narrows to those questions (still only open + visible ones).
+
+    Paging is a keyset: every question carries its ``cursor`` and ``next_cursor`` is the cursor of
+    the last RETURNED question while more remain; passing it back continues strictly after that
+    question in (created_at, question_id) order, so questions answered or expired in between
+    neither shift nor repeat the rest. Questions that do not fit ``token_budget`` are dropped from
+    the end (``omitted``) and come first on the next page."""
+    request = parse_request(ReviewListRequest, req)
+    after_t, after_q = (
+        parse_review_cursor(request.cursor, request.project, request.kind)
+        if request.cursor is not None
+        else (None, None)
+    )
+    try:
+        budget = validate_budget(request.token_budget, default=REVIEW_DEFAULT_BUDGET)
+    except BudgetError as exc:
+        raise ToolError(exc.code, str(exc), **exc.details) from exc
+    async with conn.transaction():
+        found = await q.resolve_projects(conn, [request.project])
+        project = found.get(request.project)
+        if project is None or not ctx.has(project.project_id, Role.READ):
+            raise ToolError(
+                "E_FORBIDDEN_PROJECT",
+                f"no read grant on project {request.project!r}",
+                project=request.project,
+            )
+        now = await q.clock_now(conn)
+        params: dict[str, Any] = {
+            "pid": project.project_id,
+            "now": now,
+            "scopes": list(ctx.scope_values()),
+            "admin": ctx.is_admin,
+            "readable": sorted(ctx.grants),
+            "kind": request.kind,
+            "qids": request.question_ids,
+            "lim": request.limit + 1,  # one more: is there a next page?
+            "after_t": after_t,
+            "after_q": after_q,
+        }
+        cur = await conn.execute(
+            f"SELECT kind, count(*) FROM librarian_questions lq WHERE {_VISIBLE} GROUP BY kind",  # noqa: S608
+            params,
+        )
+        by_kind = {str(k): int(n) for k, n in await cur.fetchall()}
+        cur = await conn.execute(
+            f"""
+            SELECT question_id::text, kind, subject_clues, proposal, created_at, expires_at
+              FROM librarian_questions lq
+             WHERE {_VISIBLE}
+               AND (%(kind)s::text IS NULL OR lq.kind = %(kind)s)
+               AND (%(qids)s::uuid[] IS NULL OR lq.question_id = ANY(%(qids)s::uuid[]))
+               AND (%(after_t)s::timestamptz IS NULL
+                    OR (lq.created_at, lq.question_id) > (%(after_t)s::timestamptz, %(after_q)s::uuid))
+             ORDER BY created_at, question_id LIMIT %(lim)s
+            """,  # noqa: S608
+            params,
+        )
+        rows = await cur.fetchall()
+        more = len(rows) > request.limit
+        rows = rows[: request.limit]
+        vids = sorted({int(c[1:].split(".")[0]) for r in rows for c in r[2] if c.startswith("v")})
+        versions: dict[int, tuple[Any, ...]] = {}
+        if vids:
+            cur = await conn.execute(
+                """
+                SELECT version_id, logical_id, kind, title, body, valid_from, project_ids,
+                       superseded_at = 'infinity' AND valid_to = 'infinity' AND status = 'active'
+                  FROM memory_versions WHERE version_id = ANY(%s)
+                """,
+                (vids,),
+            )
+            versions = {int(r[0]): r for r in await cur.fetchall()}
+        pids = {int(p) for v in versions.values() for p in v[6]}
+        pids |= {int(p) for r in rows for a in proposal_actions(r[3]) for p in a.get("add_project_ids") or []}
+        slugs = await _slugs(conn, sorted(pids)) if pids else {}
+
+    def subject(c: str) -> dict[str, Any]:
+        v = versions.get(int(c[1:].split(".")[0]))
+        if v is None:
+            return {"clue": c}
+        vid, lid, kind, title, body, valid_from, projects, current = v
+        return {
+            "clue": f"v{int(vid)}",
+            "logical_id": int(lid),
+            "kind": kind,
+            "title": title,
+            "valid_from": fmt_ts(valid_from),
+            "projects": [slugs.get(int(p), str(p)) for p in projects],
+            "current": bool(current),
+            "head": _cut(body, HEAD_CHARS),
+        }
+
+    questions: list[dict[str, Any]] = []
+    for qid, kind, clues, prop, created_at, expires_at in rows:
+        quotes = prop.get("quotes") or {}
+        verification = prop.get("verification")
+        item: dict[str, Any] = {
+            "question_id": qid,
+            "kind": kind,
+            "cursor": review_cursor(project.slug, request.kind, created_at, qid),
+            "created_at": fmt_ts(created_at),
+            "expires_at": fmt_ts(expires_at) if expires_at is not None else None,
+            "subjects": [subject(c) for c in clues],
+            "relation": prop.get("relation"),
+            "supersedes": prop.get("supersedes"),
+            "scope": prop.get("scope"),
+            "close_ok": prop.get("close_ok"),
+            "resolution": prop.get("resolution"),
+            "refiner": prop.get("refiner"),
+            "confidence": prop.get("confidence"),
+            "tier": prop.get("tier"),
+            "cross_project": prop.get("cross_project"),
+            "auto_class": prop.get("auto_class"),
+            "verified": verification.get("agreed") if isinstance(verification, dict) else None,
+            "flags": [str(f) for f in prop.get("flags") or []],
+            "reason": _cut(prop.get("reason"), REASON_CHARS),
+            "quotes": {k: _cut(quotes.get(k), QUOTE_CHARS) for k in ("new", "old") if quotes.get(k)},
+            "actions": [_review_action(a, slugs) for a in proposal_actions(prop)],
+        }
+        questions.append({k: v for k, v in item.items() if v is not None})
+    envelope: dict[str, Any] = {
+        "project": project.slug,
+        "pending": {"total": sum(by_kind.values()), "by_kind": by_kind},
+        "questions": questions,
+        "omitted": 0,
+        "next_cursor": questions[-1]["cursor"] if more and questions else None,
+    }
+    meter = _meter()
+    while meter.settle(envelope, budget) > budget:
+        # never an empty page while questions are open: it could not advance (no cursor)
+        if len(envelope["questions"]) <= 1:
+            raise ToolError("E_BUDGET_TOO_SMALL", f"token_budget {budget} cannot hold one question")
+        envelope["questions"].pop()
+        envelope["omitted"] += 1
+        # continue after the last RETURNED question: the dropped ones come first on the next page
+        envelope["next_cursor"] = envelope["questions"][-1]["cursor"]
+    return envelope
+
+
 __all__ = [
     "NOTICES_MAX",
+    "REVIEW_TOOL",
     "TOOL",
     "AnswerRequest",
+    "ReviewListRequest",
     "answer",
     "expire_due",
     "notice_text",
+    "parse_review_cursor",
     "pending_block",
+    "review_cursor",
+    "review_list",
     "rule_text",
 ]
