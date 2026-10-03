@@ -5,12 +5,15 @@ the real-usage precision. Nothing here calls a model.
 
 * **Listing** (read-only): the OWNER-ONLY client tool ``hlm.questions`` (oldest first, with the
   subjects' titles, body heads, the proposal's verbatim quotes, reason and pending counts per kind).
-  The server dispatches it only with the owner client token (``HLM_OWNER_TOKEN``, sent in the
-  ``X-HLM-Owner-Token`` header next to the device bearer). Paging is a keyset cursor: ``--cursor``
-  continues strictly after a question, so answering between pages skips or repeats nothing. A server
-  without the tool (``unknown tool``) or refusing it (no/wrong owner token) leaves the ``memory.query``
-  notices (the newest ≤ 3, no reason or age, no paging: ``--cursor`` is refused), titled through
-  ``hlm.export``. Both reads record no access event.
+  The server dispatches it only with the owner client token in the ``X-HLM-Owner-Token`` header next
+  to the device bearer. The CLI reads that token from the keychain only (``hlm review
+  --set-owner-token``), only when stdin and stdout are terminals, and sends it only on the
+  ``hlm.questions`` requests (``route_owner``); never from the environment. Paging is a keyset
+  cursor: ``--cursor`` continues strictly after a question, so answering between pages skips or
+  repeats nothing. Without the token (no terminal, none stored), on a server without the tool
+  (``unknown tool``) or refusing it, the ``memory.query`` notices are listed instead (the newest
+  ≤ 3, no reason or age, no paging: ``--cursor`` is refused), titled through ``hlm.export``, and
+  the header says why. Both reads record no access event.
 * **Decisions**: ``a`` accept / ``r`` reject call ``memory.answer`` with exactly
   ``{project, request_id, question_id, decision}``. The request id is derived from
   (project, question, decision), so a retry or a re-run is replayed by the server, never applied
@@ -53,9 +56,13 @@ TOOL_ANSWER = "memory.answer"
 TOOL_QUERY = "memory.query"
 TOOL_DRILLDOWN = "memory.drilldown"
 TOOL_EXPORT = "hlm.export"
-#: the owner client capability: env on the owner's machine → header on every review request
-OWNER_TOKEN_ENV = "HLM_OWNER_TOKEN"
+#: the owner client capability (keychain → this header, on hlm.questions requests only)
 OWNER_HEADER = "X-HLM-Owner-Token"
+#: client-side: the owner token is not available here, so hlm.questions is never requested
+NO_OWNER_TOKEN = "E_NO_OWNER_TOKEN"
+#: the longest valid keyset cursor: <slug ≤64>/<kind ≤32 | *>/<created_at 27>/<uuid 36>
+#: (= librarian/questions.py REVIEW_CURSOR_MAX; a unit test pins both)
+CURSOR_MAX = 64 + 1 + 32 + 1 + len("2026-01-01T00:00:00.000000Z") + 1 + 36
 #: request ids are uuid5(NS_REVIEW, "hlm-review/1:<project>:<question_id>:<decision>")
 NS_REVIEW = uuid.UUID("6d3c0f7e-2b8a-5c41-9e57-1f0a4b6c8d21")
 SENT = ("accept", "reject")
@@ -131,11 +138,30 @@ def _unknown_tool(exc: ToolCallError, tool: str) -> bool:
 
 def _fallback_reason(exc: ToolCallError) -> str | None:
     """Why ``hlm.questions`` is not usable here (None: a real error to raise)."""
+    if exc.code == NO_OWNER_TOKEN:
+        return f"hlm.questions is owner-only and {exc.message}"
     if _unknown_tool(exc, TOOL_LIST):
         return "this server has no hlm.questions"
     if exc.code == "E_FORBIDDEN":  # owner-only: E_FORBIDDEN_PROJECT (no read grant) still raises
-        return f"the server refused hlm.questions (owner-only: set {OWNER_TOKEN_ENV} to its owner token)"
+        return (
+            "the server refused the owner token for hlm.questions "
+            "(store the current one: hlm review --set-owner-token)"
+        )
     return None
+
+
+def route_owner(plain: Call, owner: Call | None, *, reason: str | None = None) -> Call:
+    """``hlm.questions`` goes through ``owner`` (the only client carrying the owner header), every
+    other tool through ``plain``. Without an owner client, ``hlm.questions`` is not sent at all."""
+
+    async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        if tool != TOOL_LIST:
+            return await plain(tool, args)
+        if owner is None:
+            raise ToolCallError(NO_OWNER_TOKEN, reason or "no owner token is available")
+        return await owner(tool, args)
+
+    return call
 
 
 def default_log_path() -> Path:
@@ -887,6 +913,7 @@ __all__ = [
     "notices_listing",
     "render_card",
     "request_id_for",
+    "route_owner",
     "run_review",
     "summary_text",
     "tty_read_key",

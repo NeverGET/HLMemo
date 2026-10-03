@@ -603,7 +603,9 @@ _REVIEW_CURSOR_RE = re.compile(
     r"^(?P<p>[a-z0-9][a-z0-9-]{1,63})/(?P<k>\*|[a-z_]{1,32})/"
     r"(?P<t>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)/(?P<q>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$"
 )
-REVIEW_CURSOR_MAX = 160
+#: the longest valid cursor: <slug ≤64>/<kind ≤32 | *>/<created_at 27>/<uuid 36> (162; a shorter cap
+#: rejected the cursor of a maximal project/kind on page two — review 102)
+REVIEW_CURSOR_MAX = 64 + 1 + 32 + 1 + len("2026-01-01T00:00:00.000000Z") + 1 + 36
 
 
 def review_cursor(project: str, kind: str | None, created_at: datetime, question_id: str) -> str:

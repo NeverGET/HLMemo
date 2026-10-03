@@ -351,7 +351,8 @@ class Settings(BaseSettings):
     # Owner client capability (``hlm review``): owner-only client tools (``hlm.questions``) need it in
     # the X-HLM-Owner-Token header ON TOP OF the device bearer, which every agent on that device
     # also holds. Unset or shorter than 32 chars: those tools are refused for everyone (fail closed).
-    # Never put it in an agent's MCP entry; `hlm claude|codex|agy` strips it from the agent's env.
+    # SERVER side only (api.env). The owner's CLI keeps its copy in the keychain, never in the
+    # environment (`hlm review --set-owner-token`; docs/review/README.md).
     owner_token: SecretStr | None = None
     registration_secret: SecretStr | None = None
     # W0a (D-052, D-061), fail-closed: only local compose.yaml and the test fixtures opt in.

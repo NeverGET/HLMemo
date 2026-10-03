@@ -91,7 +91,7 @@ Keep these private files together with mode 0600; each has exactly one example i
 |---|---|---|
 | `prod.env` | `.env.prod.example` | Compose interpolation (domain, images, local ports) |
 | `app.env` | `app.env.example` | API, worker and migration: database DSN/provider settings |
-| `api.env` | `api.env.example` | API only: cursor secret, trusted proxy CIDR (no admin token, D-061) |
+| `api.env` | `api.env.example` | API only: cursor secret, trusted proxy CIDR (no admin token, D-061); optional owner token for `hlm review` (docs/review/README.md) |
 | `db.env` | `db.env.example` | DB only: PostgreSQL variables |
 | `backup.env` | `backup.env.example` | Host backup/upload only: S3 credentials and retention |
 | `llm.env` (optional) | `llm.env.example` | Librarian and API (risk judge, librarian enqueue): provider key, profile, role, spend guard. Absent in R1; R2 installs it with `install_llm_env.sh` |

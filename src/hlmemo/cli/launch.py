@@ -67,7 +67,9 @@ def build_argv(
     return argv
 
 
-#: the owner client capability (``hlm review``) never reaches an agent through the launcher
+#: defence in depth: the owner's CLI keeps the owner token in the keychain only (never env), but a
+#: server-side HLM_OWNER_TOKEN exported on the owner's machine by mistake (e.g. local dev) is still
+#: never handed to an agent this launcher starts
 OWNER_TOKEN_ENV_VAR = "HLM_OWNER_TOKEN"
 
 

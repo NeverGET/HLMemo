@@ -15,11 +15,13 @@ from typing import Any
 import pytest
 from test_cli_support import _clean_tables, _isolated_home, runner, write_toml  # noqa: F401
 
+from hlmemo.cli import credentials
 from hlmemo.cli import hlm as hlm_mod
 from hlmemo.cli.client_config import EX_USAGE
 from hlmemo.cli.hlm import app
 from hlmemo.cli.mcp_client import ToolCallError
 from hlmemo.cli.review import (
+    CURSOR_MAX,
     NS_REVIEW,
     ReviewOptions,
     Session,
@@ -32,6 +34,7 @@ from hlmemo.cli.review import (
     read_log,
     render_card,
     request_id_for,
+    route_owner,
     run_review,
     summary_text,
 )
@@ -607,8 +610,49 @@ async def test_owner_refusal_falls_back_to_the_notices_and_says_why(tmp_path: Pa
     _session, out = await review(
         server, ReviewOptions(project=P, dry_run=True, log_path=tmp_path / "l"), read_key=keys("s")
     )
-    assert "the server refused hlm.questions (owner-only: set HLM_OWNER_TOKEN" in out
+    assert "the server refused the owner token for hlm.questions" in out
     assert "notice    contradiction: v812 vs v455" in out
+
+
+async def test_route_owner_sends_only_hlm_questions_through_the_owner_client(tmp_path: Path) -> None:
+    server = FakeServer([contradiction(), link()])
+    via: list[tuple[str, str]] = []
+
+    def client(name: str):  # noqa: ANN202
+        async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+            via.append((name, tool))
+            return await server(tool, args)
+
+        return call
+
+    call = route_owner(client("plain"), client("owner"))
+    await review(call, ReviewOptions(project=P, log_path=tmp_path / "l"), read_key=keys("o", "a", "q"))  # type: ignore[arg-type]
+    assert {t for n, t in via if n == "owner"} == {"hlm.questions"}
+    assert {t for n, t in via if n == "plain"} == {"memory.drilldown", "memory.answer"}
+    # no owner client: hlm.questions is never sent; the notices are listed with the reason
+    via.clear()
+    server.calls.clear()
+    call = route_owner(client("plain"), None, reason="not a terminal, so the owner token is not used")
+    _s, out = await review(
+        call, ReviewOptions(project=P, dry_run=True, log_path=tmp_path / "l"), read_key=keys("s")
+    )  # type: ignore[arg-type]
+    assert "hlm.questions" not in {t for _n, t in via} and "hlm.questions" not in server.tools()
+    assert "hlm.questions is owner-only and not a terminal, so the owner token is not used" in out
+
+
+def test_the_longest_valid_cursor_fits_server_and_cli() -> None:
+    """Review 102 (Sol): a maximal project (64) and kind (32) gave a 162-char cursor; the cap was 160."""
+    from hlmemo.librarian import questions as lq
+    from hlmemo.server.tools import questions as qtool
+
+    slug, kind = "p" * 64, "k" * 32
+    cursor = lq.review_cursor(slug, kind, datetime(2026, 12, 31, 23, 59, 59, 999999, tzinfo=UTC), QC)
+    assert len(cursor) == lq.REVIEW_CURSOR_MAX == CURSOR_MAX == 162
+    assert qtool.INPUT_SCHEMA["properties"]["cursor"]["maxLength"] == 162
+    req = lq.parse_request(lq.ReviewListRequest, {"project": slug, "kind": kind, "cursor": cursor})
+    assert lq.parse_review_cursor(req.cursor, slug, kind)[1] == QC
+    with pytest.raises(Exception, match="cursor"):
+        lq.parse_request(lq.ReviewListRequest, {"project": slug, "kind": kind, "cursor": cursor + "0"})
 
 
 async def test_a_cursor_is_refused_when_the_listing_cannot_page(tmp_path: Path) -> None:
@@ -708,42 +752,126 @@ async def test_session_log_entries_have_ids_kinds_and_decisions_only(tmp_path: P
 
 # --------------------------------------------------------------------------- the typer command
 class _Memory:
-    def __init__(self, server: FakeServer) -> None:
-        self.call_async = server
+    """One client the CLI builds; records (tool, headers) of every call it carries."""
+
+    def __init__(
+        self, server: FakeServer, headers: dict[str, str] | None, sent: list[tuple[str, dict]]
+    ) -> None:
+        self.server, self.headers, self.sent = server, dict(headers or {}), sent
+
+    async def call_async(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        self.sent.append((tool, dict(self.headers)))
+        return await self.server(tool, args)
+
+
+class _MemKeyring:
+    def __init__(self, store: dict[tuple[str, str], str] | None = None) -> None:
+        self.store = dict(store or {})
+
+    def get_password(self, service: str, key: str) -> str | None:
+        return self.store.get((service, key))
+
+    def set_password(self, service: str, key: str, value: str) -> None:
+        self.store[(service, key)] = value
+
+
+OWNER = "o" * 64
+SERVER_BASE = "http://127.0.0.1:8765"  # base_url of write_toml's server
 
 
 def _install(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeServer,
     tmp_path: Path,
-    seen: list[dict[str, Any]] | None = None,
-) -> Path:
+    *,
+    tty: bool = False,
+    keychain: _MemKeyring | None = None,
+) -> tuple[Path, list[tuple[str, dict]]]:
     monkeypatch.setenv("HLM_DEVICE_TOKEN", "hlm_" + "b" * 43)
     monkeypatch.setenv("HLM_REVIEW_LOG", str(tmp_path / "review.log"))
-    monkeypatch.delenv("HLM_OWNER_TOKEN", raising=False)
-
-    def memory(self: Any, **kw: Any) -> _Memory:
-        if seen is not None:
-            seen.append(kw)
-        return _Memory(server)
-
-    monkeypatch.setattr(hlm_mod.Ctx, "memory", memory)
+    sent: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        hlm_mod.Ctx, "memory", lambda self, **kw: _Memory(server, kw.get("extra_headers"), sent)
+    )
+    monkeypatch.setattr(hlm_mod, "_stdio_is_tty", lambda: tty)
+    monkeypatch.setattr(credentials, "_keyring", lambda: keychain)
     write_toml(Path.cwd() / "hlm.toml")
-    return tmp_path / "review.log"
+    return tmp_path / "review.log", sent
 
 
-def test_cli_sends_the_owner_token_header_only_when_set(
+def test_without_a_terminal_the_owner_token_is_never_read_or_sent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    seen: list[dict[str, Any]] = []
-    _install(monkeypatch, FakeServer([]), tmp_path, seen)
-    res = runner().invoke(app, ["review", "--dry-run"])
+    """Review 102 HIGH (Sol): an agent's shell tool (piped stdio) must not get the owner capability,
+    even with the token in the keychain and HLM_OWNER_TOKEN in the environment."""
+    kc = _MemKeyring({(credentials.OWNER_SERVICE, SERVER_BASE): OWNER})
+    reads: list[str] = []
+    real_load = credentials.load_owner_token
+    monkeypatch.setattr(credentials, "load_owner_token", lambda url: reads.append(url) or real_load(url))
+    server = FakeServer([contradiction(), link()])
+    _log, sent = _install(monkeypatch, server, tmp_path, tty=False, keychain=kc)
+    monkeypatch.setenv("HLM_OWNER_TOKEN", OWNER)
+    res = runner().invoke(app, ["review", "--dry-run"], input="s\n")
     assert res.exit_code == 0, res.output
-    assert seen[-1].get("extra_headers") is None
-    monkeypatch.setenv("HLM_OWNER_TOKEN", "o" * 64)
-    res = runner().invoke(app, ["review", "--dry-run", "--cursor", f"{P}/*/000000/{QC}"])
+    assert reads == [] and all(h == {} for _t, h in sent) and OWNER not in res.output
+    assert "hlm.questions" not in server.tools()  # not even requested
+    assert "hlm.questions is owner-only and not a terminal, so the owner token is not used" in res.output
+    # --decisions without a terminal: the decisions still go out (device bearer), no owner token
+    f = tmp_path / "d.json"
+    f.write_text(json.dumps({QC: "reject"}))
+    res = runner().invoke(app, ["review", "--decisions", str(f), "--yes"])
     assert res.exit_code == 0, res.output
-    assert seen[-1]["extra_headers"] == {"X-HLM-Owner-Token": "o" * 64}
+    assert server.answer_calls() == [answer_args(P, QC, "reject")] and all(h == {} for _t, h in sent)
+    assert "hlm.questions" not in server.tools() and reads == []
+
+
+def test_in_a_terminal_the_keychain_token_goes_only_on_hlm_questions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kc = _MemKeyring({(credentials.OWNER_SERVICE, SERVER_BASE): OWNER})
+    server = FakeServer([contradiction(), link()])
+    _log, sent = _install(monkeypatch, server, tmp_path, tty=True, keychain=kc)
+    res = runner().invoke(app, ["review", "--batch", "2"], input="o\na\ns\n")
+    assert res.exit_code == 0, res.output
+    assert {t for t, h in sent if h} == {"hlm.questions"}
+    assert all(h == {"X-HLM-Owner-Token": OWNER} for t, h in sent if t == "hlm.questions")
+    assert {t for t, h in sent if not h} == {"memory.drilldown", "memory.answer"}
+    assert OWNER not in res.output
+
+
+def test_in_a_terminal_the_environment_variable_is_ignored(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    server = FakeServer([contradiction()])
+    _log, sent = _install(monkeypatch, server, tmp_path, tty=True, keychain=_MemKeyring())
+    monkeypatch.setenv("HLM_OWNER_TOKEN", OWNER)
+    res = runner().invoke(app, ["review", "--dry-run"], input="s\n")
+    assert res.exit_code == 0, res.output
+    assert all(h == {} for _t, h in sent) and "hlm.questions" not in server.tools()
+    assert "no owner token in the keychain (hlm review --set-owner-token)" in res.output
+
+
+def test_set_owner_token_prompts_hidden_and_stores_in_the_keychain_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kc = _MemKeyring()
+    _install(monkeypatch, FakeServer([]), tmp_path, tty=False, keychain=kc)
+    prompts: list[str] = []
+    answer = iter([" " + OWNER + "\n", "short", OWNER])
+    monkeypatch.setattr(hlm_mod.getpass, "getpass", lambda prompt: prompts.append(prompt) or next(answer))
+    res = runner().invoke(app, ["review", "--set-owner-token"])  # no terminal: refused, no prompt
+    assert res.exit_code == EX_USAGE and prompts == [] and kc.store == {}
+    monkeypatch.setattr(hlm_mod, "_stdio_is_tty", lambda: True)
+    res = runner().invoke(app, ["review", "--set-owner-token"])
+    assert res.exit_code == 0, res.output
+    assert kc.store == {(credentials.OWNER_SERVICE, SERVER_BASE): OWNER} and OWNER not in res.output
+    assert prompts == ["owner token (input hidden): "]
+    assert not (Path(credentials.config_dir()) / credentials.CREDENTIALS_FILE).exists()  # no file copy
+    res = runner().invoke(app, ["review", "--set-owner-token"])
+    assert res.exit_code == EX_USAGE and "at least 32" in res.output
+    monkeypatch.setattr(credentials, "_keyring", lambda: None)  # no keychain: nothing stored anywhere
+    res = runner().invoke(app, ["review", "--set-owner-token"])
+    assert res.exit_code == 69 and "no working keychain" in res.output
 
 
 def test_the_agent_launcher_never_passes_the_owner_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -755,7 +883,8 @@ def test_the_agent_launcher_never_passes_the_owner_token(monkeypatch: pytest.Mon
 
 def test_cli_dry_run_reads_keys_from_stdin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     server = FakeServer([contradiction(), link()])
-    log = _install(monkeypatch, server, tmp_path)
+    kc = _MemKeyring({(credentials.OWNER_SERVICE, SERVER_BASE): OWNER})
+    log, _sent = _install(monkeypatch, server, tmp_path, tty=True, keychain=kc)
     res = runner().invoke(app, ["review", "--dry-run", "--batch", "2"], input="a\ns\n")
     assert res.exit_code == 0, res.output
     assert server.answer_calls() == [] and "DRY-RUN would send memory.answer" in res.output
@@ -765,7 +894,8 @@ def test_cli_dry_run_reads_keys_from_stdin(monkeypatch: pytest.MonkeyPatch, tmp_
 
 def test_cli_decisions_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     server = FakeServer([contradiction(), link()])
-    log = _install(monkeypatch, server, tmp_path)
+    kc = _MemKeyring({(credentials.OWNER_SERVICE, SERVER_BASE): OWNER})
+    log, _sent = _install(monkeypatch, server, tmp_path, tty=True, keychain=kc)
     f = tmp_path / "d.json"
     f.write_text(json.dumps({QC: "accept", QL: "reject"}))
     res = runner().invoke(app, ["review", "--project", "hlmemo", "--decisions", str(f)], input="n\n")
@@ -793,3 +923,7 @@ def test_cli_usage_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert res.exit_code != 0 and server.calls == []
     res = runner().invoke(app, ["review", "--cursor", "a b"])
     assert res.exit_code == EX_USAGE and server.calls == []
+    res = runner().invoke(app, ["review", "--cursor", "x" * (CURSOR_MAX + 1)])
+    assert res.exit_code == EX_USAGE and server.calls == []
+    res = runner().invoke(app, ["review", "--cursor", "x" * CURSOR_MAX])  # passes the CLI check
+    assert "--cursor expects" not in res.output and "the notices cannot page" in res.output

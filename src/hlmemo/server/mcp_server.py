@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import secrets
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -163,6 +164,8 @@ async def request_binding(
 #: bearer), so a prompt-injected agent cannot present it through ``tools/call``
 OWNER_HEADER = "x-hlm-owner-token"
 OWNER_TOKEN_MIN_CHARS = 32
+#: compared instead when the server has no usable token, so every refusal takes the same path
+_OWNER_DUMMY = secrets.token_hex(32)
 
 
 def require_owner_client(request: Any, tool: str) -> None:
@@ -175,9 +178,11 @@ def require_owner_client(request: Any, tool: str) -> None:
     settings = getattr(getattr(getattr(request, "app", None), "state", None), "settings", None)
     secret_obj = getattr(settings, "owner_token", None)
     secret = secret_obj.get_secret_value() if secret_obj is not None else ""
+    usable = len(secret) >= OWNER_TOKEN_MIN_CHARS
     headers = getattr(request, "headers", None)
     presented = (headers.get(OWNER_HEADER) if headers is not None else None) or ""
-    if len(secret) < OWNER_TOKEN_MIN_CHARS or not presented or not constant_time_equal(presented, secret):
+    matches = constant_time_equal(presented, secret if usable else _OWNER_DUMMY)  # always compared
+    if not (usable and presented and matches):
         raise HlmError(
             "E_FORBIDDEN",
             f"{tool} is an owner-only client tool: the owner's hlm CLI sends HLM_OWNER_TOKEN "
