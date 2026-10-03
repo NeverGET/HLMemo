@@ -639,9 +639,11 @@ ssh -F "$STATE/ssh_config" hlm-deploy "$OPS withdraw --project hlmemo --ids-file
   < "$WITHDRAW_FILE" > "$STATE/withdraw.json"
 python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); ok = not d["dry_run"] and d["withdrawn"] == int(sys.argv[2]) and bool(d["event_id"]); print("withdraw", "PASS" if ok else "FAIL", d["withdrawn"], "event", d["event_id"]); sys.exit(not ok)' \
   "$STATE/withdraw.json" "$EXPECT_WITHDRAW"
-# 4. what a promotion would release now (records nothing): exactly the kept questions of hlmemo
+# 4. what a promotion would release now (records nothing): exactly the kept questions, nothing else.
+#    PASS: total == EXPECT_KEEP, the only project is hlmemo, and its counts are exactly
+#    {accepted_pending: EXPECT_KEEP, approved: 0}
 ssh -F "$STATE/ssh_config" hlm-deploy "$OPS role set assistant --decision D-NNN --dry-run" </dev/null > "$STATE/role-preview.json"
-python3 -c 'import json,sys; c = json.load(open(sys.argv[1]))["would_release"]["by_project"].get("hlmemo", {}); ok = c.get("accepted_pending") == int(sys.argv[2]); print("kept", "PASS" if ok else "FAIL", c); sys.exit(not ok)' \
+python3 -c 'import json,sys; r = json.load(open(sys.argv[1]))["would_release"]; n = int(sys.argv[2]); ok = r["total"] == n and set(r["by_project"]) == {"hlmemo"} and r["by_project"]["hlmemo"] == {"accepted_pending": n, "approved": 0}; print("kept", "PASS" if ok else "FAIL", r); sys.exit(not ok)' \
   "$STATE/role-preview.json" "$EXPECT_KEEP"
 ```
 

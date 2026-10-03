@@ -160,6 +160,12 @@ deployment_failed() {
   restore_env_w0
   if [[ $writers_stopped == 1 && -n $previous && -s $rollback_config ]]; then
     echo 'Deployment failed; recovering the previous stack.' >&2
+    # D-242 (reviews 107 #3, 108): the same warning as rollback.sh when the model this recovery
+    # starts has no dual-stack `edge` network. Inline, not in common.sh: recovery must not depend on
+    # a helper the restored checkout may lack.
+    if ! grep -Eq '"edge"[[:space:]]*:' "$rollback_config"; then
+      echo "WARNING: rollback target $previous has no 'edge' network in its Compose model (D-242): after this recovery Caddy sees every IPv6 client through ONE shared bucket again. Re-apply edge right after it with /usr/local/sbin/hlm-ipv6-maint.sh (RUNBOOK: Rollback between W0+ releases)." >&2
+    fi
     recovery_ok=1
     dc stop caddy api worker librarian </dev/null >&2 || recovery_ok=0
     # W2a: a previous model without the librarian must not keep this release's librarian
