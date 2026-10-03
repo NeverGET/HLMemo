@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from hlmemo.capture import config as CC
 
-KILL_ENV = "HLM_BRIEF"  # "off" / "0" / "false" / "no" disables the brief
+KILL_ENV = "HLM_BRIEF"  # "off" / "0" / "false" / "no" disables the whole hook (digest and brief)
+DIGEST_ENV = "HLM_BRIEF_DIGEST"  # the same values suppress only the "HLMemo mode" protocol digest
 DRYRUN_ENV = "HLM_BRIEF_DRYRUN"  # a directory: write the would-be brief there and inject nothing
 WALL_ENV = "HLM_BRIEF_WALL_S"  # test/ops override of the hard wall clock
 
@@ -20,9 +22,17 @@ BRIEF_TOKENS = 1500
 SOURCES = ("startup", "clear", "compact")
 
 
-def killed(env: dict[str, str] | None = None) -> bool:
-    v = (env if env is not None else os.environ).get(KILL_ENV, "")
+def _off(env: Mapping[str, str] | None, name: str) -> bool:
+    v = (env if env is not None else os.environ).get(name, "")
     return v.strip().lower() in {"off", "0", "false", "no", "disabled"}
+
+
+def killed(env: Mapping[str, str] | None = None) -> bool:
+    return _off(env, KILL_ENV)
+
+
+def digest_off(env: Mapping[str, str] | None = None) -> bool:
+    return _off(env, DIGEST_ENV)
 
 
 def wall_seconds() -> float:
