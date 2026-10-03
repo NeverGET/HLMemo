@@ -373,10 +373,8 @@ path uses it); present-tense detection or mandatory When/Do/Avoid headings (no c
 3. **Writer reach.** D-246 keeps the review queue and global lessons away from writers. But `memory.answer`
    works with the device bearer, and the owner's device was granted `hlm-global:write` (D-234). One bearer per device
    also means the server cannot enforce "own slug only".
-4. **Install status.** `docs/brief/README.md` and `docs/capture/README.md` still say "Install (NOT done)";
-   D-228/D-218 record both as installed for the HLMemo project.
-5. **Tool names.** `docs/USAGE.md:125` says tools appear as `mcp__hlm__memory.query`. Claude Code exposes
-   `mcp__hlm__memory_query`, as `docs/capture/README.md` already writes it.
+4. **Install status.** RESOLVED 2026-10-03 (brief-digest): the brief and capture READMEs now state what is installed.
+5. **Tool names.** RESOLVED 2026-10-03: `docs/USAGE.md` now uses `mcp__hlm__memory_query`, etc.
 
 ## 6. Injected digest ("HLMemo mode")
 
