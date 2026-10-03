@@ -506,6 +506,90 @@ async def test_promotion_guard_counts_per_project_and_needs_the_exact_count(conn
         await conn.rollback()
 
 
+async def test_a_batch_approval_never_slips_between_the_guard_count_and_the_promotion(
+    connect, world: World
+) -> None:  # noqa: ANN001
+    """Review 107 #1: a batch approval (open → approved + an apply_batch job) takes the role-order
+    lock SHARED, so it either precedes the promotion's count (the guard then sees it and refuses) or
+    waits until the promotion has committed. Before, it committed in between: the promotion recorded
+    a count without it and the queued job applied an uncounted question."""
+    import asyncio
+
+    async with await connect() as conn:
+        first, second = str(uuid.uuid4()), str(uuid.uuid4())
+        await _row(conn, world.main_id, "open", first)
+        await _row(conn, world.main_id, "open", second)
+        await conn.commit()
+
+    async def promote(**kw: Any) -> int | ToolError:
+        async with await connect() as conn:
+            try:
+                event_id = await record_role_decision(
+                    conn, role="assistant", decided_by=world.ctx_admin, decision="D-race", **kw
+                )
+            except ToolError as exc:
+                return exc
+            await conn.commit()
+        return event_id
+
+    async def approve(batch: str) -> dict[str, Any]:
+        async with await connect() as conn:
+            res = await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="accept")
+            await conn.commit()
+        return res
+
+    # (1) the approval first: the promotion waits for it, then counts it and refuses
+    async with await connect() as appr:
+        await record_batch_decision(appr, batch_id=first, approver=world.ctx_a, decision="accept")
+        promotion = asyncio.create_task(promote())
+        await asyncio.sleep(0.3)
+        assert not promotion.done(), "the promotion must wait for the approval in flight"
+        await appr.commit()
+    err = await promotion
+    assert isinstance(err, ToolError) and err.details["would_release"]["total"] == 1
+    # (2) the promotion first: the approval waits until it committed (it was not in the count)
+    async with await connect() as promo:
+        await record_role_decision(
+            promo, role="assistant", decided_by=world.ctx_admin, decision="D-race", release_pending=1
+        )
+        approval = asyncio.create_task(approve(second))
+        await asyncio.sleep(0.3)
+        assert not approval.done(), "the approval must wait for the promotion in flight"
+        await promo.commit()
+    assert (await approval)["accepted"] == 1
+    # both approved: the first was in the promotion's count (1), the second was decided after it
+    assert sorted((await _statuses(connect)).values()) == ["approved", "approved"]
+
+
+async def test_the_guard_counts_an_answer_a_revision_could_release_later(connect, world: World) -> None:  # noqa: ANN001
+    """Review 107 #1, the other path that makes an answer releasable: a project-scope revision of an
+    item its action touches (no role-order lock). The answer's action touches an observer project now,
+    so this promotion queues nothing for it; a narrowing revision committed after the count would let
+    the sweeper or ``release_pending`` release it. The count ignores the actions' current projects
+    (an upper bound), so it is counted now. Before, it was not (count 0, an uncounted release)."""
+    from hlmemo.librarian.roles import pending_apply_jobs
+
+    (other,) = await write_items(
+        connect, world.ctx_a, OTHER, [item("Other host", "The other project has a host.")]
+    )
+    async with await connect() as conn:
+        qid = await _row(conn, world.main_id, "accepted_pending")
+        action = {"op": "link_insert", "rel": "contradicts", "src_logical_id": other.logical_id}
+        await conn.execute(
+            "UPDATE librarian_questions SET proposal = %s WHERE question_id = %s",
+            (Jsonb({"actions": [{**action, "dst_logical_id": other.logical_id}]}), qid),
+        )
+        await record_role_decision(
+            conn, role="observer", decided_by=world.ctx_admin, decision="D-o", project_id=world.other_id
+        )
+        await conn.commit()
+        assert await pending_apply_jobs(conn, "assistant", None, 0) == []  # not releasable yet
+        assert await promotion_release(conn, "assistant", None) == {
+            world.main_id: {"accepted_pending": 1, "approved": 0}
+        }
+        await conn.rollback()
+
+
 # --------------------------------------------------------------------------- the ops CLI
 def _ops(db_dsn: str, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     env = {"PATH": "/usr/bin:/bin", "HLM_DB_DSN": db_dsn, "HLM_API_PORT": "9"}

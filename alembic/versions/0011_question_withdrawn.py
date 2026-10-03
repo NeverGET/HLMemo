@@ -4,22 +4,28 @@ an open, approved or accepted_pending proposal; terminal, never applied).
 Revision ID: 0011_question_withdrawn
 Revises: 0010_billing_outcome
 
-Widens the ``status`` CHECK by one value; no data changes. Backward compatible: code from before this
-revision never writes the new value, and every apply path of that code selects only ``approved`` and
-``accepted_pending`` (``memory.answer`` only ``open``), so it runs unchanged on the migrated schema and
-never applies a withdrawn question.
+Widens the ``status`` CHECK by one value; no data changes. Code from before this revision never
+writes the new value, and its apply paths select only ``approved`` and ``accepted_pending``
+(``memory.answer`` only ``open``), so its apply logic ignores withdrawn rows. An older RELEASE still
+does not run on this schema: its readiness check expects its own alembic head (0010). Rolling back to
+it means restoring the pre-upgrade dump, which loses every write made after that dump.
 
-The swap runs in short autocommit steps, as in ``0010_billing_outcome`` (R4.1 review Sol F-2): add the
-replacement ``librarian_questions_status_check_v2`` ``NOT VALID`` (catalog only), ``VALIDATE`` it
-(``SHARE UPDATE EXCLUSIVE``: reads and writes go on), then drop the old constraint and rename ``_v2`` to
-it in ONE short transaction. Every step can be re-run; the final name is
-``librarian_questions_status_check`` either way.
+Upgrade: the swap runs in short autocommit steps, as in ``0010_billing_outcome`` (R4.1 review Sol
+F-2): add the replacement ``librarian_questions_status_check_v2`` ``NOT VALID`` (catalog only),
+``VALIDATE`` it (``SHARE UPDATE EXCLUSIVE``: reads and writes go on), then drop the old constraint and
+rename ``_v2`` to it in ONE short transaction. Safe to interrupt: a leftover staged constraint holds
+the NEW values, a superset of the live ones, so it never rejects a write; a re-run drops and re-adds
+it. The final name is ``librarian_questions_status_check`` either way.
 
 Downgrade REFUSES while any question is ``withdrawn`` (as ``0008`` refuses while W2c statuses exist):
 those rows are projections of authoritative ``librarian`` events (op ``withdraw``), and replaying those
-events needs this schema. The staged old-value constraint is added ``NOT VALID`` first, so no new
-``withdrawn`` row can be written while the check runs; the check, the drop and the rename then land in
-ONE transaction. On a refusal the staged constraint is dropped again and nothing else changed.
+events needs this schema. Review 107 #2: a staged OLD constraint committed on its own would reject
+every future withdraw if a refusal's cleanup failed (lock timeout) while alembic still says 0011. So
+the whole downgrade is ONE transaction, the migration's own (``transaction_per_migration``, with the
+alembic version update): the first ``ALTER`` takes ``ACCESS EXCLUSIVE`` (no withdraw can commit
+after it), then the refusal check, then the drop and the validated old constraint. A refusal or a
+lock timeout rolls ALL of it back. The validation scan runs under that lock; ``librarian_questions``
+is small (one row per proposal).
 """
 
 from __future__ import annotations
@@ -52,39 +58,37 @@ BEGIN
 END $$"""
 
 
-def _swap(values: str, *, refuse_withdrawn: bool) -> None:
-    """Replace the ``status`` CHECK by one over ``values`` without a long ``ACCESS EXCLUSIVE`` lock
-    (module doc). ``refuse_withdrawn``: the downgrade's guard, in the same transaction as the swap."""
-    with op.get_context().autocommit_block():  # every step below is its own short transaction
+DOWNGRADE = f"""
+ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS {STAGED};
+{REFUSE_WITHDRAWN};
+ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS {CHECK};
+ALTER TABLE {TABLE} ADD CONSTRAINT {STAGED} CHECK (status IN ({OLD}));
+ALTER TABLE {TABLE} RENAME CONSTRAINT {STAGED} TO {CHECK};
+"""
+
+
+def upgrade() -> None:
+    """The staged swap (module doc); every step is its own short transaction."""
+    with op.get_context().autocommit_block():
         bind = op.get_bind()
         bind.exec_driver_sql(f"SET lock_timeout = '{LOCK_TIMEOUT}'")
         try:
             bind.exec_driver_sql(f"ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS {STAGED}")
             bind.exec_driver_sql(
-                f"ALTER TABLE {TABLE} ADD CONSTRAINT {STAGED} CHECK (status IN ({values})) NOT VALID"
+                f"ALTER TABLE {TABLE} ADD CONSTRAINT {STAGED} CHECK (status IN ({NEW})) NOT VALID"
             )
-            if not refuse_withdrawn:
-                bind.exec_driver_sql(f"ALTER TABLE {TABLE} VALIDATE CONSTRAINT {STAGED}")
-            # one simple-query string = one implicit transaction: guard, drop and rename land together
-            try:
-                bind.exec_driver_sql(
-                    (f"{REFUSE_WITHDRAWN};\n" if refuse_withdrawn else "")
-                    + f"ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS {CHECK};\n"
-                    f"ALTER TABLE {TABLE} RENAME CONSTRAINT {STAGED} TO {CHECK};"
-                )
-            except Exception:
-                # nothing swapped: drop the staged constraint so the current schema stays as it was
-                bind.exec_driver_sql(f"ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS {STAGED}")
-                raise
-            if refuse_withdrawn:
-                bind.exec_driver_sql(f"ALTER TABLE {TABLE} VALIDATE CONSTRAINT {CHECK}")
+            bind.exec_driver_sql(f"ALTER TABLE {TABLE} VALIDATE CONSTRAINT {STAGED}")
+            # one simple-query string = one implicit transaction: drop and rename land together
+            bind.exec_driver_sql(
+                f"ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS {CHECK};\n"
+                f"ALTER TABLE {TABLE} RENAME CONSTRAINT {STAGED} TO {CHECK};"
+            )
         finally:
             bind.exec_driver_sql("RESET lock_timeout")
 
 
-def upgrade() -> None:
-    _swap(NEW, refuse_withdrawn=False)
-
-
 def downgrade() -> None:
-    _swap(OLD, refuse_withdrawn=True)
+    """ONE transaction (module doc): refused or timed out, nothing changes and alembic stays at 0011."""
+    bind = op.get_bind()
+    bind.exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+    bind.exec_driver_sql(DOWNGRADE)
