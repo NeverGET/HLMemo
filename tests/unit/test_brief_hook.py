@@ -1,4 +1,8 @@
-"""AL5 brief hook: mapping, kill switch, fail-open on every error path, output JSON, dry run."""
+"""AL5 brief hook: mapping, kill switch, fail-open on every error path, output JSON, dry run.
+
+The hook prepends the "HLMemo mode" protocol digest for every mapped project (test_brief_digest.py). The
+fail-open tests here run both ways: digest on (the default: digest + one "unavailable" line) and
+``HLM_BRIEF_DIGEST=off`` (the pre-digest behaviour: nothing at all)."""
 
 from __future__ import annotations
 
@@ -58,6 +62,26 @@ def payload(tmp_path: Path, sub: str = "proj", **kw: Any) -> str:
 
 def go(raw: str, cfg: Path, fetcher=ok_fetcher, env: dict[str, str] | None = None) -> H.Outcome:
     return H.handle(raw, fetcher=fetcher, env=env if env is not None else {}, config_path=cfg)
+
+
+DIGEST_OFF = {"HLM_BRIEF_DIGEST": "off"}
+
+
+def ctx(o: H.Outcome) -> str:
+    assert o.output is not None
+    return json.loads(o.output)["hookSpecificOutput"]["additionalContext"]
+
+
+def assert_fail_open(o: H.Outcome, digest_on: bool) -> None:
+    """Digest on: the digest plus ONE "unavailable" line and no brief. Digest off: nothing."""
+    if not digest_on:
+        assert o.output is None
+        return
+    text = ctx(o)
+    assert text.startswith("HLMemo mode: project proj ") and o.digest
+    tail = text.split("\n\n")[-1]
+    assert tail.startswith("# Memory brief: project proj: unavailable this session (") and "\n" not in tail
+    assert "## Lessons" not in text and "## Now" not in text
 
 
 # --------------------------------------------------------------------------- mapping + kill switch
@@ -145,38 +169,55 @@ def test_invalid_toml_is_a_noop(tmp_path: Path) -> None:
     assert go(payload(tmp_path), p).output is None
 
 
+@pytest.mark.parametrize("digest_on", [True, False])
 @pytest.mark.parametrize(
     "exc", [RuntimeError("x"), OSError("net"), ValueError("v"), KeyError("k"), SystemExit(3)]
 )
-def test_fetcher_errors_are_silent(tmp_path: Path, cfg_file: Path, exc: BaseException) -> None:
+def test_fetcher_errors_fail_open(
+    tmp_path: Path, cfg_file: Path, exc: BaseException, digest_on: bool
+) -> None:
     async def boom(slug: str, cfg: Any) -> Snapshot:
         raise exc
 
-    o = go(payload(tmp_path), cfg_file, fetcher=boom)
-    assert o.output is None and o.status.startswith("error:")
+    o = go(payload(tmp_path), cfg_file, fetcher=boom, env={} if digest_on else DIGEST_OFF)
+    assert o.status.startswith("error:")
+    assert_fail_open(o, digest_on)
+    if digest_on:
+        assert "(the memory read failed)" in ctx(o)
 
 
-def test_timeout_is_silent(tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("digest_on", [True, False])
+def test_timeout_fails_open(
+    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch, digest_on: bool
+) -> None:
     monkeypatch.setattr(BC, "FETCH_S", 0.2)
 
     async def slow(slug: str, cfg: Any) -> Snapshot:
         await asyncio.sleep(5)
         return good_snapshot()
 
-    o = go(payload(tmp_path), cfg_file, fetcher=slow)
-    assert o.status == "timeout" and o.output is None
+    o = go(payload(tmp_path), cfg_file, fetcher=slow, env={} if digest_on else DIGEST_OFF)
+    assert o.status == "timeout"
+    assert_fail_open(o, digest_on)
+    if digest_on:
+        assert "(the memory read timed out)" in ctx(o)
 
 
-def test_no_token_means_nothing(tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("digest_on", [True, False])
+def test_no_token_means_no_brief(
+    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch, digest_on: bool
+) -> None:
     from hlmemo.brief import fetch as F
 
     monkeypatch.setattr(F, "open_call_factory", lambda *a, **k: None)
-    o = H.handle(payload(tmp_path), env={}, config_path=cfg_file)
-    assert o.status == "empty" and o.output is None
+    o = H.handle(payload(tmp_path), env={} if digest_on else DIGEST_OFF, config_path=cfg_file)
+    assert o.status == "empty"
+    assert_fail_open(o, digest_on)
 
 
-def test_server_unreachable_is_silent(
-    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("digest_on", [True, False])
+def test_server_unreachable_fails_open(
+    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch, digest_on: bool
 ) -> None:
     from hlmemo.brief import fetch as F
 
@@ -184,11 +225,13 @@ def test_server_unreachable_is_silent(
         raise ConnectionError("refused")
 
     monkeypatch.setattr(F, "open_call_factory", refuse)
-    o = H.handle(payload(tmp_path), env={}, config_path=cfg_file)
-    assert o.output is None and o.status.startswith("error:")
+    o = H.handle(payload(tmp_path), env={} if digest_on else DIGEST_OFF, config_path=cfg_file)
+    assert o.status.startswith("error:")
+    assert_fail_open(o, digest_on)
 
 
-def test_empty_or_skeleton_snapshot_is_silent(tmp_path: Path, cfg_file: Path) -> None:
+@pytest.mark.parametrize("digest_on", [True, False])
+def test_empty_or_skeleton_snapshot_shows_no_brief(tmp_path: Path, cfg_file: Path, digest_on: bool) -> None:
     async def skeleton(slug: str, cfg: Any) -> Snapshot:
         return Snapshot(
             project="proj", card={"clue": "v1", "text": "Skeleton card (D-015) x", "stale": False}
@@ -197,8 +240,13 @@ def test_empty_or_skeleton_snapshot_is_silent(tmp_path: Path, cfg_file: Path) ->
     async def none(slug: str, cfg: Any) -> None:
         return None
 
-    assert go(payload(tmp_path), cfg_file, fetcher=skeleton).status == "empty"
-    assert go(payload(tmp_path), cfg_file, fetcher=none).status == "empty"
+    env = {} if digest_on else DIGEST_OFF
+    for fetcher in (skeleton, none):
+        o = go(payload(tmp_path), cfg_file, fetcher=fetcher, env=env)
+        assert o.status == "empty"
+        assert_fail_open(o, digest_on)
+        if digest_on:
+            assert "Skeleton card" not in ctx(o) and "(nothing to show:" in ctx(o)
 
 
 # --------------------------------------------------------------------------- output shape
@@ -210,9 +258,16 @@ def test_output_is_the_sessionstart_json(tmp_path: Path, cfg_file: Path) -> None
     inner = doc["hookSpecificOutput"]
     assert set(inner) == {"hookEventName", "additionalContext"}
     assert inner["hookEventName"] == "SessionStart"
-    assert inner["additionalContext"].startswith("# Memory brief: project proj")
+    assert inner["additionalContext"].startswith("HLMemo mode: project proj ")
+    assert "\n\n# Memory brief: project proj (" in inner["additionalContext"]
     assert "## Lessons" in inner["additionalContext"]
     assert o.tokens <= 1500
+
+
+def test_output_without_digest_is_the_brief_alone(tmp_path: Path, cfg_file: Path) -> None:
+    o = go(payload(tmp_path), cfg_file, env=DIGEST_OFF)
+    assert o.status == "injected" and not o.digest
+    assert ctx(o).startswith("# Memory brief: project proj (") and "HLMemo mode" not in ctx(o)
 
 
 def test_unicode_survives(tmp_path: Path, cfg_file: Path) -> None:
@@ -231,9 +286,26 @@ def test_dryrun_writes_a_file_and_injects_nothing(tmp_path: Path, cfg_file: Path
     o = go(payload(tmp_path), cfg_file, env={"HLM_BRIEF_DRYRUN": str(out)})
     assert o.status == "dryrun" and o.output is None
     txt = list(out.glob("*.brief.txt"))
-    assert len(txt) == 1 and txt[0].read_text().startswith("# Memory brief: project proj")
+    assert len(txt) == 1  # the would-be additionalContext: the digest, then the brief
+    body = txt[0].read_text()
+    assert body.startswith("HLMemo mode: project proj ") and "\n\n# Memory brief: project proj (" in body
     meta = json.loads(next(out.glob("*.meta.json")).read_text())
-    assert meta["tokens"] > 0 and "Lessons" in meta["sections"]
+    assert meta["tokens"] > 0 and meta["sections"][:1] == ["Digest"] and "Lessons" in meta["sections"]
+    assert meta["digest"] is True and meta["status"] == "injected" and meta["chars"] == len(body) - 1
+
+
+def test_dryrun_of_a_failed_fetch_writes_the_digest_and_the_unavailable_line(
+    tmp_path: Path, cfg_file: Path
+) -> None:
+    async def boom(slug: str, cfg: Any) -> Snapshot:
+        raise RuntimeError("x")
+
+    out = tmp_path / "dry"
+    o = go(payload(tmp_path), cfg_file, fetcher=boom, env={"HLM_BRIEF_DRYRUN": str(out)})
+    assert o.status == "dryrun" and o.output is None
+    body = next(out.glob("*.brief.txt")).read_text()
+    assert body.startswith("HLMemo mode: project proj ") and "unavailable this session" in body
+    assert json.loads(next(out.glob("*.meta.json")).read_text())["status"] == "error:RuntimeError"
 
 
 # --------------------------------------------------------------------------- main(): stdout, exit code
@@ -246,10 +318,12 @@ def test_main_prints_json_and_exits_zero(
     monkeypatch.delenv("HLM_BRIEF_DRYRUN", raising=False)
     monkeypatch.setattr(H, "default_fetcher", ok_fetcher)
     monkeypatch.setattr(sys, "stdin", io.StringIO(payload(tmp_path)))
+    monkeypatch.delenv("HLM_BRIEF_DIGEST", raising=False)
     assert H.main() == 0
     doc = json.loads(capsys.readouterr().out)
     assert doc["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert "injected" in (tmp_path / "state" / "brief.log").read_text()
+    log = (tmp_path / "state" / "brief.log").read_text()
+    assert " injected " in log and " digest=1 " in log and "sections=Digest,Now,Lessons" in log
 
 
 def test_main_unmapped_prints_nothing(
@@ -360,3 +434,36 @@ def test_config_history_and_body_defaults(tmp_path: Path) -> None:
     )
     c = BC.load_config(p)
     assert c.decisions_max_lines == 0 and c.lesson_body_chars == 0
+
+
+def test_history_and_body_settings_reach_the_brief(tmp_path: Path) -> None:
+    """`[brief] decisions_max_lines` / `lesson_body_chars` are passed to assemble (they were read from the
+    config but never passed, so the documented settings had no effect)."""
+    from datetime import timedelta
+
+    async def with_note(slug: str, cfg: Any) -> Snapshot:
+        s = good_snapshot()
+        note = Item(
+            7,
+            "session_note",
+            "Session",
+            None,
+            [],
+            body="## Decisions\n- Use the new parser.\n",
+            logical_id=7,
+            verified=True,
+            current=True,
+            recorded_at=s.now - timedelta(days=1),
+        )
+        s.sessions = [note]
+        return s
+
+    p = tmp_path / "c.toml"
+    p.write_text(f'[projects]\n"{tmp_path}/proj" = "proj"\n')
+    off = go(payload(tmp_path), p, fetcher=with_note).output or ""
+    assert "Use the new parser." not in off and "The rule." not in off
+    p.write_text(
+        f'[projects]\n"{tmp_path}/proj" = "proj"\n[brief]\ndecisions_max_lines = 3\nlesson_body_chars = 50\n'
+    )
+    on = go(payload(tmp_path), p, fetcher=with_note).output or ""
+    assert "Use the new parser." in on and "A lesson — The rule." in on

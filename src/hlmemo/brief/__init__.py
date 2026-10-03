@@ -5,9 +5,11 @@ the project card, the decisions and open items of the newest session notes, curr
 pending-review count and the memory's "as of" date. Only verbatim memory lines (truncated with an
 ellipsis, never summarised), every line with its handle, every superseded or non-current item excluded.
 
-Modules: ``config`` (kill switch, ``[brief]`` table, cwd -> project via the capture mapping), ``fetch``
+Modules: ``config`` (kill switches, ``[brief]`` table, cwd -> project via the capture mapping), ``fetch``
 (read-only memory.query / memory.raw calls and the supersession filter), ``assemble`` (pure: snapshot
--> brief text within the token budget) and ``hook`` (the entry point: hard wall clock, fail-open).
+-> brief text within the token budget) and ``hook`` (the entry point: hard wall clock, fail-open). The
+hook puts the "HLMemo mode" protocol digest (``protocol_digest.txt``, a byte copy of section 6 of
+``docs/protocol/HLMEMO-PROTOCOL.md``) before the brief for every mapped project.
 
 Guiding principle (GOAL-PLAN): half-learning is worse than not knowing. On any doubt, say nothing.
 """

@@ -6,8 +6,9 @@ When a Claude Code session in a **mapped** project ends (or compacts), HLMemo re
 - the **decisions** that were explicitly made (at most 12);
 - **lessons**, only where a mistake or learning is explicit in the session (0 is the normal case).
 
-Everything goes through `memory.call_the_day` (no card update). Status: **built and evaluated offline,
-not installed anywhere**. Installation is an owner decision (see "Install").
+Everything goes through `memory.call_the_day` (no card update). Status: **installed for the HLMemo
+project only** (D-218: project-local hooks in the HLMemo repo's `.claude/settings.local.json`, the mapping
+file lists only that project). Any wider install is an owner decision (see "Install").
 
 Guiding principle (GOAL-PLAN): learning something halfway is worse than not knowing it. So: nothing that
 is not in the transcript, every item carries provenance, uncertainty is explicit, and any failure writes
@@ -147,10 +148,18 @@ exclude = [".claude/worktrees"]      # path fragments that are never captured
 
 Start with this one project only (owner decision). A missing or unreadable file means capture is off.
 
-## Install (NOT done; owner decision)
+The SessionStart brief (`docs/brief/README.md`) reads the SAME `[projects]` table and `[capture] exclude`
+list. A project line therefore registers a folder for both hooks, but each hook acts only where it is
+installed: adding a line for the (global) brief does not capture that project as long as the capture hook
+stays project-local in the HLMemo repo.
 
-Project-scoped, in `/Users/cemalkurt/Projects/HLMemo/.claude/settings.local.json` (gitignored: `.gitignore`
-line `.claude/settings.local.json`), merge into the existing `hooks`:
+## Install
+
+Status: installed project-locally for the HLMemo project (D-218). Capture is a SEPARATE hook from the
+SessionStart brief: the brief may be installed globally (`docs/brief/README.md`, "Install"), capture
+stays project-local unless the owner decides otherwise. The installed block, in
+`/Users/cemalkurt/Projects/HLMemo/.claude/settings.local.json` (gitignored: `.gitignore` line
+`.claude/settings.local.json`), merged into the existing `hooks`:
 
 ```json
 {
@@ -183,9 +192,12 @@ line `.claude/settings.local.json`), merge into the existing `hooks`:
 }
 ```
 
-The same block works in `~/.claude/settings.json` (every project; the mapping file still limits it to mapped
-cwds). `hlmemo` is installed editable in that venv (`hlmemo.__file__` resolves to `src/hlmemo`), so no
-`PYTHONPATH` is needed once this branch is merged. Hook input JSON (verified on this machine with a real
+A global capture install would be the same block in `~/.claude/settings.json` (the mapping file still
+limits it to mapped cwds), but it is NOT installed that way: it would capture, with an LLM call per session,
+every project that gets a `[projects]` line for the brief. If the owner ever decides on it, use
+`python -P -m hlmemo.capture.hook` there, for the reason given in the brief README (`-P` keeps the session
+cwd off `sys.path`). `hlmemo` is installed editable in that venv (`hlmemo.__file__` resolves to
+`src/hlmemo`), so no `PYTHONPATH` is needed. Hook input JSON (verified on this machine with a real
 `claude -p` run): `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `reason` (SessionEnd:
 `clear|resume|logout|prompt_input_exit|other`) or `trigger` (PreCompact: `manual|auto`), plus `prompt_id`.
 
