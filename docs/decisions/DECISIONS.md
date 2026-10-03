@@ -2152,3 +2152,28 @@ D-243 | 2026-10-03 | ACCEPTED (owner: "Close without deploy") | **R4.3 is closed
   - the hour and day lines were dropped by the literal check, which is the true-claim loss 2a targeted.
   - R4.4 may address that with byte-exact table and value matching only.
 - **Next:** R4.4. The superseder pull-in redesign (D-241) goes ceiling first; the lesson-verification small item moves along with its LOW fix.
+D-244 | 2026-10-03 | ACCEPTED (owner: "Apply the 26 authoritative", "Only present-tense claims", "Pipeline + withdraw command") | **The librarian's accepted proposals were measured independently. The librarian is not ready to act alone; a candidate → 2 verifiers → gate pipeline is. 26 curated links were applied (event 5719). History policy: flag only present-tense claims.**
+
+- **Input:** 298 proposals that the owner accepted in `hlm review` (277 `contradicts`, 21 `refines`), all `accepted_pending` because the librarian role is observer.
+- **First pass:** 3 Sonnet verifiers against the current memory export gave:
+  - 2 genuine contradictions;
+  - 139 supersessions (temporal updates mislabeled as contradictions);
+  - 141 with no conflict (dated history, parallel reviews, unrelated items, sibling chunks);
+  - refines 16/21 correct;
+  - 33 with the direction reversed.
+- **Librarian precision:** the "contradiction" label is right 2/277; "a real relation exists" 51%; direction about 76%. This matches D-224 (NO-GO for an active role alone).
+- **Second pass:** 2 refuting Sonnet verifiers over the 106 records that passed the gate kept 27, fixed 24 and dropped 55. Most drops are dated history.
+  - Single-pass verification is therefore not enough. The history-vs-stale rule must be explicit.
+- **Authority filter:** of the 45 new links, only those whose source is a decision, plan, RUNBOOK, USAGE or CLAUDE.md were applied (26). 19 with living or dated sources are held for re-anchoring: auto-memory notes, STATUS, consult prompts, logs.
+- **Apply:** preview PASS 26/26 with counts unchanged; apply as one event; links 402 → 428, live backfill 143 → 169.
+- **Read semantics** (code read): `contradicts` and `refines` change no read. Only `supersedes` affects query, ask, card and brief.
+- **Queue hazard:**
+  - The only apply path for accepted proposals is `role set assistant`, which mass-applies every eligible pending batch in every project, with no preview and no subset.
+  - Accepted proposals cannot be rejected; they expire after 30 days.
+  - RUNBOOK and BACKLOG now forbid promotion until this is resolved.
+- **History policy (owner):** flag only statements that read as current state or instructions ("still OPEN", "Prod runs R3", "resume here"). Dated findings and review records stay as true history.
+- **Next (owner):**
+  - an evented `ops librarian withdraw/resolve` plus a promotion guard;
+  - a repeatable curate command: librarian candidates → 2 verifier agents → authority and quote gate → preview → apply part-scope `supersedes`;
+  - measure it on a fresh batch before the doc→memory sync relies on it;
+  - `hlm review` shows the librarian's own doubts (verifier kind, direction flags).
