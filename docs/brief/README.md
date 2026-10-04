@@ -4,7 +4,7 @@ An LLM-free, client-side Claude Code `SessionStart` hook. When a session starts 
 project it injects, in this order:
 
 1. the **"HLMemo mode" digest**: the writer rules of `docs/protocol/HLMEMO-PROTOCOL.md` section 6 with the
-   project's slug filled in (39 lines, about 3,200 characters / 780 tokens; see "The digest" below);
+   project's slug filled in (32 lines, about 3,300 characters / 780 tokens; see "The digest" below);
 2. a short **memory brief** (at most 1,500 o200k_base tokens, the same meter as the server's budget
    block). Everything in it is a verbatim memory line (cut with an ellipsis, never summarised) with its
    `[vN]` handle, so the agent can `memory.drilldown` / `memory.raw` it.
@@ -64,7 +64,7 @@ reviewed by the owner. "as of" = newest `recorded_at` among the items read.
 - Size: Claude Code caps a hook's `additionalContext` at 10,000 characters (beyond that it saves the text
   to a file and the model sees only a 2,000-character preview). The hook holds digest + brief to 9,500
   characters (`CONTEXT_CHARS` in `hook.py`): the brief keeps its token budget and also gets only the
-  characters the digest leaves (about 6,300); over that, `assemble` drops lines in its usual order
+  characters the digest leaves (about 6,200); over that, `assemble` drops lines in its usual order
   (lessons, open, decisions, then shrinks the card).
 - Suppress only the digest with `HLM_BRIEF_DIGEST=off` (also `0`, `false`, `no`). If the resource is
   unreadable (a broken install), the brief is still injected without it.
