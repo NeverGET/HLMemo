@@ -1,40 +1,44 @@
-# HLMemo — Human-Like Memory
+# HLMemo: Human-Like Memory
 
-Self-hosted, unified long-term memory backend for CLI coding agents (claude-code, codex, antigravity-cli),
-exposed as ONE remote MCP server (streamable HTTP). Token-budgeted, clue-based progressive disclosure;
-async "librarian" LLM for placement/contradiction/consolidation.
+A self-hosted, long-term memory backend for CLI coding agents (Claude Code, Codex, agy), served as one remote MCP
+server (`hlm`, streamable HTTP). Reads are token-budgeted and progressive: clues first, then drill down.
 
-## Working agreement (owner: Cemal)
-- **Coworker/reviewer models (D-085):** routine consults/reviews → codex `gpt-6-astra` at reasoning **low**; CRITICAL reviews (release gates, security/privacy, data integrity, migrations) → run BOTH `gpt-6-astra` low and `gpt-5.6-sol` xhigh in parallel and merge the findings (their blind spots differ).
-  Consult on every non-trivial design/implementation decision; record the exchange in `docs/consults/`.
-  Invocation: `codex exec --skip-git-repo-check -s read-only -m gpt-6-astra -c model_reasoning_effort="low" -o <out.md> - < <prompt.md>` (critical: also `-m gpt-5.6-sol -c model_reasoning_effort="xhigh"`)
-- **Local-first validation:** everything runs in docker compose locally and passes the deterministic gate
-  (`docs/decisions/` → validation gates) BEFORE any VPS deploy.
-- **Decisions live in `docs/decisions/DECISIONS.md`** (append-only ADR log). Chat is transient; files are real.
-- **Source of truth for design:** `docs/research/00-deep-research-report.md` (deep-research report, Turkish).
-  Deviations from it must be logged as a decision with rationale.
+## Direction
+- **The hybrid model (D-246).**
+  - Project chats write memory under the protocol in `docs/protocol/HLMEMO-PROTOCOL.md`.
+  - The orchestrator acts as the library operator in sessions the owner starts.
+  - The server librarian answers `memory.ask` (the research librarian of D-130) and flags candidates; it does not act on its own.
+  - A fully autonomous librarian is a later goal.
+- **The aim is LLM quality, not infrastructure polish.**
+  - Measure a ceiling (an oracle or prototype run on real data, at most a day) before building an LLM-quality feature.
+  - Treat the first failed measurement as a reason to pause and talk to the owner.
+- **Provider-agnostic (D-017).** Models, embedders, the DB and hosting are configuration. Model ids live only in provider profiles.
 
-## Product goal and working rules (D-125, D-130)
-- **The goal is the RESEARCH LIBRARIAN (D-130).** The caller sends a question with its project context. The librarian uses the project's Memory Map, runs several internal queries, and answers LLM-to-LLM with a refined answer, its primary sources and related sources. Every source is a handle the caller can drill into or pull raw.
-- **Production Ready is self-certified.** When the Production Ready gate in D-130 passes on REAL migrated memory, the release certifies itself; no owner OK is needed.
-- **Engineering depth goes into LLM performance**, the product's core job, not into infrastructure polish.
-- **Ceiling first.** Before building any LLM-quality feature, spend at most one day on an oracle run or prototype on real data. If the ceiling is low, do not build it.
-- **Reviews.**
-  - Dual review is only for one-way doors: data, security, release.
-  - Write the threat model and the severity rubric before the review starts.
-  - At most 2 rounds; after that, the owner accepts or rejects the remaining risk explicitly.
-  - A HIGH finding needs a test that reproduces it.
-- **Parallelism and timeboxes.** Run at most 2–3 workstreams, and finish one before starting another. Timebox every workstream and check in with the owner when the timebox expires. Call a strategic pause after the first failed measurement.
-- **Dogfooding.** HLMemo is used as the memory of this project itself.
+## How we work here
+- **Decisions are appended to `docs/decisions/DECISIONS.md`.**
+  - `docs/research/00-deep-research-report.md` is the design baseline; a deviation gets a decision entry.
+  - Chat is transient, so decisions belong in files.
+- **Validate locally first.** Docker compose plus the deterministic gates, before anything reaches the VPS.
+- **Reviews are proportionate.**
+  - Codex `gpt-6-astra` at low effort is the everyday second opinion. Record consults in `docs/consults/`.
+  - One-way doors (data, security, releases) get Astra low and `gpt-5.6-sol` xhigh in parallel. Write the threat model and the severity rubric before the review, cap it at 2 rounds, and give a HIGH finding a reproducing test. The owner decides any residual risk.
+  - Command: `codex exec --skip-git-repo-check -s read-only -m gpt-6-astra -c model_reasoning_effort="low" -o <out.md> - < <prompt.md>`.
+- **Keep 2-3 workstreams at most,** each with a timebox, and check in with the owner when a timebox ends.
+- **Production is Hostinger VM 2002259 (mcp.hlmemo.com).**
+  - Deploys and prod data writes happen with the owner's OK, following `deploy/RUNBOOK.md`.
+  - Prod gates run with `--no-drill`, because the drill restores over live data.
+  - The Mac reaches the server over IPv6.
+- **The GitHub repo is public.**
+  - Owner-project names and data stay in the gitignored `docs/private/`.
+  - The `.githooks/pre-push` privacy gate blocks a leaking push. Fix the finding rather than bypass it.
+  - Prod memory is private and may hold owner-project data.
 
-## Product principle (D-017): provider-agnostic
-Librarian model, embedding model, DB and hosting are configuration, never code. Never hard-code a vendor, model id or model-specific prompt quirk outside a provider profile. `bench/` is a user-facing tool for choosing a model.
+## Memory
+- **This project dogfoods HLMemo.**
+  - The project is `hlmemo`; its SessionStart brief arrives at session start, and the `hlmemo` skill explains reading and writing.
+  - Repo docs remain the source of truth and are synced into memory with `hlm import markdown … --keep-missing`, dry run first.
+- **Resume from `docs/status/STATUS.md`** and the newest decisions.
 
 ## Layout
-- `docs/research/`   — research inputs (deep-research report, model/VPS analyses)
-- `docs/consults/`   — codex ⇄ claude design exchanges (numbered)
-- `docs/decisions/`  — ADR log + validation gates
-- `docs/status/`     — save-state for resuming sessions (STATUS.md is the first thing to read)
-
-## Project Memory
-This project is deliberately NOT on the NotebookLM-first protocol (D-020): HLMemo is the target that legacy memories (NotebookLM, serena, auto-memory) will be migrated INTO. Use docs/status/STATUS.md + docs/decisions/ as the memory layer here; Claude auto-memory is fine for personal working notes.
+`docs/research/` inputs · `docs/consults/` reviews · `docs/decisions/` ADR log and plans · `docs/status/` state and backlog ·
+`docs/protocol/` the writer protocol · `deploy/` runbook and scripts · `integrations/claude/` the skill · `src/hlmemo/` the code.
