@@ -94,9 +94,9 @@ def test_resource_equals_protocol_section_6_byte_for_byte() -> None:
 
 def test_resource_shape() -> None:
     t = H.digest_template()
-    assert t.startswith("HLMemo mode: project <slug> (MCP server `hlm`). These are hard rules.\n")
+    assert t.startswith("HLMemo mode: project <slug> (MCP server `hlm`). Later sessions act on this memory")
     assert t.count("<slug>") == 2 and t.endswith("\n") and "```" not in t
-    assert 30 <= t.count("\n") <= 45  # "about 40 lines"
+    assert 24 <= t.count("\n") <= 34  # "about 30 lines"
     assert set(re.findall(r"<[a-z]+>", t)) == {"<slug>"}  # no other placeholder to fill
 
 
@@ -104,7 +104,7 @@ def test_digest_fills_every_slug() -> None:
     d = H.digest("my-proj")
     assert "<slug>" not in d and not d.endswith("\n")
     assert d.startswith("HLMemo mode: project my-proj (MCP server `hlm`).")
-    assert "WRITE (project my-proj only;" in d
+    assert "Write into project my-proj only (" in d
 
 
 # --------------------------------------------------------------------------- mapped / unmapped
