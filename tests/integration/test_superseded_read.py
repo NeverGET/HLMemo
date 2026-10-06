@@ -272,6 +272,7 @@ async def test_raw_superseded_by_respects_the_valid_time_of_the_version(
                 "The cache notes moved to the ops runbook.",
                 valid_from=D_OLD.isoformat(),
                 valid_to=d_mar.isoformat(),
+                source={"system": "markdown", "path": "docs/pointer.md", "sha256": "0" * 64},  # PV-2: a raw supersedes link needs an import's source
                 links=[{"rel": "supersedes", "target": old["logical_id"]}],
             )
         ],

@@ -58,6 +58,7 @@ from hlmemo.config import get_settings
 from hlmemo.core.budget import BudgetError, canonical
 from hlmemo.core.clues import InvalidClue
 from hlmemo.core.errors import ToolError
+from hlmemo.core.secret_guard import redact_for_log
 from hlmemo.server.tools import READ_TOOL_NAMES, TOOL_BY_NAME, TOOLS, advertised_tools
 from hlmemo.server.tools.handlers import ReadHandler
 
@@ -203,7 +204,7 @@ def _client_of(ctx: ServerRequestContext[Any, Any]) -> str:
 async def on_list_tools(
     ctx: ServerRequestContext[Any, Any], params: types.PaginatedRequestParams | None
 ) -> types.ListToolsResult:
-    log.info("mcp tools/list client=%s", _client_of(ctx))
+    log.info("mcp tools/list client=%s", redact_for_log(_client_of(ctx)))
     request = ctx.request
     settings = getattr(request.app.state, "settings", None) if isinstance(request, Request) else None
     tools = TOOLS if settings is None else advertised_tools(settings)
@@ -217,7 +218,8 @@ async def on_call_tool(
 ) -> types.CallToolResult:
     spec = TOOL_BY_NAME.get(params.name)
     if spec is None:
-        return error_result(ToolError("E_INVALID_ARG", f"unknown tool {params.name!r}", tool=params.name))
+        name = redact_for_log(params.name)
+        return error_result(ToolError("E_INVALID_ARG", f"unknown tool {name!r}", tool=name))
     arguments = params.arguments
     if arguments is None:
         arguments = {}
@@ -269,7 +271,7 @@ async def on_call_tool(
             "mcp tools/call %s device=%s client=%s outcome=%s ms=%d",
             params.name,
             device_id if device_id is not None else "-",
-            _client_of(ctx),
+            redact_for_log(_client_of(ctx)),  # a caller label: never a secret in the log (review 112)
             outcome,
             int((time.perf_counter() - t0) * 1000),
         )

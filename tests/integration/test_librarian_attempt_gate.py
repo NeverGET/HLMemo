@@ -123,19 +123,24 @@ async def test_revocation_before_the_next_attempt_stops_it(
         assert await outcomes(conn) == ["authority_lost"]
 
 
-async def test_rules_are_redacted_and_rule_shaped(db_dsn, connect, world, deps) -> None:  # noqa: ANN001
+async def test_rules_are_redacted_and_rule_shaped(db_dsn, connect, world, deps, monkeypatch) -> None:  # noqa: ANN001
+    from hlmemo.core import write_service
+
     body_text = "PASTED ITEM BODY " + ("lorem ipsum dolor sit amet " * 40)  # > MAX_RULE_CHARS
     async with await connect() as conn:
         ids = await reserved_ids(conn)
         lib = memory_ctx(ids.librarian_device_id, ids.memory_project_id)
         rule = {"kind": "fact", "tags": ["librarian-rule"], "importance": 9}
-        # written by the librarian but NOT via write_rule: the secret must still be redacted at load
+        # written by the librarian but NOT via write_rule: the secret must still be redacted at load.
+        # Today PV-1 refuses such a write; a row stored before PV-1 is what load-time redaction guards.
+        monkeypatch.setattr(write_service, "_check_secrets", lambda *payloads: None)
         await write(
             conn,
             lib,
             write_req(MEMORY_PROJECT, [{**rule, "title": "r1", "body": f"Never log {SECRET}"}]),
             deps=deps,
         )
+        monkeypatch.undo()
         await write(
             conn, lib, write_req(MEMORY_PROJECT, [{**rule, "title": "r2", "body": body_text}]), deps=deps
         )

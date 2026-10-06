@@ -193,6 +193,7 @@ async def test_r76_2_a_carrier_declaring_the_same_supersedes_link_is_a_per_updat
         [
             item(
                 *NEW_TTL,
+                source={"system": "markdown", "path": "docs/new-ttl.md", "sha256": "0" * 64},  # PV-2: a raw supersedes link needs an import's source
                 links=[{"rel": "supersedes", "target": target["logical_id"]}],
                 updates=[_upd(target, replacement=REPL, mode=mode)],
             )
@@ -231,6 +232,7 @@ async def test_r76_4_an_existing_edge_that_only_overlaps_a_backdated_update_is_a
                     "Cache plan",
                     "The cache will be removed.",
                     valid_from=D_LATE.isoformat(),
+                    source={"system": "markdown", "path": "docs/cache-plan.md", "sha256": "0" * 64},  # PV-2: a raw supersedes link needs an import's source
                     links=[{"rel": "supersedes", "target": target["logical_id"]}],
                 )
             ],

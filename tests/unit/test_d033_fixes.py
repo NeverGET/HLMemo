@@ -128,7 +128,7 @@ def test_f06_long_error_messages_are_clipped():
 
 
 # --------------------------------------------------------------------------- F12
-@pytest.mark.parametrize("decisions", [[], ["a"], ["a", "b c", ""]])
+@pytest.mark.parametrize("decisions", [[], ["a"], ["a", "b c", " d "]])  # a blank entry is refused (PV-3)
 def test_f12_session_note_body_matches_close_items(decisions):
     req = CloseRequest.model_validate(
         {

@@ -25,6 +25,7 @@ from hlmemo.core import write_service
 from hlmemo.core.budget import BudgetError, validate_budget
 from hlmemo.core.errors import ToolError
 from hlmemo.core.read_service import ReadDeps
+from hlmemo.librarian.reserved import refuse_reserved_project
 
 Handler = Callable[[AsyncConnection, AuthContext, dict[str, Any]], Awaitable[dict[str, Any]]]
 
@@ -64,12 +65,14 @@ def as_result_dict(result: Any) -> dict[str, Any]:
 
 
 async def memory_write(conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]) -> dict[str, Any]:
+    refuse_reserved_project(args)  # PV-4
     return as_result_dict(await write_service.write(conn, ctx, args, raw=args))
 
 
 async def memory_call_the_day(
     conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]
 ) -> dict[str, Any]:
+    refuse_reserved_project(args)  # PV-4
     return as_result_dict(await write_service.call_the_day(conn, ctx, args, raw=args))
 
 

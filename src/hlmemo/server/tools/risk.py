@@ -17,6 +17,7 @@ from psycopg import AsyncConnection
 from hlmemo.auth.context import AuthContext
 from hlmemo.core import lesson_service, risk_service
 from hlmemo.core.errors import ToolError
+from hlmemo.librarian.reserved import refuse_reserved_project
 from hlmemo.server.tools.schemas import DEFS
 
 RISK_CHECK = "memory.risk_check"
@@ -105,6 +106,7 @@ async def memory_risk_check(
 async def memory_register_lesson(
     conn: AsyncConnection, ctx: AuthContext, args: dict[str, Any]
 ) -> dict[str, Any]:
+    refuse_reserved_project(args)  # PV-4
     return await lesson_service.register_lesson(conn, ctx, args)
 
 

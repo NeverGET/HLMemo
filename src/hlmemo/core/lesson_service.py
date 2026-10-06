@@ -49,6 +49,7 @@ from hlmemo.core.clues import encode_clue
 from hlmemo.core.write_models import (
     DEVICE_SCOPE_RE,
     SLUG_RE,
+    _reject_blank,
     _Strict,
     canonical_device_scope,
     parse_request,
@@ -81,9 +82,7 @@ class LessonRequest(_Strict):
     @field_validator("mistake", "fix", "context")
     @classmethod
     def _not_blank(cls, v: str | None) -> str | None:
-        if v is not None and not v.strip():
-            raise ValueError("must not be blank")
-        return v
+        return v if v is None else _reject_blank(v)  # PV-3: details.reason "blank"
 
 
 def lesson_title(mistake: str) -> str:
@@ -121,6 +120,9 @@ async def register_lesson(
     *,
     deps: WriteDeps | None = None,
 ) -> dict[str, Any]:
+    # PV-1 over the raw arguments and the full client label (the write below stores it cut to 200
+    # characters, which could split a token past the rule), before parsing
+    write_service._check_secrets(args, {"client": getattr(ctx, "client", None)})
     request = parse_request(LessonRequest, args)
     deps = deps or write_service.default_deps()
     write_args = {

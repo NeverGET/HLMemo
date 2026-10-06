@@ -483,6 +483,7 @@ async def test_r96_sol4_superseded_by_needs_the_link_and_the_version_to_overlap(
                     "Pointer",
                     "The cache notes moved to the ops runbook.",
                     valid_from=D_APR.isoformat(),
+                    source={"system": "markdown", "path": "docs/pointer.md", "sha256": "0" * 64},  # PV-2: a raw supersedes link needs an import's source
                     links=[{"rel": "supersedes", "target": v["logical_id"]} for v in vs],
                 )
             ],

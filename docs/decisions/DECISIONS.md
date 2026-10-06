@@ -2270,3 +2270,47 @@ D-253 | 2026-10-07 | ACCEPTED (owner) | **The librarian's review proposals after
 - One fact had merged two different measures into one sentence, copied from the project's own hand-over document. An owner-approved revise update corrected that sentence; the old version stays as history.
 - All proposals were withdrawn in one event with the fail-closed RUNBOOK script (live-set check, dry run, apply), so a later librarian role promotion cannot mass-apply them.
 - Operational note: the home IPv4 path to the VM failed again on 2026-10-07; the IPv6 ssh config worked.
+D-254 | 2026-10-07 | ACCEPTED (owner: both residual risks accepted 2026-10-07; deploy by the owner) | **The five server validations PV-1..PV-5 of protocol §5.2 are implemented: the write path refuses key-shaped secrets anywhere in the arguments, raw `supersedes` links from writers, blank text, writes into the librarian's reserved project over MCP, and a lesson tagged both active and concluded.**
+
+- **PV-1 `secret_pattern` (R7).**
+  - `core/secret_guard.py::find_secret` is a lazy walk over every string value and dict key of the raw arguments of `memory.write`, `call_the_day` and `register_lesson` (including the full `X-HLM-Client` label that `register_lesson` stores). It runs once per request, before parsing and authorization.
+  - Refusals name a field path and the rule, never the value. `parse_request` raises without the chained `ValidationError`, and no validator message echoes an input value.
+  - The rules are narrower than the importer's (unchanged) set, so documentation and placeholders pass:
+    - `sk-` needs a known prefix;
+    - Slack needs its token structure;
+    - a private key needs key material after the header;
+    - AWS's documented example keys pass;
+    - low-diversity placeholders (`ghp_xxxx…`) pass;
+    - `jwt` is out.
+  - Log lines on the MCP path redact a secret-shaped caller label (`redact_for_log`).
+- **PV-2 `supersedes_needs_updates` (R13).** `_check_shapes` refuses a `supersedes` link on an item without `source`, and imports keep it. It guards against mistakes, not against a writer who forges `source`; a forged source is an R13 violation visible in the event log.
+- **PV-3 `blank` (R6).** Whitespace-only or empty text is refused in item titles and bodies, lesson specs, notes, decisions, the card and the `register_lesson` parts (NBSP included), always with `details.reason: "blank"`.
+- **PV-4 `reserved_project` (R3, R16).** The MCP write tools refuse `hlm-librarian` as `project` or in `project_ids`, whatever the grants. The librarian's own writes are unaffected.
+- **PV-5 `lesson_status_conflict` (R15).**
+  - A lesson or experience tagged `active` together with `resolved` or `historical` is refused, with tags compared stripped and case-folded.
+  - `resolved` + `historical` stays valid (D-234).
+  - `call_the_day` lessons are checked at parse time.
+- **Reviews** (consults 111 and 112; Astra low and Sol xhigh in parallel; 2 rounds, the cap). Every HIGH has a reproducing test.
+  - Round 1: NO-GO with 6 HIGH and 1 MEDIUM, all fixed, except PV-2's forgeable `source` (documented):
+    - PV-1 coverage of every argument;
+    - echo of a secret-shaped `project`;
+    - error-text and chained-exception echo;
+    - JWT false rejects;
+    - PV-5 case;
+    - PV-3 reasons.
+  - Round 2: all round-1 fixes verified, plus 2 HIGH and 2 MEDIUM, all fixed:
+    - the `X-HLM-Client` label logged verbatim;
+    - placeholders and documented examples refused;
+    - an eager scan that ballooned memory on a huge request;
+    - a double scan.
+- **Residual risks, accepted by the owner on 2026-10-07.**
+  1. PV-2 trusts a writer-supplied `source`, so a writer who forges one can still write a raw `supersedes` link.
+  2. JWTs are not checked on the write path, so a live JWT pasted into memory is not refused (the importer and capture still catch it).
+- **Measured before release** (lesson D-236: measure what a validation check rejects).
+  - Run as pure functions over the `hlmemo` project's 1106 stored items and one migrated project's curated set (every stored string field scanned), the checks refused none.
+  - A planted violation per check was refused.
+  - A documentation-example set (the jwt.io sample, AWS's example key, Slack, GitHub and OpenAI placeholders, a PEM mention) passes, while real-shaped variants fail.
+  - Details are kept privately.
+- **Replay** is unaffected: `db/replay.py` never calls the write service. A test rebuilds events that today's checks would refuse, byte for byte.
+- **Known effect.** The checks run before the idempotency lookup. A pre-release request that a check now refuses is refused on resend instead of replayed.
+- **Docs.** Protocol §5.1/§5.2 and the R3, R6, R7, R13 and R15 enforcement lines; the skill's rule and error tables and its protocol copy. The digest is unchanged.

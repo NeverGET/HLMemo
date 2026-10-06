@@ -1,11 +1,13 @@
-> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-06, source sha256 66bd741f4aacd09ab5d6ce22a90cc9ec95418e81d0379961270f7d760a8b3621. If the two differ, the source file wins.
+> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-07, source sha256 4f401f51f47c973fde2a82563c5ec0154cd5b8f5c59928bfb4412d29a64ec702. If the two differ, the source file wins.
 
 # HLMemo protocol v1: rules for project writers
 
 Status: draft v1, 2026-10-03, D-246 build step 1; reworded 2026-10-04 in a plainer style, with every rule, limit
 and citation kept. Grounded in `main` @ 3143b56; every server claim cites `file:line` (under `src/hlmemo/` unless
 a path says otherwise) at that commit. 2026-10-06 (D-248): the skeleton-card wording in R17, §4b and §6, the migration steps in §4, and
-the `TEMPLATE.md` line citations refreshed. Product content only (D-220).
+the `TEMPLATE.md` line citations refreshed. 2026-10-07 (D-254): the server validations PV-1..PV-5 are implemented;
+§5.2 and the R3, R6, R7, R13 and R15 enforcement lines cite them by symbol, and they are live from the release that
+carries D-254. Product content only (D-220).
 Terms: a **clue/handle** is `v<version_id>[.<ordinal>]`. A **one-way door** is a change that cannot be cleanly
 undone (prod data, global knowledge, the public repo); only the owner opens one.
 
@@ -58,6 +60,7 @@ or extra `project_ids` only when the owner asked for it in this session.
 *Why:* a mis-scoped item is expensive to undo (`docs/migration/TEMPLATE.md:32-36`). *Enforced by:* protocol
 only. The server requires a write grant on the home slug and every listed slug (`core/write_service.py:477-514`),
 but grants belong to the device, not the chat (`auth/context.py:20-27`). All chats on one machine share one bearer.
+The MCP write tools refuse the librarian's reserved project whatever the grants (PV-4, §5.2).
 
 **R4. Stay within the server limits.** *Why:* a write that breaks one fails whole. *Enforced by:* **server
 today** (`E_INVALID_ARG`, `E_BUDGET_*`, `E_CARD_TOO_LARGE`).
@@ -83,14 +86,15 @@ real hits within the budget. *Enforced by:* protocol only.
 **R6. One claim per item.** Title = the claim (aim for ≤ 80 chars). Body = the claim, why, evidence
 (`file:line`, commit, D-id, clue) and date context. Every text field carries content, not only whitespace.
 *Why:* updates and supersession act on statements; a mixed item cannot be partly corrected. *Enforced by:*
-server planned (PV-3, blank text). The rest is protocol only.
+**server** for blank text (PV-3, §5.2). The rest is protocol only.
 
 **R7. Keep secrets and personal data out:** keys, tokens, passwords, DSNs with passwords, e-mail/password
 pairs. Name where a secret lives ("the key in `.env`"), not its value.
 *Why:* history is append-only; erasing needs an owner-run database procedure (`docs/migration/TEMPLATE.md:147-149`).
-*Enforced by:* server planned (PV-1). Today the write path has no secret check. The server only redacts text
-before LLM calls (`librarian/redact.py:1-13,31-59`). The importer refuses matching files
-(`importers/common.py:52-68,161-163`); capture scrubs such lines (`capture/scrub.py:13,42`).
+*Enforced by:* **server** for the strong shapes: keys, tokens and private keys are refused on write (PV-1,
+§5.2). DSNs with passwords, credential assignments and personal data are not machine-checked on write, so they
+stay with you. The server also redacts text before LLM calls (`librarian/redact.py:1-13,31-59`); the importer
+refuses matching files (`importers/common.py:52-68,161-163`); capture scrubs such lines (`capture/scrub.py:13,42`).
 
 **R8. Choose the kind by meaning.** `fact` = current state (revisable). `episode` = a dated event (history).
 `lesson` = a rule from a mistake (revisable). The other kinds have their own paths, so `memory.write` does not
@@ -142,8 +146,8 @@ with `updates`, not with `links: [{rel: "supersedes"}]`. Use `close`, `valid_to`
 only on items you wrote in this session.
 *Why:* a raw `supersedes` link skips every D-118 guard. It reads as `whole` scope
 (`db/read_queries.py:777,845`) and hides its target (`core/read_service.py:256-258`). `close` ends a fact
-outright (`core/write_models.py:163-167`). *Enforced by:* server planned (PV-2). Revisions are server today
-only as a head check (`core/write_service.py:783-805`).
+outright (`core/write_models.py:163-167`). *Enforced by:* **server**: a `supersedes` link on an item without
+`source` is refused (PV-2, §5.2). Revisions are server today only as a head check (`core/write_service.py:783-805`).
 
 **R14. Keep decisions, facts, episodes and session notes apart.** A decision is a `call_the_day` `decisions`
 line with its reason (history). If it changes the current state, also write a `fact` with the new state and
@@ -162,7 +166,7 @@ with the D-222 schema mapped onto its fields:
 
 *Why:* lessons become permanent knowledge (D-222); resolved/historical lessons are reminders (D-234).
 *Enforced by:* protocol only. The shape is server today (`core/lesson_service.py:59-114`), including the
-priority-2 cross-project check (`:61,135-137`). The status-tag conflict is server planned (PV-5).
+priority-2 cross-project check (`:61,135-137`). The server refuses the status-tag conflict (PV-5, §5.2).
 
 **R16. Global lessons go through the operator.** A writer leaves `hlm-global` and kind `experience` alone and
 lists such lessons as **Promotion candidates** in the session note; the operator promotes and the owner reviews
@@ -305,40 +309,70 @@ Imports of legacy files go through `/hlm-migrate` (section 4), not through catch
 
 ### 5.1 Matrix
 
-| rule | server today | server planned | protocol only |
-|---|---|---|---|
-| R1, R2, R5, R12, R14, R18 | flags, link-only history, verdicts | – | **primary** |
-| R3 own slug | device grant | PV-4 (reserved project) | **primary** |
-| R4, R9, R10, R11, R17, R19 | **primary** | – | R10's evidence rule; R17's contents |
-| R6 one claim | – | **PV-3** | the conventions |
-| R7 secrets | pre-LLM redaction only | **PV-1** | naming the location |
-| R8 kinds | enum; history kept | – | **primary** |
-| R13 no delete/hide | head check | **PV-2** | `close`/revisions |
-| R15 project lessons | tool shape | PV-5 | **primary** (D-222 schema) |
-| R16, R20, R21 | grants; `hlm.questions` owner-only; pre-push gate | – | **primary** |
+| rule | server today | protocol only |
+|---|---|---|
+| R1, R2, R5, R12, R14, R18 | flags, link-only history, verdicts | **primary** |
+| R3 own slug | device grant; PV-4 (reserved project) | **primary** |
+| R4, R9, R10, R11, R17, R19 | **primary** | R10's evidence rule; R17's contents |
+| R6 one claim | **PV-3** (blank text) | the conventions |
+| R7 secrets | **PV-1** (strong shapes); pre-LLM redaction | other secret forms; naming the location |
+| R8 kinds | enum; history kept | **primary** |
+| R13 no delete/hide | **PV-2**; head check | `close`/revisions |
+| R15 project lessons | tool shape; PV-5 (status conflict) | **primary** (D-222 schema) |
+| R16, R20, R21 | grants; `hlm.questions` owner-only; pre-push gate | **primary** |
 
-**Primary count:** 21 rules = 6 server today (R4, R9, R10, R11, R17, R19) + 3 server planned (R6, R7, R13) +
-12 protocol only.
+**Primary count:** 21 rules = 9 server today (R4, R6, R7, R9, R10, R11, R13, R17, R19) + 12 protocol only.
 
-### 5.2 Planned server validations (next release)
+### 5.2 Server validations PV-1..PV-5 (D-254)
 
-Each check rejects only text that no legitimate write needs. All five reuse codes from the closed list
-(`auth/errors.py:11-30`) with a `details.reason`, the way `missing_home`/`duplicate_project` do
-(`core/write_service.py:495,499`). The spec and its HTTP mapping stay unchanged. Nothing runs on replay:
-`db/replay.py` does not call the write service, so historic events replay byte-identically.
+Implemented with D-254 and live from the release that carries it. Each check rejects only text that no legitimate
+write needs. All five reuse codes from the closed list (`auth/errors.py:11-30`) with a `details.reason`, the way
+`missing_home`/`duplicate_project` do (`core/write_service.py::_resolve_item_projects`). The spec and its HTTP
+mapping stay unchanged. Nothing runs on replay: `db/replay.py` does not call the write service, so historic events
+replay byte-identically (`tests/integration/test_pv_validations.py`, the replay test).
+
+*Measured before the release (D-254):* run as pure functions over the `hlmemo` project's 1106 stored items and
+one migrated project's curated set (imports, writer items, lessons with status tags, items with `supersedes`
+links; details private), the checks refused none, PV-1 scanning every stored string field (source paths,
+`describes`, tags, titles, bodies); a planted violation per check was refused.
+
+*One effect to know:* the checks run before the idempotency lookup, as the existing shape checks do. A request
+first sent before this release that a check now refuses is refused when resent with the same `request_id`,
+instead of replaying its stored ack.
 
 **PV-1 `secret_pattern`** (R7).
-- *Check:* each `title`, `body` and tag of the `memory.write` items, the `call_the_day` derived items (note,
-  lessons, card) and the `register_lesson` item against the strong shapes of `importers/common.py:52-68`:
-  `private-key`, `aws-access-key`, `github-token`, `slack-token`, `google-api-key`, `hlm-token`, `jwt`, and
-  `sk-api-key` narrowed to `\bsk-(?:or-v1-|ant-|proj-)[A-Za-z0-9_-]{24,}`. Excluded as prone to false positives
-  (D-219): `assigned-secret`, `dsn-with-password`, `env-secret-assignment`, `credential-pair`.
-- *Error:* `E_INVALID_ARG` "items[i].body matches secret rule <rule>: remove it or name where it is stored",
-  `{index, field, reason: "secret_pattern", rule}`. The value is not echoed (F06, `core/write_models.py:341-367`).
-- *Where:* a new `core/secret_guard.py::strong_secret_rule(text)`, called by a new
-  `write_service._check_secrets(items)` after `parse_request` in `write()` (`core/write_service.py:361`) and
-  after `_close_items` in `call_the_day()` (`:411`), before the transaction. `register_lesson` is covered
-  through `write()` (`core/lesson_service.py:135`).
+- *Check:* every string value and every dict key of the raw arguments of `memory.write`, `memory.call_the_day`
+  and `memory.register_lesson`, at any depth, because the event stores the arguments verbatim: `project`,
+  `project_ids`, `client`, `request_id`, titles, bodies, tags, `updates[].old_span`/`replacement`, `source.path`,
+  `describes[]`, `links[].target`, `notes`, `decisions[]`, `card_update.body`, the lesson parts, and the full
+  `X-HLM-Client` label that `register_lesson` stores. The shapes are the strong ones of `importers/common.py:52-68`,
+  narrowed on the write path, where documentation and placeholders are ordinary memory text (reviews 111, 112):
+  - `sk-api-key` needs a known prefix (`\bsk-(?:or-v1-|ant-|proj-)[A-Za-z0-9_-]{24,}`);
+  - `slack-token` needs Slack's token structure (`xoxb-<digits>-<digits>-<secret>`), so `xoxb-<placeholder>`
+    passes;
+  - `private-key` needs at least 40 characters of key material after the header (a pasted PEM or OpenSSH block,
+    with real or escaped line breaks), so a sentence naming the header passes;
+  - AWS's documented example keys (`AKIA` + `IOSFODNN7EXAMPLE`, `AKIA` + `I44QH8DHBEXAMPLE`) pass;
+  - a match whose random part is a placeholder (fewer than 6 distinct characters in its last 24, such as
+    `ghp_xxxx…`, `AIzaSyXXXX…`, `sk-proj-xxxx…`) passes, since a real key is random;
+  - `aws-access-key`, `github-token`, `google-api-key` and `hlm-token` keep the importer's shapes.
+
+  Excluded as prone to false positives (D-219): `assigned-secret`, `dsn-with-password`, `env-secret-assignment`,
+  `credential-pair`, and `jwt`, because documentation examples such as the jwt.io sample are legitimate memory
+  text with the same shape as a live token (review 111). The importer and capture keep their sets unchanged.
+- *Error:* `E_INVALID_ARG` "<field path> matches secret rule <rule>: remove it or name where it is stored",
+  `{field, reason: "secret_pattern", rule}` plus `index` under `items[i]`. The path names keys and positions
+  (`items[0].updates[0].replacement`, `project`); a secret-shaped key is reported as `<key>`. The value is never
+  echoed: the check runs before model validation and authorization, so a secret-shaped `project` never reaches an
+  `E_FORBIDDEN_PROJECT` message, and `parse_request` raises without the chained `ValidationError` (whose text
+  carries input values).
+- *Where:* `core/secret_guard.py::find_secret(args)`, a lazy walk that stops at the first match and copies no
+  leaves, called by `write_service._check_secrets` first thing in `write()` and `call_the_day()` (once per request
+  when the verbatim arguments and the request are the same object), and in `lesson_service.register_lesson`
+  before its own parsing.
+- *Logs:* the MCP path logs a caller-chosen label (`X-HLM-Client`, the tool name of an unknown tool, a commit
+  error) through `secret_guard.redact_for_log`, so a secret-shaped label appears as `<redacted:<rule>>`. Arguments
+  are never logged.
 - *Why it is safe:* every shape is already in the importer's refusal set (`importers/common.py:161-163`) and
   in the capture scrub (`capture/scrub.py:13,42`). Placeholders such as `sk-...` do not match.
 - *Test:* each rule × each field and tool is refused, with no value in the envelope and nothing written. The
@@ -349,33 +383,40 @@ Each check rejects only text that no legitimate write needs. All five reuse code
   (integer or `$i` target).
 - *Error:* `E_INVALID_ARG` "items[i].links: supersede with items[].updates (a verbatim old_span), not a link",
   `{index, reason}`.
-- *Where:* the link loop of `write_service._check_shapes` (`core/write_service.py:547`).
+- *Where:* `write_service._check_supersedes_links`, called from the link loop of `write_service._check_shapes`.
 - *Why it is safe:* imports carry `source` and stay exempt, export round trips included
   (`importers/runner.py:177-199`). `call_the_day` only adds `derived_from` (`core/write_service.py:452-466`).
   No client sends this link. `updates` mode supersede gives the same read result, with the guards.
+- *Limit:* the check guards against mistakes, not a writer who forges `source`; a forged source is an R13
+  violation visible in the event log (review 111; a residual risk for the owner to decide).
 - *Test:* refused without `source`, accepted with it; other relations unaffected. The tests that write raw
-  `supersedes` (e.g. `tests/integration/test_superseded_read.py:275`) move to `updates` or get a `source`.
+  `supersedes` to study link semantics (`test_superseded_read.py`, `test_write_updates_r76.py`,
+  `test_write_updates_r96.py`) now give that item a `source`.
 
 **PV-3 `blank`** (R6).
 - *Check:* `text.strip() == ""` for `Item.title`/`body`, `LessonSpec.title`/`body`, `CloseRequest.notes`,
   each `decisions[]` entry and `CardUpdate.body`. *Error/Where:* `E_INVALID_ARG` through `parse_request`
-  ("must not be blank", as `core/lesson_service.py:81-86` already does), from field validators at
-  `core/write_models.py:149-150,223-224,232,247-248`.
+  ("must not be blank", as `core/lesson_service.py` already does), from field validators that call
+  `write_models._reject_blank`; `parse_request` adds `details.reason: "blank"` (and `index` for `items[i]`),
+  also for an empty string, which the length limit refuses first, and for the `register_lesson` parts.
 - *Why it is safe:* whitespace carries nothing; capture validates with the same model before sending
   (`capture/write.py:141-145`). *Test:* whitespace-only text (NBSP included) is refused per field; normal text passes.
 
 **PV-4 `reserved_project`** (R3, R16).
 - *Check:* on the MCP path only, a `project` or `items[].project_ids` equal to `hlm-librarian`
-  (`librarian/reserved.py:15`). *Error/Where:* `E_FORBIDDEN_PROJECT` `{project, reason}`, in
-  `server/tools/handlers.py:66-73` and `server/tools/risk.py:105-108`. Not in `write_service`: the librarian
-  writes there itself (`librarian/memory.py:210-222`).
+  (`librarian/reserved.py::MEMORY_PROJECT`). *Error/Where:* `E_FORBIDDEN_PROJECT` `{project, reason}` from
+  `librarian/reserved.py::refuse_reserved_project`, called first in `server/tools/handlers.py` (`memory_write`,
+  `memory_call_the_day`) and `server/tools/risk.py` (`memory_register_lesson`). Not in `write_service`: the
+  librarian writes there itself (`librarian/memory.py::write_rule`).
 - *Why it is safe:* the reserved librarian device has no usable bearer (`librarian/reserved.py:20-24`).
   *Test:* a device granted there is still refused over MCP; the librarian's own rule write succeeds.
 
 **PV-5 `lesson_status_conflict`** (R15).
-- *Check:* a `lesson`/`experience` item whose tags hold `active` together with `resolved` or `historical`.
-  *Error/Where:* `E_INVALID_ARG` `{index, reason}` in the `Item` model validator (`core/write_models.py:188-197`);
-  `register_lesson` tags reach it through `write()`.
+- *Check:* a `lesson`/`experience` item whose tags hold `active` together with `resolved` or `historical`,
+  compared stripped and case-folded (`Active` counts).
+  *Error/Where:* `E_INVALID_ARG` `{index, reason}` from the `Item` model validator
+  (`write_models.lesson_status_conflict`); `register_lesson` tags reach it through `write()`. `LessonSpec` runs the
+  same check, so a `call_the_day` lesson is refused at parse time and not later as an internal error.
 - *Why it is safe:* a lesson cannot be both active and resolved (D-234); `resolved` + `historical`, as the D-234
   import used them, stays valid. *Test:* `[active, resolved]` refused; `[resolved, historical]` and a `fact`
   with both pass.

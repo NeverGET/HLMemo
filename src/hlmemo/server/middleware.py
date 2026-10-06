@@ -62,6 +62,7 @@ from hlmemo.auth.errors import HlmError
 from hlmemo.auth.resolve import resolve
 from hlmemo.auth.tokens import constant_time_equal, hash_token, parse_bearer
 from hlmemo.config import get_settings
+from hlmemo.core.secret_guard import redact_for_log
 from hlmemo.db import auth_queries as q
 from hlmemo.server.errors import ERROR_TYPES, error_response
 
@@ -594,7 +595,7 @@ class AuthMiddleware:
             if sent_any:
                 raise
             if commit_error is not None:
-                log.error("request commit failed; response discarded: %s", commit_error)
+                log.error("request commit failed; response discarded: %s", redact_for_log(str(commit_error)))
                 await error_response(COMMIT_FAILED)(scope, receive, send)
             elif isinstance(err, ERROR_TYPES):
                 await error_response(err)(scope, receive, send)

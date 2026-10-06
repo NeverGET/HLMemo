@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any, Literal
 
@@ -21,6 +22,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from hlmemo.core.errors import ToolError
 
@@ -38,6 +40,36 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=False)
 
 
+#: Pydantic error types that ``parse_request`` reports as ``details.reason`` (protocol §5.2)
+REASON_TYPES = frozenset({"blank", "lesson_status_conflict"})
+LESSON_KINDS = frozenset({"lesson", "experience"})
+_CONCLUDED = frozenset({"resolved", "historical"})
+
+
+def _reject_blank(v: Any) -> Any:
+    """PV-3 ``blank`` (R6): text made only of whitespace (NBSP included) carries no claim, so a
+    title, body, note, decision or card that is blank is refused. ``min_length`` alone lets it pass."""
+    if isinstance(v, str) and not v.strip():
+        raise PydanticCustomError("blank", "must not be blank")
+    return v
+
+
+def lesson_status_conflict(kind: str, tags: Iterable[str]) -> bool:
+    """PV-5 (R15, D-234): a lesson is ``active`` or concluded (``resolved``/``historical``), never
+    both. ``resolved`` + ``historical`` stays valid (the D-234 import form); other kinds are free.
+    Tags are compared stripped and case-folded, so ``Active`` counts as ``active`` (review 111)."""
+    t = {tag.strip().casefold() for tag in tags}
+    return kind in LESSON_KINDS and "active" in t and bool(t & _CONCLUDED)
+
+
+def _refuse_status_conflict(kind: str, tags: Iterable[str]) -> None:
+    if lesson_status_conflict(kind, tags):
+        raise PydanticCustomError(
+            "lesson_status_conflict",
+            "a lesson cannot be active and resolved or historical at once: keep one status tag (D-234)",
+        )
+
+
 def canonical_device_scope(v: str) -> str:
     """F08: ``device:<id>`` must be spelled canonically (no leading zeros). Readers match the
     stored string against ``'device:' || device_id``, so ``device:02`` would be acked on write and
@@ -45,7 +77,7 @@ def canonical_device_scope(v: str) -> str:
     if v.startswith("device:"):
         digits = v[len("device:") :]
         if digits.startswith("0"):
-            raise ValueError(f"device_scope {v!r} is not canonical: use 'device:<id>' without leading zeros")
+            raise ValueError("device_scope is not canonical: use 'device:<id>' without leading zeros")
     return v
 
 
@@ -171,6 +203,11 @@ class Item(_Strict):
 
     _device_scope = field_validator("device_scope")(canonical_device_scope)
 
+    @field_validator("title", "body")
+    @classmethod
+    def _text_not_blank(cls, v: str) -> str:
+        return _reject_blank(v)
+
     @field_validator("describes")
     @classmethod
     def _describes(cls, v: list[str] | None) -> list[str] | None:
@@ -194,6 +231,7 @@ class Item(_Strict):
                 raise ValueError("a project card cannot be closed")
             if self.logical_id is None or self.valid_from is None:
                 raise ValueError("close needs logical_id, expected_version_id and valid_from")
+        _refuse_status_conflict(self.kind, self.tags)  # PV-5
         return self
 
     @field_validator("project_ids", mode="before")
@@ -227,10 +265,27 @@ class LessonSpec(_Strict):
 
     _device_scope = field_validator("device_scope")(canonical_device_scope)
 
+    @field_validator("title", "body")
+    @classmethod
+    def _text_not_blank(cls, v: str) -> str:
+        return _reject_blank(v)
+
+    @model_validator(mode="after")
+    def _status(self) -> LessonSpec:
+        # PV-5 here as well: ``_close_items`` turns each lesson into an ``Item``, and a conflict found
+        # only there would surface as an internal error instead of ``E_INVALID_ARG``
+        _refuse_status_conflict("lesson", self.tags)
+        return self
+
 
 class CardUpdate(_Strict):
     body: str = Field(min_length=1, max_length=64000)
     expected_version_id: int | None = Field(default=None, ge=1)  # None: no card exists yet (first close)
+
+    @field_validator("body")
+    @classmethod
+    def _text_not_blank(cls, v: str) -> str:
+        return _reject_blank(v)
 
 
 class ExpectedVersion(_Strict):
@@ -255,6 +310,16 @@ class CloseRequest(_Strict):
     @classmethod
     def _uuid(cls, v: str) -> str:
         return str(uuid.UUID(v))
+
+    @field_validator("notes")
+    @classmethod
+    def _notes_not_blank(cls, v: str) -> str:
+        return _reject_blank(v)
+
+    @field_validator("decisions")
+    @classmethod
+    def _decisions_not_blank(cls, v: list[str]) -> list[str]:
+        return [_reject_blank(d) for d in v]
 
     @model_validator(mode="after")
     def _derived_items_fit(self) -> CloseRequest:
@@ -376,18 +441,49 @@ def _format_validation_error(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
+#: fields whose empty value is a PV-3 ``blank`` refusal too (``min_length=1`` fires before the
+#: blank validator, so ``""`` arrives as ``string_too_short``): titles, bodies, notes, lesson parts
+BLANK_FIELDS = frozenset({"title", "body", "notes", "mistake", "fix", "context"})
+
+
+def _reason_type(err: Any) -> str | None:
+    kind = err.get("type")
+    if kind in REASON_TYPES:
+        return str(kind)
+    loc = err.get("loc", ())
+    if kind == "string_too_short" and loc and loc[-1] in BLANK_FIELDS:
+        return "blank"
+    return None
+
+
+def _reason_details(exc: ValidationError) -> dict[str, Any]:
+    """Protocol §5.2: a PV-3/PV-5 refusal names its ``reason`` (and the ``index`` of the item, when
+    the error sits under ``items[i]``), like ``missing_home``/``duplicate_project`` do."""
+    for err in exc.errors(include_input=False, include_url=False):
+        reason = _reason_type(err)
+        if reason is not None:
+            out: dict[str, Any] = {"reason": reason}
+            loc = err.get("loc", ())
+            if len(loc) >= 2 and loc[0] == "items" and isinstance(loc[1], int):
+                out["index"] = loc[1]
+            return out
+    return {}
+
+
 def parse_request[T: BaseModel](model: type[T], raw: T | dict[str, Any]) -> T:
     """Validate ``raw`` as ``model``; a Pydantic error becomes ``E_INVALID_ARG`` with a bounded
-    ``details.errors`` list (no input echo) and ``details.error_count`` (the full count)."""
+    ``details.errors`` list (no input echo), ``details.error_count`` (the full count) and, for a
+    PV-3/PV-5 refusal, ``details.reason`` (+ ``index``)."""
     if isinstance(raw, model):
         return raw
     try:
         return model.model_validate(raw)
     except ValidationError as exc:
         errors, total = bounded_validation_errors(exc)
-        raise ToolError(
-            "E_INVALID_ARG", _format_validation_error(exc), errors=errors, error_count=total
-        ) from exc
+        message, extra = _format_validation_error(exc), _reason_details(exc)
+    # Raised outside the ``except`` block: neither ``__cause__`` nor ``__context__`` keeps the
+    # ValidationError, whose text carries the input values (review 111, F06).
+    raise ToolError("E_INVALID_ARG", message, errors=errors, error_count=total, **extra)
 
 
 __all__ = [
@@ -409,6 +505,7 @@ __all__ = [
     "WriteRequest",
     "WriteResult",
     "bounded_validation_errors",
+    "lesson_status_conflict",
     "parse_request",
     "session_note_body",
 ]

@@ -7,14 +7,42 @@ test suite needs it because its per-test truncation removes every row except dev
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from psycopg import AsyncConnection
+
+from hlmemo.core.errors import ToolError
 
 LIBRARIAN_DEVICE = "librarian"
 LIBRARIAN_TOKEN_PLACEHOLDER = "reserved:librarian"
 MEMORY_PROJECT = "hlm-librarian"
 GLOBAL_PROJECT = "hlm-global"
 RESERVED_PROJECTS = (MEMORY_PROJECT, GLOBAL_PROJECT)
+
+
+def refuse_reserved_project(args: Any) -> None:
+    """PV-4 ``reserved_project`` (R3, R16), on the MCP write tools only: no client writes into the
+    librarian's working memory, whatever its grants (grants belong to the device, not the chat). The
+    librarian writes there itself through the write service, which this check does not touch."""
+    if not isinstance(args, dict):
+        return
+    hit = args.get("project") == MEMORY_PROJECT
+    items = args.get("items")
+    if not hit and isinstance(items, list):
+        hit = any(
+            isinstance(it, dict)
+            and isinstance(it.get("project_ids"), list)
+            and MEMORY_PROJECT in it["project_ids"]
+            for it in items
+        )
+    if hit:
+        raise ToolError(
+            "E_FORBIDDEN_PROJECT",
+            f"project {MEMORY_PROJECT!r} is reserved for the librarian: write into your own project",
+            project=MEMORY_PROJECT,
+            reason="reserved_project",
+        )
+
 
 _ENSURE = r"""
 INSERT INTO devices (user_id, name, class, fingerprint, os, status, is_admin, is_system,

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -62,6 +63,7 @@ from hlmemo.core.chunker import CHUNK_OVERLAP, CHUNK_TOK, Chunker
 from hlmemo.core.embedder import default_model_dir, sha256_file
 from hlmemo.core.errors import ToolError, invalid_arg
 from hlmemo.core.normalize import normalize
+from hlmemo.core.secret_guard import find_secret
 from hlmemo.core.temporal import (
     Interval,
     fmt_ts,
@@ -358,6 +360,7 @@ async def write(
     ``memory.register_lesson`` sets 2; W1.5: a batch whose items all carry ``source`` is an
     import and gets 6)."""
     request_payload = verbatim_args(req, raw)
+    _check_secrets(request_payload, req)  # PV-1 over the raw arguments, before parsing
     request = parse_request(WriteRequest, req)
     if librarian_priority is None and all(it.source is not None for it in request.items):
         librarian_priority = IMPORT_LIBRARIAN_PRIORITY
@@ -402,6 +405,7 @@ async def call_the_day(
     raw: dict[str, Any] | None = None,
 ) -> CloseResult:
     request_payload = verbatim_args(req, raw)
+    _check_secrets(request_payload, req)  # PV-1 over the raw arguments, before parsing
     request = parse_request(CloseRequest, req)
     deps = deps or default_deps()
     try:
@@ -467,6 +471,51 @@ def _close_items(request: CloseRequest) -> list[Item]:
             )
         )
     return items
+
+
+# --------------------------------------------------------------------------- write-path validations
+def _check_secrets(*payloads: Any) -> None:
+    """PV-1 ``secret_pattern`` (R7): every string value and dict key of the raw arguments (and of
+    the request the service was handed, when it differs) is checked against the strong secret
+    shapes before parsing, authorization or the transaction. Append-only history can only be erased
+    by an owner-run database procedure, and the event stores the arguments verbatim, so no field is
+    exempt (``updates[].replacement``, ``source.path``, ``client``, ``project`` ...). A refusal names
+    the field path and the rule, never the value; a secret therefore never reaches the model
+    validation or an authorization error either. A payload passed twice (``raw`` is ``req``, or
+    ``raw`` was None) is scanned once."""
+    scanned: list[Any] = []
+    for payload in payloads:
+        if any(payload is seen for seen in scanned):
+            continue
+        scanned.append(payload)
+        if not isinstance(payload, dict | list):
+            payload = payload.model_dump(mode="json") if hasattr(payload, "model_dump") else None
+        hit = find_secret(payload)
+        if hit is None:
+            continue
+        path, rule = hit
+        details: dict[str, Any] = {"field": path, "reason": "secret_pattern", "rule": rule}
+        m = _ITEM_INDEX.match(path)
+        if m is not None:
+            details["index"] = int(m.group(1))
+        raise invalid_arg(
+            f"{path} matches secret rule {rule}: remove it or name where it is stored", **details
+        )
+
+
+_ITEM_INDEX = re.compile(r"^items\[(\d+)\]")
+
+
+def _check_supersedes_links(i: int, it: Item) -> None:
+    """PV-2 ``supersedes_needs_updates`` (R13): a writer replaces a memory with ``updates`` (a
+    verbatim ``old_span``, the D-118 guards), not with a raw ``supersedes`` link, which reads as
+    whole scope and hides its target. Imports carry ``source`` and stay exempt (export round trips)."""
+    if it.source is None and any(ln.rel == "supersedes" for ln in it.links):
+        raise invalid_arg(
+            f"items[{i}].links: supersede with items[].updates (a verbatim old_span), not a link",
+            index=i,
+            reason="supersedes_needs_updates",
+        )
 
 
 # --------------------------------------------------------------------------- authorization
@@ -543,6 +592,7 @@ def _check_shapes(batch: _Batch, plans: list[_Plan]) -> None:
                     f"items[{i}]: logical_id {p.logical_id} appears twice in the batch", index=i
                 )
             seen_logical.add(p.logical_id)
+        _check_supersedes_links(i, it)  # PV-2
         seen_links: set[tuple[str, str]] = set()
         for ln in it.links:
             if isinstance(ln.target, str):

@@ -87,8 +87,8 @@ MCP tools.
 
 | error | meaning | do |
 |---|---|---|
-| `E_INVALID_ARG` | a shape or limit failed; `details` name the field | fix that argument; the same payload fails again |
-| `E_FORBIDDEN_PROJECT` | no write grant on that slug | check the slug against the header and ask the owner; another slug is not a workaround |
+| `E_INVALID_ARG` | a shape or limit failed; `details` name the field, and `details.reason` names a PV check (`secret_pattern`, `supersedes_needs_updates`, `blank`, `lesson_status_conflict`) | fix that argument (a secret: remove it and name where it lives); the same payload fails again |
+| `E_FORBIDDEN_PROJECT` | no write grant on that slug, or `reason: reserved_project` (the librarian's project) | check the slug against the header and ask the owner; another slug is not a workaround |
 | `E_BUDGET_TOO_SMALL` | the result does not fit; `details.min` | raise `token_budget` to at least `min` |
 | `E_VERSION_CONFLICT` | the item or card changed since you read it | drill `current_clue` (or re-query the card), then decide again |
 | `E_REQUEST_ID_CONFLICT`, `E_SESSION_CLOSED` | that `request_id` was used with another payload; that `session_id` is already closed | the earlier write or close landed; a new logical write needs a new UUID |
@@ -99,23 +99,24 @@ MCP tools.
 
 ## 4. Writing well: the rules and their reasons
 
-"(server)" marks what the server enforces today; the rest depends on you, including the secret, raw-link and
-blank-text checks the next release adds (PV-1 to PV-5). R1, R2 and R18 are in §2; R11, R15 and R17 have Examples
+"(server)" marks what the server enforces today; the rest depends on you. The PV checks (protocol §5.2) refuse
+key-shaped secrets, raw `supersedes` links, blank text, the librarian's reserved project and an `active` lesson
+that is also `resolved` or `historical`. R1, R2 and R18 are in §2; R11, R15 and R17 have Examples
 B to D; R20 and R21 have §7; the protocol has every rule's full text and server citations.
 
 | rule | convention | why |
 |---|---|---|
-| R3 | write only into the slug in the header; another slug or extra `project_ids` only when the owner asked in this session | grants belong to the device, not the chat, so the server cannot catch a mis-scoped write |
+| R3 (server, in part: PV-4) | write only into the slug in the header; another slug or extra `project_ids` only when the owner asked in this session | grants belong to the device, not the chat, so the server cannot catch a mis-scoped write |
 | R4 (server) | title 1–200 chars, body up to 64000; at most 32 tags, 32 links and 8 updates per item; 1–50 items per write | one broken item fails the whole write |
 | R5 | only durable items: a current-state fact, a decision with its reason, a lesson, a dated episode; open questions go to `## Open` | transcripts, dumps, narration and speculation displace real hits |
-| R6 | one claim per item: title = the claim (aim for ≤ 80 chars); body = the claim, why, evidence (`file:line`, commit, D-id, clue), the date | corrections act on statements; a mixed item cannot be partly corrected |
-| R7 | no secrets or personal data (keys, tokens, passwords, DSNs with passwords); name where a secret lives ("the key in `.env`"), not its value | history is append-only; erasing needs an owner-run DB procedure |
+| R6 (server, in part: PV-3) | one claim per item: title = the claim (aim for ≤ 80 chars); body = the claim, why, evidence (`file:line`, commit, D-id, clue), the date | corrections act on statements; a mixed item cannot be partly corrected |
+| R7 (server, in part: PV-1) | no secrets or personal data (keys, tokens, passwords, DSNs with passwords); name where a secret lives ("the key in `.env`"), not its value; the server refuses key-shaped values, the rest is on you | history is append-only; erasing needs an owner-run DB procedure |
 | R8 | kind by meaning: `fact` = current state, `episode` = a dated event, `lesson` = a rule from a mistake; `session_note`, `project_card`, `doc_chunk` and `experience` are not for `memory_write`; leave `source` unset | the kind decides whether text can change (§1) |
 | R9 (server) | `device_scope` stays `all`; `device:<id>` only for a single-machine fact such as a local path | a narrower item is invisible elsewhere and cannot correct a wider one |
 | R10 (server, in part) | `valid_from` only from an explicit date in the source, not guessed and not in the future | a guessed date reorders history |
 | R11 (server) | correct a memory you read with `updates`, not with a duplicate (Example B) | a duplicate would leave the stale item ranking as current |
 | R12 | supersede only present-tense claims ("still open", "prod runs X", "next step"); dated findings, measurements and reviews are history | in D-244's check, most wrong supersessions hit history |
-| R13 | nothing is deleted or hidden: no `links` with `rel: "supersedes"`; `close`, `valid_to` and `logical_id` revisions only on items you wrote this session | a raw link skips every guard and hides its target |
+| R13 (server, in part: PV-2) | nothing is deleted or hidden: no `links` with `rel: "supersedes"`; `close`, `valid_to` and `logical_id` revisions only on items you wrote this session | a raw link skips every guard and hides its target |
 | R14 | decisions, facts, episodes and session notes stay apart: a decision is a `call_the_day` line with its reason; if it changes the current state, also write the new `fact` with `updates` | history stays true and the current state findable |
 | R16 | global lessons (`hlm-global`, kind `experience`) are the operator's: list them as "Promotion candidates" in the session note | a one-way door; the owner reviews each one |
 | R17 (server, in part) | close once; `card_update` only to fix a card line your session made false, or to replace the skeleton card a new project starts with; leave out the `auto-capture` tag and the text `AUTO-CAPTURED` | the note feeds the next brief, and the card is the canonical current state |
@@ -186,7 +187,8 @@ returns `clue`, `logical_id`, `version_id`, `replayed`.
   **When** + what went wrong; `fix` = **Do** + **Avoid**; `context` = **Evidence** (a verbatim quote and its
   pointer), **Not verified for**, **Scope**, **Status**, **Era** (from dated evidence, not guessed).
 - `tags` = the scope (`<stack>@<version>`) plus exactly one of `active` or `resolved`, plus `historical` for a
-  lesson from an earlier model era.
+  lesson from an earlier model era. A historical lesson is `resolved` + `historical`; the server refuses
+  `active` together with either (PV-5).
 - A lesson that would hold in every project is still registered in your project and named under "Promotion
   candidates". Merging duplicate lessons and changing a lesson's status or era is the operator's job.
 

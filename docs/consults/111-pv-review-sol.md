@@ -1,0 +1,16 @@
+Verdict: **NO-GO**
+
+- **HIGH** — PV-1 ignores supported `updates[].replacement`; the raw value is persisted even when the update is rejected ([write_service.py:480](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a888c16beef9bcb79/src/hlmemo/core/write_service.py:480), [write_service.py:1218](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a888c16beef9bcb79/src/hlmemo/core/write_service.py:1218)). Trigger: clean carrier with `replacement="sk-proj-"+("a"*30)` and non-matching `old_span`. Repro: commit the successful carrier, assert rejected update and secret present in `events.payload`.
+- **HIGH** — PV-2’s unauthenticated `source` exemption is forgeable by any writer ([write_service.py:493](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a888c16beef9bcb79/src/hlmemo/core/write_service.py:493)). Trigger: ordinary item with fake Markdown `source` plus `links:[{rel:"supersedes",target:1}]`. Repro: normal MCP writer succeeds and creates the hiding link.
+- **HIGH** — Secret-shaped `project`/`project_ids` bypass PV-1 and are echoed by authorization ([write_service.py:480](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a888c16beef9bcb79/src/hlmemo/core/write_service.py:480), [write_service.py:506](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a888c16beef9bcb79/src/hlmemo/core/write_service.py:506)). Trigger: `project="sk-proj-"+("a"*30)`. Repro: assert the resulting `E_FORBIDDEN_PROJECT` message/details exclude the token; currently both include it.
+- **HIGH** — PV-1 false-rejects the explicitly listed legitimate JWT-example class ([secret_guard.py:25](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a888c16beef9bcb79/src/hlmemo/core/secret_guard.py:25)). Trigger: documentation text `eyJ`+`a`×12+`.eyJ`+`b`×12+`.`+`c`×12. Repro: a normal fact containing this fake example raises `secret_pattern`.
+- **MEDIUM** — Some PV-3 refusals omit required `details.reason:"blank"` ([lesson_service.py:81](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a888c16beef9bcb79/src/hlmemo/core/lesson_service.py:81), [write_models.py:443](/Users/cemalkurt/Projects/HLMemo/.claude/worktrees/agent-a888c16beef9bcb79/src/hlmemo/core/write_models.py:443)). Trigger: `register_lesson(mistake="\u00a0",fix="ok")` or item `title=""`.
+- **LOW** — None.
+
+(a) **No** for writes actually refused by PV-1..PV-5: no payload-holding item/event/request row or normal argument log is created; accepted bypasses above do persist data.  
+(b) **Yes**: secret-shaped project values appear in the error message/details; malformed-input paths can also retain them in the Pydantic exception cause.  
+(c) **No check is reachable from `db/replay.py`**; historic events remain byte-identical. A live retry of an old payload may now be refused, as documented.  
+(d) `updates[].old_span/replacement`, `client`, `source.path`, and `describes[]` bypass PV-1; `source` bypasses PV-2.  
+(e) **Yes**: the closed code list and HTTP mapping are unchanged—`E_INVALID_ARG`→400 and `E_FORBIDDEN_PROJECT`→403, both non-retryable.
+
+Evidence: two independent read-only reviews plus direct pure-function probes; no database integration mutation was performed.
