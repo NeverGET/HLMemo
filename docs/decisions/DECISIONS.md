@@ -2224,3 +2224,16 @@ D-247 | 2026-10-03 | ACCEPTED (owner: "Install all 4") | **"How to HLMemo" is in
 - **Verified:** three migrated projects get the digest plus their brief; an unmapped folder gets nothing.
 - **Gap found:** the migrated projects have no project card. A catch-up may now create the initial card (the server already supports it: `card_update` without `expected_version_id`).
 - **Next:** the owner runs "do the HLMemo catch-up" per integrated project; the PV-1..PV-5 server-validation release; the `/hlm-library` operator skill; a migration pilot.
+D-248 | 2026-10-06 | ACCEPTED (owner: drains relaxed; doc fixes) | **Migration procedure updates before a further migration: skeleton-card wording, per-file batches, no-preamble grouped files, estimated dates as in D-215, and optional queue drains under the observer librarian.**
+
+- **Skeleton card.** `project create` writes a D-015 skeleton card (`core/skeleton_card.py:1-12`; 0007 backfilled older projects), and the brief hides it (`brief/assemble.py:191-193`). So "no card yet" means a skeleton card.
+  - The first `card_update` takes `expected_version_id` = the skeleton's version. Omitted, it is refused with `E_VERSION_CONFLICT` and `details.current_version_id`, and nothing is stored (`core/write_service.py:783-789`).
+  - This corrects D-247's "Gap found" line: the migrated projects do have a card (a skeleton; checked on one of them on 2026-10-06), and `card_update` without `expected_version_id` does not create one.
+  - Protocol R17, §4b step 6 and the §6 digest, the skill and its protocol copy are reworded.
+- **Batches by file.** `--keep-missing` stops closes, not the remap (`importers/cli.py:82-91`, `importers/runner.py:99`). A file split across runs lets a later run pair an earlier record of that file with a similar new record (Jaccard ≥ 0.6) and turn the new one into a revision of the old. TEMPLATE §4a now keeps every record of a file in one batch.
+- **Grouped files without a preamble.** Frontmatter or an H1 above the first dated heading or decision row becomes an extra item, undated unless it carries `date:` (checked on a local stack). Same-day order needs a time in `date:` (`importers/runner.py:248` writes in key order).
+- **Dates.** TEMPLATE's hard rule now matches D-215: explicit evidence first, else a visibly marked estimate (`date-estimated`).
+- **Queue drains between batches are optional** while the librarian is an observer (D-244, D-246): its proposals are untrusted flags, so their order adds little. The operator checks the queues once after the last batch. Owner approved.
+- **Roles (D-246).** The project's chat may run the prod import under the owner's OK. The operator does the project, the grant and the pre-import dump before it, and the queue check, blind check and `capture.toml` mapping after.
+- **Tooling.** A private local-stack helper replaces the lost reset scripts.
+- Prepared for a further migration; its details are kept privately.

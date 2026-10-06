@@ -23,8 +23,8 @@ flagged, not guessed.
 - No LLM API calls during preparation: the curating agent reads and decides; the librarian only runs on prod after step 6.
 - Facts are never rewritten. A curator may drop, mark (`CURATOR NOTE`), verify against live state, or fix structure
   (move a paragraph under its own dated heading). A statement that cannot be verified stays as written and is flagged.
-- Dates come only from explicit evidence (D-072): frontmatter `date`/`valid_from`, a decision-log row, a heading that
-  starts with the date, or `SESSION <date>`. File mtime and git dates are provenance and may ORDER items, never date them.
+- Dates come from explicit evidence first (D-072): frontmatter `date`/`valid_from`, a decision-log row, a heading that
+  starts with the date, or `SESSION <date>`. Without it, an item gets an estimated date that is marked as one (D-215, §4a).
 - One project at a time. A failed audit stops the next project (fix-before-degrade, §4b step 6).
 
 ## Naming, scope and grants
@@ -69,26 +69,42 @@ importer's own filter (a dry run must report `skipped 0`; a `secret-pattern` ski
 The curator also greps the curated set by eye/regex for credential-shaped assignments (`*_KEY=`, `*_SECRET=`, `*_TOKEN=`, `PASSWORD=`, DSNs with inline passwords): the importer regex and gitleaks BOTH missed a `MINIO_SECRET_KEY=<value>` line in a pilot file (2026-09-30), so the two scanners are a floor, not proof. Files that still hit go to a cleanup list (redact the line, drop the file, or keep it outside HLMemo), never into the import.
 
 ### 4. Dry run on a LOCAL database, and the review package
-Local stack only: create a scratch database (`CREATE DATABASE hlm_mig_<slug>`), `alembic upgrade main@head`, run the API on a
-loopback port with its own admin token, register a scratch device with `write` on the slug. Always run the client with an explicit
-local `HLM_SERVER_URL` and `HLM_CONFIG` so the prod `hlm.toml` is never read. Then `--dry-run`, then the real local import.
+Local stack only: a scratch database (`hlm_mig_<slug>`), `alembic upgrade main@head`, the project, a scratch device with
+`write` on the slug, and the API on a loopback port; the private helper `docs/private/migration/tools/local_stack.sh up <slug>`
+sets all of it up (2026-10-06). Run the client from a neutral working directory with an explicit local `HLM_SERVER_URL` and
+`--project`: the repo root's `hlm.toml` names prod and is read when the client runs there (`HLM_CONFIG=/dev/null` alone does
+not stop that). Then `--dry-run`, then the real local import.
 Write `docs/private/migration/<slug>/REVIEW.md` for the owner:
 source -> item counts by kind; the item titles; dropped files and why; flagged uncertain/stale statements; conflicts;
 `valid_from` coverage (items with explicit dates, items undated); the batch plan (next step); the proposed slug(s);
 what prod would write (counts, token estimate); the exact prod command; the librarian cost (items x $0.0013); the
 truth-set sha256; the promotion candidates.
 
-### 4a. Chronological import (oldest first, never mixed)
-- Establish each item's date from explicit evidence (see the hard rules). Bucket items by the month of `valid_from` read in the
-  owner's time zone (`--tz`), oldest batch first. Items without explicit evidence form an **undated** batch that the owner
-  reviews and that is imported LAST (or dated by the owner, or dropped). Note: an undated item gets `valid_from` = import
-  time, so it looks newer than everything dated; the owner must know that when accepting the undated batch.
-- Run the batches in order, one `hlm import` pass per batch, `--keep-missing` (a batch must never close the items of another).
-  The CLI has no date filter yet (W5a/W5c follow-up): until it has one, use a thin driver on the importer API
-  (`importers.cli.parse_source` + `import_async`, records filtered by the bucket, same keys as a whole-directory import), or
-  stage one directory per batch. Between batches wait until the embedding and librarian queues drain
-  (`hlm_ops.sh status`, `librarian audit --project <slug>`) so contradiction/supersession proposals see the history in order.
-- The review package lists each batch with its date range and item count. The local import must be run batch by batch in the same order first.
+### 4a. Chronological import (oldest first)
+- **Dates.** Take each item's date from explicit evidence first (see the hard rules). Without it, give the item an estimated
+  date: the git last commit of its source file, else its mtime, the later of the two when there are uncommitted edits. Mark it
+  visibly (a first text line such as "Date estimated from commit <sha>" and the tag `date-estimated`) and list these items in
+  the review package; the owner approved this practice in D-215. The reason: an undated item gets `valid_from` = import time
+  and so looks newer than everything dated, its own corrections included. An item the owner prefers undated goes last.
+- **Order within a day** needs a time in `date:` (`2026-08-17T18:00:00`). Inside a run the importer writes in source-key order
+  (`importers/runner.py:248`), so only `valid_from` carries the order.
+- **Batches by file, not by record.** Bucket by the month of `valid_from` read in the owner's time zone (`--tz`), oldest
+  first, and keep every record of a file in one batch (for example the month of the file's newest record). The reason:
+  `--keep-missing` stops closes, not the remap (`importers/cli.py:82-91`, `importers/runner.py:99`). When a file is split
+  across runs, a later run sees the file's earlier records as missing and can pair one with a similar new record (word
+  shingles, Jaccard ≥ 0.6 in the same file), which turns the new record into a revision of the old one.
+- **Grouped files** (a dated-heading log, a decision log) start directly with their first entry. Frontmatter or an H1 above
+  it becomes an extra item of its own, undated unless the frontmatter carries `date:` (checked 2026-10-06 on a local stack).
+  Put provenance into each entry instead, and give files unique names across directories (`same_name` is reported).
+- **Runs.** One `hlm import` pass per batch, in order, with `--keep-missing` (a batch does not close the items of another).
+  The CLI has no date filter yet (W5a/W5c follow-up), so use a thin driver on the importer API (`importers.cli.parse_source`
+  + `import_async`, records filtered by the batch, same keys as a whole-directory import), or stage one directory per batch.
+- **Queue drains between batches are optional while the librarian is an observer** (D-244, D-246, owner approved
+  2026-10-06). Drains existed so that the librarian's proposals would see the history in order; its proposals are now
+  untrusted flags for the operator, so that order adds little. The operator checks the queues once after the last batch,
+  before the blind check (`hlm_ops.sh status`, `librarian audit --project <slug>`).
+- The review package lists each batch with its date range and item count. The local import runs batch by batch in the same
+  order first.
 
 ### 5. Owner review and OK
 The owner reads REVIEW.md (and any curated file they doubt), resolves the flagged items (keep, date, drop), accepts or rejects the
@@ -98,6 +114,9 @@ slug decision and the undated batch, and says OK in the conversation. The OK is 
 D-131/D-132 path: from the owner's Mac, `hlm` configured by `hlm.toml` to `https://mcp.hlmemo.com/mcp`, a device holding
 `<slug>:write`. Sequence: operator creates the project and grants (see Grants); `hlm import ... --project <slug> --dry-run`
 per batch (classified against prod: expect only `new`); then the real run per batch with `--keep-missing`, in the batch order.
+Roles (D-246): the project's own chat may run the prod import under the owner's OK given in that chat. The operator creates
+the project and the grant and takes the pre-import dump right before the first batch; afterwards it checks the queues, runs
+the blind check (step 7), and maps the project folder in `capture.toml` once the project card is written.
 Record counts, the dry-run vs apply difference, the time window and the spend. Hard stops: any `failed`, `rejected` or unexpected
 `changed`/`closed` count; the librarian hour cap pausing is expected, a provider error is not.
 Automation note: an auto-mode agent may be refused prod writes; that is correct and is not routed around. The owner grants

@@ -1,10 +1,11 @@
-> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-04, source sha256 df3592432711b401e1eb53341d318b98f707d5281e33f20b88e3147352f19bc2. If the two differ, the source file wins.
+> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-06, source sha256 66bd741f4aacd09ab5d6ce22a90cc9ec95418e81d0379961270f7d760a8b3621. If the two differ, the source file wins.
 
 # HLMemo protocol v1: rules for project writers
 
 Status: draft v1, 2026-10-03, D-246 build step 1; reworded 2026-10-04 in a plainer style, with every rule, limit
 and citation kept. Grounded in `main` @ 3143b56; every server claim cites `file:line` (under `src/hlmemo/` unless
-a path says otherwise) at that commit. Product content only (D-220).
+a path says otherwise) at that commit. 2026-10-06 (D-248): the skeleton-card wording in R17, §4b and §6, the migration steps in §4, and
+the `TEMPLATE.md` line citations refreshed. Product content only (D-220).
 Terms: a **clue/handle** is `v<version_id>[.<ordinal>]`. A **one-way door** is a change that cannot be cleanly
 undone (prod data, global knowledge, the public repo); only the owner opens one.
 
@@ -86,7 +87,7 @@ server planned (PV-3, blank text). The rest is protocol only.
 
 **R7. Keep secrets and personal data out:** keys, tokens, passwords, DSNs with passwords, e-mail/password
 pairs. Name where a secret lives ("the key in `.env`"), not its value.
-*Why:* history is append-only; erasing needs an owner-run database procedure (`docs/migration/TEMPLATE.md:128-130`).
+*Why:* history is append-only; erasing needs an owner-run database procedure (`docs/migration/TEMPLATE.md:147-149`).
 *Enforced by:* server planned (PV-1). Today the write path has no secret check. The server only redacts text
 before LLM calls (`librarian/redact.py:1-13,31-59`). The importer refuses matching files
 (`importers/common.py:52-68,161-163`); capture scrubs such lines (`capture/scrub.py:13,42`).
@@ -136,7 +137,7 @@ history, so they stay as they are. *Why:* in D-244's second verification pass, m
 *Enforced by:* protocol only. The server limits the damage: a historical target gets a link only and keeps
 its text (`core/write_updates.py:96-97,377`).
 
-**R13. Nothing is deleted or hidden.** There is no delete (`docs/migration/TEMPLATE.md:121`). Replace a memory
+**R13. Nothing is deleted or hidden.** There is no delete (`docs/migration/TEMPLATE.md:140`). Replace a memory
 with `updates`, not with `links: [{rel: "supersedes"}]`. Use `close`, `valid_to` and `logical_id` revisions
 only on items you wrote in this session.
 *Why:* a raw `supersedes` link skips every D-118 guard. It reads as `whole` scope
@@ -173,9 +174,13 @@ owner's device was granted one for the D-234 import, and no later decision recor
 `notes` = what changed, why, pointers (files, commits, D-ids, clues), then `## Open` bullets. `decisions` = one
 line each with its reason. Leave `lessons` empty, since it skips R15's schema; write every lesson with
 `memory.register_lesson`. Use `card_update` only to fix a card line your session made false: a minimal edit,
-`expected_version_id` = the current card version, ≤ 420 tokens. If the project has no card yet, write the
-initial card (present-tense lines backed by what you read; omit `expected_version_id`, which creates it:
-`core/write_models.py:233`). Leave out the `auto-capture` tag and the text `AUTO-CAPTURED`: they mark the
+`expected_version_id` = the current card version, ≤ 420 tokens. If the project has no real card yet, write the
+initial card (present-tense lines backed by what you read). Every project starts with a skeleton card: `project
+create` writes one (D-015, `core/skeleton_card.py:1-12`), so the brief shows no "Now" section while `memory_query`
+returns a card whose text starts "Skeleton card (D-015)". Replace it with `expected_version_id` = its version
+(the number in `card.clue`). Omitted, the write is refused with `E_VERSION_CONFLICT` and
+`details.current_version_id`, and nothing is stored (`core/write_service.py:783-789`); resend with that
+version. Leave out the `auto-capture` tag and the text `AUTO-CAPTURED`: they mark the
 hook's unreviewed notes (`brief/fetch.py:85`).
 *Why:* the note feeds the next brief; the card is the canonical current state. *Enforced by:* **server today**:
 once per project (`E_SESSION_CLOSED`, `core/write_service.py:776-780`); card head and size (`:783-789`,
@@ -245,21 +250,22 @@ records it.
 
 A project's own chat may migrate its legacy memory into **its own slug only** (D-246), following
 `docs/migration/TEMPLATE.md` and the rules at `TEMPLATE.md:19-28`. Private artifacts stay in a gitignored
-directory (`git check-ignore -v`); rollback is `TEMPLATE.md:119-131`. Step 0 is **[owner]**: the operator creates
+directory (`git check-ignore -v`); rollback is `TEMPLATE.md:138-150`. Step 0 is **[owner]**: the operator creates
 the slug and grants the importing device `write` over SSH (`TEMPLATE.md:40-44`); the chat cannot create a project.
 
 1. **Inventory** every agent-memory source (§1). Record secret hits by file and rule id, not by value.
 2. **Curate** each file as keep, drop or fix (§2). Facts keep their wording; mark perishable statements and
-   conflicts; add provenance frontmatter; take `date:` only from explicit text.
+   conflicts; add provenance frontmatter; take `date:` from explicit text, else a marked estimate (D-215, §4a).
 3. **Secret gate** (§3): `gitleaks` 0, the importer dry run `skipped 0`, and a manual grep for
    credential-shaped assignments. Continue only when all three pass.
 4. **Local dry run** on a scratch database (§4) and `REVIEW.md`. **Seal the truth set now** (§7): 10–20
    questions including a superseded value and a negative; put its sha256 in `REVIEW.md`.
-5. **Chronological batches**, oldest first; the undated batch goes last (§4a).
+5. **Chronological batches**, oldest first, every record of a file in one batch (§4a).
 6. **[owner] OK on `REVIEW.md`** (§5). Without it, stop. An auto-mode refusal of a prod write is correct and is
-   not routed around (`TEMPLATE.md:103-104`).
-7. **Prod import** per batch (§6): a dry run (only `new`), then the apply with `--keep-missing`, with the
-   queues drained between batches. Stop on any `failed`/`rejected`, or on an unexpected `changed`/`closed`.
+   not routed around (`TEMPLATE.md:122-123`).
+7. **Prod import** per batch (§6): a dry run (only `new`), then the apply with `--keep-missing`. The operator
+   checks the queues once after the last batch (drains between batches are optional while the librarian is an
+   observer, D-248). Stop on any `failed`/`rejected`, or on an unexpected `changed`/`closed`.
 8. **Operator hand-off.** A different agent, without the curated set, answers the sealed questions through
    prod `memory.query`/`memory.ask`. The bar: ≥ .80 correct, 0 superseded values stated as current, every
    negative abstains (§7). A failure is a finding, not a retry. Then the curate pass and AUDIT.md (§8).
@@ -284,8 +290,9 @@ the project's current state. Write only into this project's slug, under R1–R21
    Write lessons via `register_lesson` (R15), and project scope only. Cross-project candidates go into the
    session note's "Promotion candidates".
 6. **Fix or create the card** (R17). If a card line is now false, make a minimal `card_update`. If the
-   project has no card yet (the brief has no "Now" section and `memory_query` returns no card), write the
-   initial card: present-tense lines only, ≤ 420 tokens, every line backed by an item or file you read.
+   project has no real card yet (the brief has no "Now" section and `memory_query` returns the skeleton card,
+   "Skeleton card (D-015)"), write the initial card over it with `expected_version_id` = the skeleton's version:
+   present-tense lines only, ≤ 420 tokens, every line backed by an item or file you read.
 7. **Close** with `call_the_day`. The notes hold counts (corrected, added, lessons), the clues written, and
    `## Open` for anything the chat could not decide.
 8. **Report to the owner:** the counts, and the questions the owner needs to answer. The operator checks the
@@ -420,8 +427,8 @@ Lessons become permanent knowledge: after a mistake or a validated judgment call
 - hlm-global and experience are the operator's: list such lessons as "Promotion candidates" in the session note.
 Close once per session with memory.call_the_day (fresh UUIDs); its note feeds the next brief.
 - notes = what changed, why, pointers, then "## Open". decisions = one line each with its reason.
-- card_update only to fix a card line your session made false, or to create a missing card (<= 420 tokens;
-  expected_version_id = current, omitted for a new card).
+- card_update only to fix a card line your session made false, or to replace the skeleton card (<= 420 tokens;
+  expected_version_id = the current card version, the skeleton's included).
 Catch-up ("do the HLMemo catch-up") or migration: load the `hlmemo` skill and follow it.
 Operator and owner only, because they change shared or prod state: memory.answer, hlm review, hlm curate
 --apply/--execute, hlm links, ops librarian *, hlm_ops.sh, imports outside /hlm-migrate, prod deploys.

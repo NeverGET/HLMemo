@@ -24,8 +24,8 @@ Lessons become permanent knowledge: after a mistake or a validated judgment call
 - hlm-global and experience are the operator's: list such lessons as "Promotion candidates" in the session note.
 Close once per session with memory.call_the_day (fresh UUIDs); its note feeds the next brief.
 - notes = what changed, why, pointers, then "## Open". decisions = one line each with its reason.
-- card_update only to fix a card line your session made false, or to create a missing card (<= 420 tokens;
-  expected_version_id = current, omitted for a new card).
+- card_update only to fix a card line your session made false, or to replace the skeleton card (<= 420 tokens;
+  expected_version_id = the current card version, the skeleton's included).
 Catch-up ("do the HLMemo catch-up") or migration: load the `hlmemo` skill and follow it.
 Operator and owner only, because they change shared or prod state: memory.answer, hlm review, hlm curate
 --apply/--execute, hlm links, ops librarian *, hlm_ops.sh, imports outside /hlm-migrate, prod deploys.

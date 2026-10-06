@@ -118,7 +118,7 @@ B to D; R20 and R21 have §7; the protocol has every rule's full text and server
 | R13 | nothing is deleted or hidden: no `links` with `rel: "supersedes"`; `close`, `valid_to` and `logical_id` revisions only on items you wrote this session | a raw link skips every guard and hides its target |
 | R14 | decisions, facts, episodes and session notes stay apart: a decision is a `call_the_day` line with its reason; if it changes the current state, also write the new `fact` with `updates` | history stays true and the current state findable |
 | R16 | global lessons (`hlm-global`, kind `experience`) are the operator's: list them as "Promotion candidates" in the session note | a one-way door; the owner reviews each one |
-| R17 (server, in part) | close once; `card_update` only to fix a card line your session made false, or to create the card when the project has none; leave out the `auto-capture` tag and the text `AUTO-CAPTURED` | the note feeds the next brief, and the card is the canonical current state |
+| R17 (server, in part) | close once; `card_update` only to fix a card line your session made false, or to replace the skeleton card a new project starts with; leave out the `auto-capture` tag and the text `AUTO-CAPTURED` | the note feeds the next brief, and the card is the canonical current state |
 | R19 (server) | one `request_id` per logical write; a transport retry resends the identical payload; a refusal gets fixed, not looped on | the retry then replays instead of writing twice |
 
 ### Example A: a good item and a bad one
@@ -206,6 +206,10 @@ and returns `versions[]` and `session_note_clue`. Leave its `lessons` field empt
 - `card_update` is optional. Take the current text from `memory_query` (`card.text`; drill `card.clue` if
   `card.truncated`), change only the line your session made false, stay within 420 tokens, and set
   `expected_version_id` to the number in `card.clue` (`v701` gives `701`). On `E_VERSION_CONFLICT`, redo the edit.
+- A new project has a **skeleton card**: `project create` writes one whose text starts "Skeleton card (D-015)" and
+  tags it `skeleton-card`. The brief hides it (no "Now" section), so it counts as "no real card yet". Write the
+  initial card over it with `expected_version_id` = the skeleton's version from `card.clue`. Without that field
+  the server answers `E_VERSION_CONFLICT` with `details.current_version_id` and stores nothing; resend with it.
 - The ack's `session_note_clue` is the note's handle; give it to the owner.
 
 ## 5. Catch-up (protocol §4b)
@@ -223,10 +227,11 @@ the project's current state. You write only into this project's slug, under R1�
    read and a verbatim `old_span`: `revise` for one changed statement, `supersede` for a wholly outdated item.
 5. **Add what is missing** (R5, R6, R8): one claim per item, with evidence and dates from the source. Lessons
    via `register_lesson`, project scope only; cross-project ones become "Promotion candidates" in the session note.
-6. **Fix or create the card** (R17). If a card line is now false, make a minimal `card_update`. With no card yet
-   (the brief has no "Now" section), write the initial card in `call_the_day` `card_update`: present-tense lines
-   only (what the project is, its stack, production state, current work and conventions), ≤ 420 tokens, every
-   line backed by an item or file you read, with no `expected_version_id`.
+6. **Fix or create the card** (R17). If a card line is now false, make a minimal `card_update`. With no real card
+   yet (the brief has no "Now" section; `memory_query` returns the skeleton card), write the initial card in
+   `call_the_day` `card_update`: present-tense lines only (what the project is, its stack, production state,
+   current work and conventions), ≤ 420 tokens, every line backed by an item or file you read, with
+   `expected_version_id` = the skeleton's version (Example D).
 7. **Close** with `call_the_day`: the counts (corrected, added, lessons), the clues written, and `## Open` for
    anything you could not decide.
 8. **Report to the owner**, then stop. The operator checks the result in the next library session.
@@ -254,15 +259,16 @@ TEMPLATE's "Rollback" section, run with the operator.
 0. **[owner]** The operator creates the slug and grants the importing device `write`; a chat cannot create a project.
 1. **Inventory** every agent-memory source; record secret hits by file and rule id, not by value.
 2. **Curate** each file as keep, drop or fix. Facts keep their wording; mark perishable statements and
-   conflicts; add provenance frontmatter; take `date:` only from explicit text.
+   conflicts; add provenance frontmatter; take `date:` from explicit text, else a marked estimate (TEMPLATE §4a).
 3. **Secret gate:** `gitleaks` 0 findings, the importer dry run `skipped 0`, and a manual grep for
    credential-shaped assignments. Continue only when all three pass.
 4. **Local dry run** on a scratch database, and a `REVIEW.md`. Seal the truth set now: 10–20 questions including
    a superseded value and a negative; its sha256 goes into `REVIEW.md`.
-5. **Chronological batches**, oldest first; the undated batch goes last.
+5. **Chronological batches**, oldest first, every record of a file in one batch (TEMPLATE §4a explains why).
 6. **[owner] OK on `REVIEW.md`.** Without it, stop. An auto-mode refusal of a prod write is correct; leave it standing.
-7. **Prod import** per batch: a dry run (only `new`), then the apply with `--keep-missing`, queues drained
-   between batches. Stop on any `failed` or `rejected`, or on an unexpected `changed` or `closed`.
+7. **Prod import** per batch: a dry run (only `new`), then the apply with `--keep-missing`; the operator checks
+   the queues once after the last batch. Stop on any `failed` or `rejected`, or on an unexpected `changed` or
+   `closed`.
 8. **Operator hand-off.** A different agent, without the curated set, answers the sealed questions through prod
    `memory.query` / `memory.ask`: at least 0.80 correct, 0 superseded values stated as current, every negative
    abstains. A failure is a finding, not a retry. Then the operator's curate pass and the **[owner]** AUDIT sign-off.
