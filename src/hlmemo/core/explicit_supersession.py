@@ -75,7 +75,8 @@ _TR_SUFFIX = r"(?:['’][A-Za-zÇĞİÖŞÜçğıöşü]{1,7})?"
 _JOIN_RE = re.compile(
     r"^[`'\"*\s]*(?:\([^()\n]{0,100}\)[\s`]*)?(?:,|/|&|\band\b|\bund\b|\bsowie\b)[\s`'\"*]*", re.I
 )
-_TR_JOIN_RE = re.compile(r"^[`'\"*\s]*(?:/|\bve\b|\bile\b)[\s`'\"*]*$", re.I)
+# a case suffix may sit on every ref of the list ("D-150'yi ve D-151'i"), not only on the last one
+_TR_JOIN_RE = re.compile(rf"^[`'\"*\s]*{_TR_SUFFIX}[`'\"*\s]*(?:/|\bve\b|\bile\b)[\s`'\"*]*$", re.I)
 # between an explicit subject ref and its marker
 _SUBJ_GAP_RE = re.compile(
     r"^[`'\"*_)\]\s]*(?:['’]s\s+)?(?:(?:is|was|are|were|has|have|had|been|being|now|hereby|also|thereby|fully|"
@@ -304,9 +305,20 @@ def _refs(text: str, offset: int) -> list[Ref]:
 
 
 # --------------------------------------------------------------------------- declarations
-def decision_rows(body: str) -> list[tuple[str, int, int]]:
-    """``(D-id, start, end)`` of every decision row of a decision log (>= 2 row starts), else []."""
+def decision_rows(body: str, path: str | None = None) -> list[tuple[str, int, int]]:
+    """``(D-id, start, end)`` of every decision row of a decision log, else [].
+
+    A decision log is an item with >= 2 row starts, or an imported one-row item: its body starts with
+    the row and its ``source.path`` anchor is that row's D-id (``DECISIONS.md#D-006``), the key the
+    markdown importer gives each decision row (2026-10-06, D-249). Any other single row start stays
+    prose, so a document that quotes a row is never indexed as that decision (review 109)."""
     starts = [(m.group(1), m.start()) for m in _ROW_RE.finditer(body)]
+    if len(starts) == 1:
+        did, start = starts[0]
+        anchor = path.rsplit("#", 1)[1] if path and "#" in path else None
+        if anchor == did and not body[:start].strip():
+            return [(did, start, len(body))]
+        return []
     if len(starts) < 2:
         return []
     return [
@@ -393,11 +405,12 @@ _PASSIVE = frozenset(
 )
 
 
-def find_declarations(body: str) -> list[Declaration]:
-    """Every explicit supersession declaration of one item ``body``, in text order (the item's
-    ``source.path`` matters only for resolution, ``resolve``)."""
+def find_declarations(body: str, path: str | None = None) -> list[Declaration]:
+    """Every explicit supersession declaration of one item ``body``, in text order. The item's
+    ``source.path`` only tells an imported one-row decision item (``decision_rows``); the rest of
+    resolution happens in ``resolve``."""
     fences = _fences(body)
-    rows = decision_rows(body)
+    rows = decision_rows(body, path)
     out: list[Declaration] = []
     seen: set[int] = set()
     for mk in MARKERS:
@@ -479,7 +492,7 @@ class Index:
         for d in self.docs:
             if d.doc_path:
                 self.by_path.setdefault(d.doc_path, []).append(d)
-            for did, s, e in decision_rows(d.body):
+            for did, s, e in decision_rows(d.body, d.path):
                 self.rows.setdefault(did, []).append((d, d.body[s:e]))
         for docs in self.by_path.values():
             docs.sort(key=lambda d: (d.path or "", d.version_id))
@@ -627,7 +640,7 @@ def propose(docs: list[Doc], existing: Iterable[tuple[int, int]] = ()) -> list[P
     index = Index(list(docs))
     by_pair: dict[tuple[int, int], Proposal] = {}
     for doc in sorted(index.docs, key=lambda d: (d.path or "", d.version_id)):
-        for decl in find_declarations(doc.body):
+        for decl in find_declarations(doc.body, doc.path):
             for p in resolve(decl, doc, index):
                 key = (p.source_logical_id, p.target_logical_id)
                 if key not in by_pair or (by_pair[key].scope == "whole" and p.scope == "part"):
