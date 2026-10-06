@@ -65,6 +65,14 @@ Updated 2026-09-23. Source of each item in parentheses.
 - **Memory Map at budget for a ~500-item slug.** `map_tokens` was 5984 on every blind-check question (budget ~6k, `core/memory_map.py`): file lines get spread-truncated. Measure the effect before raising the budget or grouping lines.
 - **`abstained` on a rejected false premise.** `memory.ask` correctly rejected a negative question's false premise with evidence but returned `abstained:false, confidence:high`; callers that key on the flag would miss it.
 
+## First real test-drive findings (2026-10-07)
+A project chat that did not build the memory used it for a full session; its notes and a reproduction gave these items (details private: docs/private/test-drive/).
+- **risk_check: the judge filters out relevant lessons (safety, next release).** Retrieval ranked the right lesson first, yet with the judge on (`judged: true`) the verdict was `no_matching_evidence` (10 of 10 candidates dropped); with the judge timed out, retrieval-only returned it as the top warning. Change: the judge annotates, never removes. Every lesson above the retrieval threshold is listed with the judge's label (the D-246 rule: an LLM label is not trusted alone). The 1/3 judge timeouts (risk-judge probe) belong to the same item.
+- **revise leaves a stale title (next release).** Titles state the claim (R6). When `old_span` occurs verbatim in the target's title, apply the replacement there as well (within 200 chars); otherwise return an ack warning. Interim protocol guidance: use `supersede` when the title states the outdated claim.
+- **Import title suffix shows the import key, not a repo path.** For migrations the key is the curated file path. When the frontmatter has `source_path`, use it for the suffix; otherwise mark the suffix as an import path.
+- **Several revises to one target in one write are all rejected (`batch_conflict`).** Document "one write per target" now; let the server apply non-overlapping revises in sequence once the need is measured.
+- **Lessons should not carry current values** (a version string in a lesson went stale within a day). Add to the protocol (R15), the skill and the migration curation rules: the value goes into a fact, and the lesson points to it.
+
 ## R4.3 candidates (2026-10-03)
 - memory.query: when a hit is flagged `superseded`, pull its superseder into the hit list (as memory.ask's `superseders_pulled` does). On 10-03 a "production budget caps" query returned 4/4 superseded hits, while the current values were only in the card.
 - memory.ask answer quality: a same-DB comparison vs main with ≥ 3 samples per arm; extractive (verbatim-only) main-sentence repair; the round-2 findings of consult 99 (URL non-path parts, the alternation bracket guard, the dangling-drop word lists, the preview filter).
