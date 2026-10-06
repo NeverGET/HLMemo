@@ -17,7 +17,7 @@ stdlib-light modules, opens no socket and prints nothing. ``-P`` keeps the sessi
 so a project's own ``json.py`` (or any stdlib-named file) never runs inside the hook.
 
 It must NEVER block or break a session: any error, timeout or empty result exits 0. A watchdog thread
-ends the process after the hard wall clock (4 s; the registered hook timeout is 5) whatever the main
+ends the process after the hard wall clock (8 s; the registered hook timeout is 10) whatever the main
 thread is doing (imports, keychain, a hung socket). Once the cwd is mapped the watchdog first prints the
 digest with the "unavailable" line, so even a hung fetch still injects the rules.
 """

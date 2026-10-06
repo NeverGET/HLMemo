@@ -16,8 +16,9 @@ DIGEST_ENV = "HLM_BRIEF_DIGEST"  # the same values suppress only the "HLMemo mod
 DRYRUN_ENV = "HLM_BRIEF_DRYRUN"  # a directory: write the would-be brief there and inject nothing
 WALL_ENV = "HLM_BRIEF_WALL_S"  # test/ops override of the hard wall clock
 
-WALL_S = 4.0  # hard budget for the whole hook process (the registered hook timeout is 5)
-FETCH_S = 3.2  # the memory calls must finish by then; the rest is assembly + output
+# 2026-10-06 (D-252): 3.2 s was at the edge of measured fetch times (2.3-3.2 s; slower under librarian load)
+WALL_S = 8.0  # hard budget for the whole hook process (the registered hook timeout is 10)
+FETCH_S = 6.5  # the memory calls must finish by then; the rest is assembly + output
 BRIEF_TOKENS = 1500
 SOURCES = ("startup", "clear", "compact")
 

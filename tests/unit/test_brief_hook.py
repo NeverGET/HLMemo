@@ -363,11 +363,11 @@ def test_watchdog_ends_a_hung_process_silently_with_exit_zero() -> None:
     assert __import__("time").monotonic() - t < 10
 
 
-def test_wall_clock_is_four_seconds_and_inside_the_hook_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wall_clock_is_eight_seconds_and_inside_the_hook_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HLM_BRIEF_WALL_S", raising=False)
-    assert BC.wall_seconds() == 4.0 and BC.FETCH_S < BC.wall_seconds() < 5.0
+    assert BC.wall_seconds() == 8.0 and BC.FETCH_S < BC.wall_seconds() < 10.0
     monkeypatch.setenv("HLM_BRIEF_WALL_S", "bogus")
-    assert BC.wall_seconds() == 4.0
+    assert BC.wall_seconds() == 8.0
 
 
 def test_config_defaults_and_age_setting(tmp_path: Path) -> None:

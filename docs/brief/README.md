@@ -47,7 +47,7 @@ reviewed by the owner. "as of" = newest `recorded_at` among the items read.
   reverses an earlier decision without a link is not detected.
 - Fail-open, exit 0 always. Unmapped project, kill switch or bad input: nothing is printed. Mapped project
   whose brief cannot be produced (no token, unreachable server, any exception, an empty result, the 3.2 s
-  fetch timeout, or the 4 s wall clock of the watchdog thread): the digest plus ONE line
+  fetch timeout, or the 8 s wall clock of the watchdog thread): the digest plus ONE line
   `# Memory brief: project <slug>: unavailable this session (<why>). Use memory.query (token_budget 3000)
   for your task.` With `HLM_BRIEF_DIGEST=off` such a run prints nothing, as before the digest. The
   watchdog (`os._exit(0)`) prints that digest-only fallback itself when it has to end a hung process
@@ -139,7 +139,7 @@ the HLMemo repo, gitignored). Global install (every mapped project) is the entry
           {
             "type": "command",
             "command": "/Users/cemalkurt/Projects/HLMemo/.venv/bin/python -P -m hlmemo.brief.hook",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }

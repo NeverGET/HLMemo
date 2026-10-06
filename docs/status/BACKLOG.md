@@ -61,7 +61,7 @@ Updated 2026-09-23. Source of each item in parentheses.
 - [FIXED ab4b790] W2e synthesis fallback is ineffective under the 6 s cap: the provider retries the primary with 1/2/4/8 s backoff before trying the fallback, so an outage or stall of the primary times out before the fallback runs (found by gpt-5.6-sol in the D-084 bake-off). Fix: a synthesis-specific attempt budget (one bounded primary attempt, then the fallback within the deadline) + a timeout/503 failover test. The same applies to risk_judge (4 s cap).
 
 ## Migration pilot findings (2026-10-06, D-251)
-- **Brief fetch budget is at the edge.** `brief/config.py` FETCH_S 3.2 s (WALL_S 4, hook timeout 5): today's fetches took 2.3–3.2 s, and under librarian load the brief fell back to "unavailable" twice (digest still injected). Proposal: FETCH_S ~6.5, WALL_S ~8, hook timeout 10 (mapped projects only pay it).
+- **RESOLVED 2026-10-06 (D-252): FETCH_S 6.5 / WALL_S 8 / hook timeout 10.** Brief fetch budget was at the edge. `brief/config.py` FETCH_S 3.2 s (WALL_S 4, hook timeout 5): today's fetches took 2.3–3.2 s, and under librarian load the brief fell back to "unavailable" twice (digest still injected). Proposal: FETCH_S ~6.5, WALL_S ~8, hook timeout 10 (mapped projects only pay it).
 - **Memory Map at budget for a ~500-item slug.** `map_tokens` was 5984 on every blind-check question (budget ~6k, `core/memory_map.py`): file lines get spread-truncated. Measure the effect before raising the budget or grouping lines.
 - **`abstained` on a rejected false premise.** `memory.ask` correctly rejected a negative question's false premise with evidence but returned `abstained:false, confidence:high`; callers that key on the flag would miss it.
 

@@ -360,7 +360,7 @@ def test_documented_global_entry() -> None:
     e = _documented_entry()
     assert e["matcher"] == "startup|clear|compact"
     (h,) = e["hooks"]
-    assert h["type"] == "command" and h["timeout"] == 5
+    assert h["type"] == "command" and h["timeout"] == 10 and H.BC.WALL_S < h["timeout"]
     py, *args = h["command"].split()
     assert py == "/Users/cemalkurt/Projects/HLMemo/.venv/bin/python"  # absolute: works from any cwd
     assert args == ["-P", "-m", "hlmemo.brief.hook"]

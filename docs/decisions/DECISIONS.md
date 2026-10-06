@@ -2256,3 +2256,10 @@ D-251 | 2026-10-06 | ACCEPTED (operator; owner sign-off pending) | **The first D
 - The folder is now mapped (`capture.toml`), so new chats there start in HLMemo mode with the brief.
 - Findings for HLMemo are in BACKLOG ("Migration pilot findings"): the brief's fetch budget, the Memory Map at its budget, and the `abstained` flag on a rejected false premise.
 - Next: the owner's AUDIT sign-off; a curate pass and the librarian's questions in the next library session.
+D-252 | 2026-10-06 | ACCEPTED (owner) | **The D-251 migration is signed off, and the SessionStart brief gets a fetch budget that fits real server latency.**
+
+- **Sign-off.** The owner signed the private AUDIT of the D-251 migration (TEMPLATE step 8). Still open: the curate pass and the librarian's review questions, both for a library session.
+- **Brief budget.** Measured brief fetches took 2.3–3.2 s against a 3.2 s budget. Under librarian load the brief fell back to "unavailable" twice, while the digest was still injected. The new budget is `FETCH_S` 6.5 s and `WALL_S` 8 s (`brief/config.py`), with the registered hook timeout at 10 s (docs/brief/README.md, the owner's settings).
+  - Only mapped projects pay it; unmapped folders stay a fast no-op.
+  - The hook runs from the local checkout, so no release is needed.
+  - Re-measured with the real hook: 6/6 briefs delivered, 2.6–3.2 s end to end. 148 brief tests pass.
