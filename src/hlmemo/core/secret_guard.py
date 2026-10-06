@@ -14,7 +14,8 @@ placeholders are ordinary memory text, they are narrower (reviews 111 and 112):
   ``xoxb-<placeholder>`` or ``xoxb-<your-token>`` passes;
 - ``private-key`` needs key material after the header (a pasted PEM/OpenSSH block), so a sentence
   that names ``-----BEGIN ... PRIVATE KEY-----`` passes;
-- AWS's documented example access keys (``AKIA`` + ``IOSFODNN7EXAMPLE``, ``AKIA`` + ``I44QH8DHBEXAMPLE``) pass;
+- AWS's documented example access keys (``AKIA`` + ``IOSFODNN7EXAMPLE``,
+  ``AKIA`` + ``I44QH8DHBEXAMPLE``) pass;
 - a match whose random part is a placeholder (fewer than ``PLACEHOLDER_DISTINCT`` distinct
   characters in its last ``PLACEHOLDER_TAIL`` characters, e.g. ``ghp_xxxx…``, ``AIzaSyXXXX…``,
   ``sk-proj-xxxx…``) passes: a real key is random, a placeholder is not;
@@ -56,7 +57,8 @@ STRONG_SECRET_RULES: dict[str, re.Pattern[str]] = {
 
 #: documented example values that are never live credentials (exact literals)
 DOCUMENTED_EXAMPLES: dict[str, frozenset[str]] = {
-    "aws-access-key": frozenset({"AKIA" + "IOSFODNN7EXAMPLE", "AKIA" + "I44QH8DHBEXAMPLE"})  # split: secret scanners,
+    # the literals are split so that push-protection secret scanners do not flag this allow-list
+    "aws-access-key": frozenset({"AKIA" + "IOSFODNN7EXAMPLE", "AKIA" + "I44QH8DHBEXAMPLE"}),
 }
 
 PLACEHOLDER_TAIL = 24
