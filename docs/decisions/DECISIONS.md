@@ -2263,3 +2263,10 @@ D-252 | 2026-10-06 | ACCEPTED (owner) | **The D-251 migration is signed off, and
   - Only mapped projects pay it; unmapped folders stay a fast no-op.
   - The hook runs from the local checkout, so no release is needed.
   - Re-measured with the real hook: 6/6 briefs delivered, 2.6–3.2 s end to end. 148 brief tests pass.
+D-253 | 2026-10-07 | ACCEPTED (owner) | **The librarian's review proposals after the D-251 migration were verified and all withdrawn; one wording error they surfaced was corrected by a writer update.**
+
+- Method as in D-244: two Sonnet verifiers read both subjects of every proposal (read-only drilldown); the operator checked every proposed real conflict by hand against the source repo, and checked by code that no current-state fact was the older side of a judged-history pair.
+- Result: no proposal needed a link or a reversal in memory; the "contradiction" label again found no real contradiction (dated history and two different measures). Details are kept privately.
+- One fact had merged two different measures into one sentence, copied from the project's own hand-over document. An owner-approved revise update corrected that sentence; the old version stays as history.
+- All proposals were withdrawn in one event with the fail-closed RUNBOOK script (live-set check, dry run, apply), so a later librarian role promotion cannot mass-apply them.
+- Operational note: the home IPv4 path to the VM failed again on 2026-10-07; the IPv6 ssh config worked.
