@@ -60,6 +60,11 @@ Updated 2026-09-23. Source of each item in parentheses.
 - W0a /ready detail gating trusts the raw socket peer (loopback = details). This is safe while Caddy reaches the API over the docker network, but a reverse proxy running inside the API's own network namespace would expose details to the public. If the topology ever changes, gate the details on a separate loopback-only listener or an ops token (verifier note, 2026-09-23).
 - [FIXED ab4b790] W2e synthesis fallback is ineffective under the 6 s cap: the provider retries the primary with 1/2/4/8 s backoff before trying the fallback, so an outage or stall of the primary times out before the fallback runs (found by gpt-5.6-sol in the D-084 bake-off). Fix: a synthesis-specific attempt budget (one bounded primary attempt, then the fallback within the deadline) + a timeout/503 failover test. The same applies to risk_judge (4 s cap).
 
+## Migration pilot findings (2026-10-06, D-251)
+- **Brief fetch budget is at the edge.** `brief/config.py` FETCH_S 3.2 s (WALL_S 4, hook timeout 5): today's fetches took 2.3–3.2 s, and under librarian load the brief fell back to "unavailable" twice (digest still injected). Proposal: FETCH_S ~6.5, WALL_S ~8, hook timeout 10 (mapped projects only pay it).
+- **Memory Map at budget for a ~500-item slug.** `map_tokens` was 5984 on every blind-check question (budget ~6k, `core/memory_map.py`): file lines get spread-truncated. Measure the effect before raising the budget or grouping lines.
+- **`abstained` on a rejected false premise.** `memory.ask` correctly rejected a negative question's false premise with evidence but returned `abstained:false, confidence:high`; callers that key on the flag would miss it.
+
 ## R4.3 candidates (2026-10-03)
 - memory.query: when a hit is flagged `superseded`, pull its superseder into the hit list (as memory.ask's `superseders_pulled` does). On 10-03 a "production budget caps" query returned 4/4 superseded hits, while the current values were only in the card.
 - memory.ask answer quality: a same-DB comparison vs main with ≥ 3 samples per arm; extractive (verbatim-only) main-sentence repair; the round-2 findings of consult 99 (URL non-path parts, the alternation bracket guard, the dangling-drop word lists, the preview filter).

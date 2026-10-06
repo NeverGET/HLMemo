@@ -2249,3 +2249,10 @@ D-250 | 2026-10-06 | ACCEPTED (owner) | **A further migration's review package i
 - The owner approved the review package (TEMPLATE step 5). The operator then created the project (`hlm_ops.sh project create`, which wrote its skeleton card), granted the owner's device `write` and took a pre-import dump (`backup.sh --pre-upgrade`, kept until an explicit prune). The names and paths are kept privately.
 - Release bc8a58f (D-248 docs, D-249 links fix) was deployed by the owner, because the auto-mode classifier refused the operator's deploy; that refusal was left standing. Gates 10/10 PASS with `--no-drill`. The container's `hlm links` carries the D-249 rule (checked).
 - Next, per D-248: the project's chat runs the import batches; the operator checks the queues, runs the prod `hlm links explicit` dry run for the owner's OK, then the blind check and the `capture.toml` mapping.
+D-251 | 2026-10-06 | ACCEPTED (operator; owner sign-off pending) | **The first D-246 project-chat migration is live and passes the blind check: the project's own chat curated and imported its memory; the operator did the gates, links and checks.**
+
+- The project's chat ran inventory, curation, the secret gate, a local rehearsal, the review package and the prod import batches (dry run before every apply; 0 failed/changed/closed/skipped; an idempotent re-run). The operator created the project and grant, took the pre-import dump, applied the decision-row links after the owner's OK (D-249 tool fix), and ran the blind check.
+- Blind check (TEMPLATE §7, D-216 method: one code-saved memory.ask per sealed question, 2 blind graders, the stricter grade on a split): passes the bar, with 0 superseded-as-current and every negative abstaining. Scores are kept privately.
+- The folder is now mapped (`capture.toml`), so new chats there start in HLMemo mode with the brief.
+- Findings for HLMemo are in BACKLOG ("Migration pilot findings"): the brief's fetch budget, the Memory Map at its budget, and the `abstained` flag on a rejected false premise.
+- Next: the owner's AUDIT sign-off; a curate pass and the librarian's questions in the next library session.
