@@ -38,7 +38,8 @@ working path. macOS has no `timeout` command; do not wrap commands in it.
 - Per project: `memory_query` shows the card (is it stale?), and `librarian.pending_questions` the review backlog.
 - Recent session notes: the brief of each project, or `memory_query` with `kinds: ["session_note"]`.
 - Before any risky step, `memory_risk_check` **and** a `memory_query` with `kinds: ["lesson"]` for the component: the
-  risk judge can drop a relevant lesson (R18). On a warning, drill the lesson and say how you comply.
+  risk judge can drop a relevant lesson (R18), so read both `warnings` and `dropped_by_judge`. On a warning, drill
+  the lesson and say how you comply.
 
 ## 2. Librarian proposals: verify, correct, withdraw
 

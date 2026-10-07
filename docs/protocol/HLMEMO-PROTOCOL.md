@@ -199,12 +199,14 @@ once per project (`E_SESSION_CLOSED`, `core/write_service.py:776-780`); card hea
 
 **R18. `memory.risk_check` before risky steps:** deploys, migrations, prod data, deletion, force-push, secrets.
 On `warn`, drill each lesson and state how you comply. `no_matching_evidence` is not a guarantee: the LLM judge can
-drop a relevant lesson (test-drive 2026-10-07; to be changed so the judge only labels, BACKLOG). So before a deploy
+drop a relevant lesson (test-drive 2026-10-07). So a judged result also lists `dropped_by_judge`: the retrieval
+matches the judge did not warn on (D-257). Read them like warnings and decide whether each applies. Before a deploy
 or a prod-data change, also run `memory.query` with `kinds: ["lesson"]` for the component, worded the way the
 lessons are written. `judged: false` means retrieval only. A warned lesson tagged `resolved`/`historical` is a reminder: say so.
 *Why:* lesson-backed checks are what prevent repeats (D-222). *Enforced by:* protocol only. The verdict
-semantics are server today (`server/tools/risk.py:60-63`; `core/risk_service.py:4-6,26-31`). Candidates are
-chosen by kind with no tag filter (`db/risk_queries.py:31`).
+semantics are server today (`server/tools/risk.py:60-63`; `core/risk_service.py:4-6,26-31`), and so is the
+`dropped_by_judge` list (`core/risk_service.py`, consult 114). Candidates are chosen by kind with no tag filter
+(`db/risk_queries.py:31`).
 
 **R19. Make writes idempotent.** One `request_id` per logical write; a transport retry resends the identical
 payload; a refusal gets fixed, not retried in a loop. *Why:* a retry then replays the stored ack instead of
@@ -459,7 +461,7 @@ Read first: the injected brief, else memory.query your task (token_budget 3000).
 - Query each area before work there; previews are excerpts, so drill the top hits (memory.drilldown) first.
 - superseded:true is not current: follow superseded_by. memory.ask (when listed): open its handles to check quotes.
 - Before a deploy, migration, prod-data change, deletion, force-push or secret: memory.risk_check, and memory.query
-  kinds:[lesson] for the component. On warn, read each lesson and say how you comply; no match is not safety.
+  kinds:[lesson] for the component. Read warnings and dropped_by_judge, say how you comply; no match is not safety.
 Write into project <slug> only (another slug or extra project_ids only if the owner asks). Memory is append-only.
 - Durable items: current facts, decisions + reasons, lessons, dated episodes. No transcript/tool-output dumps, guesses
   as fact, other projects' data or secret values (keys, tokens, passwords, DSNs with passwords); name where they live.

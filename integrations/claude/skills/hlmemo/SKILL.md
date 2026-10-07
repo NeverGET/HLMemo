@@ -72,9 +72,11 @@ MCP tools.
 - **`mcp__hlm__memory_risk_check`**, past lessons against a planned step:
   `{"project": "my-project", "task": "Run the migration that adds an index on events(created_at) in prod", "token_budget": 2000}`.
   `verdict: "warn"` lists `warnings[]` (`clue`, `title`, `why`, `source_project`): drill each one and say how you
-  comply. `no_matching_evidence` means no stored lesson matched (the judge can also drop a relevant one), not that the step is
-  safe, so before a deploy or prod-data change also run `memory_query` with `kinds: ["lesson"]` for the component; `judged: false` means
-  retrieval only, with no LLM judge. A warned lesson tagged `resolved` or `historical` is a reminder: say so
+  comply. A judged result also lists `dropped_by_judge[]` (same fields): retrieval matches the judge did not warn
+  on, since the judge can drop a relevant lesson. Read them like warnings and decide whether each applies.
+  `no_matching_evidence` means no stored lesson matched, not that the step is safe, so before a deploy or prod-data
+  change also run `memory_query` with `kinds: ["lesson"]` for the component; `judged: false` means retrieval only,
+  with no LLM judge. A warned lesson tagged `resolved` or `historical` is a reminder: say so
   rather than treat it as a block. Lessons of every project you can read are checked.
 - **`mcp__hlm__memory_register_lesson`** and **`mcp__hlm__memory_call_the_day`**: Examples C and D.
 - **`mcp__hlm__memory_write`**, 1–50 items in one transaction (below). Required: `project`, `request_id` (a UUID,

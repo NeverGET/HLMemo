@@ -2340,3 +2340,19 @@ D-256 | 2026-10-07 | ACCEPTED (owner approved the plan) | **The migration kit sh
   - TEMPLATE now points to the PLAYBOOK.
 - **K3 skills.** `hlm-migrate` walks a project chat through the tiers, phases and hand-offs. `hlm-library` writes down the operator procedures run by hand on 2026-10-06/07: proposal verification and withdraw, links, cards, doc sync, post-import duties, test-drive triage, releases and deploys. The hlmemo skill and protocol §4 point to them.
 - Next (K4): the kit's first real run is the next migration the owner chose: a NotebookLM project with layered legacy memory, Full tier.
+D-257 | 2026-10-07 | PROPOSED (release candidate; dual review and the deploy pending) | **`memory.risk_check` lists the lessons its judge drops: a judged result carries `dropped_by_judge`, so a relevant lesson that the LLM judge did not warn on still reaches the writer.**
+
+- **Why.** In the first real test drive, the judge dropped all 10 candidates and the verdict was `no_matching_evidence`, while retrieval had ranked the applicable lesson first. With the judge timed out, the same lesson was the top warning (BACKLOG, consult 114). An LLM label is not trusted alone (D-246), so the writer sees what was dropped and decides.
+- **Shape.**
+  - When the judge ran (`judged: true`), the response adds `dropped_by_judge: [{clue, title, why, source_project}]` and `dropped_omitted`.
+  - The list holds the candidates with `det_score ≥ TAU` (the set a retrieval-only answer would warn on) that the judge did not match, best first, at most 3.
+  - Privacy-withheld candidates are excluded: the judge never saw them, and they warn at `TAU_STRICT` as before.
+  - Each `why` is deterministic (kind, lists, score), because the judge explains only its matches. A secret-shaped title is masked.
+  - The list comes from the same candidate set and passes the same D-062 visibility re-check as the warnings.
+  - It is packed after the warnings: warnings keep priority, and `dropped_omitted` is its own counter.
+  - Retrieval-only results carry neither field.
+- **Unchanged:** `verdict`, `warnings`, `omitted`, `judged`, `judge` and the closed verdict set, so G-LIVE-C (catch and false-warn rates) measures the same thing.
+- **Checked.**
+  - 12 new tests: the test-drive shape (the gold lesson appears; the list equals the retrieval-only warning set); retrieval-only and judge-failure results without the field; matched lessons not listed; budget packing at every budget from 256 (exact `used`, the counters add up, a partly filled list); the warning-priority case as a unit test; ungranted and other-class lessons never listed; a grant revoked during the judge removes its lesson; title masking.
+  - 119 existing risk-related tests pass (3 skipped: live providers).
+- **Docs.** Protocol R18 and the §6 digest line ("Read warnings and dropped_by_judge"); the hlmemo and hlm-library skills; the tool description; BACKLOG. The 1/3 judge timeouts stay open.

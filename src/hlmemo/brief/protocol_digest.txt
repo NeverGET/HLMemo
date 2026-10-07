@@ -3,7 +3,7 @@ Read first: the injected brief, else memory.query your task (token_budget 3000).
 - Query each area before work there; previews are excerpts, so drill the top hits (memory.drilldown) first.
 - superseded:true is not current: follow superseded_by. memory.ask (when listed): open its handles to check quotes.
 - Before a deploy, migration, prod-data change, deletion, force-push or secret: memory.risk_check, and memory.query
-  kinds:[lesson] for the component. On warn, read each lesson and say how you comply; no match is not safety.
+  kinds:[lesson] for the component. Read warnings and dropped_by_judge, say how you comply; no match is not safety.
 Write into project <slug> only (another slug or extra project_ids only if the owner asks). Memory is append-only.
 - Durable items: current facts, decisions + reasons, lessons, dated episodes. No transcript/tool-output dumps, guesses
   as fact, other projects' data or secret values (keys, tokens, passwords, DSNs with passwords); name where they live.
