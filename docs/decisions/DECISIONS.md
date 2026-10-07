@@ -2314,3 +2314,13 @@ D-254 | 2026-10-07 | ACCEPTED (owner: both residual risks accepted 2026-10-07; d
 - **Replay** is unaffected: `db/replay.py` never calls the write service. A test rebuilds events that today's checks would refuse, byte for byte.
 - **Known effect.** The checks run before the idempotency lookup. A pre-release request that a check now refuses is refused on resend instead of replayed.
 - **Docs.** Protocol §5.1/§5.2 and the R3, R6, R7, R13 and R15 enforcement lines; the skill's rule and error tables and its protocol copy. The digest is unchanged.
+D-255 | 2026-10-07 | ACCEPTED (owner deployed) | **Release 80f4f70 (PV-1..PV-5, D-254) is live; the write path refuses the planned classes in production, and nothing refused is stored.**
+
+- Deployed by the owner over IPv4 (office tethering; the home network uses the IPv6 wrappers). The live checkout is clean at 80f4f70.
+- Gates (`--no-drill`): 9 PASS, drill SKIP, and `postgres-closed` FAIL as a **false positive of the client network**. The tethered carrier accepts TCP connections to any port: control ports 6543, 12345 and 31337 also showed OPEN. The server-side half of the same gate shows `host-listeners=0 db-published=none`, and `ss -ltn` lists only 22, 80 and 443 (plus local DNS). Backlog: the gate should report INCONCLUSIVE when a control port also connects.
+- Live probes into `hlmemo` were refused with the expected codes:
+  - PV-1: `secret_pattern`, rule `github-token`, field `items[0].body`, value not echoed.
+  - PV-5: `lesson_status_conflict` on `["Active","resolved"]`.
+  - PV-4: `E_FORBIDDEN_PROJECT` `reserved_project` on `hlm-librarian`.
+  - PV-3: `blank` on a whitespace title.
+- A query afterwards shows none of the probes stored. PV-2 was not probed live; its unit and integration tests cover it, and a mistaken accept would have written a hiding link.

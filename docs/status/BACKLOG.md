@@ -65,6 +65,8 @@ Updated 2026-09-23. Source of each item in parentheses.
 - **Memory Map at budget for a ~500-item slug.** `map_tokens` was 5984 on every blind-check question (budget ~6k, `core/memory_map.py`): file lines get spread-truncated. Measure the effect before raising the budget or grouping lines.
 - **`abstained` on a rejected false premise.** `memory.ask` correctly rejected a negative question's false premise with evidence but returned `abstained:false, confidence:high`; callers that key on the flag would miss it.
 
+- **remote_gates `postgres-closed` depends on the client network (2026-10-07, D-255).** On a mobile carrier that accepts TCP to any port, the client-side probe reports OPEN although the server listens on nothing there. Probe a control port that is known closed: if it also connects, report INCONCLUSIVE and rely on the server-side listener check.
+
 ## First real test-drive findings (2026-10-07)
 A project chat that did not build the memory used it for a full session; its notes and a reproduction gave these items (details private: docs/private/test-drive/).
 - **risk_check: the judge filters out relevant lessons (safety, next release).** Retrieval ranked the right lesson first, yet with the judge on (`judged: true`) the verdict was `no_matching_evidence` (10 of 10 candidates dropped); with the judge timed out, retrieval-only returned it as the top warning. Change: the judge annotates, never removes. Every lesson above the retrieval threshold is listed with the judge's label (the D-246 rule: an LLM label is not trusted alone). The 1/3 judge timeouts (risk-judge probe) belong to the same item.
