@@ -14,14 +14,21 @@ On a grader split, the stricter grade counts. A failure is a finding, not a retr
 
 Keep the work dir private (in the HLMemo repo: `docs/private/migration/<slug>/blindcheck/`).
 
+Run the script with the **HLMemo venv python**: `ask` looks the relay's token up through the hlmemo package.
+
 ```bash
 W=docs/private/migration/<slug>/blindcheck
-python3 tools/migrate/blindcheck/blindcheck.py extract --dir $W --truthset <truthset.jsonl> --sha256 <sealed sha> --project <slug>
-python3 tools/migrate/blindcheck/blindcheck.py ask --dir $W            # code-saved memory.ask via a claude -p relay
-python3 tools/migrate/blindcheck/blindcheck.py packets --dir $W --truthset <truthset.jsonl> --sha256 <sealed sha>
+PY=.venv/bin/python
+$PY tools/migrate/blindcheck/blindcheck.py extract --dir $W --truthset <truthset.jsonl> --sha256 <sealed sha> --project <slug>
+$PY tools/migrate/blindcheck/blindcheck.py ask --dir $W --server <https://your-hlm-server> --device <device name>
+$PY tools/migrate/blindcheck/blindcheck.py packets --dir $W --truthset <truthset.jsonl> --sha256 <sealed sha>
 bash tools/migrate/blindcheck/run_graders.sh $W "${TMPDIR:-/tmp}/hlm-graders-<slug>"
-python3 tools/migrate/blindcheck/blindcheck.py score --dir $W         # exit 0 = PASS
+$PY tools/migrate/blindcheck/blindcheck.py score --dir $W         # exit 0 = PASS
 ```
+
+`ask` exits 1 when no question came back `ok`, or when any came back `no_call`, `relay_mismatch` or `exception`:
+the relay is broken, so nothing was measured. Look at `answers/` and `ask.log`, fix the cause (server, device,
+token) and run `ask` again; answers that already exist are kept (each question is still asked once).
 
 ## Why the steps are separate (isolation)
 
@@ -33,8 +40,14 @@ python3 tools/migrate/blindcheck/blindcheck.py score --dir $W         # exit 0 =
 | `score` | `key.json` and both grade files | — |
 
 **How `ask` works:**
-- It runs the user's configured `hlm` MCP server (production) through a headless `claude -p` relay. The relay may use
-  only ToolSearch and the memory_ask tool, runs from an empty scratch cwd, and has `HLM_CAPTURE=off`.
+- It calls the `hlm` server at `--server` (production) through a headless `claude -p` relay started with
+  `--restricted --strict-mcp-config --mcp-config <file>`: no user settings, hooks or plugins, and `hlm` is the only
+  MCP server. The config is a 0600 temp file whose header reads the bearer from the relay's environment
+  (`${HLM_DEVICE_TOKEN}`); the token comes from `HLM_DEVICE_TOKEN` or the keychain for `--server`/`--device` and is
+  never written to disk or printed. (Without `--mcp-config`, `--restricted` drops the user-scope `hlm` server and
+  every question comes back `no_call`.)
+- The relay may use only ToolSearch and the memory_ask tool, runs from an empty scratch cwd, and has
+  `HLM_CAPTURE=off` and `HLM_BRIEF_DIGEST=off`.
 - The raw tool result is saved **by code** from the stream-json output, never retyped by a model. A hand-retyping agent
   was stopped by an API safeguard once (D-216).
 - The relay's tool input must equal the question verbatim.

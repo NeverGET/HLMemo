@@ -8,7 +8,8 @@
   and the write itself treats a version conflict as a failure instead of turning a new record into a revision.
 - The write stops on any failed, rejected, skipped, changed or closed count, or when it wrote fewer items than
   the plan called new.
-- prod needs a valid seal and `HLM_MIGRATE_ALLOW_PROD=1`; local needs a loopback server.
+- prod needs a valid seal; a prod WRITE (`--apply`) also needs `HLM_MIGRATE_ALLOW_PROD=1` (a dry run and
+  `verify` only read); local needs a loopback server.
 """
 
 from __future__ import annotations
@@ -118,6 +119,21 @@ def check_counts(counts: dict[str, int], *, verify: bool = False, resume: bool =
     return {k: v for k, v in counts.items() if v and k not in allowed}
 
 
+def stop_hint(bad: dict[str, int], target: str, *, verify: bool = False) -> str:
+    """What to do next, for the counts that stopped a run (kit feedback #12)."""
+    if verify:
+        return ""
+    if set(bad) == {"unchanged"}:
+        return (
+            " — these items are already stored. `run` only writes new items; to check that a finished "
+            f"import is complete and idempotent, run `hlm migrate verify --target {target}`; to finish an "
+            "interrupted apply, add `--resume`"
+        )
+    if "changed" in bad or "closed" in bad:
+        return " — the target holds a different version of these sources: find out why before any write"
+    return ""
+
+
 def check_writes(planned_new: int, writes: dict[str, Any]) -> dict[str, Any]:
     """The write results that stop a run."""
     bad: dict[str, Any] = {}
@@ -133,9 +149,10 @@ def check_writes(planned_new: int, writes: dict[str, Any]) -> dict[str, Any]:
     return bad
 
 
-def check_target(spec: MigrationSpec, name: str, loaded: list[Loaded]) -> Target:
-    """Refuse before any network call. The target must exist; local must be loopback; prod needs the env
-    opt-in and a seal that matches the tree and the parse."""
+def check_target(spec: MigrationSpec, name: str, loaded: list[Loaded], *, writes: bool = True) -> Target:
+    """Refuse before any network call. The target must exist; local must be loopback; prod needs a seal that
+    matches the tree and the parse, and a WRITE (`--apply`) also needs the env opt-in. A read (a dry run,
+    `verify`) needs no opt-in: it changes nothing (kit feedback #16)."""
     try:
         target = spec.target(name)
     except SpecError as exc:
@@ -143,8 +160,10 @@ def check_target(spec: MigrationSpec, name: str, loaded: list[Loaded]) -> Target
     if name == "local" and not target.is_loopback:
         raise RunRefused("the local target is not a loopback URL")
     if name == "prod":
-        if os.environ.get(ALLOW_PROD_ENV) != "1":
-            raise RunRefused(f"prod needs {ALLOW_PROD_ENV}=1 (and the owner's OK on the review package)")
+        if writes and os.environ.get(ALLOW_PROD_ENV) != "1":
+            raise RunRefused(
+                f"a prod write needs {ALLOW_PROD_ENV}=1 (and the owner's OK on the review package)"
+            )
         verdict = sealmod.verify(spec, loaded)
         if not verdict.ok:
             raise RunRefused("the tree does not match its seal: " + "; ".join(verdict.problems[:5]))
@@ -196,7 +215,7 @@ async def run(
         raise RunRefused("verify never writes: drop --apply")
     if resume and not apply:
         raise RunRefused("--resume only applies to --apply")
-    target = check_target(spec, target_name, loaded)
+    target = check_target(spec, target_name, loaded, writes=apply)
     keys = batch_keys(loaded)
     if batch is not None and batch not in keys:
         raise RunRefused(f"unknown batch {batch!r}; batches are {keys}")
@@ -226,7 +245,7 @@ async def run(
                 record(line)
                 bad = check_counts(line["counts"], verify=verify, resume=resume)
                 if bad:
-                    stop = f"{where} classification: {bad}"
+                    stop = f"{where} classification: {bad}" + stop_hint(bad, target_name, verify=verify)
                     break
                 if not apply:
                     continue
@@ -266,4 +285,5 @@ __all__ = [
     "check_writes",
     "default_session",
     "run",
+    "stop_hint",
 ]

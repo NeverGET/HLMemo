@@ -29,16 +29,34 @@ private = "."
 
 [tags]
 # The closed list of topic tags (one per line of work, area or component). Status tags (active, resolved,
-# historical, date-estimated) and `<stack>@<version>` scope tags are always allowed.
+# historical, date-estimated) are always allowed.
 closed = ["api", "deploy", "data"]
+# Optional: the allowed `<stack>@<version>` scope tags. Without it, any scope-shaped tag passes; with it, lint
+# catches a typo such as `react-native@0.8x`.
+# scopes = ["python@3.12", "postgres@17"]
+
+# Optional. Side files next to the curated tree (a package's NOTES.md, a source list, a manifest) that are NOT part
+# of the migration: lint, plan, seal and run all leave them out, so they are never imported. Globs, relative to
+# paths.curated. Non-markdown files are ignored anyway.
+# [lint]
+# exclude = ["packages/**", "*/NOTES.md"]
+
+# Optional: tools/migrate/scan.py (personal data and credentials).
+# [scan]
+# allow = ["email:status/support/contact.md:4"]   # accept one finding: "<rule>:<path>:<line>"
+# allow_values = ["support@example.org"]           # accept a value wherever it occurs (a public address)
+# [[scan.patterns]]                                 # project-specific rules (account ids, tax ids, ...)
+# id = "account-id"
+# regex = "\\bACC-[0-9]{8}\\b"
+# mask = "<ACCOUNT>"
 
 # The local scratch stack: tools/migrate/local_stack.sh up <slug> mints device mig-<slug> on port 8799.
 [local]
 server_url = "http://127.0.0.1:8799/mcp"
 device = "mig-my-project"
 
-# Production: only after the owner's OK on the review package, with a seal that passes `seal --verify` and
-# HLM_MIGRATE_ALLOW_PROD=1.
+# Production: only after the owner's OK on the review package, with a seal that passes `seal --verify`. A prod
+# write (`run --apply`) also needs HLM_MIGRATE_ALLOW_PROD=1; a dry run, `verify` and `roundtrip` only read.
 [prod]
 server_url = "https://memory.example.org/mcp"
 device = "my-device"

@@ -11,6 +11,7 @@ import collections
 import copy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from hlmemo.importers.cli import parse_source, resolve_tz
@@ -44,8 +45,35 @@ def file_buckets(records: list[ImportRecord], tz_name: str) -> dict[str, str]:
     return {f: d.astimezone(tz).strftime("%Y-%m") for f, d in newest.items()}
 
 
+def _curated_rel(spec: MigrationSpec, path: Path) -> str | None:
+    """`path` relative to the curated dir (posix), or None when it lies outside it."""
+    try:
+        return path.resolve().relative_to(spec.curated_dir).as_posix()
+    except ValueError:
+        return None
+
+
+def _drop_excluded(spec: MigrationSpec, src: Source, pr: ParseResult) -> ParseResult:
+    """Leave out the files that `[lint].exclude` names (side files next to the curated tree): their records,
+    their skip/reject notes and their place in the seal's file list. An excluded file is never imported."""
+    if not spec.exclude:
+        return pr
+    root = src.base or (src.path if src.path.is_dir() else src.path.parent)
+
+    def out(rel_to_source: str) -> bool:
+        rel = _curated_rel(spec, root / rel_to_source.split("#", 1)[0])
+        return rel is not None and spec.excluded(rel)
+
+    pr.records = [r for r in pr.records if not out(r.file)]
+    pr.skipped = [s for s in pr.skipped if not out(s.path)]
+    pr.rejected = [r for r in pr.rejected if not out(r.key.split(":", 1)[-1])]
+    pr.files = [f for f in pr.files if not ((rel := _curated_rel(spec, Path(f))) and spec.excluded(rel))]
+    return pr
+
+
 def load(spec: MigrationSpec, *, now: datetime | None = None) -> list[Loaded]:
-    """Every source of the spec, parsed exactly as `hlm import` would (same keys, kinds and dates)."""
+    """Every source of the spec, parsed exactly as `hlm import` would (same keys, kinds and dates), minus the
+    files `[lint].exclude` names."""
     tz = resolve_tz(spec.tz)
     now = now or datetime.now(UTC)
     out: list[Loaded] = []
@@ -59,6 +87,7 @@ def load(spec: MigrationSpec, *, now: datetime | None = None) -> list[Loaded]:
             base=src.base,
             repo=spec.repo,
         )
+        pr = _drop_excluded(spec, src, pr)
         out.append(Loaded(src, pr, file_buckets(pr.records, spec.tz)))
     return out
 

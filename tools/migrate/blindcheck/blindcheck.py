@@ -2,21 +2,25 @@
 """Blind check of a migrated project's memory (TEMPLATE §7, D-216 method), generic over the project.
 
     blindcheck.py extract --dir W --truthset T.jsonl --sha256 SEAL --project SLUG
-    blindcheck.py ask     --dir W [--workers 2] [--cap 1.00] [--model M]
+    blindcheck.py ask     --dir W --server URL --device NAME [--workers 2] [--cap 1.00] [--model M]
     blindcheck.py packets --dir W --truthset T.jsonl --sha256 SEAL [--seed N]
     (run_graders.sh W <grader-work-root>)
     blindcheck.py score   --dir W [--bar 0.80]
 
 W is a PRIVATE work dir (0700). The steps are separate for isolation:
 - `extract` verifies the truth set's sealed sha256 and writes ONLY qid/project/question to W/questions.jsonl.
-- `ask` reads only questions.jsonl. Each question is asked ONCE through `memory.ask` on the user's
-  configured `hlm` MCP server, by a headless `claude -p` relay. The raw tool_result is saved BY CODE from
-  the stream-json output (never retyped by a model, D-216), and the relay's tool input must equal the
-  question verbatim. A failure is a finding, not a retry.
+- `ask` reads only questions.jsonl. Each question is asked ONCE through `memory.ask` on the `hlm` server at
+  --server, by a headless `claude -p` relay. The raw tool_result is saved BY CODE from the stream-json output
+  (never retyped by a model, D-216), and the relay's tool input must equal the question verbatim. A failure is
+  a finding, not a retry. `ask` exits 1 when no question came back `ok`, or when any came back `no_call`,
+  `relay_mismatch` or `exception` (a broken relay must not look like a run: K4 friction).
   Relay isolation: `--restricted` (no user, project or local settings, so no hooks such as the SessionStart
-  brief and no plugins; no code-running tools); only ToolSearch and the memory_ask tool are allowed; an empty
-  scratch cwd (no CLAUDE.md, an unmapped folder); HLM_CAPTURE=off and HLM_BRIEF_DIGEST=off. MCP servers from
-  the user's configuration stay loaded (the relay needs `hlm`), but no tool of theirs is allowed.
+  brief and no plugins; no code-running tools) with `--strict-mcp-config --mcp-config <file>`: the ONLY MCP
+  server is `hlm` from a 0600 temp file whose header reads the bearer from the relay's environment
+  (`${HLM_DEVICE_TOKEN}`; the token comes from HLM_DEVICE_TOKEN or the keychain for --server/--device and is
+  never written or printed); only ToolSearch and the memory_ask tool are allowed; an empty scratch cwd (no
+  CLAUDE.md, an unmapped folder); HLM_CAPTURE=off and HLM_BRIEF_DIGEST=off. Run it with the HLMemo venv python
+  (the token lookup imports hlmemo).
 - `packets` joins the sealed gold and the saved answers under random codes (W/packets; W/key.json outside it).
 - Two isolated graders see only packets/, READER-INSTRUCTIONS.md and their reader order (run_graders.sh).
 - `score` takes the STRICTER grade on a split. Bar (D-216): correct >= 0.80 of the answerable questions,
@@ -34,6 +38,7 @@ import hashlib
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -109,17 +114,58 @@ def _prompt(project: str, question: str) -> str:
     )
 
 
-def _ask_one(q: dict, outdir: Path, relay_cwd: str, model: str) -> dict:
-    out = outdir / (q["qid"].replace(":", "__") + ".json")
-    if out.exists():
-        return {"qid": q["qid"], "status": "exists"}
-    env = dict(os.environ, MCP_TOOL_TIMEOUT="180000", HLM_CAPTURE="off", HLM_BRIEF_DIGEST="off")
-    cmd = [
+RELAY_BROKEN = frozenset({"no_call", "relay_mismatch", "exception"})
+
+
+def _hlmemo() -> None:
+    """Make the hlmemo package importable when the script runs from a checkout without it installed."""
+    try:
+        import hlmemo  # noqa: F401
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+
+
+def relay_token(server: str, device: str) -> str | None:
+    """HLM_DEVICE_TOKEN, else the keychain entry for (server, device). Never printed."""
+    _hlmemo()
+    from hlmemo.cli.credentials import load_token
+
+    return load_token(server, device)
+
+
+def write_mcp_config(directory: Path, server: str) -> Path:
+    """An hlm-only MCP config (0600). The bearer is NOT written: `${HLM_DEVICE_TOKEN}` is expanded by claude
+    from the relay's environment."""
+    _hlmemo()
+    from hlmemo.cli.client_config import mcp_url
+
+    p = directory / "mcp.json"
+    cfg = {
+        "mcpServers": {
+            "hlm": {
+                "type": "http",
+                "url": mcp_url(server),
+                "headers": {"Authorization": "Bearer ${HLM_DEVICE_TOKEN}"},
+            }
+        }
+    }
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(cfg, f)
+    return p
+
+
+def relay_cmd(prompt: str, model: str, mcp_config: Path) -> list[str]:
+    return [
         "claude",
         "-p",
-        _prompt(q["project"], q["question"]),
+        prompt,
         # no user/project/local settings (no hooks such as the SessionStart brief, no plugins), no code tools
         "--restricted",
+        # the only MCP server is hlm from our 0600 config (--restricted alone drops the user-scope hlm server)
+        "--strict-mcp-config",
+        "--mcp-config",
+        str(mcp_config),
         "--allowedTools",
         "ToolSearch",
         TOOL,
@@ -133,6 +179,30 @@ def _ask_one(q: dict, outdir: Path, relay_cwd: str, model: str) -> dict:
         "--max-turns",
         "6",
     ]
+
+
+def ask_exit_code(statuses: list[str]) -> int:
+    """1 when nothing came back ok, or when any answer shows a broken relay; else 0."""
+    asked = [s for s in statuses if s != "exists"]
+    if not asked:
+        return 0
+    if "ok" not in asked or RELAY_BROKEN & set(asked):
+        return 1
+    return 0
+
+
+def _ask_one(q: dict, outdir: Path, relay_cwd: str, model: str, mcp_config: Path, token: str) -> dict:
+    out = outdir / (q["qid"].replace(":", "__") + ".json")
+    if out.exists():
+        return {"qid": q["qid"], "status": "exists"}
+    env = dict(
+        os.environ,
+        MCP_TOOL_TIMEOUT="180000",
+        HLM_CAPTURE="off",
+        HLM_BRIEF_DIGEST="off",
+        HLM_DEVICE_TOKEN=token,
+    )
+    cmd = relay_cmd(_prompt(q["project"], q["question"]), model, mcp_config)
     t0 = time.time()
     p = subprocess.run(
         cmd, cwd=relay_cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=400
@@ -202,9 +272,20 @@ def cmd_ask(a: argparse.Namespace) -> None:
     ]
     if not all(set(q) == {"qid", "project", "question"} for q in qs):
         sys.exit("questions.jsonl must hold qid/project/question only (run `extract`)")
+    if not a.server or not a.device:
+        sys.exit("ask needs --server and --device (or HLM_SERVER_URL and HLM_DEVICE_NAME)")
+    token = relay_token(a.server, a.device)
+    if not token:
+        sys.exit(
+            f"no token for device {a.device!r} at {a.server} "
+            "(set HLM_DEVICE_TOKEN or store it in the keychain)"
+        )
     outdir = w / "answers"
     outdir.mkdir(exist_ok=True, mode=0o700)
     relay_cwd = tempfile.mkdtemp(prefix="hlm-relay-")
+    mcp_dir = Path(tempfile.mkdtemp(prefix="hlm-relay-mcp-"))
+    mcp_config = write_mcp_config(mcp_dir, a.server)
+    statuses: list[str] = []
     lock = threading.Lock()
     state = {"spent": 0.0, "in_flight": 0, "not_asked": []}
     queue = list(qs)
@@ -222,10 +303,11 @@ def cmd_ask(a: argparse.Namespace) -> None:
                 q = queue.pop(0)
                 state["in_flight"] += 1
             try:
-                r = _ask_one(q, outdir, relay_cwd, a.model)
+                r = _ask_one(q, outdir, relay_cwd, a.model, mcp_config, token)
             except Exception as exc:  # noqa: BLE001 - asked once: record and continue, never retry
                 r = {"qid": q["qid"], "status": "exception", "error": repr(exc)[:300]}
             with lock:
+                statuses.append(str(r.get("status")))
                 state["in_flight"] -= 1
                 state["spent"] += float(r.get("cost_usd") or 0.0)
                 r["spent_total"] = round(state["spent"], 6)
@@ -235,15 +317,29 @@ def cmd_ask(a: argparse.Namespace) -> None:
                 log.flush()
 
     threads = [threading.Thread(target=worker) for _ in range(max(1, min(a.workers, 2)))]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        shutil.rmtree(mcp_dir, ignore_errors=True)
     _write(
         w / "spend.json",
         {"spent_usd": round(state["spent"], 6), "cap_usd": a.cap, "not_asked": state["not_asked"]},
     )
-    print(json.dumps({"spent_usd": round(state["spent"], 6), "not_asked": state["not_asked"]}))
+    counts = {s: statuses.count(s) for s in sorted(set(statuses))}
+    print(
+        json.dumps({"spent_usd": round(state["spent"], 6), "not_asked": state["not_asked"], "status": counts})
+    )
+    code = ask_exit_code(statuses)
+    if code:
+        print(
+            "ask: FAILED: no answer came back ok, or the relay broke (no_call / relay_mismatch / exception); "
+            "check --server/--device and that `claude` can reach the hlm server",
+            file=sys.stderr,
+        )
+    sys.exit(code)
 
 
 # --------------------------------------------------------------------------- packets
@@ -407,6 +503,16 @@ def main() -> None:
     k.add_argument("--workers", type=int, default=2)
     k.add_argument("--cap", type=float, default=1.00, help="memory.ask spend cap in USD (server-side cost)")
     k.add_argument("--model", default=os.environ.get("RELAY_MODEL", "sonnet"))
+    k.add_argument(
+        "--server",
+        default=os.environ.get("HLM_RELAY_SERVER") or os.environ.get("HLM_SERVER_URL"),
+        help="the hlm server base URL (default: HLM_RELAY_SERVER or HLM_SERVER_URL)",
+    )
+    k.add_argument(
+        "--device",
+        default=os.environ.get("HLM_RELAY_DEVICE") or os.environ.get("HLM_DEVICE_NAME"),
+        help="the device whose token the relay uses (default: HLM_RELAY_DEVICE or HLM_DEVICE_NAME)",
+    )
     p = sub.add_parser("packets")
     p.add_argument("--dir", required=True)
     p.add_argument("--truthset", required=True)

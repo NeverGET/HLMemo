@@ -60,6 +60,16 @@ def test_query_prints_compact_sorted_json(cfg: Path, monkeypatch: pytest.MonkeyP
     )
 
 
+def test_query_takes_its_own_project_option(cfg: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`hlm query --project X` works like `hlm --project X query` (kit v1.1, kit feedback #14)."""
+    calls = _install(monkeypatch, query=lambda a: query_ok(a["project"], a["token_budget"]))
+    res = runner().invoke(app, ["query", "pool bug", "--project", "slug-two"])
+    assert res.exit_code == 0, res.output
+    assert calls[0]["args"]["project"] == "slug-two"
+    res = runner().invoke(app, ["--project", "global-one", "query", "x", "--project", "local-wins"])
+    assert res.exit_code == 0 and calls[1]["args"]["project"] == "local-wins"
+
+
 @pytest.mark.parametrize(
     ("code", "exit_code"),
     [
