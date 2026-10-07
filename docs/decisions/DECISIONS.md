@@ -2340,3 +2340,34 @@ D-256 | 2026-10-07 | ACCEPTED (owner approved the plan) | **The migration kit sh
   - TEMPLATE now points to the PLAYBOOK.
 - **K3 skills.** `hlm-migrate` walks a project chat through the tiers, phases and hand-offs. `hlm-library` writes down the operator procedures run by hand on 2026-10-06/07: proposal verification and withdraw, links, cards, doc sync, post-import duties, test-drive triage, releases and deploys. The hlmemo skill and protocol §4 point to them.
 - Next (K4): the kit's first real run is the next migration the owner chose: a NotebookLM project with layered legacy memory, Full tier.
+D-257 | 2026-10-07 | ACCEPTED (owner: residual Redactor risk accepted 2026-10-07; 2 review rounds, consults 115-116) | **`memory.risk_check` lists the lessons its judge drops: a judged result carries `dropped_by_judge`, so a relevant lesson that the LLM judge did not warn on still reaches the writer.**
+
+- **Why.** In the first real test drive, the judge dropped all 10 candidates and the verdict was `no_matching_evidence`, while retrieval had ranked the applicable lesson first. With the judge timed out, the same lesson was the top warning (BACKLOG, consult 114). An LLM label is not trusted alone (D-246), so the writer sees what was dropped and decides.
+- **Shape.**
+  - When the judge ran (`judged: true`), the response adds `dropped_by_judge: [{clue, title, why, source_project}]` and `dropped_omitted`.
+  - The list holds the candidates with `det_score ≥ TAU` (the set a retrieval-only answer would warn on) that the judge did not match, best first, at most 3.
+  - Privacy-withheld candidates are excluded: the judge never saw them, and they warn at `TAU_STRICT` as before.
+  - Each `why` is a deterministic sentence (kind, lists, score), never judge or memory text, because the judge gives no reason for a candidate it does not match. The title passes the librarian's redaction (`librarian/redact.py`), and a strong secret shape that survives it is masked whole.
+  - The list comes from the same candidate set and passes the same D-062 visibility re-check as the warnings.
+  - Packing: the warnings pack exactly as before this change. Only when no warning was omitted are `dropped_by_judge` (a best-first prefix) and `dropped_omitted` (its own counter) added, in the room left.
+  - When not even one entry fits, only `dropped_omitted: N` is added, so the caller can tell that a larger budget would show N more. The CLI preflight then asks for a larger `token_budget`.
+  - Edge case: when even that counter does not fit, both fields are left out.
+  - Retrieval-only results carry neither field.
+- **Unchanged for every input:** `verdict`, `judged`, `judge` and the closed verdict set. `warnings`, `omitted` and `E_BUDGET_TOO_SMALL` are also unchanged, because the warnings pack before the new fields exist; a unit test compares against the pre-change packing code over many shapes and budgets. G-LIVE-C (catch and false-warn rates) therefore measures the same thing.
+- **Review 115** (Astra low, Sol xhigh; round 1 NO-GO), all fixed with tests:
+  - HIGH: titles showed secrets that the librarian redaction hides (`password=…`, DSN passwords). They now pass that redaction.
+  - MEDIUM: the empty new fields used budget before the warnings and could push a warning out at a tight budget. The packing is now warnings first, exactly as before.
+  - MEDIUM: tests for privacy-withheld (device-scoped, `librarian: off`) and closed lessons.
+  - LOW: the CLI preflight summary named "no matching past lesson" even when dropped lessons were listed.
+  - LOW: the contract text for `why`.
+- **Review 116** (round 2, the last), fixed with tests:
+  - MEDIUM: when no dropped entry fit the budget, the information was lost. The counter is now kept.
+  - LOW: the preflight line now tells listed matches apart from budget-cut ones.
+- **Residual risk for the owner (review 116 HIGH, not fixed in this release).** The librarian `Redactor` misses JSON-style assignments and quoted multi-word passphrases. A memory title like `password="Correct Horse …"` therefore shows unredacted in `dropped_by_judge`. That is the same exposure the caller already has through `warnings` and `memory.query`, which return the same visible titles. The gap is in the pre-existing Redactor, which also guards LLM prompts, so it is fixed there separately (BACKLOG: "Redactor: JSON-style and quoted multi-word secret assignments"). PV-1 already refuses the strong key shapes at write time.
+- **Checked.**
+  - 29 new tests: 8 integration, 18 unit, 3 preflight.
+    - Integration: the test-drive shape, retrieval-only and judge-failure results without the fields, matched lessons not listed, budget fill after the warnings, ungranted and other-class lessons, privacy-withheld lessons above the threshold, a grant revoked during the judge, and a lesson closed during the judge.
+    - Unit: the entry shape, redaction and packing equivalence.
+    - Preflight: the summary lines.
+  - The existing risk-related tests pass.
+- **Docs.** Protocol R18 and the §6 digest line ("Read warnings and dropped_by_judge"); the hlmemo and hlm-library skills; the tool description; the CLI preflight line; BACKLOG. The 1/3 judge timeouts stay open.
