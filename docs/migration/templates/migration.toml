@@ -1,0 +1,27 @@
+# Migration spec for the kit tools (`hlm migrate … --spec migration.toml`, PLAYBOOK "The kit").
+# Copy to docs/private/migration/<slug>/migration.toml. Paths may be absolute or relative to this file.
+
+slug = "<slug>"
+tz = "Europe/Istanbul"                          # zone of date-only evidence and of the month buckets
+
+[paths]
+curated = "final"                                # the sealed tree that is imported
+private = "."                                    # this migration's private directory (seal, manifests, runs)
+repo = "/path/to/the/project/repository"         # resolves `describes` pointers
+
+# One entry per importer pass; every source is a directory of the curated tree.
+[[sources]]
+importer = "markdown"
+path = "final"
+section_chars = 8000
+
+[tags]
+closed = ["<topic>", "<topic>", "active", "resolved", "historical", "date-estimated"]
+
+[local]
+server_url = "http://127.0.0.1:8799/mcp"
+device = "mig-<slug>"                            # created by tools/migrate/local_stack.sh
+
+[prod]
+server_url = "https://mcp.hlmemo.com/mcp"
+device = "<the owner's device name>"             # a prod run also needs HLM_MIGRATE_ALLOW_PROD=1 and a verified seal

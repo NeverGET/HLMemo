@@ -1,4 +1,4 @@
-> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-07, source sha256 4a6eadad6ed49ff759d14a1f0df729309af078dcef7cf0bc38fb4afe77f2721e. If the two differ, the source file wins.
+> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-07, source sha256 e2ca77b9b5b65c21ca1299390d48c75907806d86fe387406a35d93795c46f948. If the two differ, the source file wins.
 
 # HLMemo protocol v1: rules for project writers
 
@@ -7,7 +7,8 @@ and citation kept. Grounded in `main` @ 3143b56; every server claim cites `file:
 a path says otherwise) at that commit. 2026-10-06 (D-248): the skeleton-card wording in R17, §4b and §6, the migration steps in §4, and
 the `TEMPLATE.md` line citations refreshed. 2026-10-07 (D-254): the server validations PV-1..PV-5 are implemented;
 §5.2 and the R3, R6, R7, R13 and R15 enforcement lines cite them by symbol, and they are live from the release that
-carries D-254. Product content only (D-220).
+carries D-254. 2026-10-07: §4 follows the migration PLAYBOOK (`docs/migration/PLAYBOOK.md`), which replaces
+`TEMPLATE.md`; the citations below name its sections. Product content only (D-220).
 Terms: a **clue/handle** is `v<version_id>[.<ordinal>]`. A **one-way door** is a change that cannot be cleanly
 undone (prod data, global knowledge, the public repo); only the owner opens one.
 
@@ -57,7 +58,7 @@ quoted statement is outdated.
 
 **R3. Write only into your own project:** the slug named in the injected HLMemo-mode header. Add another slug
 or extra `project_ids` only when the owner asked for it in this session.
-*Why:* a mis-scoped item is expensive to undo (`docs/migration/TEMPLATE.md:32-36`). *Enforced by:* protocol
+*Why:* a mis-scoped item is expensive to undo (`docs/migration/PLAYBOOK.md` §2). *Enforced by:* protocol
 only. The server requires a write grant on the home slug and every listed slug (`core/write_service.py:477-514`),
 but grants belong to the device, not the chat (`auth/context.py:20-27`). All chats on one machine share one bearer.
 The MCP write tools refuse the librarian's reserved project whatever the grants (PV-4, §5.2).
@@ -80,7 +81,7 @@ today** (`E_INVALID_ARG`, `E_BUDGET_*`, `E_CARD_TOO_LARGE`).
 **R5. Write only durable items:** a current-state fact, a decision with its reason, a lesson, or a dated
 episode (incident, measurement). Transcript or tool-output dumps, narration, chatter and speculation stated as
 fact stay out; open questions go into the session note's `## Open`.
-*Why:* "learning halfway is worse than not knowing" (`docs/migration/TEMPLATE.md:12-17`); noise also displaces
+*Why:* "learning halfway is worse than not knowing" (`docs/migration/PLAYBOOK.md` §1); noise also displaces
 real hits within the budget. *Enforced by:* protocol only.
 
 **R6. One claim per item.** Title = the claim (aim for ≤ 80 chars). Body = the claim, why, evidence
@@ -90,7 +91,7 @@ real hits within the budget. *Enforced by:* protocol only.
 
 **R7. Keep secrets and personal data out:** keys, tokens, passwords, DSNs with passwords, e-mail/password
 pairs. Name where a secret lives ("the key in `.env`"), not its value.
-*Why:* history is append-only; erasing needs an owner-run database procedure (`docs/migration/TEMPLATE.md:147-149`).
+*Why:* history is append-only; erasing needs an owner-run database procedure (`docs/migration/PLAYBOOK.md` §17).
 *Enforced by:* **server** for the strong shapes: keys, tokens and private keys are refused on write (PV-1,
 §5.2). DSNs with passwords, credential assignments and personal data are not machine-checked on write, so they
 stay with you. The server also redacts text before LLM calls (`librarian/redact.py:1-13,31-59`); the importer
@@ -145,7 +146,7 @@ history, so they stay as they are. *Why:* in D-244's second verification pass, m
 *Enforced by:* protocol only. The server limits the damage: a historical target gets a link only and keeps
 its text (`core/write_updates.py:96-97,377`).
 
-**R13. Nothing is deleted or hidden.** There is no delete (`docs/migration/TEMPLATE.md:140`). Replace a memory
+**R13. Nothing is deleted or hidden.** There is no delete (`docs/migration/PLAYBOOK.md` §17). Replace a memory
 with `updates`, not with `links: [{rel: "supersedes"}]`. Use `close`, `valid_to` and `logical_id` revisions
 only on items you wrote in this session.
 *Why:* a raw `supersedes` link skips every D-118 guard. It reads as `whole` scope
@@ -262,26 +263,29 @@ records it.
 ## 4. Migration procedure for a project chat (`/hlm-migrate`)
 
 A project's own chat may migrate its legacy memory into **its own slug only** (D-246), following
-`docs/migration/TEMPLATE.md` and the rules at `TEMPLATE.md:19-28`. Private artifacts stay in a gitignored
-directory (`git check-ignore -v`); rollback is `TEMPLATE.md:138-150`. Step 0 is **[owner]**: the operator creates
-the slug and grants the importing device `write` over SSH (`TEMPLATE.md:40-44`); the chat cannot create a project.
+`docs/migration/PLAYBOOK.md` and its templates (`docs/migration/templates/`). Private artifacts stay in an ignored
+private directory; rollback is PLAYBOOK §17. The chat cannot create a project: at F5 the operator creates the slug,
+grants the importing device `write` and takes the pre-import dump, after the owner's OK (PLAYBOOK §2).
 
-1. **Inventory** every agent-memory source (§1). Record secret hits by file and rule id, not by value.
-2. **Curate** each file as keep, drop or fix (§2). Facts keep their wording; mark perishable statements and
-   conflicts; add provenance frontmatter; take `date:` from explicit text, else a marked estimate (D-215, §4a).
-3. **Secret gate** (§3): `gitleaks` 0, the importer dry run `skipped 0`, and a manual grep for
-   credential-shaped assignments. Continue only when all three pass.
-4. **Local dry run** on a scratch database (§4) and `REVIEW.md`. **Seal the truth set now** (§7): 10–20
-   questions including a superseded value and a negative; put its sha256 in `REVIEW.md`.
-5. **Chronological batches**, oldest first, every record of a file in one batch (§4a).
-6. **[owner] OK on `REVIEW.md`** (§5). Without it, stop. An auto-mode refusal of a prod write is correct and is
-   not routed around (`TEMPLATE.md:122-123`).
-7. **Prod import** per batch (§6): a dry run (only `new`), then the apply with `--keep-missing`. The operator
-   checks the queues once after the last batch (drains between batches are optional while the librarian is an
-   observer, D-248). Stop on any `failed`/`rejected`, or on an unexpected `changed`/`closed`.
-8. **Operator hand-off.** A different agent, without the curated set, answers the sealed questions through
-   prod `memory.query`/`memory.ask`. The bar: ≥ .80 correct, 0 superseded values stated as current, every
-   negative abstains (§7). A failure is a finding, not a retry. Then the curate pass and AUDIT.md (§8).
+0. **[owner] Tier, slug and scope.** Light (a few dozen agent-memory files, up to about 100 items) or Full (large
+   corpora, NotebookLM, research history, earlier projects, layered legacy memory); PLAYBOOK §3.
+1. **Inventory** every source with the adapters of PLAYBOOK §5. Record secret hits by file and rule id, not by value.
+2. **Curate** under a written curation spec (PLAYBOOK §6, `templates/CURATION-SPEC.md`): facts hold only the present,
+   history goes into dated episodes and decision rows; dates from explicit text, else a marked estimate (D-215);
+   the Full tier adds packages, curator ≠ checker, and a consolidation pass.
+3. **Secret gate** (PLAYBOOK §10): `gitleaks` 0, the importer dry run `skipped 0`, and a manual grep. Continue only
+   when all three pass.
+4. **Local rehearsal** (§11) and `REVIEW.md` (§14). **Seal** the final set and the truth set (§12, §13); the Full tier
+   adds a consult of at most two rounds.
+5. **[owner] OK on `REVIEW.md`.** Without it, stop. An auto-mode refusal of a prod write is correct and is not routed
+   around.
+6. **Prod import** per batch (§15): batches per file, oldest first; a dry run of each batch right before its apply;
+   stop on anything other than `new`, and on any `failed`, `rejected`, `changed`, `closed` or `skipped`. Then the
+   verify run, and the card through `call_the_day` with the skeleton card's version.
+7. **Operator hand-off** (§16): queue check, the decision-row links (dry run, owner OK, apply), the blind check by an
+   agent that did not prepare the import (≥ .80 correct, 0 superseded values stated as current, every negative
+   abstains; a failure is a finding, not a retry), the librarian proposals (verify, correct, withdraw), the
+   `capture.toml` mapping, and the **[owner]** AUDIT sign-off.
 
 ## 4b. Catch-up for an already-integrated project
 
