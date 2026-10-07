@@ -1,4 +1,4 @@
-> Copy of `docs/migration/PLAYBOOK.md` (HLMemo repository, migration playbook v1), copied 2026-10-07, source sha256 b56381a73258b6c7994cca28aaa234678dcd2989139bedfaa452c2b85bf539f6. If the two differ, the repository file is the one to follow.
+> Copy of `docs/migration/PLAYBOOK.md` (HLMemo repository, migration playbook v1), copied 2026-10-07, source sha256 d68c0babeece7da3956b2cd48c7f196d9026a7a8aa136a1b6cbb46d21a3f21bb. If the two differ, the repository file is the one to follow.
 
 # Migrating a project's legacy memory into HLMemo: the playbook
 
@@ -29,6 +29,8 @@ needs on top of them.
 | `hlm migrate roundtrip --spec … --target local` | parses the final set, exports what the local stack stored and compares every body verbatim (§11) |
 | `hlm migrate containment --export DIR --originals PATH… [--shingle 8] [--json]` | how much of an exported store (a NotebookLM export) the originals already contain, by 8-word shingles (§5.6, §5.9) |
 | `hlm migrate markers [--format md]` | prints the supersession marker table of §9, generated from the code |
+| `hlm migrate nlm-check --export DIR [--originals PATH…]` | flags NotebookLM notes that were cut when they were saved (§5.6) |
+| `hlm migrate card --file CARD-DRAFT.md` | counts the card draft in the server's tokenizer (o200k) and fails above 420 (§14) |
 | `tools/migrate/scan.py --spec … [--known-values FILE]` | the credential and personal-data scan with masked output, plus a compare against known leaked values (§10) |
 | `tools/migrate/blindcheck/` | extract → ask → packets → graders → score: the blind check of §13 (`ask` uses an hlm-only MCP configuration and fails loudly when nothing was asked) |
 | `tools/migrate/withdraw.sh <slug> <ids-file> <expect> --reason '<why>' [--owner NAME] [--status open|accepted_pending]` | operator only: withdraws reviewed librarian proposals in one event (§16) |
@@ -37,10 +39,11 @@ Exit codes: 0 ok; 1 lint errors, seal mismatch or recall below `--min-rate`; 2 a
 error; 65 refused before anything was sent. The spec's optional `estimated_marker` (default "Date estimated") is the
 line `lint` requires in an item tagged `date-estimated`. Diagnostics never print a value that matches a secret rule.
 
-`local_stack.sh env` also exports `HLM_PROJECT`, and `hlm query --project <slug>` queries a slug directly.
+`local_stack.sh env` also exports `HLM_PROJECT`, and `hlm query --project <slug>` queries a slug directly;
+`local_stack.sh up <slug> --embed` also starts the embed worker, which the recall pre-check needs (§11).
 
-A prod run needs `HLM_MIGRATE_ALLOW_PROD=1` and a seal that verifies, so a prod write cannot happen by accident or
-from a tree that changed after the owner's review.
+A prod write needs `HLM_MIGRATE_ALLOW_PROD=1` and a seal that verifies, so it cannot happen by accident or from a
+tree that changed after the owner's review. The read-only `hlm migrate verify --target prod` runs without the flag.
 
 ## 1. Principles
 
@@ -113,6 +116,11 @@ four decisions in F0:
 | consult | optional, one independent reviewer | two independent reviewers, at most 2 rounds, a triage file (§14) |
 | truth set | 10 questions | 15–20 questions, both languages if the project writes in two |
 
+**Planning the Full tier.** One measured run (a project of about 500 items, layered legacy memory, 2026-10-07): about
+5 hours of wall clock from the first pull to the AUDIT, about 25 subagents and about 9 million subagent tokens
+(inventory about 1.6 M, curators about 3.8 M including fix rounds, checkers about 2.6 M, drafting and review agents
+about 0.6 M), and about one checker fix per six items. It is a single data point, not a budget.
+
 **Choosing.** Start from the inventory: count the files, estimate the items (about 2.4 items per memory file in the
 first migrations), and note which sources exist. Choose Full when any of these holds: more than about 100 items, a
 NotebookLM notebook, research results that the items must point to, earlier projects whose lessons carry over, or
@@ -184,10 +192,14 @@ originals under-reports the overlap; `hlm migrate containment` compares by 8-wor
   records something found nowhere else;
 - **sources** are usually pasted repository text: compare them with the repo (shingle overlap). A source that the repo
   already holds becomes a pointer, not an item; only content found nowhere else is curated;
-- **notes may already be cut.** A note body saved as rich text can lose everything after its first `<` (`<tag>`,
-  `Type<T>`) at the moment it is saved in the notebook, with no warning. Compare a note's length and content with its
-  originals where they exist, and prefer the originals for anything a note cut. `hlm migrate roundtrip` then shows
-  that HLMemo keeps every body verbatim;
+- **notes may already be cut.** NotebookLM's write path can drop everything after a note's first `<` (`<tag>`,
+  `Type<T>`) at the moment the note is saved, with no warning; reading it back returns the cut text faithfully. So
+  every project that used NotebookLM as its memory probably has cut notes, unnoticed for months. Run
+  `hlm migrate nlm-check --export <dir> [--originals <paths…>]` on the export: it flags notes that end mid-sentence
+  or right before a `<`, and, with originals, notes shorter than what the originals hold. Recover a cut note from the
+  stores written alongside it (serena or auto-memory files, git history, session files) and mark it as recovered.
+  Check each NotebookLM-first project this way before its migration starts. `hlm migrate roundtrip` then shows that
+  HLMemo keeps every body verbatim;
 - set a **freeze date**: no new notes after the export, and the notebook stays as a read-only archive.
 
 ### 5.7 Git history
@@ -279,6 +291,9 @@ used: untested for hand-made files, and their raw `supersedes` links skip the up
   points to; inside the lesson it is stale with the next change (test-drive 2026-10-07). One rule per file: two rule
   headings would split the file and share its tags.
 - **Keep the frontmatter short**: it stays in the body of a generic import and is searchable noise.
+- **Owner decisions are `OD-nn`, not `D-nn`.** The decision log's rows are `D-NNN`, and HLMemo's own decisions are
+  `D-NNN` too; an owner decision written as "D-12" in an item reads as a project decision row. `lint` warns when an
+  item mentions an `OD-` id, because owner decisions about the migration belong in `PLAN.md`, not in memory.
 - **Sizes**: facts and lessons about 300–1500 characters, episodes up to about 3000, every entry under 8000 (no size
   split). `lint` warns above 1500 and 3000. The 80-character title aim counts the whole title, an episode heading's
   date and prefix included.
@@ -375,8 +390,10 @@ local` (dry run), then `--apply`. The idempotence check is `hlm migrate verify -
 `unchanged` (a second `run` stops on purpose, because `run` accepts only new or missing records). Then
 `hlm migrate roundtrip --target local` exports what the stack stored and compares every body with the final set,
 verbatim; it is an F4 gate and shows that nothing was cut or rewritten on the way in (angle brackets, backticks,
-non-ASCII letters, long markdown). With the embed worker started, `hlm migrate recall` checks each sealed question
-against the top hits: a cheap loop before the paid blind check, and the right time to sharpen titles.
+non-ASCII letters, long markdown). `hlm migrate recall` checks each sealed question against the top hits: a cheap
+loop before the paid blind check, and the right time to sharpen titles. It needs the embed worker
+(`local_stack.sh up <slug> --embed`); without it, retrieval is lexical and trigram only, and inflected Turkish
+questions score lower than they will in production.
 `hlm query --project <slug>` answers ad-hoc questions against the stack.
 
 ## 12. Batches, seal and manifests
@@ -395,15 +412,19 @@ A content fix after sealing means a new seal and a note in `REVIEW.md` (and a ne
 **Before F5**, write 10–20 questions (`templates/TRUTHSET.md`) with gold answers and verbatim quotes from the final
 set: facts, a temporal question including at least one superseded value, a procedure, a lesson, and at least two
 negatives that must abstain; both languages if the project writes in two; questions across the freeze date for
-layered legacy memory. Seal it (`sha256sum`), and keep the file private. When a later content fix changes a quote,
-publish a new version with both hashes; gold answers do not change.
+layered legacy memory. **Before sealing, verify each gold answer** against the items it cites and, for a claim about
+behaviour, against the code: a gold that says "never", "only" or "there is no route" gets the same check as a fact
+that says so, because a wrong gold turns a correct answer into a miss. Seal it (`sha256sum`), and keep the file
+private. When a later content fix changes a quote, publish a new version with both hashes; gold answers do not change.
 
 **After F5**, the operator runs `tools/migrate/blindcheck/`: each question is asked once through production
 `memory.ask` by a relay that never sees the gold and runs with an hlm-only MCP configuration (no user settings, hooks
 or other servers; `ask` exits non-zero when no question came back answered), the raw tool result is saved by code (no model retypes it, D-216),
 and two blind graders score the packets; on a split the stricter grade counts. The bar: at least 0.80 correct on the
 answerable questions, 0 superseded values stated as current, every negative abstains. A failure is a finding, not a
-retry.
+retry. When a miss traces to a gold shown wrong by the cited items or the code, the operator may re-grade that one
+question: record both scores (raw and corrected), the evidence and the reason, and keep the raw score as the
+headline; the gold is fixed in a new truth-set version.
 
 ## 14. Review package and consult
 
@@ -411,7 +432,9 @@ retry.
 §5.9); dropped files and why; flagged uncertain or stale statements; conflicts and how they were resolved; date
 coverage (explicit, estimated); the batch plan; the slug; the exact prod commands; the expected librarian cost
 (about $0.0013–0.003 per item); the truth-set and seal hashes; the promotion candidates; the open owner questions. A
-title review file (all titles, one per line) and a card draft (present tense, ≤ 420 tokens) come with it.
+title review file (all titles, one per line) and a card draft (present tense, ≤ 420 tokens) come with it; check the
+draft with `hlm migrate card --file CARD-DRAFT.md`, because the limit is in the server's tokenizer (o200k) and other
+tokenizers count differently.
 
 **Consult (Full).** Before the owner's OK, two independent reviewers check the package in parallel: another model, or
 a fresh-context agent that did not curate (Codex models reviewed the first migrations, while they were available).
@@ -427,7 +450,7 @@ or rejected with the reason. The owner decides residual risks and may skip the c
 3. The chat runs each batch: `HLM_MIGRATE_ALLOW_PROD=1 hlm migrate run --target prod --batch <B> --apply --spec …`. The
    tool runs the same batch's dry run first and stops on anything other than `new` (or `missing` under keep-missing),
    and on any `failed`, `rejected`, `changed`, `closed` or `skipped` count.
-4. `hlm migrate verify --target prod` must report every batch `unchanged`.
+4. `hlm migrate verify --target prod --spec …` (read-only, no prod flag needed) must report every batch `unchanged`.
 5. The chat closes with `call_the_day`: notes with counts and pointers, and `card_update` with `expected_version_id` =
    the skeleton card's version (from `memory_query`'s `card.clue`).
 6. The operator copies the pre-import dump to `/var/backups/hlmemo/migration/` and verifies its sha256.
@@ -450,7 +473,9 @@ or rejected with the reason. The owner decides residual risks and may skip the c
    written and the blind check has passed; from then on, new chats there start in HLMemo mode with the brief.
 6. **Old stores.** Auto-memory archived and reduced to a pointer; the old notebook frozen as an archive; the project's
    `CLAUDE.md` memory section reduced to one line naming the slug (the global `CLAUDE.md` and the injected digest
-   carry the protocol).
+   carry the protocol). This is the chat's F6 work, and by default it happens in **a second, short session** that
+   ends with its own `call_the_day`, because the import session already closed with the card. A chat may instead
+   keep the import session open and close it only after F6; `PLAN.md` says which.
 7. **AUDIT** (`templates/AUDIT.md`), signed by the owner and the operator; a `D-` entry records the scores. The public
    decision log carries counts and pass/fail without project content; the AUDIT itself stays private.
 
@@ -492,7 +517,10 @@ Afterwards, record what was retired and why in a `D-` entry and fix the step tha
 | `revise` on an item whose title states the old claim | the title stays stale | use `supersede` (R11) |
 | the brief missing at session start | the server answered slower than the hook's budget | fixed in D-252 (6.5 s); fall back to `memory_query` |
 | the `postgres-closed` gate failing on a mobile network | a false alarm: the carrier accepts every port | the server-side listener check decides (D-255) |
-| NotebookLM notes cut at their first `<` when saved | months of silently missing text | compare notes with their originals; `hlm migrate roundtrip` shows HLMemo keeps bodies verbatim (§5.6) |
+| NotebookLM notes cut at their first `<` when saved | months of silently missing text | `hlm migrate nlm-check` on the export; recover cut notes from the stores written alongside; check every NotebookLM-first project before its migration (§5.6) |
+| a gold answer that is itself wrong | a correct answer graded as a miss | verify golds against the cited items and the code before sealing; re-grade with both scores recorded (§13) |
+| owner decisions numbered like decision rows | "D-12" in an item reads as a project decision | `OD-nn` for owner decisions; `lint` warns (§7) |
+| local recall without the embed worker | Turkish and inflected questions under-score | `local_stack.sh up <slug> --embed` (§11) |
 | "instead of D-xxx" or "D-xxx yerine" in a decision row | the links pass marks D-xxx as partly outdated | the marker table and wording of §9; check `lint`'s link preview |
 | a one-entry monthly episode file without frontmatter | an item titled by its file name | frontmatter `title`/`date`, or merge it; `lint` warns (§7) |
 | an older store resumed after its freeze | the "originals" on disk were edited after the bundling | read them at the freeze commit; the resumed edits are their own layer (§5.9) |

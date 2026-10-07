@@ -53,7 +53,8 @@ Record the answers in `PLAN.md` as owner decisions.
    pulled tree (counts, freeze markers, the files it names) before you build on it.
 2. Step 0 with the owner (above).
 3. In the HLMemo repository: create `docs/private/migration/<slug>/` (0700), run `git check-ignore -v` on it, copy
-   `docs/migration/templates/*` into it, start `PLAN.md` (phases, gates, an owner-decision log, a "repo fixes made
+   `docs/migration/templates/*` into it, start `PLAN.md` (phases, gates, an owner-decision log numbered `OD-nn`, never
+   `D-nn`, a "repo fixes made
    during the migration" list) and `migration.toml` (`slug`, `tz`, `[paths]` curated/private/repo, `[[sources]]`,
    `[tags].closed`, `[local]` and `[prod]` server URL and device).
 4. Start the local stack: `bash tools/migrate/local_stack.sh up <slug>`, then
@@ -79,7 +80,8 @@ sent.
 **F0 Inventory** (§3 above; PLAYBOOK §5). One line per source: path, files, bytes, date span, type, the importer that
 fits, secret hits by file and rule id. NotebookLM: export read-only (sources' raw content, notes with full bodies via
 `nlm note list <notebook> --json`, a manifest with sha256), and set a freeze date. Notes saved as rich text may have
-lost everything after their first `<`: compare them with their originals. `hlm migrate containment --export <dir>
+lost everything after their first `<`: run `hlm migrate nlm-check --export <dir> [--originals <paths…>]` and recover
+cut notes from the stores written alongside (serena, auto-memory, git, session files). `hlm migrate containment --export <dir>
 --originals <paths…>` measures how much of the export the originals already hold (8-word shingles; a line-by-line
 compare under-reports). Gate: the owner confirms tier, slug and scope.
 
@@ -126,14 +128,17 @@ Gate: `hlm migrate lint --spec …` reports 0 errors (side files go into `[lint]
   `hlm migrate roundtrip --target local --spec …` (every body stored verbatim). `hlm query --project <slug>` answers
   ad-hoc questions against the stack.
 - Truth set (`templates/TRUTHSET.md`): 10 questions (Light) or 15–20 (Full) with gold answers and verbatim quotes,
-  including a superseded value and at least two negatives; across the freeze date for layered legacy memory. Seal it
-  (`sha256sum`) and keep it private.
-- Recall pre-check, with the local embed worker running: `hlm migrate recall --truthset <truthset.jsonl> --target local
+  including a superseded value and at least two negatives; across the freeze date for layered legacy memory. Before
+  sealing, verify each gold against its cited items and, for behaviour, the code ("never", "only", "no route"
+  golds get the same check as such facts). Seal it (`sha256sum`) and keep it private.
+- Recall pre-check, with the embed worker running (`local_stack.sh up <slug> --embed`; without it recall is lexical
+  only and inflected questions under-score): `hlm migrate recall --truthset <truthset.jsonl> --target local
   [--k 5] [--min-rate R] --spec …`; sharpen titles where the right file misses the top hits.
 - Seal the reviewed tree: `hlm migrate seal --spec …` (add `--expect '<batch counts JSON>'` to bind the counts the
   review states); `hlm migrate seal --verify --spec …` checks it later. A content fix after sealing needs
   `--force`, a new seal and a note in `REVIEW.md`.
-- `REVIEW.md` (`templates/REVIEW.md`), a title list and a card draft (present tense, ≤ 420 tokens).
+- `REVIEW.md` (`templates/REVIEW.md`), a title list and a card draft (present tense, ≤ 420 tokens, checked with
+  `hlm migrate card --file CARD-DRAFT.md`, which counts in the server's tokenizer).
 - Full tier: a consult by two independent reviewers in parallel (another model, or a fresh-context agent that did not
   curate), at most two rounds, with a triage file. The owner may skip it; `REVIEW.md` then says so.
 
@@ -146,14 +151,15 @@ When the operator confirms the slug answers with its skeleton card and 0 hits:
    batch once, refuses unless it is new/missing only, re-reads the open keys and writes exactly that checked plan; it
    stops on any `failed`, `rejected`, `changed`, `closed` or `skipped`, and a production run needs a seal that
    verifies. `--resume` finishes a batch an interrupted apply partly wrote.
-2. `hlm migrate verify --target prod --spec …`: every batch must come back `unchanged`.
+2. `hlm migrate verify --target prod --spec …` (read-only, no prod flag): every batch must come back `unchanged`.
 3. Close with `memory_call_the_day`: notes with counts and pointers; `card_update` with `expected_version_id` = the
    skeleton card's version (the number in `memory_query`'s `card.clue`; D-248).
 4. Tell the owner the counts and the session-note clue, and that the operator's F6 steps are next.
 
 **F6 Hand-over.** The operator runs the post-import steps (§6 below). Your remaining part: the new `CLAUDE.md` (from
 F2, if the owner approved it), archiving the old auto-memory files and reducing `MEMORY.md` to a pointer, and freezing
-the old notebook as a read-only archive.
+the old notebook as a read-only archive. By default do this in **a second, short session** that ends with its own
+`call_the_day` (the import session already closed with the card); say so in `PLAN.md`.
 
 ## 5. Source adapters in one line each (PLAYBOOK §5)
 

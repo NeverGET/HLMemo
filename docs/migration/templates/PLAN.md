@@ -14,10 +14,12 @@ PRIVATE. A later session resumes from this file, then `ARCHITECTURE.md` (Full), 
 | F3 | curation | lint 0, checks applied | |
 | F4 | secret gate, rehearsal, truth set, REVIEW (+ consult) | owner OK on REVIEW | |
 | F5 | prod import (operator opens) | dry before apply; verify | |
-| F6 | links, blind check, librarian review, mapping, AUDIT | owner sign-off | |
+| F6 | links, blind check, librarian review, mapping, AUDIT; the chat's F6 work in a second short session | owner sign-off | |
 
-## Owner decisions (D-01 …)
-- D-01 <date> <decision> — <reason>
+## Owner decisions (OD-01 …)
+Numbered `OD-nn`, never `D-nn`: decision rows in memory and HLMemo's own decisions use `D-NNN`, and an owner decision
+written as "D-12" in an item would read as one of them. Owner decisions stay in this file, not in memory items.
+- OD-01 <date> <decision> — <reason>
 
 ## Questions open for the owner / the operator
 1. <…>

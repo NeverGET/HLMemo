@@ -119,7 +119,9 @@ and an agent that did not prepare the import.
    code-saved `memory.ask` per question through an isolated relay that never sees the gold) → `packets` →
    `run_graders.sh` (two isolated graders) → `score`. The bar: ≥ 0.80 correct on the answerable questions, 0
    superseded values stated as current, every negative abstains; on a grader split the stricter grade counts. Recompute
-   the score yourself from the raw grade files. A failure is a finding, not a retry.
+   the score yourself from the raw grade files. A failure is a finding, not a retry. When a miss traces to a gold
+   that the cited items or the code show to be wrong, you may re-grade that question: record the raw and the
+   corrected score with the evidence, keep the raw one as the headline, and ask the chat for a new truth-set version.
 6. **Librarian proposals** (§2 above), once the queue has drained.
 7. **Mapping.** After the card is written and the blind check passed, add `"<project folder>" = "<slug>"` to
    `[projects]` in `~/.config/hlm/capture.toml` (back it up first) and preview the hook for that folder:
