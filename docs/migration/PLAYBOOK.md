@@ -1,6 +1,8 @@
 # Migrating a project's legacy memory into HLMemo: the playbook
 
-Status: v1, 2026-10-07. It replaces `docs/migration/TEMPLATE.md` (v1, 2026-09-30), which is now a pointer here.
+Status: v1.1, 2026-10-07 (v1.1 adds the second migration's findings: the marker table, the round-trip, containment
+and personal-data checks, resumed stores, team projects, a reviewer-agnostic consult). It replaces
+`docs/migration/TEMPLATE.md` (v1, 2026-09-30), which is now a pointer here.
 Grounded in the first migrations (D-131/D-132, D-215/D-216) and in the first migration run by a project's own chat
 under the hybrid model (D-246; D-248..D-255). Product content only: per-project material stays in the gitignored
 `docs/private/migration/<slug>/` (directories 0700, files 0600; check with `git check-ignore -v`).
@@ -22,12 +24,18 @@ needs on top of them.
 | `hlm migrate run --target local\|prod [--batch B] [--apply] [--resume] --spec …` | a dry run by default; `--apply` classifies the batch once, checks it is new/missing only, re-reads the open keys and writes exactly that checked plan (a key that appeared in between stops the run before any write); `--resume` finishes a partly written batch; reports go to `runs/` in the private dir |
 | `hlm migrate verify --target prod --spec …` | read-only: every batch must come back `unchanged` |
 | `hlm migrate recall --truthset <jsonl> --target local [--k 5] [--min-rate R] --spec …` | a cheap pre-check: does the right source file reach the top hits for each sealed question; `--min-rate` makes it a gate |
-| `tools/migrate/blindcheck/` | extract → ask → packets → graders → score: the blind check of §13 |
+| `hlm migrate roundtrip --spec … --target local` | parses the final set, exports what the local stack stored and compares every body verbatim (§11) |
+| `hlm migrate containment --export DIR --originals PATH… [--shingle 8] [--json]` | how much of an exported store (a NotebookLM export) the originals already contain, by 8-word shingles (§5.6, §5.9) |
+| `hlm migrate markers [--format md]` | prints the supersession marker table of §9, generated from the code |
+| `tools/migrate/scan.py --spec … [--known-values FILE]` | the credential and personal-data scan with masked output, plus a compare against known leaked values (§10) |
+| `tools/migrate/blindcheck/` | extract → ask → packets → graders → score: the blind check of §13 (`ask` uses an hlm-only MCP configuration and fails loudly when nothing was asked) |
 | `tools/migrate/withdraw.sh <slug> <ids-file> <expect> --reason '<why>' [--owner NAME] [--status open|accepted_pending]` | operator only: withdraws reviewed librarian proposals in one event (§16) |
 
 Exit codes: 0 ok; 1 lint errors, seal mismatch or recall below `--min-rate`; 2 a hard stop; 64 a usage or spec
 error; 65 refused before anything was sent. The spec's optional `estimated_marker` (default "Date estimated") is the
 line `lint` requires in an item tagged `date-estimated`. Diagnostics never print a value that matches a secret rule.
+
+`local_stack.sh env` also exports `HLM_PROJECT`, and `hlm query --project <slug>` queries a slug directly.
 
 A prod run needs `HLM_MIGRATE_ALLOW_PROD=1` and a seal that verifies, so a prod write cannot happen by accident or
 from a tree that changed after the owner's review.
@@ -81,6 +89,16 @@ so only open points are asked). Answers are tagged **[code]** (verified against 
 **[tested]** (run on a local stack) or **[rec]** (a recommendation); that turns an ambiguous procedure into verified
 answers and makes a tool bug reproducible (D-249 came from such a report).
 
+**Team projects.** The kit assumes one owner on one machine. A project written by two people from two machines needs
+four decisions in F0:
+- **Device and grant.** The second writer's machine gets its own device (`hlm_ops.sh device mint`) and a `write` grant
+  on the slug. Devices are not shared, so one can be revoked alone.
+- **Mapping and hooks.** `~/.config/hlm/capture.toml` is per machine: the second machine needs its own `[projects]`
+  entry and its own SessionStart hook install (on Windows, with Windows paths to the venv python and the folder).
+- **Their local memory.** The second writer's auto-memory lives on their machine: decide whether it is a source of
+  this migration (they export it) or not (say so in `REVIEW.md`).
+- **Closing sessions.** Both write under the protocol, and each chat closes its own sessions with `call_the_day`.
+
 ## 3. Two tiers and how to choose
 
 | | Light | Full |
@@ -90,7 +108,7 @@ answers and makes a tool bug reproducible (D-249 came from such a report).
 | inventory | the chat reads the sources itself | parallel read-only inventory agents, one record per document (`templates/INVENTORY.md`) |
 | curation | one curator pass, a second agent checks a sample | packages with curator ≠ checker, a consolidation pass, a sample recomputed by the main thread (§6) |
 | seal and manifests | `hlm migrate seal` | the same, plus per-package manifests |
-| consult | optional (Astra low) | Codex Astra low + Sol xhigh, at most 2 rounds, a triage file (§14) |
+| consult | optional, one independent reviewer | two independent reviewers, at most 2 rounds, a triage file (§14) |
 | truth set | 10 questions | 15–20 questions, both languages if the project writes in two |
 
 **Choosing.** Start from the inventory: count the files, estimate the items (about 2.4 items per memory file in the
@@ -108,7 +126,7 @@ needed.
 | **F1 Architecture** | a short note in `PLAN.md` | `ARCHITECTURE.md`: layers, lines/topics, kind mapping, dates, language, package plan; questions to the operator | answers file | owner OK on the architecture |
 | **F2 Rules** | skip unless the project has many agent rules | rule catalog of `CLAUDE.md`, handover prompts and feedback memories → principles with reasons in a new `CLAUDE.md` | rule catalog, draft `CLAUDE.md` | the owner reads it |
 | **F3 Curation** | one pass + a checked sample | spec pilot on one package, then all packages; checkers; consolidation | `curated/`, `final/`, manifests, logs | `hlm migrate lint` 0 errors; checker findings applied |
-| **F4 Gates and review** | secret gate, local rehearsal, truth set, `REVIEW.md` | the same, plus recall pre-check, title review, card draft, seal, consult | `REVIEW.md`, `truthset.jsonl` + sha256, seal | the owner's OK on `REVIEW.md`, recorded as a `D-` entry |
+| **F4 Gates and review** | secret and personal-data gate, local rehearsal with `roundtrip`, truth set, `REVIEW.md` | the same, plus recall pre-check, title review, card draft, seal, consult | `REVIEW.md`, `truthset.jsonl` + sha256, seal | the owner's OK on `REVIEW.md`, recorded as a `D-` entry |
 | **F5 Prod import** | operator opens; chat runs batches; card | the same | run manifests | dry run before every apply; hard stops (§15) |
 | **F6 Hand-over** | queue check, blind check, mapping, AUDIT | the same, plus decision-row links and the librarian review | `AUDIT.md`, blind-check result | the owner's AUDIT sign-off |
 
@@ -154,7 +172,9 @@ summary of it, and the checker verifies the denominator ("N of M").
 Export read-only with the `nlm` CLI or the NotebookLM MCP tools (the owner authenticates; nothing is written to the
 notebook): notebook facts, the source list, each source's raw content (`nlm source content <id>`), and the notes with
 their bodies, plus a manifest (sha256, bytes, export time, tool version). Do not use AI-generated descriptions as
-content. Then:
+content. Tested (2026-10-07): `nlm note list <notebook> --json` returns the full note bodies, so no other export path
+is needed. `nlm source content` returns raw text but reflows markdown, so a line-by-line comparison with the
+originals under-reports the overlap; `hlm migrate containment` compares by 8-word shingles instead. Then:
 - **notes** carry no timestamps: take the date from the note title (`SESSION <date>`) and say so in the review;
   `SESSION` → episode, `LESSON` → lesson, `BUG` → a dated episode (plus a lesson if a rule came out of it);
 - **`STATUS` notes never become facts.** Their present tense is stale; the current state comes from the repo and is
@@ -162,6 +182,10 @@ content. Then:
   records something found nowhere else;
 - **sources** are usually pasted repository text: compare them with the repo (shingle overlap). A source that the repo
   already holds becomes a pointer, not an item; only content found nowhere else is curated;
+- **notes may already be cut.** A note body saved as rich text can lose everything after its first `<` (`<tag>`,
+  `Type<T>`) at the moment it is saved in the notebook, with no warning. Compare a note's length and content with its
+  originals where they exist, and prefer the originals for anything a note cut. `hlm migrate roundtrip` then shows
+  that HLMemo keeps every body verbatim;
 - set a **freeze date**: no new notes after the export, and the notebook stays as a read-only archive.
 
 ### 5.7 Git history
@@ -191,6 +215,15 @@ newer store bundled it, usually as undated concatenations, and everything writte
 - **Record the layer** each item came from, in the inventory and in `REVIEW.md`, and put truth-set questions across the
   freeze date (one answered by a pre-freeze original, one only by a post-freeze note, one where a post-freeze note
   replaced a pre-freeze fact).
+
+**A store resumed after its freeze.** The older store may have been frozen, bundled, and then written to again (new
+files, or old files edited in place under a "current state" header), while the newer store kept going too. The
+files on disk are then no longer the originals.
+- Read the originals as they were at the freeze: `git show <freeze-commit>:<file>`.
+- Treat the post-resume edits and files as their own layer, dated by their commits (§5.7), and reconcile them with
+  the newer store's notes of the same period.
+- Re-check a freeze premise of an earlier plan against the pulled repository (§19 step 1): a resume may have happened
+  since the plan was written.
 
 Layered legacy memory implies the Full tier.
 
@@ -232,6 +265,8 @@ used: untested for hand-made files, and their raw `supersedes` links skip the up
 
 - **Grouped files start with their first entry.** Frontmatter or an H1 above it becomes an extra item, undated unless
   it carries `date:` (D-248).
+- **A monthly log with one entry** is read as a single item titled by its file name (`topic 2026 05 · sessions/…`).
+  Give such a file a frontmatter `title` and `date`, or merge the entry into a neighbouring month; `lint` warns.
 - **File names are unique across directories** (`same_name` is reported), and a fact is not grouped: a dated heading
   always makes an episode, and the size split never cuts below 1000 characters.
 - **Titles** carry the claim, prefixed with the topic or line (`PREFIX · claim`), because no tool filters by tag. The
@@ -242,7 +277,12 @@ used: untested for hand-made files, and their raw `supersedes` links skip the up
   points to; inside the lesson it is stale with the next change (test-drive 2026-10-07). One rule per file: two rule
   headings would split the file and share its tags.
 - **Keep the frontmatter short**: it stays in the body of a generic import and is searchable noise.
-- **Sizes**: facts and lessons about 300–1500 characters, episodes up to about 3000, every entry under 8000 (no size split).
+- **Sizes**: facts and lessons about 300–1500 characters, episodes up to about 3000, every entry under 8000 (no size
+  split). `lint` warns above 1500 and 3000. The 80-character title aim counts the whole title, an episode heading's
+  date and prefix included.
+- **Scope tags** (`<stack>@<version>` on lessons) can be checked: list the allowed ones in `[tags].scopes` of
+  `migration.toml`, and `lint` errors on any other. Side files next to the curated tree (notes, manifests) go into
+  `[lint].exclude`; non-markdown files are skipped.
 
 ## 8. Dates
 
@@ -259,21 +299,68 @@ used: untested for hand-made files, and their raw `supersedes` links skip the up
 ## 9. Supersession inside the import
 
 With facts holding only the present (§1), the import needs little supersession. What remains is a decision that
-reverses an earlier one. Write it in the row text, where `hlm links explicit` finds it:
-- a **full reversal** names the old row with a marker (`supersedes D-012`, Turkish `D-012'yi geçersiz kılar`, a list
-  `D-300/D-308'i geçersiz kılar`; a case suffix may sit on every id, D-249);
-- a **partial change** uses different wording ("changes the threshold part of D-012", `D-012'nin eşik kısmını
-  değiştirir`), so it does not hide the whole earlier row.
-The operator runs the links pass after the import (§16). A one-row decision item resolves only when its source anchor
-is its D-id (`DECISIONS.md#D-006`), which the importer gives every row (D-249).
+reverses an earlier one. Write it in the row text, where `hlm links explicit` finds it, and write everything else so
+that it does not trigger a link: **the links pass reacts to more words than "supersedes"**. The table lists every
+marker. `hlm migrate markers --format md` prints it from the code (`core/explicit_supersession.py`, `MARKERS`), and a
+test keeps this copy equal to it.
+
+<!-- markers:begin -->
+| language | relation | wording that triggers it | where it counts | the declaring item is |
+|---|---|---|---|---|
+| English | merged from | "merged … from" / "merged … out of" (up to 3 words between) | anywhere | the newer one |
+| English | merged into | "merged into" | anywhere | the older one |
+| English | superseded by | "superseded by" / "superseded through" | anywhere | the older one |
+| English | supersedes | "supersede", "supersedes", "superseding" | anywhere | the newer one |
+| English | replaced by | "replaced by" / "replaced with" | anywhere | the older one |
+| English | replaces | "replace", "replaces", "replaced", "replacing" (not followed by "by"/"with") | anywhere | the newer one |
+| English | instead of | "instead of", "rather than", "in place of" | decision rows only | the newer one |
+| German | merged from | "zusammengeführt aus" / "zusammengeführt von" | anywhere | the newer one |
+| German | superseded by | "ersetzt", "abgelöst", "überholt" + "durch" / "von" | anywhere | the older one |
+| German | supersedes | "ersetzt" (not followed by "durch"/"von") | anywhere | the newer one |
+| German | instead of | "anstelle von", "anstatt", "statt" | decision rows only | the newer one |
+| Turkish | merged from | "birleştirildi", "birleştirilmiştir", "birleştirilerek" | anywhere | the newer one |
+| Turkish | superseded by | "tarafından geçersiz kılındı/kılınmıştır", "tarafından değiştirildi/değiştirilmiştir" | anywhere | the older one |
+| Turkish | supersedes | "geçersiz kılar", "geçersiz kılıyor", "geçersiz kıldı", "geçersiz kılmıştır" | anywhere | the newer one |
+| Turkish | replaces | "yerini alır", "yerini aldı", "yerini almıştır", "yerini alıyor" | anywhere | the newer one |
+| Turkish | instead of | "yerine" | decision rows only | the newer one |
+<!-- markers:end -->
+
+How a marker finds its target:
+- **English and German markers** link the first D-id or document path that follows within 5 filler words in the same
+  clause; a list joined by "," "/" "&" or "and" counts as one target list. The decision-row-only markers need the D-id
+  right after them (at most one filler word): "instead of D-110" links, while "instead of cursor paging (D-110)" does
+  not, because a parenthesised citation after other words is a reference, not the object of the marker.
+- **Turkish markers** take the D-ids that end right before them, with an optional case suffix on each, and lists joined
+  by "ve", "ile" or "/": "D-300/D-308'i geçersiz kılar", "D-350'yi ve D-351'i geçersiz kılar" (D-249).
+- A marker does not count in a question, after a negation or a hypothetical ("would supersede", "not replacing"),
+  inside code or quotes, or when used as a noun ("a supersedes link").
+- A one-row decision item resolves only when its source anchor is its D-id (`DECISIONS.md#D-006`), which the importer
+  gives every row (D-249).
+
+Wording to use:
+- a **full reversal** names the old row with a marker: "supersedes D-012", "D-012'yi geçersiz kılar";
+- a **partial change** uses neutral words, so the whole earlier row is not marked as outdated: "narrows D-012",
+  "complements D-012", "changes the threshold part of D-012", "D-012'nin eşik kısmını değiştirir";
+- **in a decision row, "instead of D-xxx", "rather than D-xxx" and "D-xxx yerine" link** whether or not the row means to
+  retire D-xxx: "use the local store instead of D-110" marks D-110 as partly outdated. When that is not the intent,
+  write "the local store, not the option of D-110", or cite the D-id in parentheses after other words.
+- Check the result before the import: `hlm migrate lint` previews the links the pass would propose, and the list must
+  equal the reversals you meant (the review package states them).
+
+The operator runs the links pass after the import (§16).
 
 ## 10. Secret and personal-data gate
 
 Three checks on the exact file set, all required: `gitleaks dir <final> --redact --no-banner` with 0 findings; the
-importer's own filter (a dry run reports `skipped 0`); and a manual grep for credential-shaped assignments
-(`*_KEY=`, `*_SECRET=`, `*_TOKEN=`, `PASSWORD=`, DSNs with passwords) and for plain hex tokens in prose. Both scanners
-missed a real assignment once and a plain hex token once, so they are a floor, not proof. When a leaked value is known
-(a token found in the sources), compare the final set against it by code without printing it. A hit goes to a cleanup
+importer's own filter (a dry run reports `skipped 0`); and `tools/migrate/scan.py --spec …`, which replaces the
+hand-written grep. It covers credential-shaped assignments (`*_KEY=`, `*_SECRET=`, `*_TOKEN=`, `PASSWORD=`, DSNs with
+passwords), plain hex tokens in prose, and **personal data**: mail addresses, device identifiers such as 40-hex UDIDs,
+private IP addresses, account and tax identifiers, local key paths. It prints the rule, `file:line` and a masked
+value (`<HEX40>`, `<MAIL>`), never the value, and a `[scan]` allow-list in `migration.toml` takes documented false
+positives. Gitleaks and the importer filter once missed a real assignment and once a plain hex token, and in the
+second migration the real exposure was personal data, which neither looks for; they are a floor, not proof. When a
+leaked value is known (a token found in the sources), `--known-values FILE` compares the final set against it by
+code without printing it. A hit goes to a cleanup
 list (redact, drop, or keep it outside HLMemo) and to the owner if the value needs rotating. Since D-254 the server
 also refuses key-shaped secrets on writes (PV-1), but the import path relies on this gate first.
 
@@ -282,9 +369,13 @@ also refuses key-shaped secrets on writes (PV-1), but the import path relies on 
 `tools/migrate/local_stack.sh up <slug>`, then `eval "$(tools/migrate/local_stack.sh env <slug>)"` (neutral working
 directory, local URL, scratch token). The repository root's `hlm.toml` names production and is read when the client
 runs there, so the client runs from the neutral directory with an explicit `--project`. Then `hlm migrate run --target
-local` (dry run), `--apply`, and a second run that comes back all `unchanged` (idempotent). With the embed worker
-started, `hlm migrate recall` checks each sealed question against the top hits: a cheap loop before the paid blind
-check, and the right time to sharpen titles.
+local` (dry run), then `--apply`. The idempotence check is `hlm migrate verify --target local`: every batch comes back
+`unchanged` (a second `run` stops on purpose, because `run` accepts only new or missing records). Then
+`hlm migrate roundtrip --target local` exports what the stack stored and compares every body with the final set,
+verbatim; it is an F4 gate and shows that nothing was cut or rewritten on the way in (angle brackets, backticks,
+non-ASCII letters, long markdown). With the embed worker started, `hlm migrate recall` checks each sealed question
+against the top hits: a cheap loop before the paid blind check, and the right time to sharpen titles.
+`hlm query --project <slug>` answers ad-hoc questions against the stack.
 
 ## 12. Batches, seal and manifests
 
@@ -306,7 +397,8 @@ layered legacy memory. Seal it (`sha256sum`), and keep the file private. When a 
 publish a new version with both hashes; gold answers do not change.
 
 **After F5**, the operator runs `tools/migrate/blindcheck/`: each question is asked once through production
-`memory.ask` by a relay that never sees the gold, the raw tool result is saved by code (no model retypes it, D-216),
+`memory.ask` by a relay that never sees the gold and runs with an hlm-only MCP configuration (no user settings, hooks
+or other servers; `ask` exits non-zero when no question came back answered), the raw tool result is saved by code (no model retypes it, D-216),
 and two blind graders score the packets; on a split the stricter grade counts. The bar: at least 0.80 correct on the
 answerable questions, 0 superseded values stated as current, every negative abstains. A failure is a finding, not a
 retry.
@@ -319,9 +411,11 @@ coverage (explicit, estimated); the batch plan; the slug; the exact prod command
 (about $0.0013–0.003 per item); the truth-set and seal hashes; the promotion candidates; the open owner questions. A
 title review file (all titles, one per line) and a card draft (present tense, ≤ 420 tokens) come with it.
 
-**Consult (Full).** Before the owner's OK, Codex Astra low and Sol xhigh review the package in parallel, with a written
-prompt, the threat to guard against (stale stated as current, secrets, wrong scope) and a severity rubric; at most two
-rounds; a triage file records each finding as accepted or rejected with the reason. The owner decides residual risks.
+**Consult (Full).** Before the owner's OK, two independent reviewers check the package in parallel: another model, or
+a fresh-context agent that did not curate (Codex models reviewed the first migrations, while they were available).
+They get a written prompt, the threats to guard against (stale stated as current, secrets and personal data, wrong
+scope, unintended links) and a severity rubric; at most two rounds; a triage file records each finding as accepted
+or rejected with the reason. The owner decides residual risks and may skip the consult; `REVIEW.md` then says so.
 
 ## 15. Production import (F5)
 
@@ -396,10 +490,19 @@ Afterwards, record what was retired and why in a `D-` entry and fix the step tha
 | `revise` on an item whose title states the old claim | the title stays stale | use `supersede` (R11) |
 | the brief missing at session start | the server answered slower than the hook's budget | fixed in D-252 (6.5 s); fall back to `memory_query` |
 | the `postgres-closed` gate failing on a mobile network | a false alarm: the carrier accepts every port | the server-side listener check decides (D-255) |
+| NotebookLM notes cut at their first `<` when saved | months of silently missing text | compare notes with their originals; `hlm migrate roundtrip` shows HLMemo keeps bodies verbatim (§5.6) |
+| "instead of D-xxx" or "D-xxx yerine" in a decision row | the links pass marks D-xxx as partly outdated | the marker table and wording of §9; check `lint`'s link preview |
+| a one-entry monthly episode file without frontmatter | an item titled by its file name | frontmatter `title`/`date`, or merge it; `lint` warns (§7) |
+| an older store resumed after its freeze | the "originals" on disk were edited after the bundling | read them at the freeze commit; the resumed edits are their own layer (§5.9) |
+| a plan prepared from an old checkout | wrong counts and premises | pull every repository first and re-validate the plan (§19) |
+| the blind-check relay without the hlm server | no question is answered, yet the run looks finished | the hlm-only MCP configuration; `ask` fails loudly (§13) |
+| personal data in the sources | credential scanners do not see it | `tools/migrate/scan.py` with its personal-data rules (§10) |
 
 ## 19. The first 30 minutes
 
-1. Read the source repository's state: uncommitted paths (commit or list them), the remote, the slug rules (§2).
+1. **Fetch and pull every repository first**, then read its state: uncommitted paths (commit or list them), the
+   remote, the slug rules (§2). A plan prepared earlier is re-validated against the pulled tree (source counts, freeze
+   markers, the files it names) before anything else.
 2. Ask the owner: tier, slug, scope, deep documents as pointers or doc chunks, language, which dated-note sources
    exist, the era boundary if there are model-behaviour lessons.
 3. Create `docs/private/migration/<slug>/` (0700), confirm `git check-ignore -v`, copy the templates in, start `PLAN.md`

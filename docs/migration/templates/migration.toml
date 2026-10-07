@@ -17,6 +17,17 @@ section_chars = 8000
 
 [tags]
 closed = ["<topic>", "<topic>", "active", "resolved", "historical", "date-estimated"]
+# Optional: the allowed `<stack>@<version>` scope tags of lessons; `lint` errors on any other.
+# scopes = ["<stack>@<version>"]
+
+[lint]
+# Optional: side files next to the curated tree that are not items (package notes, manifests). Non-markdown files
+# are skipped anyway.
+# exclude = ["**/NOTES.md", "manifests/**"]
+
+[scan]
+# Optional: documented false positives of tools/migrate/scan.py (rule id and file:line, never a value).
+# allow = ["<rule>:<path>:<line>"]
 
 [local]
 server_url = "http://127.0.0.1:8799/mcp"
