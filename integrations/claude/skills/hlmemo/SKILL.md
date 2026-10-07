@@ -53,7 +53,8 @@ MCP tools.
   Optional: `kinds` (e.g. `["lesson"]`), `valid_at`/`known_at` (read the past), `synthesize: true` (adds a cited
   draft answer; verify its clues). It returns the `card` (`stale` = a source the card pins has changed;
   `truncated` = drill `card.clue` for the rest), ranked `hits[]` with clues and previews, `evidence` (`matched` or
-  `none`) and `omitted` (hits that did not fit). A hit with `superseded: true` is not current: follow
+  `none`) and `omitted` (hits that did not fit). An imported item's title ends with `· <path>`: that is its import key,
+  not always a repository path; the repository path is the `source_path` line in its body. A hit with `superseded: true` is not current: follow
   `superseded_by[].clue`. Scope `whole` means the item is outdated; `part` means one quoted statement is and the
   rest still holds. A `librarian.notices` block lists review questions that are the owner's to answer.
 - **`mcp__hlm__memory_drilldown`**, the full text of up to 20 clues with one-hop links (`{rel, clue, stale}`):
@@ -71,7 +72,8 @@ MCP tools.
 - **`mcp__hlm__memory_risk_check`**, past lessons against a planned step:
   `{"project": "my-project", "task": "Run the migration that adds an index on events(created_at) in prod", "token_budget": 2000}`.
   `verdict: "warn"` lists `warnings[]` (`clue`, `title`, `why`, `source_project`): drill each one and say how you
-  comply. `no_matching_evidence` means no stored lesson matched, not that the step is safe; `judged: false` means
+  comply. `no_matching_evidence` means no stored lesson matched (the judge can also drop a relevant one), not that the step is
+  safe, so before a deploy or prod-data change also run `memory_query` with `kinds: ["lesson"]` for the component; `judged: false` means
   retrieval only, with no LLM judge. A warned lesson tagged `resolved` or `historical` is a reminder: say so
   rather than treat it as a block. Lessons of every project you can read are checked.
 - **`mcp__hlm__memory_register_lesson`** and **`mcp__hlm__memory_call_the_day`**: Examples C and D.
@@ -167,6 +169,10 @@ with `code`, `reason` and `hint`: `span_not_found` (copy verbatim), `span_not_un
 `span_whole` (use `supersede`), `replacement_not_in_body`, `length_ratio`, `version_conflict` (drill
 `current_clue`, decide again), `project_card` (a card changes only through `call_the_day`).
 
+Two `updates` aimed at the same memory in one write are both rejected (`batch_conflict`): send one correction per
+memory per write, or quote one wider span. And `revise` changes the body only: when the target's **title** states
+the outdated claim, use `supersede`, so your new item with the correct title takes its place in search.
+
 A rejected update does not fail the write: your new item is stored, and resending the whole write would duplicate
 it. To retry a fixed update, send a revision of the item you just wrote (`logical_id`, `expected_version_id` = its
 `version_id` from the ack, same title and body) carrying only the corrected `updates`; otherwise note it in `## Open`.
@@ -189,6 +195,8 @@ returns `clue`, `logical_id`, `version_id`, `replayed`.
 - `tags` = the scope (`<stack>@<version>`) plus exactly one of `active` or `resolved`, plus `historical` for a
   lesson from an earlier model era. A historical lesson is `resolved` + `historical`; the server refuses
   `active` together with either (PV-5).
+- A lesson states a lasting rule. A value that changes (a version string, a setting in use) belongs in a `fact` the
+  lesson points to; inside the lesson it goes stale with the next change.
 - A lesson that would hold in every project is still registered in your project and named under "Promotion
   candidates". Merging duplicate lessons and changing a lesson's status or era is the operator's job.
 
