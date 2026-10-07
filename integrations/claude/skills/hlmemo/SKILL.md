@@ -73,7 +73,8 @@ MCP tools.
   `{"project": "my-project", "task": "Run the migration that adds an index on events(created_at) in prod", "token_budget": 2000}`.
   `verdict: "warn"` lists `warnings[]` (`clue`, `title`, `why`, `source_project`): drill each one and say how you
   comply. A judged result also lists `dropped_by_judge[]` (same fields): retrieval matches the judge did not warn
-  on, since the judge can drop a relevant lesson. Read them like warnings and decide whether each applies.
+  on, since the judge can drop a relevant lesson. Their `why` is a fixed retrieval note (the judge gives no reason
+  for a non-match): drill the clue, read the lesson and decide whether it applies.
   `no_matching_evidence` means no stored lesson matched, not that the step is safe, so before a deploy or prod-data
   change also run `memory_query` with `kinds: ["lesson"]` for the component; `judged: false` means retrieval only,
   with no LLM judge. A warned lesson tagged `resolved` or `historical` is a reminder: say so

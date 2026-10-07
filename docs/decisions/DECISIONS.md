@@ -2347,12 +2347,21 @@ D-257 | 2026-10-07 | PROPOSED (release candidate; dual review and the deploy pen
   - When the judge ran (`judged: true`), the response adds `dropped_by_judge: [{clue, title, why, source_project}]` and `dropped_omitted`.
   - The list holds the candidates with `det_score ≥ TAU` (the set a retrieval-only answer would warn on) that the judge did not match, best first, at most 3.
   - Privacy-withheld candidates are excluded: the judge never saw them, and they warn at `TAU_STRICT` as before.
-  - Each `why` is deterministic (kind, lists, score), because the judge explains only its matches. A secret-shaped title is masked.
+  - Each `why` is a deterministic sentence (kind, lists, score), never judge or memory text, because the judge gives no reason for a candidate it does not match. The title passes the librarian's redaction (`librarian/redact.py`), and a strong secret shape that survives it is masked whole.
   - The list comes from the same candidate set and passes the same D-062 visibility re-check as the warnings.
-  - It is packed after the warnings: warnings keep priority, and `dropped_omitted` is its own counter.
+  - Packing: the warnings pack exactly as before this change. Only when no warning was omitted are `dropped_by_judge` (a best-first prefix) and `dropped_omitted` (its own counter) added, in the room left. Both fields are left out when not even one entry fits.
   - Retrieval-only results carry neither field.
-- **Unchanged:** `verdict`, `warnings`, `omitted`, `judged`, `judge` and the closed verdict set, so G-LIVE-C (catch and false-warn rates) measures the same thing.
+- **Unchanged for every input:** `verdict`, `judged`, `judge` and the closed verdict set. `warnings`, `omitted` and `E_BUDGET_TOO_SMALL` are also unchanged, because the warnings pack before the new fields exist; a unit test compares against the pre-change packing code over many shapes and budgets. G-LIVE-C (catch and false-warn rates) therefore measures the same thing.
+- **Review 115** (Astra low, Sol xhigh; round 1 NO-GO), all fixed with tests:
+  - HIGH: titles showed secrets that the librarian redaction hides (`password=…`, DSN passwords). They now pass that redaction.
+  - MEDIUM: the empty new fields used budget before the warnings and could push a warning out at a tight budget. The packing is now warnings first, exactly as before.
+  - MEDIUM: tests for privacy-withheld (device-scoped, `librarian: off`) and closed lessons.
+  - LOW: the CLI preflight summary named "no matching past lesson" even when dropped lessons were listed.
+  - LOW: the contract text for `why`.
 - **Checked.**
-  - 12 new tests: the test-drive shape (the gold lesson appears; the list equals the retrieval-only warning set); retrieval-only and judge-failure results without the field; matched lessons not listed; budget packing at every budget from 256 (exact `used`, the counters add up, a partly filled list); the warning-priority case as a unit test; ungranted and other-class lessons never listed; a grant revoked during the judge removes its lesson; title masking.
-  - 119 existing risk-related tests pass (3 skipped: live providers).
-- **Docs.** Protocol R18 and the §6 digest line ("Read warnings and dropped_by_judge"); the hlmemo and hlm-library skills; the tool description; BACKLOG. The 1/3 judge timeouts stay open.
+  - 29 new tests: 8 integration, 18 unit, 3 preflight.
+    - Integration: the test-drive shape, retrieval-only and judge-failure results without the fields, matched lessons not listed, budget fill after the warnings, ungranted and other-class lessons, privacy-withheld lessons above the threshold, a grant revoked during the judge, and a lesson closed during the judge.
+    - Unit: the entry shape, redaction and packing equivalence.
+    - Preflight: the summary lines.
+  - The existing risk-related tests pass.
+- **Docs.** Protocol R18 and the §6 digest line ("Read warnings and dropped_by_judge"); the hlmemo and hlm-library skills; the tool description; the CLI preflight line; BACKLOG. The 1/3 judge timeouts stay open.

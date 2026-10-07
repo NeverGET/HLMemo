@@ -34,8 +34,9 @@ a warning only means no stored lesson matched.
    **Dropped by the judge** (consult 114, 2026-10-07): a judged result also lists, as
    ``dropped_by_judge``, the candidates that passed the deterministic threshold (``det_score ≥
    TAU``, the set a retrieval-only answer would warn on) but that the judge did not match, best
-   first, at most ``MAX_DROPPED``. The judge explains only its matches, so each entry's ``why`` is
-   deterministic (kind, lists, score), and a secret-shaped title is masked. The first real test
+   first, at most ``MAX_DROPPED``. The judge gives no reason for a candidate it does not match, so
+   each entry's ``why`` is a deterministic sentence (kind, lists, score), never judge or memory
+   text; the title passes the librarian's redaction (``_safe_title``). The first real test
    drive showed the judge dropping the one lesson that applied while retrieval ranked it first; the
    writer now sees it and decides. ``verdict``, ``warnings`` and ``judged`` keep their meaning, so
    the G-LIVE-C rates are unchanged. Privacy-withheld candidates are never in this list (the judge
@@ -48,10 +49,11 @@ a warning only means no stored lesson matched.
 
 The output is packed like every read result: ``budget.used`` is the exact o200k count of the
 canonical JSON; warnings are added in order until the next one would not fit (``omitted`` counts
-the rest); ``E_BUDGET_TOO_SMALL`` only if the envelope without warnings does not fit. A judged
-result's ``dropped_by_judge`` is packed after the warnings, which keep priority: when any warning
-is omitted the list is empty, and ``dropped_omitted`` counts the dropped candidates that did not
-fit (its own counter, so ``omitted`` keeps meaning warnings only).
+the rest); ``E_BUDGET_TOO_SMALL`` only if the envelope without warnings does not fit. The warnings
+pack exactly as they did before ``dropped_by_judge`` existed, so ``warnings``, ``omitted`` and the
+budget errors are unchanged for every input. Only then, if no warning was omitted, the dropped list
+is added in the room left: ``dropped_by_judge`` (a best-first prefix) and ``dropped_omitted`` (the
+entries that did not fit, its own counter). When not even one entry fits, both fields are left out.
 """
 
 from __future__ import annotations
@@ -91,6 +93,7 @@ from hlmemo.db import auth_queries
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as q
 from hlmemo.librarian import risk_judge as rj
+from hlmemo.librarian.redact import Redactor
 
 TOOL = "memory.risk_check"
 TOP_K = 10
@@ -98,6 +101,7 @@ LIST_LIMIT = 50  # per RRF list over the lesson universe
 MATCH_CHUNKS = 3  # matching chunks per candidate handed to the judge (its text window)
 MAX_WARNINGS = 3
 MAX_DROPPED = 3  # candidates above TAU that the judge did not warn on (``dropped_by_judge``)
+_REDACTOR = Redactor()  # the librarian's redaction (secrets only; email/phone stay as written)
 WHY_MAX = rj.WHY_MAX
 
 # ---- calibrated constants (cal split of tests/fixtures/risk; see its README) --------------------
@@ -250,9 +254,12 @@ def _warning(c: RiskCandidate, why: str) -> dict[str, Any]:
 
 
 def _safe_title(title: str) -> str:
-    """A title matching a strong secret shape (possible in items written before PV-1) is masked."""
-    rule = strong_secret_rule(title)
-    return title if rule is None else f"<redacted:{rule}>"
+    """The title as the librarian's redaction would show it (``librarian/redact.py``: assignments,
+    DSN passwords, bearer tokens, key shapes); a strong secret shape that survives is masked whole.
+    Titles written before PV-1, or below its narrower rules, can carry such text (review 115)."""
+    text = _REDACTOR.text(title)
+    rule = strong_secret_rule(text)
+    return text if rule is None else f"<redacted:{rule}>"
 
 
 def _dropped(c: RiskCandidate) -> dict[str, Any]:
@@ -285,9 +292,6 @@ def _pack(
     dropped: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     meter = deps.meter
-    if dropped is not None:  # the dropped list's empty state is part of the envelope the warnings pack in
-        envelope["dropped_by_judge"] = []
-        envelope["dropped_omitted"] = len(dropped)
     prefix = [0]
     base = meter.settle(envelope, budget)
     for w in warnings:
@@ -297,22 +301,37 @@ def _pack(
         envelope["warnings"] = warnings[:n]
         envelope["omitted"] = len(warnings) - n
 
-    try:
+    try:  # the warnings pack exactly as before the dropped list existed (review 115)
         pack_prefix(meter, envelope, budget, len(warnings), apply, lambda n: base + prefix[n])
-        if dropped and envelope["omitted"] == 0:  # warnings keep priority
-            base2 = meter.settle(envelope, budget)
-            prefix2 = [0]
-            for d in dropped:
-                prefix2.append(prefix2[-1] + meter.count(d) + 1)
-
-            def apply_dropped(n: int) -> None:
-                envelope["dropped_by_judge"] = dropped[:n]
-                envelope["dropped_omitted"] = len(dropped) - n
-
-            pack_prefix(meter, envelope, budget, len(dropped), apply_dropped, lambda n: base2 + prefix2[n])
     except BudgetError as exc:
         raise ToolError(exc.code, str(exc), **exc.details) from exc
+    if dropped and envelope["omitted"] == 0:
+        return _pack_dropped(meter, envelope, budget, dropped)
     return envelope
+
+
+def _pack_dropped(
+    meter: Any, envelope: dict[str, Any], budget: int, dropped: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Adds ``dropped_by_judge`` / ``dropped_omitted`` only in the room the packed warnings left:
+    on a copy, so when not even one entry fits the envelope stays exactly as the warnings left it."""
+    trial = dict(envelope)
+    trial["dropped_by_judge"] = []
+    trial["dropped_omitted"] = len(dropped)
+    prefix = [0]
+    for d in dropped:
+        prefix.append(prefix[-1] + meter.count(d) + 1)
+
+    def apply(n: int) -> None:
+        trial["dropped_by_judge"] = dropped[:n]
+        trial["dropped_omitted"] = len(dropped) - n
+
+    try:
+        base = meter.settle(trial, budget)
+        n, _ = pack_prefix(meter, trial, budget, len(dropped), apply, lambda k: base + prefix[k])
+    except BudgetError:  # even the empty fields do not fit: leave them out
+        return envelope
+    return trial if n > 0 else envelope
 
 
 async def _recheck(conn: AsyncConnection, ctx: AuthContext, slug: str, version_ids: list[int]) -> set[int]:

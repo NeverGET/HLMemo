@@ -7,10 +7,18 @@ lesson came back as the top warning.
 
 ## The change
 An additive field. When the judge runs and drops candidates that passed the deterministic retrieval threshold, the
-response lists the best of them as `dropped_by_judge: [{clue, title, why, source_project}]`, where `why` is the judge's
-reason. `verdict`, `warnings` and `judged` keep their meaning, so the release-blocking live gate G-LIVE-C (catch rate,
-false-warn rate) measures the same thing as before. The protocol (R18), the digest and the skill tell writers to read
-`dropped_by_judge`, just as they read `warnings`.
+response lists the best of them as `dropped_by_judge: [{clue, title, why, source_project}]`. `verdict`, `warnings`
+and `judged` keep their meaning, so the release-blocking live gate G-LIVE-C (catch rate, false-warn rate) measures
+the same thing as before. The protocol (R18), the digest and the skill tell writers to read `dropped_by_judge`,
+just as they read `warnings`.
+
+**Amended after review 115 (2026-10-07).**
+- `why` is a deterministic sentence (kind, lists, score), not a judge reason: the judge gives no reason for a
+  candidate it does not match. The title passes the librarian's redaction (`librarian/redact.py`) before it is
+  shown.
+- The warnings pack exactly as before the change, so `warnings`, `omitted` and the budget errors are identical for
+  every input. The dropped fields are added only in the room left, and both are left out when not even one entry
+  fits.
 
 ## What is protected
 - **Safety of the risk check:** a relevant lesson must reach the writer. A false `no_matching_evidence` is the failure

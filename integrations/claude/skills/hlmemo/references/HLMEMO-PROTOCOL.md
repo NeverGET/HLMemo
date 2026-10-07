@@ -1,4 +1,4 @@
-> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-07, source sha256 7c47aa605fa2180509151db65af6773ef5d0c416d6432d37ea02ff8b05ef80af. If the two differ, the source file wins.
+> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-07, source sha256 e75d37190d0d909bf1fb2a2aa7815f4656f4845644671d8333861f7e02ab59db. If the two differ, the source file wins.
 
 # HLMemo protocol v1: rules for project writers
 
@@ -202,12 +202,13 @@ once per project (`E_SESSION_CLOSED`, `core/write_service.py:776-780`); card hea
 **R18. `memory.risk_check` before risky steps:** deploys, migrations, prod data, deletion, force-push, secrets.
 On `warn`, drill each lesson and state how you comply. `no_matching_evidence` is not a guarantee: the LLM judge can
 drop a relevant lesson (test-drive 2026-10-07). So a judged result also lists `dropped_by_judge`: the retrieval
-matches the judge did not warn on (D-257). Read them like warnings and decide whether each applies. Before a deploy
+matches the judge did not warn on (D-257). Their `why` is a fixed retrieval note (the judge gives no reason for a
+non-match), so read the lesson itself and decide whether it applies. Before a deploy
 or a prod-data change, also run `memory.query` with `kinds: ["lesson"]` for the component, worded the way the
 lessons are written. `judged: false` means retrieval only. A warned lesson tagged `resolved`/`historical` is a reminder: say so.
 *Why:* lesson-backed checks are what prevent repeats (D-222). *Enforced by:* protocol only. The verdict
 semantics are server today (`server/tools/risk.py:60-63`; `core/risk_service.py:4-6,26-31`), and so is the
-`dropped_by_judge` list (`core/risk_service.py`, consult 114). Candidates are chosen by kind with no tag filter
+`dropped_by_judge` list (`core/risk_service.py`, consults 114 and 115). Candidates are chosen by kind with no tag filter
 (`db/risk_queries.py:31`).
 
 **R19. Make writes idempotent.** One `request_id` per logical write; a transport retry resends the identical

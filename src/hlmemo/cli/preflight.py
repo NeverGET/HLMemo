@@ -169,10 +169,20 @@ def risk_line(risk: dict[str, Any] | None, risk_error: str | None) -> str | None
         reason = re.sub(r"[^a-z_]", "", str(risk.get("reason") or ""))[:32] or "unknown"
         how = f"RETRIEVAL ONLY, not judged by the librarian LLM ({reason})"
     n = _count(risk.get("warnings")) + _count(risk.get("omitted"))
+    dropped = _count(risk.get("dropped_by_judge")) + _count(risk.get("dropped_omitted"))
     if risk.get("verdict") == "warn" and n:
-        return (
+        line = (
             f"memory.risk_check flagged {n} past lesson(s) for this task ({how}; see the hlmemo-risk "
             "block): check whether they apply before acting and drill their clues if unsure."
+        )
+        if dropped:
+            line += f" It also lists {dropped} retrieval match(es) the judge left out (dropped_by_judge)."
+        return line
+    if dropped:  # the judge matched none, yet retrieval found some: the writer reads them (consult 115)
+        return (
+            f"memory.risk_check: the librarian judge matched no past lesson ({how}), but retrieval found "
+            f"{dropped} that the judge did not match (dropped_by_judge in the hlmemo-risk block): read them "
+            "and decide whether they apply before acting."
         )
     return (
         f"memory.risk_check found no matching past lesson for this task ({how}; not a guarantee of safety)."
