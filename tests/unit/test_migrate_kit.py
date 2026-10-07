@@ -372,6 +372,8 @@ def test_prod_needs_the_env_and_a_matching_seal(good: Path, monkeypatch: pytest.
     loaded = load(spec)
     monkeypatch.delenv(runner.ALLOW_PROD_ENV, raising=False)
     with pytest.raises(runner.RunRefused, match=runner.ALLOW_PROD_ENV):
+        _run(spec, loaded, "prod", FakeEngine(), apply=True)  # a write needs the opt-in
+    with pytest.raises(runner.RunRefused, match="seal"):  # a read needs no opt-in, but still the seal
         _run(spec, loaded, "prod", FakeEngine())
     monkeypatch.setenv(runner.ALLOW_PROD_ENV, "1")
     with pytest.raises(runner.RunRefused, match="seal"):

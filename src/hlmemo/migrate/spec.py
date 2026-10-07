@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ STATUS_TAGS = frozenset({"active", "resolved", "historical", "date-estimated"})
 #: a lesson's scope tag: `<stack>@<version>` (R15)
 SCOPE_TAG_RE = re.compile(r"^[A-Za-z0-9][\w.+-]*@[\w.+-]+$")
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+#: an accepted scan hit: `<rule>:<path>:<line>`
+SCAN_ALLOW_RE = re.compile(r"^[a-z0-9][a-z0-9-]*:[^:\s][^\s]*:[1-9][0-9]*$")
 
 
 class SpecError(ValueError):
@@ -71,6 +74,15 @@ def is_loopback_url(url: str) -> bool:
 
 
 @dataclass(frozen=True)
+class ScanPattern:
+    """A project-specific personal-data rule for `tools/migrate/scan.py` (account ids, tax ids, ...)."""
+
+    id: str
+    regex: re.Pattern[str]
+    mask: str
+
+
+@dataclass(frozen=True)
 class MigrationSpec:
     path: Path
     slug: str
@@ -82,6 +94,17 @@ class MigrationSpec:
     repo: Path | None = None
     tags: frozenset[str] = frozenset()
     estimated_marker: str = "Date estimated"
+    #: `[tags].scopes`: when set, the only allowed `<stack>@<version>` scope tags
+    scopes: frozenset[str] = frozenset()
+    #: `[lint].exclude`: globs (relative to the curated dir) of side files that are not part of the migration;
+    #: lint, plan, seal and run all leave them out, so an excluded file is never imported
+    exclude: tuple[str, ...] = ()
+    #: `[scan].allow`: accepted scan hits, each `<rule>:<path>:<line>` (path relative to the curated dir)
+    scan_allow: frozenset[str] = frozenset()
+    #: `[scan].allow_values`: literal values accepted wherever they occur (e.g. a public support address)
+    scan_allow_values: frozenset[str] = frozenset()
+    #: `[[scan.patterns]]`: project-specific personal-data rules
+    scan_patterns: tuple[ScanPattern, ...] = ()
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -94,7 +117,13 @@ class MigrationSpec:
         return self.targets[name]
 
     def tag_allowed(self, tag: str) -> bool:
-        return tag in self.tags or tag in STATUS_TAGS or bool(SCOPE_TAG_RE.match(tag))
+        if tag in self.tags or tag in STATUS_TAGS:
+            return True
+        return bool(SCOPE_TAG_RE.match(tag)) and (not self.scopes or tag in self.scopes)
+
+    def excluded(self, rel: str) -> bool:
+        """True when a curated-relative path matches one of the `[lint].exclude` globs."""
+        return any(fnmatch.fnmatchcase(rel, g) for g in self.exclude)
 
 
 def _path(root: Path, value: Any, name: str) -> Path:
@@ -118,7 +147,10 @@ def load_spec(path: Path | str) -> MigrationSpec:
         slug, tz, [estimated_marker]
         [paths]   curated, private, repo
         [[sources]] importer, path, section_chars
-        [tags]    closed = [...]
+        [tags]    closed = [...], scopes = [...]                      (scopes optional)
+        [lint]    exclude = ["glob", ...]                              (optional)
+        [scan]    allow = ["<rule>:<path>:<line>"], allow_values = [...]; [[scan.patterns]] id, regex, mask
+                  (all optional)
         [local]   server_url, device
         [prod]    server_url, device
     """
@@ -143,6 +175,31 @@ def load_spec(path: Path | str) -> MigrationSpec:
     tags = _table(raw, "tags").get("closed") or []
     if not isinstance(tags, list) or not all(isinstance(t, str) and t.strip() for t in tags):
         raise SpecError("[tags].closed must be a list of non-empty strings")
+    scopes = _table(raw, "tags").get("scopes") or []
+    if not isinstance(scopes, list) or not all(isinstance(t, str) and SCOPE_TAG_RE.match(t) for t in scopes):
+        raise SpecError("[tags].scopes must be a list of `<stack>@<version>` tags")
+    exclude = _table(raw, "lint").get("exclude") or []
+    if not isinstance(exclude, list) or not all(isinstance(g, str) and g.strip() for g in exclude):
+        raise SpecError("[lint].exclude must be a list of glob strings")
+    scan = _table(raw, "scan")
+    allow = scan.get("allow") or []
+    if not isinstance(allow, list) or not all(isinstance(v, str) and SCAN_ALLOW_RE.match(v) for v in allow):
+        raise SpecError('[scan].allow must be a list of "<rule>:<path>:<line>" strings')
+    allow_values = scan.get("allow_values") or []
+    if not isinstance(allow_values, list) or not all(isinstance(v, str) and v for v in allow_values):
+        raise SpecError("[scan].allow_values must be a list of non-empty strings")
+    raw_patterns = scan.get("patterns") or []
+    if not isinstance(raw_patterns, list):
+        raise SpecError("[[scan.patterns]] must be an array of tables")
+    patterns: list[ScanPattern] = []
+    for i, sp in enumerate(raw_patterns):
+        if not isinstance(sp, dict) or not all(isinstance(sp.get(k), str) and sp[k] for k in ("id", "regex")):
+            raise SpecError(f"[[scan.patterns]] {i} needs `id` and `regex` strings")
+        try:
+            rx = re.compile(sp["regex"])
+        except re.error as exc:
+            raise SpecError(f"[[scan.patterns]] {sp['id']}: bad regex: {exc}") from None
+        patterns.append(ScanPattern(sp["id"], rx, str(sp.get("mask") or f"<{sp['id'].upper()}>")))
     marker = raw.get("estimated_marker", "Date estimated")
     if not isinstance(marker, str) or not marker.strip():
         raise SpecError("`estimated_marker` must be a non-empty string")
@@ -174,7 +231,7 @@ def load_spec(path: Path | str) -> MigrationSpec:
         targets[name] = Target(name, t["server_url"].strip(), t["device"].strip())
     if "local" in targets and not targets["local"].is_loopback:
         raise SpecError("[local].server_url must be a loopback URL (http://127.0.0.1:…)")
-    known = {"slug", "tz", "estimated_marker", "paths", "sources", "tags", "local", "prod"}
+    known = {"slug", "tz", "estimated_marker", "paths", "sources", "tags", "lint", "scan", "local", "prod"}
     return MigrationSpec(
         path=p,
         slug=slug,
@@ -186,8 +243,22 @@ def load_spec(path: Path | str) -> MigrationSpec:
         repo=repo,
         tags=frozenset(t.strip() for t in tags),
         estimated_marker=marker,
+        scopes=frozenset(scopes),
+        exclude=tuple(g.strip() for g in exclude),
+        scan_allow=frozenset(allow),
+        scan_allow_values=frozenset(allow_values),
+        scan_patterns=tuple(patterns),
         extra={k: v for k, v in raw.items() if k not in known},
     )
 
 
-__all__ = ["MigrationSpec", "STATUS_TAGS", "Source", "SpecError", "Target", "is_loopback_url", "load_spec"]
+__all__ = [
+    "MigrationSpec",
+    "STATUS_TAGS",
+    "ScanPattern",
+    "Source",
+    "SpecError",
+    "Target",
+    "is_loopback_url",
+    "load_spec",
+]

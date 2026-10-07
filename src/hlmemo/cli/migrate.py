@@ -6,9 +6,16 @@
     hlm migrate run    --spec S --target local|prod [--batch B] [--apply] [--resume] [--json]
     hlm migrate verify --spec S --target local|prod [--json]
     hlm migrate recall --spec S --truthset T.jsonl [--target local|prod] [--k 5] [--min-rate R] [--json]
+    hlm migrate roundtrip --spec S [--target local|prod] [--json]
+    hlm migrate containment --export DIR --originals PATH [--originals PATH …] [--shingle 8] [--json]
+    hlm migrate nlm-check --export DIR [--originals PATH …] [--json]
+    hlm migrate card --file CARD-DRAFT.md
+    hlm migrate markers [--format md|json]
 
-Exit codes: 0 ok · 1 lint errors, a seal mismatch or recall below --min-rate · 2 hard stop during a run ·
-64 bad spec or arguments · 65 refused before anything was sent (target, seal, environment).
+Exit codes: 0 ok · 1 lint errors, a seal mismatch, recall below --min-rate, a round-trip mismatch, a flagged
+note (nlm-check) or a card over 420 tokens · 2 hard stop during a run · 64 bad spec or arguments · 65 refused
+before anything was sent (target, seal, environment). A prod dry run or verify needs a valid seal; a prod
+WRITE (`run --apply`) also needs HLM_MIGRATE_ALLOW_PROD=1. `roundtrip` only reads and compares.
 """
 
 from __future__ import annotations
@@ -269,6 +276,161 @@ def recall_cmd(
             )
         typer.echo(f"hit@{k}: {out['hit']}/{out['scored']} (negatives not scored); report {p}")
     raise typer.Exit(EX_FAIL if out["rate"] is not None and out["rate"] < min_rate else 0)
+
+
+@migrate_app.command("roundtrip")
+def roundtrip_cmd(spec: SpecOpt, target: TargetOpt = "local", as_json: JsonOpt = False) -> None:
+    """Is every curated body stored verbatim on the target? (read-only; byte-equal or exit 1)"""
+    from hlmemo.migrate.roundtrip import roundtrip
+    from hlmemo.migrate.runner import RunRefused, check_target, default_session
+
+    s, loaded = _load(spec)
+    try:
+        t = check_target(s, target, loaded, writes=False)  # read-only: prod needs the seal, not the opt-in
+    except RunRefused as exc:
+        typer.echo(f"refused: {exc}", err=True)
+        raise typer.Exit(EX_REFUSED) from None
+
+    async def go() -> Any:
+        async with default_session(t) as call:
+            return await roundtrip(call, s.slug, loaded)
+
+    try:
+        res = asyncio.run(go())
+    except RunRefused as exc:
+        typer.echo(f"refused: {exc}", err=True)
+        raise typer.Exit(EX_REFUSED) from None
+    out = res.as_dict()
+    p = _write_private(s, f"{_stamp()}-{target}-roundtrip.json", out)
+    if as_json:
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=1))
+    else:
+        typer.echo(
+            f"roundtrip on {target}: {res.equal}/{res.records} bodies stored verbatim "
+            f"({res.angle} with '<', {res.non_ascii} with non-ASCII letters); missing {len(res.missing)}, "
+            f"mismatched {len(res.mismatched)}; report {p}"
+        )
+        for k in res.missing[:10]:
+            typer.echo(f"  missing  {k}")
+        for m in res.mismatched[:10]:
+            typer.echo(
+                f"  MISMATCH {m['key']} sent {m['sent_chars']} vs stored {m['stored_chars']} chars, first "
+                f"difference at {m['first_difference_at']}: {m['sent_context']!r} vs {m['stored_context']!r}"
+            )
+    raise typer.Exit(0 if res.ok else EX_FAIL)
+
+
+@migrate_app.command("containment")
+def containment_cmd(
+    export: Annotated[Path, typer.Option("--export", help="the exported store (a dir or a file)")],
+    originals: Annotated[
+        list[Path], typer.Option("--originals", help="an original store (repeatable; dirs or files)")
+    ],
+    shingle: Annotated[int, typer.Option("--shingle", help="words per shingle")] = 8,
+    as_json: JsonOpt = False,
+) -> None:
+    """Share of each exported file's word shingles found in the originals (layered legacy, PLAYBOOK §5.9)."""
+    from hlmemo.migrate.containment import containment
+
+    if shingle < 3:
+        typer.echo("--shingle must be at least 3", err=True)
+        raise typer.Exit(EX_USAGE)
+    if not export.expanduser().exists() or not all(o.expanduser().exists() for o in originals):
+        typer.echo("--export and every --originals path must exist", err=True)
+        raise typer.Exit(EX_USAGE)
+    rows, summary = containment(export, originals, shingle)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "summary": summary,
+                    "files": [
+                        {"file": r.file, "shingles": r.shingles, "found": r.found, "share": r.share}
+                        for r in rows
+                    ],
+                },
+                ensure_ascii=False,
+                indent=1,
+            )
+        )
+        return
+    for r in rows:
+        share = "  n/a " if r.share is None else f"{r.share:6.1%}"
+        typer.echo(f"{share}  {r.found:6}/{r.shingles:<6} {r.file}")
+    typer.echo(json.dumps(summary, ensure_ascii=False))
+
+
+@migrate_app.command("nlm-check")
+def nlm_check_cmd(
+    export: Annotated[
+        Path, typer.Option("--export", help="the NotebookLM export (its notes/ dir is checked)")
+    ],
+    originals: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--originals", help="a store written alongside (repeatable): serena, docs, session files"
+        ),
+    ] = None,
+    as_json: JsonOpt = False,
+) -> None:
+    """Flag NotebookLM notes that look cut off at write time (a detector for a human to confirm)."""
+    from hlmemo.migrate.nlmcheck import check
+
+    if not export.expanduser().exists() or not all(o.expanduser().exists() for o in originals or []):
+        typer.echo("--export and every --originals path must exist", err=True)
+        raise typer.Exit(EX_USAGE)
+    flags, checked = check(export, originals)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {"checked": checked, "flagged": [f.__dict__ for f in flags]}, ensure_ascii=False, indent=1
+            )
+        )
+    else:
+        for f in flags:
+            where = f"  (original: {f.original})" if f.original else ""
+            typer.echo(f"{','.join(f.reasons):40} {f.note_id or '-':38} {f.title}{where}")
+        typer.echo(
+            f"nlm-check: {len(flags)} of {checked} note(s) flagged; confirm each by hand and recover the "
+            "text from the store written alongside"
+        )
+    raise typer.Exit(EX_FAIL if flags else 0)
+
+
+@migrate_app.command("card")
+def card_cmd(
+    file: Annotated[Path, typer.Option("--file", help="the card draft (markdown)")],
+) -> None:
+    """The draft's o200k token count with the server's counter: the brief shows <= 420, the server stores
+    <= 512."""
+    from hlmemo.brief.assemble import CARD_TOKENS
+    from hlmemo.core.budget import Meter
+    from hlmemo.core.write_service import CARD_MAX_TOKENS
+
+    p = file.expanduser()
+    if not p.is_file():
+        typer.echo(f"no such file: {p}", err=True)
+        raise typer.Exit(EX_USAGE)
+    n = Meter().count_text(p.read_text(encoding="utf-8"))
+    verdict = "ok" if n <= CARD_TOKENS else ("too long for the brief" if n <= CARD_MAX_TOKENS else "REFUSED")
+    typer.echo(
+        f"card: {n} o200k tokens (brief shows <= {CARD_TOKENS}; "
+        f"the server refuses > {CARD_MAX_TOKENS}): {verdict}"
+    )
+    raise typer.Exit(0 if n <= CARD_TOKENS else EX_FAIL)
+
+
+@migrate_app.command("markers")
+def markers_cmd(
+    fmt: Annotated[str, typer.Option("--format", help="md | json")] = "md",
+) -> None:
+    """The supersession markers `hlm links explicit` reacts to, generated from the code (PLAYBOOK §9)."""
+    from hlmemo.migrate import markers
+
+    if fmt not in ("md", "json"):
+        typer.echo("--format must be md or json", err=True)
+        raise typer.Exit(EX_USAGE)
+    typer.echo(markers.markdown() if fmt == "md" else markers.as_json(), nl=fmt == "json")
 
 
 __all__ = ["migrate_app"]

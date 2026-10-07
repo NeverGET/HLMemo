@@ -20,21 +20,33 @@ from typing import Any
 
 from hlmemo.core.explicit_supersession import Doc, propose
 from hlmemo.core.secret_guard import strong_secret_rule
-from hlmemo.importers.common import DATED_HEADING_RE, DECISION_ROW_RE, HEADING_RE, parse_frontmatter
+from hlmemo.importers.common import (
+    DATED_HEADING_RE,
+    DECISION_ROW_RE,
+    HEADING_RE,
+    humanize,
+    parse_frontmatter,
+)
 from hlmemo.migrate.batches import Loaded
 from hlmemo.migrate.redact import redact
-from hlmemo.migrate.spec import MigrationSpec
+from hlmemo.migrate.spec import SCOPE_TAG_RE, MigrationSpec
 
 #: top directory -> the kind the markdown importer gives its items (importers/markdown.py)
 LAYOUT = {"status": "fact", "lessons": "lesson", "sessions": "episode", "decisions": "fact"}
 GROUPED = ("sessions", "decisions")
 LESSON_SECTIONS = ("## Mistake", "## Fix", "## Context")
 TITLE_HARD = 200  # the server's title limit
-TITLE_AIM = 80  # protocol R6: aim for a title of at most 80 characters
+TITLE_AIM = 80  # protocol R6: aim for a title of at most 80 characters (the whole heading counts)
 LESSON_TITLE_MAX = 120  # the brief shows a lesson's title line (R15)
+#: PLAYBOOK §7 body sizes (characters, frontmatter not counted): above them an item reads like a document
+BODY_MAX = {"fact": 1500, "lesson": 1500, "episode": 3000}
+MARKDOWN = (".md", ".markdown")
 #: a decision row that names another D-id next to "yerine" reads as a FULL reversal to `hlm links explicit`
 _YERINE_DID = re.compile(r"\bD-\d{3,4}\b[^|]{0,40}\byerine\b|\byerine\b[^|]{0,40}\bD-\d{3,4}\b", re.I)
 _DID = re.compile(r"\bD-\d{3,4}\b")
+#: owner-decision ids of a migration PLAN (`OD-07`) or the old short form (`D-12`): they live in the PLAN, not
+#: in memory, and a short `D-12` reads like a row of the project's decision log (kit feedback #20)
+_OWNER_DECISION = re.compile(r"\bOD-\d+\b|(?<![\w-])D-\d{1,2}\b")
 _PARTIAL = re.compile(r"kısmını değiştirir|partly changes|partially (?:changes|replaces)", re.I)
 
 
@@ -85,23 +97,38 @@ def _secret_lines(text: str) -> list[tuple[int, str]]:
 
 def _check_file(spec: MigrationSpec, res: LintResult, root: Path, p: Path) -> None:
     rel = p.relative_to(root).as_posix()
+    # side files (the spec, a source list, a manifest) are not markdown: the importer ignores them, so lint
+    # does too; tools/migrate/scan.py still scans every file of the tree for personal data
+    if p.suffix.lower() not in MARKDOWN:
+        return
     text = p.read_text(encoding="utf-8", errors="replace")
     for line_no, rule in _secret_lines(text):
         res.e(
             rel, f"token-shaped string (rule {rule}) at line {line_no}: remove it or name where it is stored"
         )
+    od_lines = [i + 1 for i, line in enumerate(text.splitlines()) if _OWNER_DECISION.search(line)]
+    if od_lines:
+        res.w(
+            rel,
+            f"owner-decision ids (OD-nn, or a short D-nn) at line(s) {od_lines[:8]}: they belong to the "
+            "migration PLAN, not in memory items; state the decision itself, or cite a project D-NNN row",
+        )
     parts = p.relative_to(root).parts
     top = parts[0] if len(parts) > 1 else ""
-    if p.suffix not in (".md", ".markdown"):
-        res.w(rel, "not markdown: the markdown importer ignores it")
-        return
     if top not in LAYOUT:
         res.w(rel, f"outside {sorted(LAYOUT)}: it imports as a doc_chunk, not a curated item")
         return
     meta, body = parse_frontmatter(text)
     tags = _tags(meta)
     for t in tags:
-        if not spec.tag_allowed(t):
+        if spec.tag_allowed(t):
+            continue
+        if SCOPE_TAG_RE.match(t):
+            res.e(
+                rel,
+                f"scope tag {t!r} is not in the spec's [tags].scopes list (a typo, or a missing version?)",
+            )
+        else:
             res.e(rel, f"tag {t!r} is not in the spec's closed tag list")
     if "date-estimated" in tags and spec.estimated_marker not in body:
         res.e(rel, f"`date-estimated` tag without the marker line {spec.estimated_marker!r}")
@@ -184,9 +211,27 @@ def _check_parse(spec: MigrationSpec, res: LintResult, ld: Loaded) -> None:
         elif r.kind_guess == "lesson" and len(title) > LESSON_TITLE_MAX:
             res.e(r.path, f"lesson title {len(title)} chars > {LESSON_TITLE_MAX} (the brief shows it)")
         elif r.kind_guess in ("fact", "episode") and len(title) > TITLE_AIM and top != "decisions":
-            res.w(r.path, f"title {len(title)} chars > {TITLE_AIM} (R6 aims at 80)")
+            res.w(
+                r.path,
+                f"title {len(title)} chars > {TITLE_AIM} (R6 aims at 80, counted over the whole heading: "
+                "date and line prefix included)",
+            )
         if top in GROUPED and per_file[r.file] > 1 and "#" not in r.path:
             res.e(r.path, "a preamble item: text above the first entry of a grouped file")
+        if top == "sessions" and per_file[r.file] == 1 and title == humanize(r.file):
+            res.w(
+                r.path,
+                "a one-entry episode file imports with its FILE NAME as the title: give it frontmatter "
+                "`title` and `date` (PLAYBOOK §7)",
+            )
+        limit = BODY_MAX.get(r.kind_guess)
+        size = len(parse_frontmatter(r.body)[1].strip())
+        if limit and top != "decisions" and size > limit:
+            res.w(
+                r.path,
+                f"{r.kind_guess} body {size} chars > {limit} (PLAYBOOK §7): split it, or keep the detail in "
+                "the repository and point to it",
+            )
     for f, n in per_file.items():
         top = Path(f).parts[0] if Path(f).parts else ""
         if top in ("status", "lessons") and n != 1:
@@ -209,9 +254,17 @@ def lint(spec: MigrationSpec, loaded: list[Loaded]) -> LintResult:
     if not root.is_dir():
         res.e(str(root), "curated_dir does not exist")
         return res
-    files = sorted(p for p in root.rglob("*") if p.is_file() and not any(x.startswith(".") for x in p.parts))
+    files = sorted(
+        p
+        for p in root.rglob("*")
+        if p.is_file()
+        and not any(x.startswith(".") for x in p.relative_to(root).parts)
+        and not spec.excluded(p.relative_to(root).as_posix())
+    )
     names: dict[str, list[str]] = defaultdict(list)
     for p in files:
+        if p.suffix.lower() not in MARKDOWN:
+            continue
         names[p.name].append(p.relative_to(root).as_posix())
         _check_file(spec, res, root, p)
     for n, where in names.items():

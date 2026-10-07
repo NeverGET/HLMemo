@@ -821,11 +821,15 @@ def query(
     valid_at: Annotated[str | None, typer.Option("--valid-at")] = None,
     known_at: Annotated[str | None, typer.Option("--known-at")] = None,
     include_archived: Annotated[bool, typer.Option("--include-archived")] = False,
+    project_opt: Annotated[
+        str | None,
+        typer.Option("--project", help="project slug (overrides the global --project / HLM_PROJECT)"),
+    ] = None,
 ) -> None:
     """Direct memory.query; prints the compact JSON result."""
     c = _ctx(ctx)
     cfg = c.config(budget=budget) if budget is not None else c.config()
-    project = cfg.require_project()
+    project = project_opt or cfg.require_project()
     res = c.memory().query(
         project,
         text,
