@@ -261,7 +261,8 @@ records it.
 ## 4. Migration procedure for a project chat (`/hlm-migrate`)
 
 A project's own chat may migrate its legacy memory into **its own slug only** (D-246), following
-`docs/migration/PLAYBOOK.md` and its templates (`docs/migration/templates/`). Private artifacts stay in an ignored
+`docs/migration/PLAYBOOK.md` and its templates (`docs/migration/templates/`); the `hlm-migrate` skill walks the chat
+through it, and the `hlm-library` skill holds the operator's side. Private artifacts stay in an ignored
 private directory; rollback is PLAYBOOK §17. The chat cannot create a project: at F5 the operator creates the slug,
 grants the importing device `write` and takes the pre-import dump, after the owner's OK (PLAYBOOK §2).
 
