@@ -1,4 +1,4 @@
-> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-07, source sha256 e2ca77b9b5b65c21ca1299390d48c75907806d86fe387406a35d93795c46f948. If the two differ, the source file wins.
+> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-07, source sha256 f94172263e222dda833b6ec4350ba8d703c48b2f2482797e92f93b975f6ade5c. If the two differ, the source file wins.
 
 # HLMemo protocol v1: rules for project writers
 
@@ -263,7 +263,8 @@ records it.
 ## 4. Migration procedure for a project chat (`/hlm-migrate`)
 
 A project's own chat may migrate its legacy memory into **its own slug only** (D-246), following
-`docs/migration/PLAYBOOK.md` and its templates (`docs/migration/templates/`). Private artifacts stay in an ignored
+`docs/migration/PLAYBOOK.md` and its templates (`docs/migration/templates/`); the `hlm-migrate` skill walks the chat
+through it, and the `hlm-library` skill holds the operator's side. Private artifacts stay in an ignored
 private directory; rollback is PLAYBOOK §17. The chat cannot create a project: at F5 the operator creates the slug,
 grants the importing device `write` and takes the pre-import dump, after the owner's OK (PLAYBOOK §2).
 

@@ -259,30 +259,13 @@ Questions for you:
 1. <a decision only the owner can make, with the clues involved>
 ```
 
-## 6. Migration (protocol §4, `/hlm-migrate`)
+## 6. Migration (protocol §4)
 
-A project chat may migrate its legacy memory (auto-memory, serena, context files) into its **own slug only**,
-following `docs/migration/PLAYBOOK.md` (two tiers, source adapters, item formats, the kit tools) in the HLMemo
-repository; **[owner]** marks a gate that waits for the owner.
-Private artifacts stay in a gitignored directory (`git check-ignore -v`). There is no delete: rollback is the
-PLAYBOOK §17 (Rollback), run with the operator.
-
-0. **[owner]** The operator creates the slug and grants the importing device `write`; a chat cannot create a project.
-1. **Inventory** every agent-memory source; record secret hits by file and rule id, not by value.
-2. **Curate** each file as keep, drop or fix. Facts keep their wording; mark perishable statements and
-   conflicts; add provenance frontmatter; take `date:` from explicit text, else a marked estimate (PLAYBOOK §8).
-3. **Secret gate:** `gitleaks` 0 findings, the importer dry run `skipped 0`, and a manual grep for
-   credential-shaped assignments. Continue only when all three pass.
-4. **Local dry run** on a scratch database, and a `REVIEW.md`. Seal the truth set now: 10–20 questions including
-   a superseded value and a negative; its sha256 goes into `REVIEW.md`.
-5. **Chronological batches**, oldest first, every record of a file in one batch (PLAYBOOK §12 explains why).
-6. **[owner] OK on `REVIEW.md`.** Without it, stop. An auto-mode refusal of a prod write is correct; leave it standing.
-7. **Prod import** per batch: a dry run (only `new`), then the apply with `--keep-missing`; the operator checks
-   the queues once after the last batch. Stop on any `failed` or `rejected`, or on an unexpected `changed` or
-   `closed`.
-8. **Operator hand-off.** A different agent, without the curated set, answers the sealed questions through prod
-   `memory.query` / `memory.ask`: at least 0.80 correct, 0 superseded values stated as current, every negative
-   abstains. A failure is a finding, not a retry. Then the operator's curate pass and the **[owner]** AUDIT sign-off.
+Migrating a project's legacy memory (auto-memory, serena, `CLAUDE.md`, NotebookLM, repository notes) into its **own
+slug** has its own skill: load **`hlm-migrate`** and follow it. It follows `docs/migration/PLAYBOOK.md` in the HLMemo
+repository: owner decisions and the tier first, curated and dated items (facts hold only the present), a secret gate,
+a local rehearsal, a sealed review package, then production batches after the owner's OK, with the operator opening
+and closing the production side. Legacy files are migration material, not catch-up material (§5).
 
 ## 7. Boundaries: operator tools and privacy
 
