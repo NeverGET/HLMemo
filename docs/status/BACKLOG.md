@@ -68,6 +68,12 @@ Updated 2026-09-23. Source of each item in parentheses.
 
 - **remote_gates `postgres-closed` depends on the client network (2026-10-07, D-255).** On a mobile carrier that accepts TCP to any port, the client-side probe reports OPEN although the server listens on nothing there. Probe a control port that is known closed: if it also connects, report INCONCLUSIVE and rely on the server-side listener check.
 
+## Migration kit v1.2 candidates (2026-10-07, from the read-only NotebookLM scan)
+- **nlm-check signal `rich-text-no-angle`.** In the calibration notebook every note cut on NotebookLM's write path was saved in its rich-text form (escaped markdown) and contains no `<`. This rule matched the known cut set exactly (22/22, 0 false flags); the shipped heuristics caught 21/22 with 1 false flag. Notes that end in a URL caused both the miss and the false flag.
+- **URL-ending notes** must not count as `ends-mid-sentence`.
+- **Export fallback.** `nlm note list` (nlm 0.7.7) returned NOT_FOUND for some notebooks; the notebooklm MCP `note list` worked. Document it in PLAYBOOK §5.6.
+- The originals-based signals never fired in this scan, because notes are not copies of the files written alongside. Keep them; they help only when an agent wrote the same text into two stores.
+
 ## Migration kit v1.1 (2026-10-07): SHIPPED in D-261 (8003d1f); still open from it: a server-side warning when a stored body is shorter than the submitted one
 - **blindcheck `ask` loses the hlm MCP server (HIGH).** `--restricted` drops the user-scope server: every question comes back `no_call` and the step exits 0. Fix (tested privately): an hlm-only `--mcp-config` (a 0600 temp file, bearer from the environment) plus `--strict-mcp-config`; `ask` exits non-zero when nothing came back `ok`; the README names the venv python.
 - **Supersession markers in docs (generated from `explicit_supersession.MARKERS`, with a drift test):** PLAYBOOK §9 and the CURATION-SPEC template list every marker (replaces, superseded by, merged from, and instead of / rather than / yerine in decision rows), plus neutral wordings for partial changes.
