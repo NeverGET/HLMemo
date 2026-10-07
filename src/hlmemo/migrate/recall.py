@@ -40,7 +40,9 @@ def rank_of(hits: list[dict[str, Any]], files: set[str]) -> int | None:
     return None
 
 
-async def recall(call: Call, slug: str, rows: list[dict[str, Any]], *, k: int = 5) -> dict[str, Any]:
+async def recall(
+    call: Call, slug: str, rows: list[dict[str, Any]], *, k: int = 5, mask: Callable[..., str] = redact
+) -> dict[str, Any]:
     per: list[dict[str, Any]] = []
     hit = scored = 0
     for r in rows:
@@ -59,7 +61,7 @@ async def recall(call: Call, slug: str, rows: list[dict[str, Any]], *, k: int = 
                 "category": r.get("category"),
                 "rank": rank,
                 "evidence": res.get("evidence"),
-                "top": [redact(str(h.get("title") or ""))[:90] for h in hits[:3]],
+                "top": [mask(str(h.get("title") or ""), width=90) for h in hits[:3]],
             }
         )
     return {

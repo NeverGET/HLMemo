@@ -3,6 +3,7 @@
 
     blindcheck.py extract --dir W --truthset T.jsonl --sha256 SEAL --project SLUG
     blindcheck.py ask     --dir W --server URL --device NAME [--workers 2] [--cap 1.00] [--model M]
+                          [--keep-failed]
     blindcheck.py packets --dir W --truthset T.jsonl --sha256 SEAL [--seed N]
     (run_graders.sh W <grader-work-root>)
     blindcheck.py score   --dir W [--bar 0.80]
@@ -11,9 +12,11 @@ W is a PRIVATE work dir (0700). The steps are separate for isolation:
 - `extract` verifies the truth set's sealed sha256 and writes ONLY qid/project/question to W/questions.jsonl.
 - `ask` reads only questions.jsonl. Each question is asked ONCE through `memory.ask` on the `hlm` server at
   --server, by a headless `claude -p` relay. The raw tool_result is saved BY CODE from the stream-json output
-  (never retyped by a model, D-216), and the relay's tool input must equal the question verbatim. A failure is
-  a finding, not a retry. `ask` exits 1 when no question came back `ok`, or when any came back `no_call`,
-  `relay_mismatch` or `exception` (a broken relay must not look like a run: K4 friction).
+  (never retyped by a model, D-216), and the relay's tool input must equal the question verbatim. Within a
+  run a failure is a finding, not a retry. A re-run keeps the saved `ok` answers and asks the saved failures
+  again (`--keep-failed` keeps them as findings). `ask` exits 1 when no answer is `ok`, when an answer asked
+  now came back `no_call`, `relay_mismatch` or `exception` (a broken relay must not look like a run: K4
+  friction), or when the cap left a question unasked (`--cap` must be above 0).
   Relay isolation: `--restricted` (no user, project or local settings, so no hooks such as the SessionStart
   brief and no plugins; no code-running tools) with `--strict-mcp-config --mcp-config <file>`: the ONLY MCP
   server is `hlm` from a 0600 temp file whose header reads the bearer from the relay's environment
@@ -34,6 +37,7 @@ other category (fact, temporal, temporal-superseded, procedure, lesson, layer, .
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -74,9 +78,33 @@ grades-<n>.jsonl. Finish with a self-check: every code exactly once, valid grade
 
 
 def _write(path: Path, obj: object) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False, indent=1))
+    """Write a 0600 file, also over an older file with wider permissions: the text goes to a fresh 0600 temp
+    file beside it, which then replaces the target (an `os.open(..., 0o600)` keeps an existing file's mode;
+    review 117)."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False, indent=1))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def _private_dir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path, 0o700)
+    return path
+
+
+def _mask(text: str) -> str:
+    """The migration kit's masking (hlmemo.migrate.redact) for every line this tool prints or logs."""
+    _hlmemo()
+    from hlmemo.migrate.redact import redact
+
+    return redact(text)
 
 
 def _truth(path: Path, sha: str) -> list[dict]:
@@ -87,9 +115,7 @@ def _truth(path: Path, sha: str) -> list[dict]:
 
 
 def _workdir(path: str) -> Path:
-    w = Path(path).expanduser().resolve()
-    w.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return w
+    return _private_dir(Path(path).expanduser().resolve())
 
 
 # --------------------------------------------------------------------------- extract
@@ -149,9 +175,7 @@ def write_mcp_config(directory: Path, server: str) -> Path:
             }
         }
     }
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(cfg, f)
+    _write(p, json.dumps(cfg))
     return p
 
 
@@ -181,20 +205,42 @@ def relay_cmd(prompt: str, model: str, mcp_config: Path) -> list[str]:
     ]
 
 
-def ask_exit_code(statuses: list[str]) -> int:
-    """1 when nothing came back ok, or when any answer shows a broken relay; else 0."""
-    asked = [s for s in statuses if s != "exists"]
-    if not asked:
-        return 0
-    if "ok" not in asked or RELAY_BROKEN & set(asked):
+def ask_exit_code(asked: list[str], kept: list[str] | None = None, not_asked: int = 0) -> int:
+    """1 when a question was left unasked (the cap; `--cap 0` asks nothing), when no answer at all (asked now
+    or kept from an earlier run) is ok, or when an answer asked now shows a broken relay; else 0."""
+    if not_asked or "ok" not in [*asked, *(kept or [])] or RELAY_BROKEN & set(asked):
         return 1
     return 0
 
 
+def _answer_path(outdir: Path, qid: str) -> Path:
+    return outdir / (qid.replace(":", "__") + ".json")
+
+
+def stored_status(path: Path) -> str | None:
+    """The status of a saved answer; None when there is none (or it is unreadable: asked again)."""
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("status"))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def split_stored(qs: list[dict], outdir: Path, keep_failed: bool) -> tuple[list[dict], list[str]]:
+    """(questions to ask, statuses kept). A saved `ok` answer is kept; a saved failure (no_call, a tool
+    error, ...) is asked again unless --keep-failed keeps it as a finding (review 117)."""
+    queue: list[dict] = []
+    kept: list[str] = []
+    for q in qs:
+        status = stored_status(_answer_path(outdir, q["qid"]))
+        if status is not None and (status == "ok" or keep_failed):
+            kept.append(status)
+        else:
+            queue.append(q)
+    return queue, kept
+
+
 def _ask_one(q: dict, outdir: Path, relay_cwd: str, model: str, mcp_config: Path, token: str) -> dict:
-    out = outdir / (q["qid"].replace(":", "__") + ".json")
-    if out.exists():
-        return {"qid": q["qid"], "status": "exists"}
+    out = _answer_path(outdir, q["qid"])
     env = dict(
         os.environ,
         MCP_TOOL_TIMEOUT="180000",
@@ -259,9 +305,7 @@ def _ask_one(q: dict, outdir: Path, relay_cwd: str, model: str, mcp_config: Path
         "cost_usd": cost,
         "relay_rc": p.returncode,
     }
-    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(rec, f, ensure_ascii=False, indent=1)
+    _write(out, rec)  # replaces a saved failure that is asked again
     return {"qid": q["qid"], "status": status, "wall_s": rec["wall_s"], "cost_usd": cost}
 
 
@@ -274,22 +318,27 @@ def cmd_ask(a: argparse.Namespace) -> None:
         sys.exit("questions.jsonl must hold qid/project/question only (run `extract`)")
     if not a.server or not a.device:
         sys.exit("ask needs --server and --device (or HLM_SERVER_URL and HLM_DEVICE_NAME)")
+    if a.cap <= 0:
+        sys.exit("ask: --cap must be above 0 (a cap of 0 asks nothing)")
     token = relay_token(a.server, a.device)
     if not token:
         sys.exit(
-            f"no token for device {a.device!r} at {a.server} "
-            "(set HLM_DEVICE_TOKEN or store it in the keychain)"
+            _mask(
+                f"no token for device {a.device!r} at {a.server} "
+                "(set HLM_DEVICE_TOKEN or store it in the keychain)"
+            )
         )
-    outdir = w / "answers"
-    outdir.mkdir(exist_ok=True, mode=0o700)
+    outdir = _private_dir(w / "answers")
+    queue, kept = split_stored(qs, outdir, a.keep_failed)
     relay_cwd = tempfile.mkdtemp(prefix="hlm-relay-")
     mcp_dir = Path(tempfile.mkdtemp(prefix="hlm-relay-mcp-"))
     mcp_config = write_mcp_config(mcp_dir, a.server)
     statuses: list[str] = []
     lock = threading.Lock()
     state = {"spent": 0.0, "in_flight": 0, "not_asked": []}
-    queue = list(qs)
-    log = (w / "ask.log").open("a")
+    log_fd = os.open(w / "ask.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.fchmod(log_fd, 0o600)  # an older log keeps its mode otherwise
+    log = os.fdopen(log_fd, "a", encoding="utf-8")
 
     def worker() -> None:
         while True:
@@ -311,7 +360,7 @@ def cmd_ask(a: argparse.Namespace) -> None:
                 state["in_flight"] -= 1
                 state["spent"] += float(r.get("cost_usd") or 0.0)
                 r["spent_total"] = round(state["spent"], 6)
-                line = json.dumps(r, ensure_ascii=False)
+                line = _mask(json.dumps(r, ensure_ascii=False))
                 print(line, flush=True)
                 log.write(line + "\n")
                 log.flush()
@@ -324,19 +373,26 @@ def cmd_ask(a: argparse.Namespace) -> None:
             t.join()
     finally:
         shutil.rmtree(mcp_dir, ignore_errors=True)
+        log.close()
     _write(
         w / "spend.json",
         {"spent_usd": round(state["spent"], 6), "cap_usd": a.cap, "not_asked": state["not_asked"]},
     )
     counts = {s: statuses.count(s) for s in sorted(set(statuses))}
-    print(
-        json.dumps({"spent_usd": round(state["spent"], 6), "not_asked": state["not_asked"], "status": counts})
-    )
-    code = ask_exit_code(statuses)
+    kept_counts = {s: kept.count(s) for s in sorted(set(kept))}
+    summary = {
+        "spent_usd": round(state["spent"], 6),
+        "not_asked": state["not_asked"],
+        "status": counts,
+        "kept": kept_counts,
+    }
+    print(_mask(json.dumps(summary)))
+    code = ask_exit_code(statuses, kept, len(state["not_asked"]))
     if code:
         print(
-            "ask: FAILED: no answer came back ok, or the relay broke (no_call / relay_mismatch / exception); "
-            "check --server/--device and that `claude` can reach the hlm server",
+            "ask: FAILED: no answer is ok, the relay broke (no_call / relay_mismatch / exception), or the "
+            "cap left questions unasked; check --server/--device, that `claude` can reach the hlm server, "
+            "and --cap",
             file=sys.stderr,
         )
     sys.exit(code)
@@ -351,7 +407,7 @@ def cmd_packets(a: argparse.Namespace) -> None:
     }
     project = next(iter(qs.values()))["project"] if qs else ""
     gold = {f"{project}:{d['id']}": d for d in _truth(Path(a.truthset).expanduser(), a.sha256)}
-    (w / "packets").mkdir(exist_ok=True, mode=0o700)
+    _private_dir(w / "packets")
     rng = random.Random(a.seed)
     alphabet = "ABCDEFGJKMNPQRSTUVWXYZ23456789"
     key: dict[str, dict] = {}
@@ -512,6 +568,11 @@ def main() -> None:
         "--device",
         default=os.environ.get("HLM_RELAY_DEVICE") or os.environ.get("HLM_DEVICE_NAME"),
         help="the device whose token the relay uses (default: HLM_RELAY_DEVICE or HLM_DEVICE_NAME)",
+    )
+    k.add_argument(
+        "--keep-failed",
+        action="store_true",
+        help="keep saved failed answers as findings (default: a re-run asks them again)",
     )
     p = sub.add_parser("packets")
     p.add_argument("--dir", required=True)

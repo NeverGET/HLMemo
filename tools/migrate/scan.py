@@ -23,15 +23,28 @@ from pathlib import Path
 
 try:
     from hlmemo.migrate import scan as scanmod
+    from hlmemo.migrate.redact import redact
     from hlmemo.migrate.spec import SpecError, load_spec
 except ImportError:  # run from a checkout without the package installed: use its src/
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
     from hlmemo.migrate import scan as scanmod
+    from hlmemo.migrate.redact import redact
     from hlmemo.migrate.spec import SpecError, load_spec
+
+EX_USAGE = 64
+
+
+class _Parser(argparse.ArgumentParser):
+    """argparse exits 2 on a usage error; this tool documents 64 (review 117)."""
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        print(f"{self.prog}: error: {message}", file=sys.stderr)
+        sys.exit(EX_USAGE)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = _Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--spec", required=True, help="the migration.toml of this migration")
     ap.add_argument("--known-values", help="a 0600 file of literal values that must not appear")
     ap.add_argument("--json", action="store_true", help="print JSON")
@@ -39,14 +52,14 @@ def main() -> int:
     try:
         spec = load_spec(a.spec)
     except SpecError as exc:
-        print(f"spec: {exc}", file=sys.stderr)
-        return 64
-    kv_path = Path(a.known_values).expanduser() if a.known_values else scanmod.default_known_values()
+        print(redact(f"spec: {exc}"), file=sys.stderr)
+        return EX_USAGE
+    kv_path = Path(a.known_values).expanduser() if a.known_values else scanmod.known_values_file()
     try:
         known = scanmod.load_known_values(kv_path) if kv_path else ()
     except (OSError, PermissionError) as exc:
         print(f"known values: {exc}", file=sys.stderr)
-        return 64
+        return EX_USAGE
     hits, stats = scanmod.scan(spec, known)
     if a.json:
         print(
