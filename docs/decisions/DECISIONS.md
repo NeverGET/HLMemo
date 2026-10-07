@@ -2371,3 +2371,9 @@ D-257 | 2026-10-07 | ACCEPTED (owner: residual Redactor risk accepted 2026-10-07
     - Preflight: the summary lines.
   - The existing risk-related tests pass.
 - **Docs.** Protocol R18 and the §6 digest line ("Read warnings and dropped_by_judge"); the hlmemo and hlm-library skills; the tool description; the CLI preflight line; BACKLOG. The 1/3 judge timeouts stay open.
+D-258 | 2026-10-07 | ACCEPTED (operator deployed with the owner's standing permission) | **Release 3066ebd (D-257, risk_check `dropped_by_judge`) is live, and the test-drive failure is reproduced and resolved in production.**
+
+- The operator deployed with its private deploy wrapper, the first operator-run deploy; the project allows it. There was no compose or migration change.
+- Gates (`--no-drill`): 9 PASS, drill SKIP, and `postgres-closed` FAIL as the known carrier-network false positive (D-255; control port 31337 also showed OPEN; server-side `host-listeners=0`).
+- **Live reproduction of the test-drive task.** With the primary judge, the verdict was still `no_matching_evidence` because the judge took the step as complied. `dropped_by_judge` now lists the applying lesson first, with the hint to drill it. With the fallback judge on a task without the bump, the verdict is `warn` on the same lesson. In retrieval-only mode (judge timeout), the lesson is the first warning.
+- Still open: the judge timeouts (BACKLOG), and the Redactor gap the owner accepted as a residual risk (BACKLOG).
