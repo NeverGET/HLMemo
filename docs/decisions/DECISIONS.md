@@ -2389,3 +2389,16 @@ D-260 | 2026-10-07 | ACCEPTED (owner) | **The second project-chat migration (D-2
 - Post-import proposals were checked as in D-253 (two verifier agents, a code check, operator review). None needed a link or a correction: the "contradiction" label found no real contradiction again, and a few proposals paired items across unrelated projects. All were withdrawn in one event with the kit's fail-closed `withdraw.sh`, its first real use. Details are kept privately.
 - Cross-project proposals stay enabled for now (owner); they will be re-judged with the deferred precision re-measure.
 - Next: migration kit v1.1 (BACKLOG), so the next migration starts with this run's gaps closed.
+D-261 | 2026-10-07 | ACCEPTED (owner asked for v1.1; operator deployed) | **Migration kit v1.1 ships from the second migration's feedback, and release 8003d1f restores the tools/list budget.**
+
+- **Tools.**
+  - `hlm migrate markers`: the supersession marker table generated from the code; PLAYBOOK §9 embeds it, guarded by a drift test.
+  - `roundtrip`: a verbatim compare after import. `containment`: 8-word shingles. `nlm-check`: detects NotebookLM notes truncated on write. `card`: the o200k count of a card draft.
+  - `tools/migrate/scan.py`: personal-data and credential scan with a known-value compare and masked output.
+  - Lint now warns on a one-entry episode titled by its file name, size limits, scope tags, `exclude` globs and owner-decision ids.
+  - Also: `local_stack.sh up --embed`, `hlm query --project`, read-only prod verify without the write flag, and the blind-check relay keeping the hlm server.
+- **Review** (consult 117, Astra low): NO-GO with 5 HIGH and 3 MEDIUM. Most were personal data printed unmasked; one was blind-check files left at 0644. All are fixed with the reviewer's triggers as tests. One masking function now covers every kit output.
+- **PLAYBOOK v1.1.** Added: resumed stores, team projects, the personal-data gate, a reviewer-agnostic consult, NotebookLM truncation, gold verification before sealing (a miss caused by a wrong gold may be re-graded, with both scores kept) and a Full-tier effort line. Owner decisions use `OD-nn`.
+- **Regression fixed.** D-257's longer risk tool description took tools/list to 3008 o200k tokens against the 3000 G-SURF budget; it is now 2998. It shipped in 3066ebd and is fixed live in 8003d1f.
+- **Deploy.** 8003d1f by the operator; gates 9 PASS, and `postgres-closed` FAILed again as the known carrier false positive (D-255).
+- **Owner note (NotebookLM).** The second migration found notes cut at their first `<` on NotebookLM's write path. Other NotebookLM-first projects may have the same silent loss; `nlm-check` can scan them read-only.
