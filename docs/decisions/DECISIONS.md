@@ -2349,7 +2349,9 @@ D-257 | 2026-10-07 | PROPOSED (release candidate; dual review and the deploy pen
   - Privacy-withheld candidates are excluded: the judge never saw them, and they warn at `TAU_STRICT` as before.
   - Each `why` is a deterministic sentence (kind, lists, score), never judge or memory text, because the judge gives no reason for a candidate it does not match. The title passes the librarian's redaction (`librarian/redact.py`), and a strong secret shape that survives it is masked whole.
   - The list comes from the same candidate set and passes the same D-062 visibility re-check as the warnings.
-  - Packing: the warnings pack exactly as before this change. Only when no warning was omitted are `dropped_by_judge` (a best-first prefix) and `dropped_omitted` (its own counter) added, in the room left. Both fields are left out when not even one entry fits.
+  - Packing: the warnings pack exactly as before this change. Only when no warning was omitted are `dropped_by_judge` (a best-first prefix) and `dropped_omitted` (its own counter) added, in the room left.
+  - When not even one entry fits, only `dropped_omitted: N` is added, so the caller can tell that a larger budget would show N more. The CLI preflight then asks for a larger `token_budget`.
+  - Edge case: when even that counter does not fit, both fields are left out.
   - Retrieval-only results carry neither field.
 - **Unchanged for every input:** `verdict`, `judged`, `judge` and the closed verdict set. `warnings`, `omitted` and `E_BUDGET_TOO_SMALL` are also unchanged, because the warnings pack before the new fields exist; a unit test compares against the pre-change packing code over many shapes and budgets. G-LIVE-C (catch and false-warn rates) therefore measures the same thing.
 - **Review 115** (Astra low, Sol xhigh; round 1 NO-GO), all fixed with tests:
@@ -2358,6 +2360,10 @@ D-257 | 2026-10-07 | PROPOSED (release candidate; dual review and the deploy pen
   - MEDIUM: tests for privacy-withheld (device-scoped, `librarian: off`) and closed lessons.
   - LOW: the CLI preflight summary named "no matching past lesson" even when dropped lessons were listed.
   - LOW: the contract text for `why`.
+- **Review 116** (round 2, the last), fixed with tests:
+  - MEDIUM: when no dropped entry fit the budget, the information was lost. The counter is now kept.
+  - LOW: the preflight line now tells listed matches apart from budget-cut ones.
+- **Residual risk for the owner (review 116 HIGH, not fixed in this release).** The librarian `Redactor` misses JSON-style assignments and quoted multi-word passphrases. A memory title like `password="Correct Horse …"` therefore shows unredacted in `dropped_by_judge`. That is the same exposure the caller already has through `warnings` and `memory.query`, which return the same visible titles. The gap is in the pre-existing Redactor, which also guards LLM prompts, so it is fixed there separately (BACKLOG: "Redactor: JSON-style and quoted multi-word secret assignments"). PV-1 already refuses the strong key shapes at write time.
 - **Checked.**
   - 29 new tests: 8 integration, 18 unit, 3 preflight.
     - Integration: the test-drive shape, retrieval-only and judge-failure results without the fields, matched lessons not listed, budget fill after the warnings, ungranted and other-class lessons, privacy-withheld lessons above the threshold, a grant revoked during the judge, and a lesson closed during the judge.

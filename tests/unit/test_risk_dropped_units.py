@@ -139,8 +139,28 @@ def test_warnings_and_budget_errors_match_the_pre_change_packing(n_warn: int, wa
             assert n["omitted"] == 0 and n["dropped_by_judge"], n  # only after every warning, never empty
             assert n["dropped_by_judge"] == dropped[: len(n["dropped_by_judge"])], n  # a best-first prefix
             assert len(n["dropped_by_judge"]) + n["dropped_omitted"] == len(dropped), n
-        else:
-            assert "dropped_omitted" not in n and n == {**o, "budget": n["budget"]}, (budget, n)
+        elif "dropped_omitted" in n:  # review 116: no entry fit, the counter tells the caller
+            assert n["omitted"] == 0 and n["dropped_omitted"] == len(dropped), n
+            rest = {k: v for k, v in n.items() if k not in ("dropped_omitted", "budget")}
+            assert rest == {k: v for k, v in o.items() if k != "budget"}, (budget, n)
+        else:  # the documented edge: not even the counter fits, or a warning was omitted
+            assert n == {**o, "budget": n["budget"]}, (budget, n)
+            if n["omitted"] == 0:
+                trial = {**o, "dropped_omitted": len(dropped)}
+                assert Meter().settle(trial, budget) > budget, budget
+
+
+def test_no_entry_fits_yet_the_counter_is_kept() -> None:
+    """Review 116 (Sol): a 200-character Japanese title at budget 256 fits no dropped entry; the
+    counter still tells the caller the judge left matches out."""
+    title = "".join(chr(0x3042 + (i % 80)) for i in range(200))  # hiragana: many tokens per character
+    entry = {"clue": "v9", "title": title, "why": "w " * 40, "source_project": "demo"}
+    env = {**_env(), "verdict": "no_matching_evidence"}
+    old = _old_pack(dict(env), 256, [])
+    out = rs._pack(_Deps(), dict(env), 256, [], [entry])
+    assert "dropped_by_judge" not in out and out["dropped_omitted"] == 1, out
+    assert (out["warnings"], out["omitted"]) == (old["warnings"], old["omitted"])
+    assert Meter().count(out) <= out["budget"]["used"] <= 256
 
 
 def test_pack_fills_the_dropped_list_when_there_is_room() -> None:

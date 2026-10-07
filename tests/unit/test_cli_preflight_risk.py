@@ -185,13 +185,29 @@ def test_judged_no_match_with_dropped_lessons_names_them() -> None:
     }
     p = build_prompt(query_ok(), project="p", device="d", queried_at="t", task="x", risk=risk)
     assert "found no matching past lesson" not in p
-    assert "retrieval found 3 that the judge did not match (dropped_by_judge" in p and "read them" in p
+    # review 116: listed and budget-cut counts are told apart
+    assert "lists 2 retrieved lesson(s) the judge did not match (1 more did not fit the budget)" in p
+    assert "read them" in p
+
+
+def test_judged_no_match_with_only_the_counter_asks_for_a_larger_budget() -> None:
+    """Review 116: no dropped entry fit the budget; only dropped_omitted came back."""
+    risk = {
+        **RISK_WARN,
+        "verdict": "no_matching_evidence",
+        "warnings": [],
+        "omitted": 0,
+        "dropped_omitted": 2,
+    }
+    p = build_prompt(query_ok(), project="p", device="d", queried_at="t", task="x", risk=risk)
+    assert "found no matching past lesson" not in p
+    assert "did not match 2 retrieved lesson(s) that did not fit the budget: raise token_budget" in p
 
 
 def test_warn_line_mentions_dropped_lessons_too() -> None:
-    risk = {**RISK_WARN, "judged": True, "judge": "ok", "dropped_by_judge": _DROPPED}
+    risk = {**RISK_WARN, "judged": True, "judge": "ok", "dropped_by_judge": _DROPPED, "dropped_omitted": 2}
     p = build_prompt(query_ok(), project="p", device="d", queried_at="t", task="x", risk=risk)
-    assert "flagged" in p and "It also lists 1 retrieval match(es) the judge left out" in p
+    assert "flagged" in p and "lists 1 retrieved lesson(s) the judge did not match (2 more did not fit" in p
 
 
 def test_librarian_block_rendered_and_trimmed() -> None:

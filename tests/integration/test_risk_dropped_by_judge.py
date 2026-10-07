@@ -125,8 +125,8 @@ async def test_budget_packing_fills_the_dropped_list_after_the_warnings(connect,
             used = out["budget"]["used"]
             assert meter.count(out) <= used <= budget, (budget, out)
             listed = out.get("dropped_by_judge")
-            if listed is None:  # no room for even one entry: both fields left out
-                assert "dropped_omitted" not in out, out
+            if listed is None:  # no room for one entry: the counter alone, or (no room even for it) nothing
+                assert out.get("dropped_omitted", total) == total, out
                 continue
             assert out["omitted"] == 0 and listed, out  # only after every warning, never empty
             assert len(listed) + out["dropped_omitted"] == total, out

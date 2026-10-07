@@ -157,6 +157,20 @@ def _count(value: Any) -> int:
     return 0
 
 
+def _dropped_note(listed: int, more: int) -> str:
+    """How many retrieval matches the judge left out: listed in the block vs cut by the budget."""
+    if not listed:
+        return (
+            f"The judge did not match {more} retrieved lesson(s) that did not fit the budget: "
+            "raise token_budget and check again before acting."
+        )
+    note = f"dropped_by_judge in the hlmemo-risk block lists {listed} retrieved lesson(s)"
+    note += " the judge did not match"
+    if more:
+        note += f" ({more} more did not fit the budget)"
+    return note + ": read them and decide whether they apply before acting."
+
+
 def risk_line(risk: dict[str, Any] | None, risk_error: str | None) -> str | None:
     """The wrapper's own (trusted) one-line summary of memory.risk_check; None when not run."""
     if risk_error is not None:
@@ -169,21 +183,16 @@ def risk_line(risk: dict[str, Any] | None, risk_error: str | None) -> str | None
         reason = re.sub(r"[^a-z_]", "", str(risk.get("reason") or ""))[:32] or "unknown"
         how = f"RETRIEVAL ONLY, not judged by the librarian LLM ({reason})"
     n = _count(risk.get("warnings")) + _count(risk.get("omitted"))
-    dropped = _count(risk.get("dropped_by_judge")) + _count(risk.get("dropped_omitted"))
+    listed, more = _count(risk.get("dropped_by_judge")), _count(risk.get("dropped_omitted"))
     if risk.get("verdict") == "warn" and n:
         line = (
             f"memory.risk_check flagged {n} past lesson(s) for this task ({how}; see the hlmemo-risk "
             "block): check whether they apply before acting and drill their clues if unsure."
         )
-        if dropped:
-            line += f" It also lists {dropped} retrieval match(es) the judge left out (dropped_by_judge)."
-        return line
-    if dropped:  # the judge matched none, yet retrieval found some: the writer reads them (consult 115)
-        return (
-            f"memory.risk_check: the librarian judge matched no past lesson ({how}), but retrieval found "
-            f"{dropped} that the judge did not match (dropped_by_judge in the hlmemo-risk block): read them "
-            "and decide whether they apply before acting."
-        )
+        return line + (f" {_dropped_note(listed, more)}" if listed or more else "")
+    if listed or more:  # the judge matched none, yet retrieval found some (consults 115, 116)
+        head = f"memory.risk_check: the librarian judge matched no past lesson ({how})."
+        return f"{head} {_dropped_note(listed, more)}"
     return (
         f"memory.risk_check found no matching past lesson for this task ({how}; not a guarantee of safety)."
     )

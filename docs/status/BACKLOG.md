@@ -2,6 +2,7 @@
 Updated 2026-09-23. Source of each item in parentheses.
 
 ## Security / availability (authenticated or low impact)
+- **Redactor: JSON-style and quoted multi-word secret assignments (2026-10-07, review 116, D-257).** `librarian/redact.py` stops an assignment value at whitespace and does not read JSON-style keys, so `"password": "…"` and a quoted multi-word passphrase pass unredacted into LLM prompts and into risk_check's redacted titles. Extend the assignment rule to quoted values (single, double, JSON) up to the closing quote, with tests for false positives on prose.
 - A revoked device's in-flight upload keeps its body budget until the body deadline (≤ 8222 s); abort in-flight reads on revoke (consults/28).
 - A trusted device can hold 64 MiB per request for ~2 h 17 min with a slow chunked upload (two requests → per-client 128 MiB; two client keys → global 256 MiB). Owner-only lever; consider per-device body budget and shorter total cap for chunked bodies (consults/28).
 - Gate pool wait capped at 250 ms → 503 under >8 concurrent legitimate requests (previously queued up to 5 s); tune pool size / wait (consults/28).

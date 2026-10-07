@@ -53,7 +53,9 @@ the rest); ``E_BUDGET_TOO_SMALL`` only if the envelope without warnings does not
 pack exactly as they did before ``dropped_by_judge`` existed, so ``warnings``, ``omitted`` and the
 budget errors are unchanged for every input. Only then, if no warning was omitted, the dropped list
 is added in the room left: ``dropped_by_judge`` (a best-first prefix) and ``dropped_omitted`` (the
-entries that did not fit, its own counter). When not even one entry fits, both fields are left out.
+entries that did not fit, its own counter). When not even one entry fits, only ``dropped_omitted``
+is added (no list): the caller learns that a larger budget would show N more matches. When even
+that counter does not fit, both fields are left out (the one case a caller cannot tell).
 """
 
 from __future__ import annotations
@@ -313,8 +315,10 @@ def _pack(
 def _pack_dropped(
     meter: Any, envelope: dict[str, Any], budget: int, dropped: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Adds ``dropped_by_judge`` / ``dropped_omitted`` only in the room the packed warnings left:
-    on a copy, so when not even one entry fits the envelope stays exactly as the warnings left it."""
+    """Adds ``dropped_by_judge`` / ``dropped_omitted`` only in the room the packed warnings left,
+    on a copy. When not even one entry fits, only the counter is added (``dropped_omitted: N``, no
+    list), so a caller can tell the judge left out N matches that need a larger budget (review 116).
+    Edge: when even the counter does not fit, the envelope stays exactly as the warnings left it."""
     trial = dict(envelope)
     trial["dropped_by_judge"] = []
     trial["dropped_omitted"] = len(dropped)
@@ -329,9 +333,16 @@ def _pack_dropped(
     try:
         base = meter.settle(trial, budget)
         n, _ = pack_prefix(meter, trial, budget, len(dropped), apply, lambda k: base + prefix[k])
-    except BudgetError:  # even the empty fields do not fit: leave them out
-        return envelope
-    return trial if n > 0 else envelope
+    except BudgetError:  # not even the empty list fits
+        n = 0
+    if n > 0:
+        return trial
+    counter_only = dict(envelope)
+    counter_only["dropped_omitted"] = len(dropped)
+    if meter.settle(counter_only, budget) <= budget:
+        return counter_only
+    meter.settle(envelope, budget)  # the envelope as the warnings left it, budget block exact
+    return envelope
 
 
 async def _recheck(conn: AsyncConnection, ctx: AuthContext, slug: str, version_ids: list[int]) -> set[int]:
