@@ -2324,3 +2324,19 @@ D-255 | 2026-10-07 | ACCEPTED (owner deployed) | **Release 80f4f70 (PV-1..PV-5, 
   - PV-4: `E_FORBIDDEN_PROJECT` `reserved_project` on `hlm-librarian`.
   - PV-3: `blank` on a whitespace title.
 - A query afterwards shows none of the probes stored. PV-2 was not probed live; its unit and integration tests cover it, and a mistaken accept would have written a hiding link.
+D-256 | 2026-10-07 | ACCEPTED (owner approved the plan) | **The migration kit ships: public tools (`hlm migrate`, `tools/migrate/`), the PLAYBOOK with two tiers and templates, and two skills (`hlm-migrate` for project chats, `hlm-library` for the operator).**
+
+- Built from the first project-chat migration's retrospective (private), so the next migration starts with the curation rules, layout, seal, batching, review package and post-import steps that the pilot had to invent or ask about.
+- **K1 tools.**
+  - `hlm migrate plan|lint|seal [--verify]|run --target local|prod [--batch B] [--apply] [--resume]|verify|recall` with a `migration.toml` spec.
+  - Per-file batches (D-248). An apply writes exactly the plan whose dry run was checked, re-reading the open keys first. Prod needs `HLM_MIGRATE_ALLOW_PROD=1` and a seal over exactly the files the importer reads.
+  - Diagnostics never print a value that matches a secret rule.
+  - `tools/migrate/` holds the local stack, the blind-check pipeline (an isolated relay, graders that fail loudly) and the fail-closed withdraw (one snapshot of the ids).
+  - Review (consult 113, Astra low): NO-GO with 4 HIGH, 2 MEDIUM and 1 LOW, all fixed with reproducing tests.
+- **K2 PLAYBOOK.**
+  - Two tiers. Light covers small agent-memory sources. Full applies with a NotebookLM notebook, research results, earlier projects' lessons, about 100+ items, or layered legacy memory.
+  - Layered legacy memory: take fine-grained originals before a freeze date and the newer store's notes after it; bundles serve only as a cross-check.
+  - Also included: source adapters, item formats, dates, supersession wording, the secret gate, rehearsal, seal, the truth set and blind check, post-import steps, rollback, a pitfalls table, the first 30 minutes, and templates.
+  - TEMPLATE now points to the PLAYBOOK.
+- **K3 skills.** `hlm-migrate` walks a project chat through the tiers, phases and hand-offs. `hlm-library` writes down the operator procedures run by hand on 2026-10-06/07: proposal verification and withdraw, links, cards, doc sync, post-import duties, test-drive triage, releases and deploys. The hlmemo skill and protocol §4 point to them.
+- Next (K4): the kit's first real run is the next migration the owner chose: a NotebookLM project with layered legacy memory, Full tier.
