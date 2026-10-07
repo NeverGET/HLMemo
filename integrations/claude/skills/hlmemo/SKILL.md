@@ -262,19 +262,20 @@ Questions for you:
 ## 6. Migration (protocol §4, `/hlm-migrate`)
 
 A project chat may migrate its legacy memory (auto-memory, serena, context files) into its **own slug only**,
-following `docs/migration/TEMPLATE.md` in the HLMemo repository; **[owner]** marks a gate that waits for the owner.
+following `docs/migration/PLAYBOOK.md` (two tiers, source adapters, item formats, the kit tools) in the HLMemo
+repository; **[owner]** marks a gate that waits for the owner.
 Private artifacts stay in a gitignored directory (`git check-ignore -v`). There is no delete: rollback is the
-TEMPLATE's "Rollback" section, run with the operator.
+PLAYBOOK §17 (Rollback), run with the operator.
 
 0. **[owner]** The operator creates the slug and grants the importing device `write`; a chat cannot create a project.
 1. **Inventory** every agent-memory source; record secret hits by file and rule id, not by value.
 2. **Curate** each file as keep, drop or fix. Facts keep their wording; mark perishable statements and
-   conflicts; add provenance frontmatter; take `date:` from explicit text, else a marked estimate (TEMPLATE §4a).
+   conflicts; add provenance frontmatter; take `date:` from explicit text, else a marked estimate (PLAYBOOK §8).
 3. **Secret gate:** `gitleaks` 0 findings, the importer dry run `skipped 0`, and a manual grep for
    credential-shaped assignments. Continue only when all three pass.
 4. **Local dry run** on a scratch database, and a `REVIEW.md`. Seal the truth set now: 10–20 questions including
    a superseded value and a negative; its sha256 goes into `REVIEW.md`.
-5. **Chronological batches**, oldest first, every record of a file in one batch (TEMPLATE §4a explains why).
+5. **Chronological batches**, oldest first, every record of a file in one batch (PLAYBOOK §12 explains why).
 6. **[owner] OK on `REVIEW.md`.** Without it, stop. An auto-mode refusal of a prod write is correct; leave it standing.
 7. **Prod import** per batch: a dry run (only `new`), then the apply with `--keep-missing`; the operator checks
    the queues once after the last batch. Stop on any `failed` or `rejected`, or on an unexpected `changed` or
