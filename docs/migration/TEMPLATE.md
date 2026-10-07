@@ -146,7 +146,7 @@ Memory is bi-temporal and append-only; there is no "delete project". Retire in t
 3. **Correct single items**: re-import the fixed curated file (one revision, the old version stays as history).
 4. **Erase** (a leaked secret or personal data): not possible through the API, because history is kept by design. It needs an
    owner decision and an operator procedure on the server: restore from the pre-import database dump (the deploy scripts take one per
-   deploy, and an operator can take one before the import), or a manual database purge plus re-embedding. Plan the dump BEFORE step 6.
+   deploy, and an operator can take one before the import), or a manual database purge plus re-embedding. Plan the dump BEFORE step 6. Every deploy prunes `pre-upgrade/` to its newest 5 dumps (`backup.sh --prune-pre-upgrade`), so copy the pre-import dump to `/var/backups/hlmemo/migration/` (not rotated) right after the import, and verify the copy's sha256.
 Afterwards record what was retired and why in a `D-` entry and fix the protocol step that let it through.
 
 ## Artifact map (per project)
