@@ -539,5 +539,164 @@ def test_ask_exit_code_fails_a_broken_relay() -> None:
     assert bc.ask_exit_code(["no_call"] * 18) == 1  # K4: everything no_call used to exit 0
     assert bc.ask_exit_code(["ok", "ok", "relay_mismatch"]) == 1
     assert bc.ask_exit_code(["ok", "tool_error"]) == 0  # a server-side error is a finding, not a broken relay
-    assert bc.ask_exit_code(["exists", "exists"]) == 0
+    assert bc.ask_exit_code([], ["ok", "ok"]) == 0  # a re-run that kept every saved ok answer
     assert bc.ask_exit_code(["tool_error"]) == 1
+
+
+# --------------------------------------------------------------------------- review 117
+EMAIL = "alice" + "@" + "example.org"
+
+
+def _fragments(value: str, n: int = 10) -> list[str]:
+    return [value[i : i + n] for i in range(0, len(value) - n + 1)]
+
+
+def test_redact_masks_a_value_that_is_the_whole_text_and_masks_before_the_cut() -> None:
+    from hlmemo.migrate.redact import redact
+
+    assert redact(EMAIL, known=()) == "<EMAIL>"
+    assert redact("Kişi-7731", known=["Kişi-7731"]) == "<KNOWN>"
+    tok = "ghp_" + _rand(string.ascii_letters + string.digits, 36, seed=21)
+    for cut in range(1, 40):  # every cut position through the token
+        out = redact("x" * 29 + " " + tok + " tail", known=(), width=30 + cut)
+        assert not any(f in out for f in _fragments(tok)), (cut, out)
+
+
+def test_scan_masks_a_line_that_is_only_the_value(tmp_path: Path) -> None:
+    secret_value = "Pa55-" + _rand(string.ascii_letters, 10, seed=13)
+    p = _good(tmp_path, more={"status/api/api-contact.md": FACT + EMAIL + "\n" + secret_value + "\n"})
+    hits, _stats = scanmod.scan(load_spec(p), (secret_value,))
+    by_rule = {h.rule: h.context for h in hits}
+    assert by_rule["email"] == "<EMAIL>" and by_rule["known"] == "<KNOWN>"
+    dump = json.dumps([h.__dict__ for h in hits])
+    assert EMAIL not in dump and secret_value not in dump
+
+
+def test_roundtrip_mismatch_never_shows_an_address_or_a_cut_token() -> None:
+    d = compare("markdown:status/x.md", f"{EMAIL} A", f"{EMAIL} B")
+    assert d is not None and EMAIL not in json.dumps(d) and d["sent_context"] != d["stored_context"]
+    tok = "ghp_" + _rand(string.ascii_letters + string.digits, 36, seed=22)
+    # the first difference sits 41 characters after the token's start: a raw 40-character window would
+    # begin inside the token and cut its prefix off, so the rest no longer matched the secret rule
+    d = compare("markdown:status/x.md", "a " + tok + " A", "a " + tok + " B")
+    assert d is not None and not any(f in json.dumps(d) for f in _fragments(tok))
+    d = compare("k", f"a {tok} z", "a ghp_" + _rand(string.ascii_letters + string.digits, 36, seed=23) + " z")
+    assert d is not None and d["sent_context"] == "<the difference is inside a masked value>"
+
+
+def test_nlm_check_masks_titles_and_shows_originals_relative(tmp_path: Path) -> None:
+    notes = tmp_path / "export" / "notes"
+    notes.mkdir(parents=True)
+    head = "The animation hook keeps the offset in a shared value typed as SharedValue"
+    (notes / "cut.md").write_text(f'---\ntitle: "Contact {EMAIL} about the hook"\n---\n{head}')
+    orig = tmp_path / EMAIL
+    orig.mkdir()
+    (orig / "anim.md").write_text(head + "<number> and updates it on every frame. " + "More text. " * 30)
+    flags, _ = nlm_check(tmp_path / "export", [orig])
+    assert flags and "<EMAIL>" in flags[0].title and flags[0].original == "<EMAIL>/anim.md"
+    res = CliRunner().invoke(
+        migrate_app, ["nlm-check", "--export", str(tmp_path / "export"), "--originals", str(orig), "--json"]
+    )
+    assert res.exit_code == 1 and EMAIL not in res.output and str(tmp_path) not in res.output
+
+
+def test_lint_masks_a_tag_value_and_the_spec_patterns(tmp_path: Path) -> None:
+    acct = "ACC-" + "12345678"
+    leaky = FACT.replace("tags: [api]", f"tags: [api, {EMAIL}, {acct}]")
+    p = _good(
+        tmp_path,
+        extra='[[scan.patterns]]\nid = "account"\nregex = "ACC-[0-9]{8}"\nmask = "<ACCOUNT>"\n',
+        more={"status/api/api-cache-ttl.md": leaky},
+    )
+    spec = load_spec(p)
+    res = lint(spec, load(spec))
+    text = "\n".join(res.errors + res.warnings)
+    assert "<EMAIL>" in text and "<ACCOUNT>" in text
+    assert EMAIL not in text and acct not in text
+    out = CliRunner().invoke(migrate_app, ["lint", "--spec", str(p)])
+    assert EMAIL not in out.output and acct not in out.output
+
+
+def test_recall_titles_are_masked(tmp_path: Path) -> None:
+    from hlmemo.migrate.recall import recall
+
+    async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {"hits": [{"title": f"Mail {EMAIL} " + "x" * 120, "path": "status/a.md"}], "evidence": "ok"}
+
+    rows = [{"id": "q1", "question": "who?", "category": "fact", "quotes": [{"file": "a.md"}]}]
+    out = asyncio.run(recall(call, "kit-test", rows))
+    assert EMAIL not in json.dumps(out) and out["rows"][0]["top"][0].startswith("Mail <EMAIL>")
+
+
+def test_key_path_rule_is_linear_on_a_2mb_line() -> None:
+    import time
+
+    from hlmemo.migrate.redact import find, redact
+
+    for line in ("a" * 2_000_000, "a." * 1_000_000, "/x" * 1_000_000):
+        t0 = time.perf_counter()
+        find(line, known=())
+        assert time.perf_counter() - t0 < 0.5
+    assert redact("key at certs/AuthKey_ABC123.p8 and ~/.ssh/id_ed25519 here", known=()) == (
+        "key at <KEYPATH> and <KEYPATH> here"
+    )
+
+
+def test_blindcheck_files_end_0600_even_over_older_wider_files(tmp_path: Path) -> None:
+    bc = _blindcheck()
+    w = tmp_path / "w"
+    truth = tmp_path / "truth.jsonl"
+    truth.write_text(
+        json.dumps({"id": "q1", "question": "Q?", "gold": "G", "category": "fact", "lang": "en"}) + "\n"
+    )
+    import argparse
+    import hashlib
+
+    sha = hashlib.sha256(truth.read_bytes()).hexdigest()
+    w.mkdir(mode=0o755)
+    (w / "packets").mkdir(mode=0o755)
+    for name in ("questions.jsonl", "key.json"):
+        (w / name).write_text("{}")
+        (w / name).chmod(0o644)
+    bc.cmd_extract(argparse.Namespace(dir=str(w), truthset=str(truth), sha256=sha, project="kit-test"))
+    bc.cmd_packets(argparse.Namespace(dir=str(w), truthset=str(truth), sha256=sha, seed=1))
+    files = [p for p in w.rglob("*") if p.is_file()]
+    assert files and all(stat.S_IMODE(p.stat().st_mode) == 0o600 for p in files), [
+        (p.name, oct(p.stat().st_mode)) for p in files
+    ]
+    assert all(stat.S_IMODE(d.stat().st_mode) == 0o700 for d in (w, w / "packets"))
+
+
+def test_blindcheck_rerun_asks_saved_failures_again_and_cap_zero_fails(tmp_path: Path) -> None:
+    bc = _blindcheck()
+    out = tmp_path / "answers"
+    out.mkdir()
+    qs = [{"qid": f"p:q{i}", "project": "p", "question": f"Q{i}?"} for i in (1, 2, 3)]
+    (out / "p__q1.json").write_text(json.dumps({"status": "ok"}))
+    (out / "p__q2.json").write_text(json.dumps({"status": "no_call"}))
+    queue, kept = bc.split_stored(qs, out, keep_failed=False)
+    assert [q["qid"] for q in queue] == ["p:q2", "p:q3"] and kept == ["ok"]
+    queue, kept = bc.split_stored(qs, out, keep_failed=True)
+    assert [q["qid"] for q in queue] == ["p:q3"] and sorted(kept) == ["no_call", "ok"]
+    assert bc.ask_exit_code([], ["no_call"]) == 1  # zero ok answers
+    assert bc.ask_exit_code(["ok"], ["ok"], not_asked=1) == 1  # the cap left a question unasked
+    w = tmp_path / "w"
+    w.mkdir()
+    (w / "questions.jsonl").write_text(json.dumps(qs[0]) + "\n")
+    script = REPO / "tools" / "migrate" / "blindcheck" / "blindcheck.py"
+    res = subprocess.run(
+        [sys.executable, str(script), "ask", "--dir", str(w), "--server", "http://127.0.0.1:9/mcp"]
+        + ["--device", "d", "--cap", "0"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(REPO / "src")},
+    )
+    assert res.returncode != 0 and "--cap" in res.stderr
+
+
+def test_scan_tool_usage_errors_exit_64(tmp_path: Path) -> None:
+    tool = REPO / "tools" / "migrate" / "scan.py"
+    env = {**os.environ, "PYTHONPATH": str(REPO / "src")}
+    for args in ([], ["--spec", str(_good(tmp_path)), "--frobnicate"]):
+        res = subprocess.run([sys.executable, str(tool), *args], capture_output=True, text=True, env=env)
+        assert res.returncode == 64, (args, res.returncode, res.stderr)

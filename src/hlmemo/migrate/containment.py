@@ -14,6 +14,8 @@ import statistics
 from dataclasses import dataclass
 from pathlib import Path
 
+from hlmemo.migrate.redact import redact
+
 WORD_RE = re.compile(r"\w+", re.UNICODE)
 TEXT_SUFFIXES = (".md", ".markdown", ".txt", ".json")
 
@@ -65,7 +67,7 @@ def containment(export: Path, originals: list[Path], n: int = 8) -> tuple[list[F
     for f in _files([root]):
         sh = shingles(f.read_text(encoding="utf-8", errors="replace"), n)
         rel = f.relative_to(root).as_posix() if root.is_dir() else f.name
-        rows.append(FileShare(rel, len(sh), len(sh & pool)))
+        rows.append(FileShare(redact(rel), len(sh), len(sh & pool)))  # a shown name is masked (review 117)
     shares = [r.share for r in rows if r.share is not None]
     summary: dict[str, object] = {
         "files": len(rows),

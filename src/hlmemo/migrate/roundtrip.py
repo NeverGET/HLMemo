@@ -17,6 +17,7 @@ from hlmemo.migrate.batches import Loaded
 from hlmemo.migrate.redact import redact
 
 Call = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+Mask = Callable[[str], str]
 CONTEXT = 40  # characters of masked context shown around a first difference
 
 
@@ -55,23 +56,30 @@ def first_difference(a: str, b: str) -> int:
     return n
 
 
-def compare(key: str, sent: str, stored: str) -> dict[str, Any] | None:
-    """None when equal; else the key, both lengths and masked context around the first difference."""
+def compare(key: str, sent: str, stored: str, mask: Mask = redact) -> dict[str, Any] | None:
+    """None when equal; else the key, both lengths and context around the first difference. Both bodies are
+    masked IN FULL before the context is cut out of them (review 117: a cut first can leave the tail of a
+    token readable), so the context shows the first difference of the masked texts."""
     if sent == stored:
         return None
-    i = first_difference(sent, stored)
-    lo = max(0, i - CONTEXT)
+    masked_sent, masked_stored = mask(sent), mask(stored)
+    if masked_sent == masked_stored:
+        sent_ctx = stored_ctx = "<the difference is inside a masked value>"
+    else:
+        j = first_difference(masked_sent, masked_stored)
+        lo = max(0, j - CONTEXT)
+        sent_ctx, stored_ctx = masked_sent[lo : j + CONTEXT], masked_stored[lo : j + CONTEXT]
     return {
-        "key": redact(key),
+        "key": mask(key),
         "sent_chars": len(sent),
         "stored_chars": len(stored),
-        "first_difference_at": i,
-        "sent_context": redact(sent[lo : i + CONTEXT]),
-        "stored_context": redact(stored[lo : i + CONTEXT]),
+        "first_difference_at": first_difference(sent, stored),
+        "sent_context": sent_ctx,
+        "stored_context": stored_ctx,
     }
 
 
-async def roundtrip(call: Call, slug: str, loaded: list[Loaded]) -> RoundTrip:
+async def roundtrip(call: Call, slug: str, loaded: list[Loaded], mask: Mask = redact) -> RoundTrip:
     from hlmemo.importers.plan import source_key
     from hlmemo.importers.runner import fetch_full, fetch_items
 
@@ -94,9 +102,9 @@ async def roundtrip(call: Call, slug: str, loaded: list[Loaded]) -> RoundTrip:
         lid = lid_of.get(key)
         stored = heads.get(lid, {}).get("body") if lid is not None else None
         if stored is None:
-            res.missing.append(redact(key))
+            res.missing.append(mask(key))
             continue
-        diff = compare(key, sent, stored)
+        diff = compare(key, sent, stored, mask)
         if diff:
             res.mismatched.append(diff)
             continue

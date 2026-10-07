@@ -45,19 +45,20 @@ TargetOpt = Annotated[str, typer.Option("--target", help="local | prod")]
 
 def _load(spec_path: Path) -> tuple[Any, Any]:
     from hlmemo.migrate.batches import load
+    from hlmemo.migrate.redact import masker, redact
     from hlmemo.migrate.spec import SpecError, load_spec
 
     try:
         spec = load_spec(spec_path)
     except SpecError as exc:
-        typer.echo(f"spec: {exc}", err=True)
+        typer.echo(redact(f"spec: {exc}"), err=True)
         raise typer.Exit(EX_USAGE) from None
     # neutral cwd: nothing below may pick up a ./hlm.toml by accident (all spec paths are absolute now)
     os.chdir(tempfile.gettempdir())
     try:
         loaded = load(spec)
     except ValueError as exc:
-        typer.echo(f"parse: {exc}", err=True)
+        typer.echo(masker(spec)(f"parse: {exc}"), err=True)
         raise typer.Exit(EX_USAGE) from None
     return spec, loaded
 
@@ -243,6 +244,7 @@ def recall_cmd(
 ) -> None:
     """Per truth-set question: is an item of the quoted file among the top-k query hits? (retrieval only)"""
     from hlmemo.migrate.recall import load_truthset, recall
+    from hlmemo.migrate.redact import masker
     from hlmemo.migrate.runner import RunRefused, default_session
 
     truth = truthset.expanduser().resolve()
@@ -259,7 +261,7 @@ def recall_cmd(
 
     async def go() -> dict[str, Any]:
         async with default_session(t) as call:
-            return await recall(call, s.slug, rows, k=k)
+            return await recall(call, s.slug, rows, k=k, mask=masker(s))
 
     try:
         out = asyncio.run(go())
@@ -281,6 +283,7 @@ def recall_cmd(
 @migrate_app.command("roundtrip")
 def roundtrip_cmd(spec: SpecOpt, target: TargetOpt = "local", as_json: JsonOpt = False) -> None:
     """Is every curated body stored verbatim on the target? (read-only; byte-equal or exit 1)"""
+    from hlmemo.migrate.redact import masker
     from hlmemo.migrate.roundtrip import roundtrip
     from hlmemo.migrate.runner import RunRefused, check_target, default_session
 
@@ -293,7 +296,7 @@ def roundtrip_cmd(spec: SpecOpt, target: TargetOpt = "local", as_json: JsonOpt =
 
     async def go() -> Any:
         async with default_session(t) as call:
-            return await roundtrip(call, s.slug, loaded)
+            return await roundtrip(call, s.slug, loaded, masker(s))
 
     try:
         res = asyncio.run(go())

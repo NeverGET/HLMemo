@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,7 @@ from hlmemo.importers.common import (
     parse_frontmatter,
 )
 from hlmemo.migrate.batches import Loaded
-from hlmemo.migrate.redact import redact
+from hlmemo.migrate.redact import find, masker, redact
 from hlmemo.migrate.spec import SCOPE_TAG_RE, MigrationSpec
 
 #: top directory -> the kind the markdown importer gives its items (importers/markdown.py)
@@ -56,13 +57,15 @@ class LintResult:
     warnings: list[str] = field(default_factory=list)
     links: list[dict[str, Any]] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
+    #: the kit's masking, bound to the spec's patterns by `lint()` (a tag or title value is masked too)
+    mask: Callable[..., str] = field(default=redact, repr=False)
 
-    # every line is masked: a diagnostic about a token must not print the token (review 113)
+    # every line is masked: a diagnostic about a token or an address must not print it (reviews 113, 117)
     def e(self, where: str, msg: str) -> None:
-        self.errors.append(redact(f"{where}: {msg}"))
+        self.errors.append(self.mask(f"{where}: {msg}"))
 
     def w(self, where: str, msg: str) -> None:
-        self.warnings.append(redact(f"{where}: {msg}"))
+        self.warnings.append(self.mask(f"{where}: {msg}"))
 
     @property
     def ok(self) -> bool:
@@ -121,6 +124,10 @@ def _check_file(spec: MigrationSpec, res: LintResult, root: Path, p: Path) -> No
     meta, body = parse_frontmatter(text)
     tags = _tags(meta)
     for t in tags:
+        personal = sorted({f.rule for f in find(t, patterns=spec.scan_patterns)})
+        if personal:  # an address is scope-shaped (`name@host`): it would pass as a scope tag
+            res.e(rel, f"tag {t!r} holds personal data or a secret ({', '.join(personal)}): remove it")
+            continue
         if spec.tag_allowed(t):
             continue
         if SCOPE_TAG_RE.match(t):
@@ -249,7 +256,7 @@ def _check_parse(spec: MigrationSpec, res: LintResult, ld: Loaded) -> None:
 
 
 def lint(spec: MigrationSpec, loaded: list[Loaded]) -> LintResult:
-    res = LintResult()
+    res = LintResult(mask=masker(spec))
     root = spec.curated_dir
     if not root.is_dir():
         res.e(str(root), "curated_dir does not exist")
@@ -283,8 +290,8 @@ def lint(spec: MigrationSpec, loaded: list[Loaded]) -> LintResult:
     for p in propose(docs):
         res.links.append(
             {
-                "newer": redact(p.source_ref),
-                "older": redact(p.target_ref),
+                "newer": res.mask(p.source_ref),
+                "older": res.mask(p.target_ref),
                 "scope": p.scope,
                 "marker": p.marker,
             }

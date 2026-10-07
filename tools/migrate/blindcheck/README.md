@@ -26,9 +26,12 @@ bash tools/migrate/blindcheck/run_graders.sh $W "${TMPDIR:-/tmp}/hlm-graders-<sl
 $PY tools/migrate/blindcheck/blindcheck.py score --dir $W         # exit 0 = PASS
 ```
 
-`ask` exits 1 when no question came back `ok`, or when any came back `no_call`, `relay_mismatch` or `exception`:
-the relay is broken, so nothing was measured. Look at `answers/` and `ask.log`, fix the cause (server, device,
-token) and run `ask` again; answers that already exist are kept (each question is still asked once).
+`ask` exits 1 when no answer is `ok`, when an answer asked in this run came back `no_call`, `relay_mismatch` or
+`exception` (the relay is broken, so nothing was measured), or when the spend cap left questions unasked (`--cap`
+must be above 0). Look at `answers/` and `ask.log`, fix the cause (server, device, token, cap) and run `ask`
+again: saved `ok` answers are kept and saved failures are asked again (`--keep-failed` keeps them as findings).
+Every file the tool writes is 0600 (also over an older file) in 0700 directories, and every line it prints or
+logs is masked with the migration kit's masking.
 
 ## Why the steps are separate (isolation)
 

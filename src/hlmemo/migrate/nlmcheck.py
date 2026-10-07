@@ -18,6 +18,7 @@ Signals, per note:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,13 +53,16 @@ def _note_files(export: Path) -> list[Path]:
 
 
 def _originals(paths: list[Path]) -> list[tuple[str, str]]:
+    """(shown name, text) per original file. The name is relative to the --originals argument it came from
+    (`<dir name>/<path inside>`, or the file name): never the absolute path with its home directory."""
     out: list[tuple[str, str]] = []
     for p in paths:
         p = p.expanduser()
         files = [p] if p.is_file() else sorted(f for f in p.rglob("*") if f.is_file())
         for f in files:
             if f.suffix.lower() in TEXT_SUFFIXES:
-                out.append((str(f), f.read_text(encoding="utf-8", errors="replace")))
+                shown = f.name if f == p else f"{p.name}/{f.relative_to(p).as_posix()}"
+                out.append((shown, f.read_text(encoding="utf-8", errors="replace")))
     return out
 
 
@@ -111,8 +115,11 @@ def original_reasons(body: str, originals: list[tuple[str, str]]) -> tuple[list[
     return [], best_path if best_share >= CONTAINED else None
 
 
-def check(export: Path, originals: list[Path] | None = None) -> tuple[list[NoteFlag], int]:
-    """(flags, notes checked)."""
+def check(
+    export: Path, originals: list[Path] | None = None, mask: Callable[..., str] = redact
+) -> tuple[list[NoteFlag], int]:
+    """(flags, notes checked). Every shown value (file, note id, title, original) is masked in full before
+    the title is cut (review 117)."""
     origs = _originals(originals or [])
     flags: list[NoteFlag] = []
     files = _note_files(export)
@@ -127,11 +134,11 @@ def check(export: Path, originals: list[Path] | None = None) -> tuple[list[NoteF
         rel = f.relative_to(root).as_posix() if root.is_dir() else f.name
         flags.append(
             NoteFlag(
-                file=redact(rel),
-                note_id=redact(str(meta.get("nlm_note_id") or meta.get("id") or "")),
-                title=redact(str(meta.get("title") or f.stem))[:120],
+                file=mask(rel),
+                note_id=mask(str(meta.get("nlm_note_id") or meta.get("id") or "")),
+                title=mask(str(meta.get("title") or f.stem), width=120),
                 reasons=reasons,
-                original=original if extra else None,
+                original=mask(original) if extra and original else None,
             )
         )
     return flags, len(files)

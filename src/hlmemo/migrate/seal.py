@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from hlmemo.migrate.batches import Loaded, batch_counts
-from hlmemo.migrate.redact import redact
+from hlmemo.migrate.redact import masker
 from hlmemo.migrate.spec import MigrationSpec
 
 SEAL_VERSION = 1
@@ -112,7 +112,8 @@ def verify(spec: MigrationSpec, loaded: list[Loaded]) -> Verdict:
         problems += [f"added {k}" for k in added[:10]] + [f"removed {k}" for k in removed[:10]]
     if now["batch_items"] != sealed.get("batch_items"):
         problems.append(f"batch counts {now['batch_items']} != sealed {sealed.get('batch_items')}")
-    problems = [redact(p) for p in problems]
+    mask = masker(spec)
+    problems = [mask(p) for p in problems]
     return Verdict(not problems, problems, now["tree_sha256"], now["batch_items"])
 
 
