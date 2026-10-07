@@ -27,7 +27,12 @@ File names unique across directories.
 - Present-state claims verified against the live repo (`VERIFIED <date>: …`); production and network facts marked unverified.
 - No imperatives, handover instructions or standing authority; rules go to `CLAUDE.md`.
 - No secret values; no personal data (`<policy for people: by role>`).
-- Reversals in decision rows: `<full-reversal marker, e.g. "supersedes D-NNN">`; partial changes: `<partial wording>`.
+- Reversals in decision rows: `<full-reversal marker, e.g. "supersedes D-NNN">`; partial changes: `<partial wording,
+  e.g. "narrows D-NNN", "D-NNN'in … kısmını değiştirir">`. **The links pass reacts to every marker in PLAYBOOK §9**
+  (`hlm migrate markers --format md` prints the table), not only to "supersedes": "replaces", "superseded by",
+  "merged from" anywhere, and "instead of" / "rather than" / "in place of" / "yerine" next to a D-id in a
+  decision row. Use those words only for a real reversal, and compare `hlm migrate lint`'s link preview with the
+  reversals you meant.
 
 ## 4. Frontmatter and tags
 - Facts and lessons: `title`, `date`, `tags`, `source_path` (and `curated:` if wanted). Keep it short.
@@ -41,7 +46,9 @@ File names unique across directories.
 - Layered legacy memory: freeze date `<date>`; originals before it, newer notes after it (PLAYBOOK §5.9).
 
 ## 6. Sizes
-Facts and lessons about 300–1500 characters; episodes up to about 3000; every entry under 8000.
+Facts and lessons about 300–1500 characters; episodes up to about 3000; every entry under 8000 (`lint` warns above
+1500 and 3000). A monthly episode file with one entry needs a frontmatter `title` and `date`, or it is titled by its
+file name.
 
 ## 7. Checker error classes (Full)
 Missing denominators; prose contradicting its table/JSON; stale present tense; pointer past the end of its file; a date

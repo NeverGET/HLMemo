@@ -48,11 +48,13 @@ Record the answers in `PLAN.md` as owner decisions.
 
 ## 3. The first 30 minutes
 
-1. Read the project repository's state: uncommitted paths (commit or list them, so `file:line` pointers stay stable),
-   the remote, the slug rules.
+1. **Fetch and pull every repository first**, then read its state: uncommitted paths (commit or list them, so
+   `file:line` pointers stay stable), the remote, the slug rules. A plan prepared earlier is re-validated against the
+   pulled tree (counts, freeze markers, the files it names) before you build on it.
 2. Step 0 with the owner (above).
 3. In the HLMemo repository: create `docs/private/migration/<slug>/` (0700), run `git check-ignore -v` on it, copy
-   `docs/migration/templates/*` into it, start `PLAN.md` (phases, gates, an owner-decision log, a "repo fixes made
+   `docs/migration/templates/*` into it, start `PLAN.md` (phases, gates, an owner-decision log numbered `OD-nn`, never
+   `D-nn`, a "repo fixes made
    during the migration" list) and `migration.toml` (`slug`, `tz`, `[paths]` curated/private/repo, `[[sources]]`,
    `[tags].closed`, `[local]` and `[prod]` server URL and device).
 4. Start the local stack: `bash tools/migrate/local_stack.sh up <slug>`, then
@@ -60,9 +62,11 @@ Record the answers in `PLAN.md` as owner decisions.
 5. Inventory: Light, read the sources yourself; Full, start read-only inventory agents (docs, results, auto-memory +
    `CLAUDE.md` + serena, the NotebookLM export, the git timeline, the rule catalog), each writing records
    (`templates/INVENTORY.md`) and a summary and nothing else.
-6. Secret pre-scan of the sources (`gitleaks dir <path> --redact --no-banner` and a manual grep): file, line and rule
-   id only, never the value.
-7. Layered legacy memory: map the layers and the freeze date now (PLAYBOOK §5.9).
+6. Secret and personal-data pre-scan of the sources (`gitleaks dir <path> --redact --no-banner` and
+   `python3 tools/migrate/scan.py --spec …`): file, line and rule id with a masked value, never the value.
+7. Layered legacy memory: map the layers and the freeze date now, and check whether the older store was resumed
+   after its freeze (then read its originals at the freeze commit; PLAYBOOK §5.9).
+   Team project (two writers, two machines): settle devices, grants and mappings with the owner (PLAYBOOK §2).
 8. Write `QUESTIONS-FOR-OPERATOR.md` with only the open points (§6 below).
 
 ## 4. The phases
@@ -74,8 +78,12 @@ a seal mismatch or recall below `--min-rate`; 2 a hard stop; 64 a usage or spec 
 sent.
 
 **F0 Inventory** (§3 above; PLAYBOOK §5). One line per source: path, files, bytes, date span, type, the importer that
-fits, secret hits by file and rule id. NotebookLM: export read-only (sources' raw content, notes with bodies, a
-manifest with sha256), and set a freeze date. Gate: the owner confirms tier, slug and scope.
+fits, secret hits by file and rule id. NotebookLM: export read-only (sources' raw content, notes with full bodies via
+`nlm note list <notebook> --json`, a manifest with sha256), and set a freeze date. Notes saved as rich text may have
+lost everything after their first `<`: run `hlm migrate nlm-check --export <dir> [--originals <paths…>]` and recover
+cut notes from the stores written alongside (serena, auto-memory, git, session files). `hlm migrate containment --export <dir>
+--originals <paths…>` measures how much of the export the originals already hold (8-word shingles; a line-by-line
+compare under-reports). Gate: the owner confirms tier, slug and scope.
 
 **F1 Architecture.** Light: a short note in `PLAN.md`. Full: `ARCHITECTURE.md` with the layers, the lines or topics
 (they become title prefixes, because no tool filters by tag), the kind mapping, dates, language and the package plan.
@@ -98,28 +106,41 @@ on one package. The rules that carry the most weight:
 - Dates: explicit evidence first; otherwise a marked estimate with the `date-estimated` tag (D-215); two items of one
   day need a time in `date:`.
 - A decision that fully reverses an earlier one says so in the row (`supersedes D-012`, `D-012'yi geçersiz kılar`);
-  a partial change uses different wording, so it does not hide the whole earlier row.
+  a partial change uses neutral wording ("narrows D-012", "D-012'nin … kısmını değiştirir"), so it does not mark the
+  whole earlier row as outdated. The links pass reacts to every marker of PLAYBOOK §9 (`hlm migrate markers --format
+  md`), not only "supersedes": in a decision row, "instead of D-xxx" or "D-xxx yerine" links D-xxx too.
+- A monthly episode file with one entry needs a frontmatter `title` and `date` (or merge it), or it is titled by its
+  file name.
 - Full tier: packages with curator ≠ checker, a consolidation pass, a sample recomputed by you from the raw data.
 
-Gate: `hlm migrate lint --spec …` reports 0 errors, and the checkers' findings are applied.
+Gate: `hlm migrate lint --spec …` reports 0 errors (side files go into `[lint].exclude`; allowed scope tags into
+`[tags].scopes`), its link preview equals the reversals you meant, and the checkers' findings are applied.
 
 **F4 Gates and review** (PLAYBOOK §10–§14).
-- Secret gate, all three: `gitleaks dir <curated> --redact --no-banner` with 0 findings; the importer's dry run with
-  `skipped 0`; a manual grep for credential-shaped assignments and plain hex tokens. A hit goes to a cleanup list and
-  to the owner if a value needs rotating.
+- Secret and personal-data gate, all three: `gitleaks dir <curated> --redact --no-banner` with 0 findings; the
+  importer's dry run with `skipped 0`; `python3 tools/migrate/scan.py --spec … [--known-values <file>]` with 0
+  unexplained hits (credentials, plain hex tokens, mail addresses, device ids, private IPs, account and tax ids, key
+  paths; documented false positives go into `[scan]`). A hit goes to a cleanup list, and to the owner if a value
+  needs rotating.
 - Plan and rehearse: `hlm migrate plan --spec …` (one batch per file, oldest first), then
-  `hlm migrate run --target local --spec …` (dry run), `hlm migrate run --target local --apply --spec …`, and a second
-  run that comes back all `unchanged`.
+  `hlm migrate run --target local --spec …` (dry run), `hlm migrate run --target local --apply --spec …`, then
+  `hlm migrate verify --target local --spec …` (every batch `unchanged`; a second `run` stops on purpose) and
+  `hlm migrate roundtrip --target local --spec …` (every body stored verbatim). `hlm query --project <slug>` answers
+  ad-hoc questions against the stack.
 - Truth set (`templates/TRUTHSET.md`): 10 questions (Light) or 15–20 (Full) with gold answers and verbatim quotes,
-  including a superseded value and at least two negatives; across the freeze date for layered legacy memory. Seal it
-  (`sha256sum`) and keep it private.
-- Recall pre-check, with the local embed worker running: `hlm migrate recall --truthset <truthset.jsonl> --target local
+  including a superseded value and at least two negatives; across the freeze date for layered legacy memory. Before
+  sealing, verify each gold against its cited items and, for behaviour, the code ("never", "only", "no route"
+  golds get the same check as such facts). Seal it (`sha256sum`) and keep it private.
+- Recall pre-check, with the embed worker running (`local_stack.sh up <slug> --embed`; without it recall is lexical
+  only and inflected questions under-score): `hlm migrate recall --truthset <truthset.jsonl> --target local
   [--k 5] [--min-rate R] --spec …`; sharpen titles where the right file misses the top hits.
 - Seal the reviewed tree: `hlm migrate seal --spec …` (add `--expect '<batch counts JSON>'` to bind the counts the
   review states); `hlm migrate seal --verify --spec …` checks it later. A content fix after sealing needs
   `--force`, a new seal and a note in `REVIEW.md`.
-- `REVIEW.md` (`templates/REVIEW.md`), a title list and a card draft (present tense, ≤ 420 tokens).
-- Full tier: a Codex consult (Astra low and Sol xhigh in parallel, at most two rounds, a triage file).
+- `REVIEW.md` (`templates/REVIEW.md`), a title list and a card draft (present tense, ≤ 420 tokens, checked with
+  `hlm migrate card --file CARD-DRAFT.md`, which counts in the server's tokenizer).
+- Full tier: a consult by two independent reviewers in parallel (another model, or a fresh-context agent that did not
+  curate), at most two rounds, with a triage file. The owner may skip it; `REVIEW.md` then says so.
 
 Gate: **the owner's OK on `REVIEW.md`, given in this chat.** Without it, stop.
 
@@ -130,14 +151,15 @@ When the operator confirms the slug answers with its skeleton card and 0 hits:
    batch once, refuses unless it is new/missing only, re-reads the open keys and writes exactly that checked plan; it
    stops on any `failed`, `rejected`, `changed`, `closed` or `skipped`, and a production run needs a seal that
    verifies. `--resume` finishes a batch an interrupted apply partly wrote.
-2. `hlm migrate verify --target prod --spec …`: every batch must come back `unchanged`.
+2. `hlm migrate verify --target prod --spec …` (read-only, no prod flag): every batch must come back `unchanged`.
 3. Close with `memory_call_the_day`: notes with counts and pointers; `card_update` with `expected_version_id` = the
    skeleton card's version (the number in `memory_query`'s `card.clue`; D-248).
 4. Tell the owner the counts and the session-note clue, and that the operator's F6 steps are next.
 
 **F6 Hand-over.** The operator runs the post-import steps (§6 below). Your remaining part: the new `CLAUDE.md` (from
 F2, if the owner approved it), archiving the old auto-memory files and reducing `MEMORY.md` to a pointer, and freezing
-the old notebook as a read-only archive.
+the old notebook as a read-only archive. By default do this in **a second, short session** that ends with its own
+`call_the_day` (the import session already closed with the card); say so in `PLAN.md`.
 
 ## 5. Source adapters in one line each (PLAYBOOK §5)
 
@@ -148,12 +170,13 @@ the old notebook as a read-only archive.
 - **Results and reports:** the human-written reports drive the episodes; numbers verbatim with their pointer and
   denominator.
 - **NotebookLM:** notes dated from their titles (`SESSION` → episode, `LESSON` → lesson, `BUG` → episode plus a
-  lesson); `STATUS` notes never become facts; sources that the repository already holds become pointers.
+  lesson); `STATUS` notes never become facts; sources that the repository already holds become pointers
+  (`hlm migrate containment`); a note cut at its first `<` is recovered from its originals.
 - **Git history:** eras and date evidence; commit uncommitted paths before pinning `file:line`.
 - **Earlier projects:** spot-check their distilled lessons and add the missing ones as project-scoped lessons; a
   lesson seen in two or more projects goes under "Promotion candidates" for the owner.
-- **Layered legacy memory:** originals before the freeze, the newer store's notes after it, bundles only as a
-  cross-check; record each item's layer.
+- **Layered legacy memory:** originals before the freeze (read at the freeze commit if the store was resumed), the
+  newer store's notes after it, bundles only as a cross-check; record each item's layer.
 
 ## 6. Talking to the operator, and the hand-off points
 
