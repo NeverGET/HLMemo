@@ -96,7 +96,7 @@ def build(
     section_chars: int = SECTION_CHARS,
 ) -> ParseResult:
     now = now or datetime.now(UTC)
-    res = ParseResult(scopes=sorted(scopes or []))
+    res = ParseResult(scopes=sorted(scopes or []), files=sorted(str(c.path) for c in candidates))
     for s in empty_sources or []:
         res.skipped.append(Skip(s, "empty-source"))
     texts: dict[str, tuple[Candidate, str]] = {}

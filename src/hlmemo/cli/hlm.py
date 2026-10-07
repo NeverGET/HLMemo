@@ -56,6 +56,7 @@ from hlmemo.cli.http_client import HlmHttp, HlmHttpError
 from hlmemo.cli.launch import CLIS, build_argv, exec_cli
 from hlmemo.cli.links import links_app
 from hlmemo.cli.mcp_client import MemoryClient, ToolCallError
+from hlmemo.cli.migrate import migrate_app
 from hlmemo.cli.preflight import (
     RISK_TIMEOUT_S,
     SYNTH_TIMEOUT_S,
@@ -99,6 +100,7 @@ app.add_typer(project_app, name="project")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(bench_app, name="bench")  # W2f: hlm bench (heavy imports are inside the commands)
 app.add_typer(links_app, name="links")  # D-184: hlm links explicit (operator, direct DB)
+app.add_typer(migrate_app, name="migrate")  # D-256: the migration kit (plan, lint, seal, run, verify, recall)
 app.command("curate")(curate_command)  # D-244: local supersession curation (agents + gate)
 
 

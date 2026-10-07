@@ -221,13 +221,17 @@ async def run_import(
     meter: Any,
     progress: bool = False,
     close: bool = True,
+    reclassify_on_conflict: bool = True,
 ) -> dict[str, Any]:
     """Write every new/changed record and close the removed ones; returns write statistics.
 
     A ``replaced_by_split`` item is closed only AFTER every one of its replacement sections is
     verified stored: the manifest is re-read once all writes are done and each section key must be
     an open item. A section that failed (or was never written) keeps the old item open, reported in
-    ``kept_open`` with the absent section keys, so no content is ever lost (Sol 55)."""
+    ``kept_open`` with the absent section keys, so no content is ever lost (Sol 55).
+
+    ``reclassify_on_conflict=False`` (``hlm migrate``): an ``E_VERSION_CONFLICT`` is a failure, never a
+    re-read that turns the planned write into a revision of another writer's item."""
     project = plan.project
     stats: dict[str, Any] = {
         "written": 0,
@@ -266,7 +270,12 @@ async def run_import(
 
     async def write_entry(e: Entry, links: list[dict[str, Any]] | None, action: str = "write") -> dict | None:
         res = await send(e.record.key, e.record.sha256, _item(e, links), e.expected, action)
-        if isinstance(res, ToolCallError) and res.code == "E_VERSION_CONFLICT" and e.remapped_from is None:
+        if (
+            reclassify_on_conflict
+            and isinstance(res, ToolCallError)
+            and res.code == "E_VERSION_CONFLICT"
+            and e.remapped_from is None
+        ):
             # another writer moved the item: re-read the manifest once and re-classify (Sol 40 #3)
             fresh, _ = await fetch_items(call, project)
             again = classify(project, plan.system, ParseResult(records=[e.record]), fresh, meter).entries

@@ -1,0 +1,44 @@
+# migration.toml: the spec of ONE migration, for `hlm migrate <cmd> --spec migration.toml`.
+# Same layout as docs/migration/templates/migration.toml. Copy it into the migration's private, gitignored directory
+# (in the HLMemo repo: docs/private/migration/<slug>/). Relative paths resolve against this file's directory.
+# See `hlmemo.migrate` for the safety rules.
+
+# The target project. The operator creates it and grants the importing device `write` (TEMPLATE step 0).
+slug = "my-project"
+
+# Zone of date-only evidence (`date: 2026-07-19`) and of the month buckets. An IANA name, `UTC` or `local`.
+tz = "Europe/Berlin"
+
+# Optional: the body line that must accompany a `date-estimated` tag (the estimate's evidence: git commit or mtime).
+# estimated_marker = "Date estimated"
+
+[paths]
+# The curated tree that `lint` checks: status/ (one fact per file), lessons/ (one lesson per file),
+# sessions/ (dated episodes, `## YYYY-MM-DD …`, no preamble), decisions/ (D-rows, no preamble).
+curated = "curated"
+# seal.json and the run reports (runs/) land here. Keep it private.
+private = "."
+# Optional: the project's repository, so `path:line` pointers in bodies resolve to `describes` code refs.
+# repo = "/path/to/the/project/repo"
+
+# Optional. Without [[sources]], the import reads one markdown source: paths.curated.
+# [[sources]]
+# importer = "markdown"          # markdown | automemory | serena | context
+# path = "curated"
+# section_chars = 8000
+
+[tags]
+# The closed list of topic tags (one per line of work, area or component). Status tags (active, resolved,
+# historical, date-estimated) and `<stack>@<version>` scope tags are always allowed.
+closed = ["api", "deploy", "data"]
+
+# The local scratch stack: tools/migrate/local_stack.sh up <slug> mints device mig-<slug> on port 8799.
+[local]
+server_url = "http://127.0.0.1:8799/mcp"
+device = "mig-my-project"
+
+# Production: only after the owner's OK on the review package, with a seal that passes `seal --verify` and
+# HLM_MIGRATE_ALLOW_PROD=1.
+[prod]
+server_url = "https://memory.example.org/mcp"
+device = "my-device"
