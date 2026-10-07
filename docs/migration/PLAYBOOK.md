@@ -322,22 +322,26 @@ test keeps this copy equal to it.
 <!-- markers:begin -->
 | language | relation | wording that triggers it | where it counts | the declaring item is |
 |---|---|---|---|---|
-| English | merged from | "merged … from" / "merged … out of" (up to 3 words between) | anywhere | the newer one |
-| English | merged into | "merged into" | anywhere | the older one |
-| English | superseded by | "superseded by" / "superseded through" | anywhere | the older one |
-| English | supersedes | "supersede", "supersedes", "superseding" | anywhere | the newer one |
-| English | replaced by | "replaced by" / "replaced with" | anywhere | the older one |
-| English | replaces | "replace", "replaces", "replaced", "replacing" (not followed by "by"/"with") | anywhere | the newer one |
-| English | instead of | "instead of", "rather than", "in place of" | decision rows only | the newer one |
-| German | merged from | "zusammengeführt aus" / "zusammengeführt von" | anywhere | the newer one |
-| German | superseded by | "ersetzt", "abgelöst", "überholt" + "durch" / "von" | anywhere | the older one |
-| German | supersedes | "ersetzt" (not followed by "durch"/"von") | anywhere | the newer one |
-| German | instead of | "anstelle von", "anstatt", "statt" | decision rows only | the newer one |
-| Turkish | merged from | "birleştirildi", "birleştirilmiştir", "birleştirilerek" | anywhere | the newer one |
-| Turkish | superseded by | "tarafından geçersiz kılındı/kılınmıştır", "tarafından değiştirildi/değiştirilmiştir" | anywhere | the older one |
-| Turkish | supersedes | "geçersiz kılar", "geçersiz kılıyor", "geçersiz kıldı", "geçersiz kılmıştır" | anywhere | the newer one |
-| Turkish | replaces | "yerini alır", "yerini aldı", "yerini almıştır", "yerini alıyor" | anywhere | the newer one |
-| Turkish | instead of | "yerine" | decision rows only | the newer one |
+| English | `merged_from` | merged … from / merged … out of | anywhere; target within 5 words | newer (it replaces the target) |
+| English | `merged_into` | merged into | anywhere; target within 5 words | older (the target replaces it) |
+| English | `superseded_by` | superseded by / superseded through | anywhere; target within 5 words | older (the target replaces it) |
+| English | `supersedes` | supersedes / supersede / superseding | anywhere; target within 5 words | newer (it replaces the target) |
+| English | `replaced_by` | replaced by / replaced with | anywhere; target within 5 words | older (the target replaces it) |
+| English | `replaces` | replaces / replaced / replace / replacing | anywhere; target within 5 words | newer (it replaces the target) |
+| English | `instead_of` | instead of / rather than / in place of | decision rows; D-id right after | newer (it replaces the target) |
+| German | `merged_from` | zusammengeführt aus / von | anywhere; target within 5 words | newer (it replaces the target) |
+| German | `superseded_by` | ersetzt / abgelöst / überholt durch / von | anywhere; target within 5 words | older (the target replaces it) |
+| German | `supersedes` | ersetzt | anywhere; target within 5 words | newer (it replaces the target) |
+| German | `instead_of` | anstelle von / anstatt / statt | decision rows; D-id right after | newer (it replaces the target) |
+| Turkish | `merged_from` | birleştirildi / birleştirilmiştir / birleştirilerek | anywhere; target right before | newer (it replaces the target) |
+| Turkish | `superseded_by` | tarafından geçersiz kılındı / kılınmıştır, tarafından değiştirildi / değiştirilmiştir | anywhere; target right before | older (the target replaces it) |
+| Turkish | `supersedes` | geçersiz kılar / kılıyor / kıldı / kılmıştır | anywhere; target right before | newer (it replaces the target) |
+| Turkish | `replaces` | yerini alır / aldı / almıştır / alıyor | anywhere; target right before | newer (it replaces the target) |
+| Turkish | `instead_of` | yerine | decision rows; D-id right before | newer (it replaces the target) |
+
+- "within 5 words": the D-id or file path follows the phrase after at most 5 filler words. "right after" / "right before": nothing but a case suffix or a list joiner in between ("X instead of Y (D-110)" does not link; "X instead of D-110" does; "D-110 ve D-111'i geçersiz kılar" links both).
+- No link comes from a question, from a marker after a negation or a hypothetical word ("would", "if", "proposes", "eğer", "belki"…), from fenced or inline code, or from quoted text.
+- A partial change needs a wording that is not a marker: narrows D-xxx / complements D-xxx / extends D-xxx; D-xxx'in … kısmını değiştirir / D-xxx'i daraltır / D-xxx'e ek olarak; ergänzt D-xxx / schränkt D-xxx ein.
 <!-- markers:end -->
 
 How a marker finds its target:
