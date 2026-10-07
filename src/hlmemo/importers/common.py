@@ -134,6 +134,8 @@ class ParseResult:
     rejected: list[Reject] = field(default_factory=list)
     duplicate_groups: list[dict[str, Any]] = field(default_factory=list)
     scopes: list[str] = field(default_factory=list)  # path prefixes this run covers (missing-item report)
+    #: every file the parse read or tried to read (absolute paths, sorted): what a migration seal must pin
+    files: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- text

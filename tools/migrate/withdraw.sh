@@ -6,7 +6,8 @@
 #   bash tools/migrate/withdraw.sh <slug> <ids-file> <expect> [--status open|accepted_pending] [--owner NAME]
 #                                  --reason 'why (recorded in the event)'
 #
-# Fail closed: (1) the live set of questions in --status must equal the ids file exactly and hold <expect> ids;
+# Fail closed: the ids file is read ONCE into a 0600 snapshot whose sha256 is re-checked before every step;
+# (1) the live set of questions in --status must equal the snapshot exactly and hold <expect> ids;
 # (2) a dry run under the locks must withdraw exactly <expect>; (3) the apply writes ONE event. Any mismatch stops
 # before anything is written.
 # Environment: HLM_OPS_STATE (the deploy state dir), HLM_OPS_SSH_CONFIG (default $HLM_OPS_STATE/ssh_config),
@@ -42,15 +43,23 @@ OWNER_ARG=""
 [[ -n $OWNER ]] && OWNER_ARG="--owner $OWNER"
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/hlm-withdraw.XXXXXX")
 chmod 700 "$OUT"
-echo "withdraw: slug=$SLUG status=$STATUS expect=$EXPECT reports=$OUT" >&2
+# ONE snapshot of the reviewed ids, used by all three steps: a file changed after the check is never withdrawn
+SNAP=$OUT/ids.txt
+( umask 077; grep -v '^[[:space:]]*#' "$IDS" | sed 's/[[:space:]]//g' | grep -v '^$' | sort -u >"$SNAP" )
+SNAP_SHA=$(shasum -a 256 "$SNAP" | cut -d' ' -f1)
+same_snapshot() {
+  [[ $(shasum -a 256 "$SNAP" | cut -d' ' -f1) == "$SNAP_SHA" ]] || { echo "the ids snapshot changed: stop" >&2; exit 1; }
+}
+echo "withdraw: slug=$SLUG status=$STATUS expect=$EXPECT ids=$(wc -l <"$SNAP" | tr -d ' ') sha=${SNAP_SHA:0:12} reports=$OUT" >&2
 
 # 1. the live set (read-only) must equal the reviewed file
 ssh -F "$CFG" "$HOST" "$OPS audit --project $SLUG --status $STATUS --json" </dev/null >"$OUT/live.json"
-python3 - "$OUT/live.json" "$IDS" "$EXPECT" <<'PY'
+same_snapshot
+python3 - "$OUT/live.json" "$SNAP" "$EXPECT" <<'PY'
 import json, sys
 raw = open(sys.argv[1]).read()
 live = {p["question_id"] for p in json.loads(raw[raw.find("{"):])["proposals"]}
-ids = {x.strip() for x in open(sys.argv[2]) if x.strip() and not x.startswith("#")}
+ids = {x.strip() for x in open(sys.argv[2]) if x.strip()}
 n = int(sys.argv[3])
 ok = len(live) == n and ids == live
 print(f"ids {'PASS' if ok else 'FAIL'}: live {len(live)}, file {len(ids)}, expect {n}, equal {ids == live}")
@@ -58,7 +67,8 @@ sys.exit(0 if ok else 1)
 PY
 
 # 2. dry run under the locks: nothing written
-ssh -F "$CFG" "$HOST" "$OPS withdraw --project $SLUG --ids-file - --reason '$REASON' --dry-run --json" <"$IDS" \
+same_snapshot
+ssh -F "$CFG" "$HOST" "$OPS withdraw --project $SLUG --ids-file - --reason '$REASON' --dry-run --json" <"$SNAP" \
   >"$OUT/preview.json"
 python3 - "$OUT/preview.json" "$EXPECT" "$STATUS" <<'PY'
 import json, sys
@@ -71,8 +81,9 @@ sys.exit(0 if ok else 1)
 PY
 
 # 3. withdraw: ONE event
+same_snapshot
 # shellcheck disable=SC2086
-ssh -F "$CFG" "$HOST" "$OPS withdraw --project $SLUG --ids-file - --reason '$REASON' $OWNER_ARG --json" <"$IDS" \
+ssh -F "$CFG" "$HOST" "$OPS withdraw --project $SLUG --ids-file - --reason '$REASON' $OWNER_ARG --json" <"$SNAP" \
   >"$OUT/withdraw.json"
 python3 - "$OUT/withdraw.json" "$EXPECT" <<'PY'
 import json, sys

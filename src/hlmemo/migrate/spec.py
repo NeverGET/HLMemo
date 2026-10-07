@@ -7,6 +7,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from hlmemo.importers.cli import SOURCES
 
@@ -15,7 +16,7 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 STATUS_TAGS = frozenset({"active", "resolved", "historical", "date-estimated"})
 #: a lesson's scope tag: `<stack>@<version>` (R15)
 SCOPE_TAG_RE = re.compile(r"^[A-Za-z0-9][\w.+-]*@[\w.+-]+$")
-LOOPBACK = ("http://127.0.0.1", "http://localhost", "http://[::1]")
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 class SpecError(ValueError):
@@ -47,7 +48,26 @@ class Target:
 
     @property
     def is_loopback(self) -> bool:
-        return self.server.startswith(LOOPBACK)
+        return is_loopback_url(self.server)
+
+
+def is_loopback_url(url: str) -> bool:
+    """True only for an http(s) URL whose real host is the loopback interface and that carries no userinfo:
+    `http://127.0.0.1@prod.example/mcp` names the host prod.example and is NOT local (review 113)."""
+    try:
+        parts = urlsplit(url.strip())
+        host = parts.hostname
+        port_ok = parts.port is None or 0 < parts.port < 65536
+    except ValueError:
+        return False
+    return (
+        parts.scheme in ("http", "https")
+        and parts.username is None
+        and parts.password is None
+        and "@" not in parts.netloc
+        and host in LOOPBACK_HOSTS
+        and port_ok
+    )
 
 
 @dataclass(frozen=True)
@@ -170,4 +190,4 @@ def load_spec(path: Path | str) -> MigrationSpec:
     )
 
 
-__all__ = ["MigrationSpec", "STATUS_TAGS", "Source", "SpecError", "Target", "load_spec"]
+__all__ = ["MigrationSpec", "STATUS_TAGS", "Source", "SpecError", "Target", "is_loopback_url", "load_spec"]

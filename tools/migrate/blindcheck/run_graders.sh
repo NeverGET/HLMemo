@@ -3,6 +3,7 @@
 # OUTSIDE the repository that holds ONLY packets/ + READER-INSTRUCTIONS.md + its reader order (no key, no answers, no
 # truth set). Grader 1: `claude -p` (file tools confined to its dir, no MCP, HLM_CAPTURE=off). Grader 2: `codex exec`
 # (workspace-write in its dir). Outputs are copied back BY CODE into <work>/graders and <work>/grades-<n>.jsonl (0600).
+# Stale grades are deleted first; a failed or silent grader makes the script exit 1.
 #
 #   bash tools/migrate/blindcheck/run_graders.sh <work dir of blindcheck.py> <grader root outside the repo>
 # Environment: GRADER1_MODEL (default sonnet), GRADER2_MODEL (default gpt-6-astra), GRADER2_EFFORT (default low).
@@ -17,6 +18,8 @@ for f in packets READER-INSTRUCTIONS.md reader-order-1.txt reader-order-2.txt; d
   [[ -e $W/$f ]] || { echo "missing $W/$f (run blindcheck.py packets)" >&2; exit 64; }
 done
 mkdir -p "$ROOT" "$W/graders"
+# stale grades from an earlier run must never be scored with this run's packets
+rm -f "$W/grades-1.jsonl" "$W/grades-2.jsonl"
 for n in 1 2; do
   d="$ROOT/grader-$n"
   rm -rf "$d"; mkdir -p "$d"
@@ -50,13 +53,19 @@ wait "$p2" || rc2=$?
 echo "grader-1 rc=$rc1 grader-2 rc=$rc2"
 cp "$ROOT/grader-1.out.json" "$ROOT/grader-1.err" "$W/graders/" 2>/dev/null || true
 cp "$ROOT/grader-2.prompt.md" "$ROOT/grader-2.out.log" "$ROOT/grader-2.last.md" "$W/graders/" 2>/dev/null || true
+fail=0
 for n in 1 2; do
   if [[ -f $ROOT/grader-$n/grades-$n.jsonl ]]; then
     cp "$ROOT/grader-$n/grades-$n.jsonl" "$W/grades-$n.jsonl"
     chmod 600 "$W/grades-$n.jsonl"
     echo "grades-$n.jsonl lines: $(grep -c . "$W/grades-$n.jsonl")"
   else
-    echo "grades-$n.jsonl MISSING"
+    echo "grades-$n.jsonl MISSING" >&2
+    fail=1
   fi
 done
 chmod 600 "$W"/graders/* 2>/dev/null || true
+if [[ $rc1 -ne 0 || $rc2 -ne 0 || $fail -ne 0 ]]; then
+  echo "a grader failed (rc1=$rc1 rc2=$rc2, missing grades=$fail): do not score this run" >&2
+  exit 1
+fi

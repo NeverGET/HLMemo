@@ -22,6 +22,7 @@ from hlmemo.core.explicit_supersession import Doc, propose
 from hlmemo.core.secret_guard import strong_secret_rule
 from hlmemo.importers.common import DATED_HEADING_RE, DECISION_ROW_RE, HEADING_RE, parse_frontmatter
 from hlmemo.migrate.batches import Loaded
+from hlmemo.migrate.redact import redact
 from hlmemo.migrate.spec import MigrationSpec
 
 #: top directory -> the kind the markdown importer gives its items (importers/markdown.py)
@@ -44,11 +45,12 @@ class LintResult:
     links: list[dict[str, Any]] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
 
+    # every line is masked: a diagnostic about a token must not print the token (review 113)
     def e(self, where: str, msg: str) -> None:
-        self.errors.append(f"{where}: {msg}")
+        self.errors.append(redact(f"{where}: {msg}"))
 
     def w(self, where: str, msg: str) -> None:
-        self.warnings.append(f"{where}: {msg}")
+        self.warnings.append(redact(f"{where}: {msg}"))
 
     @property
     def ok(self) -> bool:
@@ -226,7 +228,14 @@ def lint(spec: MigrationSpec, loaded: list[Loaded]) -> LintResult:
                 Doc(version_id=len(docs) + 1, logical_id=len(docs) + 100000, path=r.path, body=r.body)
             )
     for p in propose(docs):
-        res.links.append({"newer": p.source_ref, "older": p.target_ref, "scope": p.scope, "marker": p.marker})
+        res.links.append(
+            {
+                "newer": redact(p.source_ref),
+                "older": redact(p.target_ref),
+                "scope": p.scope,
+                "marker": p.marker,
+            }
+        )
     kinds = Counter(r.kind_guess for ld in loaded for r in ld.parsed.records)
     res.summary = {
         "files": len(files),

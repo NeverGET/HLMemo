@@ -10,10 +10,13 @@
 W is a PRIVATE work dir (0700). The steps are separate for isolation:
 - `extract` verifies the truth set's sealed sha256 and writes ONLY qid/project/question to W/questions.jsonl.
 - `ask` reads only questions.jsonl. Each question is asked ONCE through `memory.ask` on the user's
-  configured `hlm` MCP server, by a headless `claude -p` relay that may use only ToolSearch and the
-  memory_ask tool, from an empty scratch cwd, with HLM_CAPTURE=off. The raw tool_result is saved BY CODE
-  from the stream-json output (never retyped by a model, D-216), and the relay's tool input must equal the
+  configured `hlm` MCP server, by a headless `claude -p` relay. The raw tool_result is saved BY CODE from
+  the stream-json output (never retyped by a model, D-216), and the relay's tool input must equal the
   question verbatim. A failure is a finding, not a retry.
+  Relay isolation: `--restricted` (no user, project or local settings, so no hooks such as the SessionStart
+  brief and no plugins; no code-running tools); only ToolSearch and the memory_ask tool are allowed; an empty
+  scratch cwd (no CLAUDE.md, an unmapped folder); HLM_CAPTURE=off and HLM_BRIEF_DIGEST=off. MCP servers from
+  the user's configuration stay loaded (the relay needs `hlm`), but no tool of theirs is allowed.
 - `packets` joins the sealed gold and the saved answers under random codes (W/packets; W/key.json outside it).
 - Two isolated graders see only packets/, READER-INSTRUCTIONS.md and their reader order (run_graders.sh).
 - `score` takes the STRICTER grade on a split. Bar (D-216): correct >= 0.80 of the answerable questions,
@@ -110,11 +113,13 @@ def _ask_one(q: dict, outdir: Path, relay_cwd: str, model: str) -> dict:
     out = outdir / (q["qid"].replace(":", "__") + ".json")
     if out.exists():
         return {"qid": q["qid"], "status": "exists"}
-    env = dict(os.environ, MCP_TOOL_TIMEOUT="180000", HLM_CAPTURE="off")
+    env = dict(os.environ, MCP_TOOL_TIMEOUT="180000", HLM_CAPTURE="off", HLM_BRIEF_DIGEST="off")
     cmd = [
         "claude",
         "-p",
         _prompt(q["project"], q["question"]),
+        # no user/project/local settings (no hooks such as the SessionStart brief, no plugins), no code tools
+        "--restricted",
         "--allowedTools",
         "ToolSearch",
         TOOL,
@@ -374,6 +379,9 @@ def score(key: dict, g1: dict, g2: dict, bar: float) -> dict:
 def cmd_score(a: argparse.Namespace) -> None:
     w = _workdir(a.dir)
     key = json.loads((w / "key.json").read_text())
+    packets = {p.stem for p in (w / "packets").glob("*.json")}
+    if packets != set(key):
+        sys.exit("key.json and packets/ hold different codes: re-run `packets` and grade again")
     out = score(key, _grades(w, 1, key), _grades(w, 2, key), a.bar)
     _write(w / "result.json", out)
     print(

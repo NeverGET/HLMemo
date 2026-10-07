@@ -15,6 +15,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from hlmemo.migrate.redact import redact
+
 Call = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
@@ -57,7 +59,7 @@ async def recall(call: Call, slug: str, rows: list[dict[str, Any]], *, k: int = 
                 "category": r.get("category"),
                 "rank": rank,
                 "evidence": res.get("evidence"),
-                "top": [str(h.get("title") or "")[:90] for h in hits[:3]],
+                "top": [redact(str(h.get("title") or ""))[:90] for h in hits[:3]],
             }
         )
     return {

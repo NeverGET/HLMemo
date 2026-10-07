@@ -255,83 +255,104 @@ def test_seal_write_verify_tamper_and_no_silent_reseal(good: Path) -> None:
 
 
 # --------------------------------------------------------------------------- run guard
-class FakeImporter:
-    """Answers per (batch, dry_run) with scripted counts; records the call order."""
+class FakeEngine:
+    """Scripted classification counts and write results per batch; records the call order."""
 
     def __init__(
-        self, dry: dict[str, dict[str, int]] | None = None, apply: dict[str, dict[str, Any]] | None = None
+        self,
+        counts: dict[str, dict[str, int]] | None = None,
+        writes: dict[str, dict[str, Any]] | None = None,
+        appear: set[str] | None = None,
     ):
-        self.dry, self.apply, self.calls = dry or {}, apply or {}, []
+        self.counts, self.writes, self.appear, self.calls = counts or {}, writes or {}, appear or set(), []
 
-    async def __call__(
-        self, call: Any, importer: str, parsed: Any, slug: str, dry_run: bool
-    ) -> dict[str, Any]:
-        n = len(parsed.records)
-        key = sorted(
+    @staticmethod
+    def _batch(parsed: Any) -> str:
+        return sorted(
             {r.evidenced_valid_from[:7] if r.evidenced_valid_from else UNDATED for r in parsed.records}
         )[-1]
-        self.calls.append((key, "dry" if dry_run else "apply", n))
-        if dry_run:
-            return {"counts": self.dry.get(key, {"new": n}), "token_estimate": {"tokens": 10}}
-        rep = self.apply.get(key, {"counts": {"new": n}, "written": n, "failed": 0})
-        return {"counts": rep["counts"], "writes": {"written": rep["written"], "failed": rep["failed"]}}
+
+    async def classify(self, call: Any, importer: str, parsed: Any, slug: str) -> runner.Classified:
+        key = self._batch(parsed)
+        n = len(parsed.records)
+        self.calls.append((key, "classify"))
+        counts = self.counts.get(key, {"new": n})
+        new = frozenset(r.key for r in parsed.records[: counts.get("new", 0)])
+        return runner.Classified(key, [], {"counts": counts, "token_estimate": {"tokens": 1}}, new)
+
+    async def open_keys(self, call: Any, slug: str) -> set[str]:
+        return set(self.appear)
+
+    async def write(self, call: Any, c: runner.Classified) -> dict[str, Any]:
+        self.calls.append((c.plan, "write"))
+        return self.writes.get(c.plan, {"written": len(c.new_keys), "failed": []})
 
 
 @contextlib.asynccontextmanager
 async def fake_session(_target: Any):
     async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
-        raise AssertionError("the fake importer never calls the server")
+        raise AssertionError("the fake engine never calls the server")
 
     yield call
 
 
-def _run(spec: Any, loaded: Any, target: str, imp: FakeImporter, **kw: Any) -> list[dict[str, Any]]:
-    return asyncio.run(runner.run(spec, loaded, target, session=fake_session, importer=imp, **kw))
+def _run(spec: Any, loaded: Any, target: str, eng: Any, **kw: Any) -> list[dict[str, Any]]:
+    return asyncio.run(runner.run(spec, loaded, target, session=fake_session, engine=eng, **kw))
 
 
-def test_apply_runs_the_same_batch_dry_first(good: Path) -> None:
+def test_apply_writes_each_batch_after_its_one_check(good: Path) -> None:
     spec = load_spec(good)
     loaded = load(spec)
-    imp = FakeImporter()
-    _run(spec, loaded, "local", imp, apply=True)
-    assert [(k, m) for k, m, _ in imp.calls] == [
-        ("2026-07", "dry"),
-        ("2026-07", "apply"),
-        ("2026-08", "dry"),
-        ("2026-08", "apply"),
+    eng = FakeEngine()
+    _run(spec, loaded, "local", eng, apply=True)
+    assert eng.calls == [
+        ("2026-07", "classify"),
+        ("2026-07", "write"),
+        ("2026-08", "classify"),
+        ("2026-08", "write"),
     ]
 
 
-def test_a_changed_count_stops_before_the_apply(good: Path) -> None:
+def test_a_changed_count_stops_before_the_write(good: Path) -> None:
     spec = load_spec(good)
     loaded = load(spec)
-    imp = FakeImporter(dry={"2026-08": {"new": 3, "changed": 1}})
+    eng = FakeEngine(counts={"2026-08": {"new": 3, "changed": 1}})
     with pytest.raises(runner.HardStop, match="2026-08"):
-        _run(spec, loaded, "local", imp, apply=True)
-    assert ("2026-08", "apply") not in {(k, m) for k, m, _ in imp.calls}
+        _run(spec, loaded, "local", eng, apply=True)
+    assert ("2026-08", "write") not in eng.calls
 
 
-def test_apply_failures_stop_the_run(good: Path) -> None:
+def test_a_key_that_appears_after_the_check_stops_before_any_write(good: Path) -> None:
     spec = load_spec(good)
     loaded = load(spec)
-    imp = FakeImporter(apply={"2026-07": {"counts": {"new": 2}, "written": 1, "failed": 1}})
+    eng = FakeEngine(appear={"markdown:status/api/api-cache-ttl.md"})
+    with pytest.raises(runner.HardStop, match="appeared on the server"):
+        _run(spec, loaded, "local", eng, apply=True)
+    assert [m for _k, m in eng.calls] == ["classify"]
+
+
+def test_write_failures_and_revisions_stop_the_run(good: Path) -> None:
+    spec = load_spec(good)
+    loaded = load(spec)
+    eng = FakeEngine(
+        writes={"2026-07": {"written": 1, "failed": [{"key": "x", "code": "E_VERSION_CONFLICT"}]}}
+    )
     with pytest.raises(runner.HardStop) as exc:
-        _run(spec, loaded, "local", imp, apply=True)
-    assert "write_failed" in str(exc.value) and len(exc.value.report) == 2
-    assert all(k != "2026-08" for k, _m, _n in imp.calls)
+        _run(spec, loaded, "local", eng, apply=True)
+    assert "write_failed" in str(exc.value) and all(k != "2026-08" for k, _m in eng.calls)
+    assert runner.check_writes(2, {"written": 2, "failed": [], "revisions": 1}) == {"revisions": 1}
 
 
 def test_resume_allows_unchanged_and_verify_expects_it(good: Path) -> None:
     spec = load_spec(good)
     loaded = load(spec)
-    partly = FakeImporter(dry={"2026-07": {"new": 1, "unchanged": 1}})
     with pytest.raises(runner.HardStop):
-        _run(spec, loaded, "local", partly, apply=True)
+        _run(spec, loaded, "local", FakeEngine(counts={"2026-07": {"new": 1, "unchanged": 1}}), apply=True)
     _run(
         spec,
         loaded,
         "local",
-        FakeImporter(dry={"2026-07": {"new": 1, "unchanged": 1}}),
+        FakeEngine(counts={"2026-07": {"new": 1, "unchanged": 1}}),
         apply=True,
         resume=True,
     )
@@ -339,11 +360,11 @@ def test_resume_allows_unchanged_and_verify_expects_it(good: Path) -> None:
         spec,
         loaded,
         "local",
-        FakeImporter(dry={"2026-07": {"unchanged": 2}, "2026-08": {"unchanged": 4}}),
+        FakeEngine(counts={"2026-07": {"unchanged": 2}, "2026-08": {"unchanged": 4}}),
         verify=True,
     )
     with pytest.raises(runner.HardStop):
-        _run(spec, loaded, "local", FakeImporter(), verify=True)
+        _run(spec, loaded, "local", FakeEngine(), verify=True)
 
 
 def test_prod_needs_the_env_and_a_matching_seal(good: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -351,36 +372,125 @@ def test_prod_needs_the_env_and_a_matching_seal(good: Path, monkeypatch: pytest.
     loaded = load(spec)
     monkeypatch.delenv(runner.ALLOW_PROD_ENV, raising=False)
     with pytest.raises(runner.RunRefused, match=runner.ALLOW_PROD_ENV):
-        _run(spec, loaded, "prod", FakeImporter())
+        _run(spec, loaded, "prod", FakeEngine())
     monkeypatch.setenv(runner.ALLOW_PROD_ENV, "1")
     with pytest.raises(runner.RunRefused, match="seal"):
-        _run(spec, loaded, "prod", FakeImporter())
+        _run(spec, loaded, "prod", FakeEngine())
     sealmod.write(spec, loaded, expect=batch_counts(loaded))
-    assert _run(spec, loaded, "prod", FakeImporter())
+    assert _run(spec, loaded, "prod", FakeEngine())
     p = spec.curated_dir / "status/api/api-cache-ttl.md"
     p.write_text(p.read_text() + "x\n")
     with pytest.raises(runner.RunRefused, match="does not match its seal"):
-        _run(spec, load(spec), "prod", FakeImporter())
+        _run(spec, load(spec), "prod", FakeEngine())
 
 
 def test_unknown_batch_and_flag_combinations_are_refused(good: Path) -> None:
     spec = load_spec(good)
     loaded = load(spec)
     with pytest.raises(runner.RunRefused, match="unknown batch"):
-        _run(spec, loaded, "local", FakeImporter(), batch="1999-01")
+        _run(spec, loaded, "local", FakeEngine(), batch="1999-01")
     with pytest.raises(runner.RunRefused):
-        _run(spec, loaded, "local", FakeImporter(), apply=True, verify=True)
+        _run(spec, loaded, "local", FakeEngine(), apply=True, verify=True)
     with pytest.raises(runner.RunRefused):
-        _run(spec, loaded, "local", FakeImporter(), resume=True)
+        _run(spec, loaded, "local", FakeEngine(), resume=True)
 
 
-def test_hard_stop_counts() -> None:
-    assert runner.hard_stop({"counts": {"new": 3, "missing": 2}}, "dry") == {}
-    assert runner.hard_stop({"counts": {"new": 3, "closed": 1}}, "dry") == {"closed": 1}
-    assert runner.hard_stop({"counts": {"new": 3}, "written": 2, "failed": 0}, "apply") == {
-        "written_vs_new": "2!=3"
-    }
-    assert runner.hard_stop({"counts": {"skipped": 1}}, "apply") == {"skipped": 1}
+def test_check_counts() -> None:
+    assert runner.check_counts({"new": 3, "missing": 2}) == {}
+    assert runner.check_counts({"new": 3, "closed": 1}) == {"closed": 1}
+    assert runner.check_counts({"new": 3, "changed": 1}) == {"changed": 1}
+    assert runner.check_counts({"unchanged": 2}, verify=True) == {}
+    assert runner.check_writes(3, {"written": 2, "failed": []}) == {"written_vs_new": "2!=3"}
+
+
+class FakeServer:
+    """A minimal hlm.export + memory.write server over the REAL importer (review 113): `appear_on` names the
+    call after which another writer owns a key."""
+
+    def __init__(self, appear_key: str, appear_on: str) -> None:
+        self.items: list[dict[str, Any]] = []
+        self.writes: list[dict[str, Any]] = []
+        self.exports = 0
+        self.appear_key, self.appear_on = appear_key, appear_on
+        self.next_lid = 1
+
+    def _own(self, key: str) -> None:
+        system, path = key.split(":", 1)
+        self.items.append(
+            {
+                "logical_id": 9000,
+                "version_id": 9000,
+                "kind": "fact",
+                "valid_to": None,
+                "source": {"system": system, "path": path, "sha256": "f" * 64},
+            }
+        )
+
+    async def __call__(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        from hlmemo.cli.mcp_client import ToolCallError
+
+        if tool == "hlm.export":
+            self.exports += 1
+            page = {"items": [dict(x) for x in self.items], "next_cursor": None, "as_of": {}}
+            if self.appear_on == "export2" and self.exports == 1:
+                self._own(self.appear_key)  # appears after the classification read
+            return page
+        assert tool == "memory.write"
+        item = args["items"][0]
+        self.writes.append(item)
+        key = f"{item['source']['system']}:{item['source']['path']}"
+        if (
+            self.appear_on == "write"
+            and key == self.appear_key
+            and not any(x["logical_id"] == 9000 for x in self.items)
+        ):
+            self._own(key)  # a concurrent writer wins the race for this key
+        if any(
+            f"{x['source']['system']}:{x['source']['path']}" == key
+            and x["logical_id"] != item.get("logical_id")
+            for x in self.items
+        ):
+            raise ToolCallError(
+                "E_VERSION_CONFLICT", "another current item owns this source; revise it instead"
+            )
+        lid = self.next_lid
+        self.next_lid += 1
+        self.items.append(
+            {
+                "logical_id": lid,
+                "version_id": lid,
+                "kind": item["kind"],
+                "valid_to": None,
+                "source": item["source"],
+            }
+        )
+        return {"versions": [{"logical_id": lid, "version_id": lid}], "replayed": False}
+
+
+def _real_run(spec: Any, loaded: Any, server: FakeServer) -> None:
+    @contextlib.asynccontextmanager
+    async def session(_t: Any):
+        yield server
+
+    asyncio.run(runner.run(spec, loaded, "local", session=session, apply=True, batch="2026-07"))
+
+
+def test_real_importer_a_key_appearing_before_the_write_stops_with_no_write(good: Path) -> None:
+    spec = load_spec(good)
+    server = FakeServer("markdown:status/api/api-cache-ttl.md", "export2")
+    with pytest.raises(runner.HardStop, match="appeared"):
+        _real_run(spec, load(spec), server)
+    assert server.writes == []
+
+
+def test_real_importer_a_conflict_during_the_write_is_never_turned_into_a_revision(good: Path) -> None:
+    spec = load_spec(good)
+    server = FakeServer("markdown:status/api/api-cache-ttl.md", "write")
+    with pytest.raises(runner.HardStop, match="write_failed"):
+        _real_run(spec, load(spec), server)
+    keys = [f"{w['source']['system']}:{w['source']['path']}" for w in server.writes]
+    assert keys.count("markdown:status/api/api-cache-ttl.md") == 1  # no re-read and second (revision) write
+    assert all("logical_id" not in w and "expected_version_id" not in w for w in server.writes)
 
 
 # --------------------------------------------------------------------------- recall
@@ -440,3 +550,111 @@ def test_blindcheck_score_takes_the_stricter_grade() -> None:
     g2 = json.loads(json.dumps(g1))
     g2["C9"] = {"grade": "fabricated"}
     assert not bc.score(key, g1, g2, 0.80)["PASS"]
+
+
+# --------------------------------------------------------------------------- review 113
+def test_loopback_is_the_real_host_not_a_prefix(tmp_path: Path) -> None:
+    from hlmemo.migrate.spec import is_loopback_url
+
+    assert is_loopback_url("http://127.0.0.1:8799/mcp") and is_loopback_url("http://localhost:8799/mcp")
+    assert is_loopback_url("http://[::1]:8799/mcp")
+    for bad in (
+        "http://127.0.0.1@mcp.example.org/mcp",
+        "http://user:pw@127.0.0.1:8799/mcp",
+        "http://127.0.0.1.example.org/mcp",
+        "ftp://127.0.0.1/mcp",
+        "http://10.0.0.1/mcp",
+        "not a url",
+    ):
+        assert not is_loopback_url(bad), bad
+    s = tmp_path / "m.toml"
+    s.write_text(
+        'slug = "ok-slug"\n[paths]\ncurated = "c"\n'
+        '[local]\nserver_url = "http://127.0.0.1@mcp.example.org/mcp"\ndevice = "d"\n'
+    )
+    with pytest.raises(SpecError, match="loopback"):
+        load_spec(s)
+
+
+def test_seal_covers_what_the_importer_reads_serena_project_root(tmp_path: Path) -> None:
+    mem = tmp_path / "proj" / ".serena" / "memories"
+    mem.mkdir(parents=True)
+    (mem / "api_overview.md").write_text("# API overview\n\n---\ndate: 2026-07-10\n---\nThe API is small.\n")
+    s = tmp_path / "migration.toml"
+    s.write_text(
+        'slug = "kit-test"\ntz = "UTC"\n[paths]\ncurated = "proj"\nprivate = "private"\n'
+        '[[sources]]\nimporter = "serena"\npath = "proj"\n'
+    )
+    spec = load_spec(s)
+    loaded = load(spec)
+    assert loaded[0].parsed.files == [str(mem / "api_overview.md")]
+    sealmod.write(spec, loaded)
+    assert sealmod.verify(spec, load(spec)).ok
+    (mem / "api_overview.md").write_text("# API overview\n\nThe API is LARGE now.\n")  # same count, same file
+    v = sealmod.verify(spec, load(spec))
+    assert not v.ok and any("changed 0:.serena/memories/api_overview.md" in x for x in v.problems)
+
+
+def test_lint_never_prints_a_token_it_found(good: Path) -> None:
+    root = good.parent / "curated"
+    tok = _token("gh" + "p_", 36)
+    _tree(root, {"status/api/api-tagged.md": FACT.replace("tags: [api]", f"tags: [api, {tok}]")})
+    spec = load_spec(good)
+    res = lint(spec, load(spec))
+    out = "\n".join(res.errors + res.warnings)
+    assert tok not in out and "<redacted:github-token>" in out
+    assert tok not in json.dumps(res.summary)
+
+
+def test_blindcheck_score_refuses_grades_that_do_not_match_the_packets(tmp_path: Path) -> None:
+    bc = _blindcheck()
+    w = tmp_path / "w"
+    (w / "packets").mkdir(parents=True)
+    key = {"AAAAA": {"qid": "p:T1", "answerable": True, "category": "fact", "lang": "en"}}
+    (w / "key.json").write_text(json.dumps(key))
+    (w / "packets" / "BBBBB.json").write_text("{}")  # packets from another run
+    for n in (1, 2):
+        (w / f"grades-{n}.jsonl").write_text(
+            json.dumps({"code": "AAAAA", "grade": "correct", "why": "x"}) + "\n"
+        )
+    args = type("A", (), {"dir": str(w), "bar": 0.8})()
+    with pytest.raises(SystemExit, match="packets"):
+        bc.cmd_score(args)
+
+
+def test_withdraw_uses_one_snapshot_of_the_ids(tmp_path: Path) -> None:
+    """A fake ssh swaps the ids file right after the live-set check: the dry run and the apply must still send
+    the checked snapshot (review 113)."""
+    import subprocess
+
+    ids = tmp_path / "ids.txt"
+    ids.write_text("q-a\nq-b\n")
+    sent = tmp_path / "sent.log"
+    fake = tmp_path / "bin" / "ssh"
+    fake.parent.mkdir()
+    fake.write_text(
+        "#!/usr/bin/env bash\n"
+        'cmd="${@: -1}"\n'
+        'if [[ $cmd == *" audit "* ]]; then\n'
+        """  echo '{"proposals": [{"question_id": "q-a"}, {"question_id": "q-b"}]}'\n"""
+        f"  printf 'q-x\\nq-y\\n' > {ids}\n"
+        "  exit 0\n"
+        "fi\n"
+        "body=$(cat); n=$(printf '%s\\n' \"$body\" | grep -c .)\n"
+        "mode=apply; [[ $cmd == *--dry-run* ]] && mode=dry\n"
+        f'printf \'%s|%s\\n\' "$mode" "$(echo $body)" >> {sent}\n'
+        "if [[ $mode == dry ]]; then\n"
+        '  echo "{\\"dry_run\\": true, \\"withdrawn\\": $n, \\"by_status\\": {\\"open\\": $n}}"\n'
+        'else echo "{\\"dry_run\\": false, \\"withdrawn\\": $n, \\"event_id\\": 7}"; fi\n'
+    )
+    fake.chmod(0o755)
+    env = {"PATH": f"{fake.parent}:/usr/bin:/bin", "HLM_OPS_STATE": str(tmp_path), "TMPDIR": str(tmp_path)}
+    p = subprocess.run(
+        ["bash", str(REPO / "tools/migrate/withdraw.sh"), "kit-test", str(ids), "2", "--reason", "reviewed"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert sent.read_text().splitlines() == ["dry|q-a q-b", "apply|q-a q-b"]

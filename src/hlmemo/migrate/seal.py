@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from hlmemo.migrate.batches import Loaded, batch_counts
+from hlmemo.migrate.redact import redact
 from hlmemo.migrate.spec import MigrationSpec
 
 SEAL_VERSION = 1
@@ -24,21 +25,29 @@ class SealError(RuntimeError):
     """The tree does not match its seal, or a seal cannot be written."""
 
 
-def _source_files(spec: MigrationSpec) -> list[tuple[str, Path]]:
+def _key(i: int, root: Path, path: Path) -> str:
+    try:
+        rel = path.relative_to(root if root.is_dir() else root.parent).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+    return f"{i}:{rel}"
+
+
+def source_files(spec: MigrationSpec, loaded: list[Loaded]) -> list[tuple[str, Path]]:
+    """Exactly the files the importer read (or tried to read) for each source: its own enumeration, kept in
+    ``ParseResult.files`` (serena's ``.serena/memories`` under a project root, automemory's flat directory,
+    the markdown walk with its pruned directories). A seal over any other set could miss a file that changes
+    the import (review 113)."""
     out: list[tuple[str, Path]] = []
-    for i, src in enumerate(spec.sources):
-        if src.path.is_file():
-            out.append((f"{i}:{src.path.name}", src.path))
-            continue
-        for p in sorted(src.path.rglob("*")):
-            rel = p.relative_to(src.path)
-            if p.is_file() and not any(part.startswith(".") for part in rel.parts):
-                out.append((f"{i}:{rel.as_posix()}", p))
-    return out
+    for i, ld in enumerate(loaded):
+        for f in ld.parsed.files:
+            p = Path(f)
+            out.append((_key(i, ld.source.path, p), p))
+    return sorted(out)
 
 
-def file_hashes(spec: MigrationSpec) -> dict[str, str]:
-    return {k: hashlib.sha256(p.read_bytes()).hexdigest() for k, p in _source_files(spec)}
+def file_hashes(spec: MigrationSpec, loaded: list[Loaded]) -> dict[str, str]:
+    return {k: hashlib.sha256(p.read_bytes()).hexdigest() for k, p in source_files(spec, loaded)}
 
 
 def tree_digest(files: dict[str, str]) -> str:
@@ -46,7 +55,7 @@ def tree_digest(files: dict[str, str]) -> str:
 
 
 def build(spec: MigrationSpec, loaded: list[Loaded]) -> dict[str, Any]:
-    files = file_hashes(spec)
+    files = file_hashes(spec, loaded)
     counts = batch_counts(loaded)
     return {
         "seal_version": SEAL_VERSION,
@@ -103,7 +112,8 @@ def verify(spec: MigrationSpec, loaded: list[Loaded]) -> Verdict:
         problems += [f"added {k}" for k in added[:10]] + [f"removed {k}" for k in removed[:10]]
     if now["batch_items"] != sealed.get("batch_items"):
         problems.append(f"batch counts {now['batch_items']} != sealed {sealed.get('batch_items')}")
+    problems = [redact(p) for p in problems]
     return Verdict(not problems, problems, now["tree_sha256"], now["batch_items"])
 
 
-__all__ = ["SealError", "Verdict", "build", "file_hashes", "tree_digest", "verify", "write"]
+__all__ = ["SealError", "Verdict", "build", "file_hashes", "source_files", "tree_digest", "verify", "write"]
