@@ -2383,3 +2383,9 @@ D-259 | 2026-10-07 | ACCEPTED (operator; owner sign-off of the AUDIT pending) | 
 - The operator did step 0 (project, grant, a pre-import dump copied out of the pruned folder), the decision-row links (dry run equal to the review package; applied after the owner's OK), the blind check with the kit's pipeline and the capture.toml mapping.
 - Blind check (D-216 method): passes the bar, with 0 superseded-as-current, every negative abstaining and every layer question correct. The Memory Map was at its budget on every question and the check still passed. Scores are kept privately.
 - The kit's first real run produced its v1.1 list (BACKLOG "Migration kit v1.1"). The blocking item was the public blind-check `ask` losing the hlm MCP server under `--restricted`; a tested fix exists and goes into v1.1.
+D-260 | 2026-10-07 | ACCEPTED (owner) | **The second project-chat migration (D-259) is signed off; its post-import librarian proposals were verified and withdrawn.**
+
+- The owner signed the private AUDIT.
+- Post-import proposals were checked as in D-253 (two verifier agents, a code check, operator review). None needed a link or a correction: the "contradiction" label found no real contradiction again, and a few proposals paired items across unrelated projects. All were withdrawn in one event with the kit's fail-closed `withdraw.sh`, its first real use. Details are kept privately.
+- Cross-project proposals stay enabled for now (owner); they will be re-judged with the deferred precision re-measure.
+- Next: migration kit v1.1 (BACKLOG), so the next migration starts with this run's gaps closed.
