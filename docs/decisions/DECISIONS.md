@@ -2340,7 +2340,7 @@ D-256 | 2026-10-07 | ACCEPTED (owner approved the plan) | **The migration kit sh
   - TEMPLATE now points to the PLAYBOOK.
 - **K3 skills.** `hlm-migrate` walks a project chat through the tiers, phases and hand-offs. `hlm-library` writes down the operator procedures run by hand on 2026-10-06/07: proposal verification and withdraw, links, cards, doc sync, post-import duties, test-drive triage, releases and deploys. The hlmemo skill and protocol §4 point to them.
 - Next (K4): the kit's first real run is the next migration the owner chose: a NotebookLM project with layered legacy memory, Full tier.
-D-257 | 2026-10-07 | PROPOSED (release candidate; dual review and the deploy pending) | **`memory.risk_check` lists the lessons its judge drops: a judged result carries `dropped_by_judge`, so a relevant lesson that the LLM judge did not warn on still reaches the writer.**
+D-257 | 2026-10-07 | ACCEPTED (owner: residual Redactor risk accepted 2026-10-07; 2 review rounds, consults 115-116) | **`memory.risk_check` lists the lessons its judge drops: a judged result carries `dropped_by_judge`, so a relevant lesson that the LLM judge did not warn on still reaches the writer.**
 
 - **Why.** In the first real test drive, the judge dropped all 10 candidates and the verdict was `no_matching_evidence`, while retrieval had ranked the applicable lesson first. With the judge timed out, the same lesson was the top warning (BACKLOG, consult 114). An LLM label is not trusted alone (D-246), so the writer sees what was dropped and decides.
 - **Shape.**
