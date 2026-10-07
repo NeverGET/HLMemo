@@ -18,12 +18,16 @@ needs on top of them.
 | `tools/migrate/local_stack.sh up\|env\|status\|down <slug>` | a scratch database, the API on loopback and a scratch device with `write` on the slug; no prod access, no LLM calls |
 | `hlm migrate plan --spec migration.toml` | parses the curated set with the real importers and prints the batch table (one batch per file, oldest first) |
 | `hlm migrate lint --spec …` | the static rules of the curation spec plus the real importer parse (kinds, dates, skipped files, `describes` pointers) |
-| `hlm migrate seal [--verify] --spec …` | per-file sha256, a tree digest and the per-batch counts; `--verify` compares the tree against the seal |
-| `hlm migrate run --target local\|prod [--batch B] [--apply] --spec …` | a dry run by default; `--apply` runs the dry run of the same batch first and stops on anything but new/missing |
+| `hlm migrate seal [--verify] [--expect JSON] [--force] --spec …` | per-file sha256 of exactly the files the importer reads, a tree digest and the per-batch counts (`seal.json` in the private dir); `--verify` compares the tree against the seal; an existing seal is replaced only with `--force` |
+| `hlm migrate run --target local\|prod [--batch B] [--apply] [--resume] --spec …` | a dry run by default; `--apply` classifies the batch once, checks it is new/missing only, re-reads the open keys and writes exactly that checked plan (a key that appeared in between stops the run before any write); `--resume` finishes a partly written batch; reports go to `runs/` in the private dir |
 | `hlm migrate verify --target prod --spec …` | read-only: every batch must come back `unchanged` |
-| `hlm migrate recall --truthset <jsonl> --target local --spec …` | a cheap pre-check: does the right source file reach the top hits for each sealed question |
+| `hlm migrate recall --truthset <jsonl> --target local [--k 5] [--min-rate R] --spec …` | a cheap pre-check: does the right source file reach the top hits for each sealed question; `--min-rate` makes it a gate |
 | `tools/migrate/blindcheck/` | extract → ask → packets → graders → score: the blind check of §13 |
 | `tools/migrate/withdraw.sh <slug> <ids-file> <expect>` | operator only: withdraws reviewed librarian proposals in one event (§16) |
+
+Exit codes: 0 ok; 1 lint errors, seal mismatch or recall below `--min-rate`; 2 a hard stop; 64 a usage or spec
+error; 65 refused before anything was sent. The spec's optional `estimated_marker` (default "Date estimated") is the
+line `lint` requires in an item tagged `date-estimated`. Diagnostics never print a value that matches a secret rule.
 
 A prod run needs `HLM_MIGRATE_ALLOW_PROD=1` and a seal that verifies, so a prod write cannot happen by accident or
 from a tree that changed after the owner's review.
