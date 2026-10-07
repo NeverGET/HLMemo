@@ -1,4 +1,4 @@
-> Copy of `docs/migration/PLAYBOOK.md` (HLMemo repository, migration playbook v1), copied 2026-10-07, source sha256 9da283f484a24eced8fc4b0f0706bd2cbf9f901d3d778a498353e9316dc5e647. If the two differ, the repository file is the one to follow.
+> Copy of `docs/migration/PLAYBOOK.md` (HLMemo repository, migration playbook v1), copied 2026-10-07, source sha256 0902c14cecb7d4d57ff70419bc0b52c33331112666df46607933d7c5ce46e325. If the two differ, the repository file is the one to follow.
 
 # Migrating a project's legacy memory into HLMemo: the playbook
 
@@ -25,7 +25,7 @@ needs on top of them.
 | `hlm migrate verify --target prod --spec …` | read-only: every batch must come back `unchanged` |
 | `hlm migrate recall --truthset <jsonl> --target local [--k 5] [--min-rate R] --spec …` | a cheap pre-check: does the right source file reach the top hits for each sealed question; `--min-rate` makes it a gate |
 | `tools/migrate/blindcheck/` | extract → ask → packets → graders → score: the blind check of §13 |
-| `tools/migrate/withdraw.sh <slug> <ids-file> <expect>` | operator only: withdraws reviewed librarian proposals in one event (§16) |
+| `tools/migrate/withdraw.sh <slug> <ids-file> <expect> --reason '<why>' [--owner NAME] [--status open|accepted_pending]` | operator only: withdraws reviewed librarian proposals in one event (§16) |
 
 Exit codes: 0 ok; 1 lint errors, seal mismatch or recall below `--min-rate`; 2 a hard stop; 64 a usage or spec
 error; 65 refused before anything was sent. The spec's optional `estimated_marker` (default "Date estimated") is the

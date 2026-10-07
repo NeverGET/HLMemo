@@ -23,7 +23,7 @@ needs on top of them.
 | `hlm migrate verify --target prod --spec …` | read-only: every batch must come back `unchanged` |
 | `hlm migrate recall --truthset <jsonl> --target local [--k 5] [--min-rate R] --spec …` | a cheap pre-check: does the right source file reach the top hits for each sealed question; `--min-rate` makes it a gate |
 | `tools/migrate/blindcheck/` | extract → ask → packets → graders → score: the blind check of §13 |
-| `tools/migrate/withdraw.sh <slug> <ids-file> <expect>` | operator only: withdraws reviewed librarian proposals in one event (§16) |
+| `tools/migrate/withdraw.sh <slug> <ids-file> <expect> --reason '<why>' [--owner NAME] [--status open|accepted_pending]` | operator only: withdraws reviewed librarian proposals in one event (§16) |
 
 Exit codes: 0 ok; 1 lint errors, seal mismatch or recall below `--min-rate`; 2 a hard stop; 64 a usage or spec
 error; 65 refused before anything was sent. The spec's optional `estimated_marker` (default "Date estimated") is the
