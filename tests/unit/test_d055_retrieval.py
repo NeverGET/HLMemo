@@ -630,6 +630,22 @@ _BODY = "## Mistake\nThe serving container lacked the healthcheck label, so the 
         ("---\n# generated\ntitle: t\ndate: 2026-05-01\n---\nBody", 0, "Body"),
         ("---\ntitle: t\n# generated\ntags: [a]\n---\nBody", 0, "Body"),
         ("---\n# Heading only\n---\nAfter", 0, "---\n# Heading only\n---\nAfter"),
+        # review 119 (Astra, round 2): a known key does not make Markdown between two rules frontmatter
+        (
+            "---\n# Deployment checklist\ntitle: release\n- [ ] rotate database\n---\nAfter",
+            0,
+            "---\n# Deployment checklist\ntitle: release\n- [ ] rotate database\n---\nAfter",
+        ),
+        # values are not parsed: the importer reads these lines as frontmatter as well (residual, consult 119)
+        ("---\ntitle: [WIP] unclosed\ndate_evidence: '[UPDATED]' in a heading\n---\nBody", 0, "Body"),
+        # real shapes: a nested block under an empty key, a block list, CRLF, a closing rule at the end
+        ("---\nname: n\nmetadata:\n  type: project\ntags:\n- a\n- b\n---\nBody", 0, "Body"),
+        ("---\r\ntitle: t\r\n---\r\nBody", 0, "---\r\ntitle: t\r\n---\r\nBody"),  # the importer keeps CRLF
+        # review 119 (Sol, round 2): the importers' exact delimiters; a block of any length
+        ("--- \ntitle: prose\n---\nBody", 0, "--- \ntitle: prose\n---\nBody"),
+        ("---\ntitle: prose\n--- \nBody", 0, "---\ntitle: prose\n--- \nBody"),
+        ("---\ntitle: t\n" + "# c\n" * 40 + "---\nBody", 0, "Body"),
+        ("---\ntitle: t\n---", 0, "---\ntitle: t\n---"),
     ],
 )
 def test_preview_text_skips_a_leading_yaml_block_of_chunk_zero(
@@ -657,3 +673,13 @@ def test_preview_text_is_linear_on_long_unclosed_input() -> None:
         t0 = time.perf_counter()
         assert preview_text(text, 0) == text
         assert time.perf_counter() - t0 < 0.5, n
+
+
+def test_preview_frontmatter_delimiters_equal_the_importers() -> None:
+    from hlmemo.core import retrieval
+    from hlmemo.importers.common import FRONTMATTER_RE, parse_frontmatter
+
+    assert retrieval._FRONTMATTER_RE.pattern == FRONTMATTER_RE.pattern
+    assert retrieval._FRONTMATTER_RE.flags == FRONTMATTER_RE.flags
+    text = "---\ntitle: t\ntags: [a]\n---\nBody"
+    assert preview_text(text, 0) == parse_frontmatter(text)[1] == "Body"

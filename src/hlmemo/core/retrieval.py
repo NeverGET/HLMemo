@@ -298,16 +298,43 @@ def term_matches(text: str, terms: Sequence[str]) -> list[tuple[int, int]]:
     return out
 
 
-#: a YAML frontmatter block opening an item: ``---``, a ``key:`` or ``#`` comment line, then key, indented,
-#: list, comment or blank lines, ``---``. It counts only with a top-level key the importers write (review
-#: 118: prose, code or a task list between two horizontal rules is body text)
-_FRONTMATTER_RE = re.compile(
-    r"\A---[ \t]*\n((?:[A-Za-z_][\w-]*:.*\n|#.*\n)"
-    r"(?:[A-Za-z_][\w-]*:.*\n|[ \t]+\S.*\n|-[ \t].*\n|#.*\n|[ \t]*\n){0,39}?)---[ \t]*(?:\n|\Z)"
+#: frontmatter keys the importers write; a block counts as frontmatter only with one of them (review 118)
+_FRONTMATTER_KEYS = frozenset(
+    ("title", "name", "date", "tags", "source_path", "valid_from", "kind", "description", "metadata")
+    + ("hlm_export", "logical_id")
 )
-_FRONTMATTER_KEY_RE = re.compile(
-    r"^(?:title|name|date|tags|source_path|valid_from|kind|description|metadata|hlm_export|logical_id):", re.M
-)
+#: the importers' own delimiter rule (``importers/common.FRONTMATTER_RE``; a unit test keeps them equal):
+#: exactly ``---`` lines, the first closing ``---`` ends the block (review 119)
+_FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
+_FM_KEY_LINE_RE = re.compile(r"([A-Za-z_][\w-]*):(?:[ \t]+(.*))?")
+
+
+def _frontmatter_end(text: str) -> int | None:
+    """The offset after a leading YAML frontmatter block, or None. The block is what the importers
+    split off as frontmatter (same delimiters, any length), and only if every line fits the shape
+    they write: top-level ``key: value`` lines, indented lines or ``- `` items only under a key with
+    an empty value, comments and blank lines, with at least one key the importers write. Reviews 118
+    and 119: code, a list or a task list between two horizontal rules is body text. Values are not
+    parsed: real files carry values such as ``'[UPDATED: …]' in the heading`` that the importer reads
+    as frontmatter too. Linear: one lazy scan for the closing line, then one pass over the block."""
+    m = _FRONTMATTER_RE.match(text)
+    if m is None:
+        return None
+    open_key = known = False
+    for line in m.group(1).split("\n"):
+        s = line.rstrip(" \t\r")
+        if not s or s.lstrip().startswith("#"):
+            continue
+        if s[0] in " \t" or s == "-" or s.startswith("- "):
+            if not open_key:
+                return None
+            continue
+        k = _FM_KEY_LINE_RE.fullmatch(s)
+        if k is None:
+            return None
+        open_key = not (k.group(2) or "").strip()
+        known = known or k.group(1) in _FRONTMATTER_KEYS
+    return m.end() if known else None
 
 
 def preview_text(text: str, ordinal: int) -> str:
@@ -317,10 +344,10 @@ def preview_text(text: str, ordinal: int) -> str:
     skips it; drilldown shows the stored text. A chunk that is nothing but the block keeps it."""
     if ordinal != 0:
         return text
-    m = _FRONTMATTER_RE.match(text)
-    if m is None or not _FRONTMATTER_KEY_RE.search(m.group(1)):
+    end = _frontmatter_end(text)
+    if end is None:
         return text
-    rest = text[m.end() :].lstrip("\n")
+    rest = text[end:].lstrip("\n")
     return rest if rest.strip() else text
 
 
