@@ -298,12 +298,12 @@ def term_matches(text: str, terms: Sequence[str]) -> list[tuple[int, int]]:
     return out
 
 
-#: a YAML frontmatter block opening an item: ``---``, a ``key:`` line, then key, indented, list or blank
-#: lines, ``---``. It counts only with a key the importers write (review 118: prose or code between two
-#: horizontal rules is body text)
+#: a YAML frontmatter block opening an item: ``---``, a ``key:`` or ``#`` comment line, then key, indented,
+#: list, comment or blank lines, ``---``. It counts only with a top-level key the importers write (review
+#: 118: prose, code or a task list between two horizontal rules is body text)
 _FRONTMATTER_RE = re.compile(
-    r"\A---[ \t]*\n((?:[A-Za-z_][\w-]*:.*\n)(?:[A-Za-z_][\w-]*:.*\n|[ \t]+\S.*\n|-[ \t].*\n|[ \t]*\n){0,39}?)"
-    r"---[ \t]*(?:\n|\Z)"
+    r"\A---[ \t]*\n((?:[A-Za-z_][\w-]*:.*\n|#.*\n)"
+    r"(?:[A-Za-z_][\w-]*:.*\n|[ \t]+\S.*\n|-[ \t].*\n|#.*\n|[ \t]*\n){0,39}?)---[ \t]*(?:\n|\Z)"
 )
 _FRONTMATTER_KEY_RE = re.compile(
     r"^(?:title|name|date|tags|source_path|valid_from|kind|description|metadata|hlm_export|logical_id):", re.M

@@ -621,6 +621,15 @@ _BODY = "## Mistake\nThe serving container lacked the healthcheck label, so the 
         ("---\n    print(123)\n---\nAfter", 0, "---\n    print(123)\n---\nAfter"),
         ("---\n- one\n- two\n---\nAfter", 0, "---\n- one\n- two\n---\nAfter"),
         ("---\nNote: a prose line\n---\nAfter", 0, "---\nNote: a prose line\n---\nAfter"),
+        # review 118 (Sol): a task list between two rules is body; a comment inside real frontmatter is fine
+        (
+            "---\n- [ ] rotate database\n- [x] verify backup\n---\nBody continues",
+            0,
+            "---\n- [ ] rotate database\n- [x] verify backup\n---\nBody continues",
+        ),
+        ("---\n# generated\ntitle: t\ndate: 2026-05-01\n---\nBody", 0, "Body"),
+        ("---\ntitle: t\n# generated\ntags: [a]\n---\nBody", 0, "Body"),
+        ("---\n# Heading only\n---\nAfter", 0, "---\n# Heading only\n---\nAfter"),
     ],
 )
 def test_preview_text_skips_a_leading_yaml_block_of_chunk_zero(
