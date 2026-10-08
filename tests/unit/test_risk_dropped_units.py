@@ -1,5 +1,5 @@
-"""Units of ``dropped_by_judge`` (consults 114, 115): the entry shape, title redaction, and packing
-that leaves the warnings exactly as the pre-change code packed them."""
+"""Units of ``dropped_by_judge`` (consults 114, 115) and ``unjudged`` (2026-10-08): the entry shape,
+title redaction, and packing that leaves the warnings exactly as the pre-change code packed them."""
 
 from __future__ import annotations
 
@@ -177,3 +177,56 @@ def test_pack_without_a_dropped_list_adds_no_field() -> None:
     for dropped in (None, []):
         out = rs._pack(_Deps(), _env(), 1000, [_item(1, 10)], dropped)
         assert "dropped_by_judge" not in out and "dropped_omitted" not in out
+
+
+# --------------------------------------------------------------------------- unjudged (2026-10-08)
+def test_unjudged_entry_shape_and_deterministic_why() -> None:
+    u = rs._unjudged(_cand("Bump app.js?v= on every frontend change", score=0.031), "timeout")
+    assert set(u) == {"clue", "title", "why", "source_project"} and u["clue"] == "v812"
+    assert u["why"].startswith(
+        "Retrieval found this lesson (LTV lists, score 0.031; a retrieval-only warning"
+    )
+    assert "no judge checked it (timeout)" in u["why"] and len(u["why"]) <= rs.WHY_MAX
+
+
+def test_unjudged_titles_pass_the_librarian_redaction() -> None:
+    secret = "ExampleSecret123"
+    u = rs._unjudged(_cand("Never ship " + "pass" + "word=" + secret + " in a config"), "timeout")
+    assert secret not in json.dumps(u) and "REDACTED" in u["title"], u
+
+
+def _cands(scores: list[float]) -> list[rs.RiskCandidate]:
+    out = []
+    for i, s in enumerate(scores):
+        c = _cand(f"lesson {i}", score=s)
+        c.version_id = 100 + i
+        out.append(c)
+    return out
+
+
+def test_unjudged_list_skips_warned_and_zero_scores_and_keeps_the_best_three() -> None:
+    cands = _cands([0.05, 0.0, 0.02, 0.03, 0.02, 0.01])
+    warned = rs._det(cands, "timeout", rs.TAU)
+    assert [v for v, _ in warned] == [100]
+    listed = rs._unjudged_list(cands, warned, "timeout")
+    # best det_score first, retrieval order breaks the 0.02 tie; 0.0 (no qualifying list) never
+    assert [v for v, _ in listed] == [103, 102, 104]
+
+
+def test_pack_unjudged_uses_its_own_fields_and_keeps_the_warnings() -> None:
+    env = {**_env(), "judged": False, "judge": "retrieval_only", "reason": "timeout"}
+    warnings = [_item(1, 20)]
+    out = rs._pack(
+        _Deps(),
+        dict(env),
+        4000,
+        list(warnings),
+        [_item(10 + i, 30) for i in range(3)],
+        names=rs.UNJUDGED_FIELDS,
+    )
+    assert out["warnings"] == warnings and len(out["unjudged"]) == 3 and out["unjudged_omitted"] == 0, out
+    assert "dropped_by_judge" not in out and "dropped_omitted" not in out, out
+    old = _old_pack(dict(env), 256, list(warnings))
+    small = rs._pack(_Deps(), dict(env), 256, list(warnings), [_item(10, 300)], names=rs.UNJUDGED_FIELDS)
+    assert (small["warnings"], small["omitted"]) == (old["warnings"], old["omitted"])
+    assert "unjudged" not in small and small.get("unjudged_omitted") in (1, None), small

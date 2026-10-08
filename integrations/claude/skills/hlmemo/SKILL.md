@@ -40,7 +40,8 @@ asks, and ask before writing anything.
 3. **Check risk** (R18) with `memory_risk_check` before a deploy, a migration, a prod-data change, a deletion, a
    force-push or anything touching secrets: lesson-backed checks are what prevent repeats.
 4. **Write as you go** (R5–R14), while the evidence is in front of you, with `updates` when your item makes
-   something you read outdated. **Close once** (R17) with `call_the_day`.
+   something you read outdated. **Close once** (R17) with `call_the_day`; work after a long pause that closed the
+   session continues under a fresh `session_id`.
 
 ## 3. The tools
 
@@ -68,13 +69,16 @@ MCP tools.
   It returns `answer`, `confidence`, `abstained`, `claims[]` (each with `support[]` of `{handle, quote}`),
   `primary[]` and `related[]`. Pass `project` every time; without it the server uses the device's default project.
   The quotes are verbatim but the answer is an LLM's, so open the primary handles with `memory_drilldown` before
-  you act on it. `abstained: true` means memory does not say; it is not a "no".
+  you act on it. `abstained: true` means memory does not say; it is not a "no". For a subagent's brief, ask for
+  an area's known open risks and lessons with their clues, and pass the checked ones on.
 - **`mcp__hlm__memory_risk_check`**, past lessons against a planned step:
   `{"project": "my-project", "task": "Run the migration that adds an index on events(created_at) in prod", "token_budget": 2000}`.
   `verdict: "warn"` lists `warnings[]` (`clue`, `title`, `why`, `source_project`): drill each one and say how you
   comply. A judged result also lists `dropped_by_judge[]` (same fields): retrieval matches the judge did not warn
   on, since the judge can drop a relevant lesson. Their `why` is a fixed retrieval note (the judge gives no reason
-  for a non-match): drill the clue, read the lesson and decide whether it applies.
+  for a non-match): drill the clue, read the lesson and decide whether it applies. A retrieval-only result
+  (`judged: false`, e.g. a judge timeout) lists `unjudged[]` instead, the best retrieved lessons it did not warn on;
+  read them the same way.
   `no_matching_evidence` means no stored lesson matched, not that the step is safe, so before a deploy or prod-data
   change also run `memory_query` with `kinds: ["lesson"]` for the component; `judged: false` means retrieval only,
   with no LLM judge. A warned lesson tagged `resolved` or `historical` is a reminder: say so

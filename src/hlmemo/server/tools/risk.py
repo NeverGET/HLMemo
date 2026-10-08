@@ -59,8 +59,8 @@ REGISTER_LESSON_INPUT = _schema(
 )
 
 RISK_CHECK_DESCRIPTION = (
-    "Check a planned task against past lessons you can read (all granted projects). warn lists "
-    "warnings to heed, and dropped_by_judge too; "
+    "Check a planned task against past lessons you can read (all granted projects). Heed warnings, "
+    "dropped_by_judge and unjudged; "
     "no_matching_evidence is not a safety guarantee; judged=false: retrieval only."
 )
 REGISTER_LESSON_DESCRIPTION = (

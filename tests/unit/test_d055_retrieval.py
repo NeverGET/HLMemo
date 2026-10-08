@@ -21,7 +21,9 @@ from hlmemo.core.retrieval import (
     Fused,
     dedupe_and_order,
     pack_query,
+    preview_text,
     query_preview,
+    render_hit,
     rrf_fuse,
     select_terms,
     split_terms,
@@ -595,3 +597,40 @@ def test_install_id_loser_rereads_the_winner(tmp_path: Path, monkeypatch: pytest
 
     monkeypatch.setattr(client_config, "_publish_install_id", lose)
     assert client_config.install_id() == winner
+
+
+# --------------------------------------------------------------------------- frontmatter (2026-10-08)
+_FM = (
+    '---\ntitle: "INFRA · Start API containers only through the swap script"\ndate: 2026-08-09T13:00:00\n'
+    "tags: [infra, traefik@3, active]\nsource_path: deploy/zero-downtime-swap.sh\n---\n"
+)
+_BODY = "## Mistake\nThe serving container lacked the healthcheck label, so the swap script bootstrapped."
+
+
+@pytest.mark.parametrize(
+    ("text", "ordinal", "expected"),
+    [
+        (_FM + _BODY, 0, _BODY),
+        ("---\ntitle: t\ntags:\n  - a\n  - b\n\n---\nbody text", 0, "body text"),
+        (_FM + _BODY, 1, _FM + _BODY),  # only chunk 0 opens the item
+        ("---\nA horizontal rule, then prose\n---\nmore", 0, "---\nA horizontal rule, then prose\n---\nmore"),
+        ("---\ntitle: t\n---\n", 0, "---\ntitle: t\n---\n"),  # nothing but the block: kept
+        ("---\ntitle: t\nno closing line", 0, "---\ntitle: t\nno closing line"),
+        (_BODY, 0, _BODY),
+    ],
+)
+def test_preview_text_skips_a_leading_yaml_block_of_chunk_zero(
+    text: str, ordinal: int, expected: str
+) -> None:
+    assert preview_text(text, ordinal) == expected
+
+
+def test_a_hit_preview_starts_after_the_frontmatter(meter: Meter) -> None:
+    text = _FM + _BODY + " " + FILLER
+    f = Fused(1, 1, 1, 0.5)
+    f.row = _row(1, 1, text)
+    terms = ["swap", "script"]
+    assert "source_path" in query_preview(meter, text, terms, PREVIEW_TOK)  # the shape the test drive saw
+    hit = render_hit(meter, f, PREVIEW_TOK, terms)
+    assert "swap script" in hit["preview"], hit["preview"]
+    assert "title:" not in hit["preview"] and "source_path" not in hit["preview"], hit["preview"]

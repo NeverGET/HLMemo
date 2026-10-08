@@ -181,6 +181,8 @@ checks a write grant on `hlm-global` (`librarian/reserved.py:16`; `core/write_se
 owner's device was granted one for the D-234 import, and no later decision records its removal.
 
 **R17. Close each session once with `memory.call_the_day`** (fresh UUIDs for `request_id` and `session_id`).
+A long pause that may end the session closes it; work after the pause is a new session with a fresh
+`session_id`, closed again (test-drive 2026-10-08).
 `notes` = what changed, why, pointers (files, commits, D-ids, clues), then `## Open` bullets. `decisions` = one
 line each with its reason. Leave `lessons` empty, since it skips R15's schema; write every lesson with
 `memory.register_lesson`. Use `card_update` only to fix a card line your session made false: a minimal edit,
@@ -201,12 +203,14 @@ once per project (`E_SESSION_CLOSED`, `core/write_service.py:776-780`); card hea
 On `warn`, drill each lesson and state how you comply. `no_matching_evidence` is not a guarantee: the LLM judge can
 drop a relevant lesson (test-drive 2026-10-07). So a judged result also lists `dropped_by_judge`: the retrieval
 matches the judge did not warn on (D-257). Their `why` is a fixed retrieval note (the judge gives no reason for a
-non-match), so read the lesson itself and decide whether it applies. Before a deploy
+non-match), so read the lesson itself and decide whether it applies. A retrieval-only result (`judged: false`, for
+example a judge timeout) lists `unjudged` instead: the best retrieved lessons it did not warn on, with the same kind
+of fixed note (test-drive 2026-10-08); read them the same way. Before a deploy
 or a prod-data change, also run `memory.query` with `kinds: ["lesson"]` for the component, worded the way the
 lessons are written. `judged: false` means retrieval only. A warned lesson tagged `resolved`/`historical` is a reminder: say so.
 *Why:* lesson-backed checks are what prevent repeats (D-222). *Enforced by:* protocol only. The verdict
-semantics are server today (`server/tools/risk.py:60-63`; `core/risk_service.py:4-6,26-31`), and so is the
-`dropped_by_judge` list (`core/risk_service.py`, consults 114 and 115). Candidates are chosen by kind with no tag filter
+semantics are server today (`server/tools/risk.py:61-65`; `core/risk_service.py:6-7,29-33`), and so are the
+`dropped_by_judge` and `unjudged` lists (`core/risk_service.py`, consults 114 and 115). Candidates are chosen by kind with no tag filter
 (`db/risk_queries.py:31`).
 
 **R19. Make writes idempotent.** One `request_id` per logical write; a transport retry resends the identical
@@ -462,7 +466,7 @@ Read first: the injected brief, else memory.query your task (token_budget 3000).
 - Query each area before work there; previews are excerpts, so drill the top hits (memory.drilldown) first.
 - superseded:true is not current: follow superseded_by. memory.ask (when listed): open its handles to check quotes.
 - Before a deploy, migration, prod-data change, deletion, force-push or secret: memory.risk_check, and memory.query
-  kinds:[lesson] for the component. Read warnings and dropped_by_judge, say how you comply; no match is not safety.
+  kinds:[lesson] per component. Read warnings, dropped_by_judge, unjudged; say how you comply; no match is not safety.
 Write into project <slug> only (another slug or extra project_ids only if the owner asks). Memory is append-only.
 - Durable items: current facts, decisions + reasons, lessons, dated episodes. No transcript/tool-output dumps, guesses
   as fact, other projects' data or secret values (keys, tokens, passwords, DSNs with passwords); name where they live.

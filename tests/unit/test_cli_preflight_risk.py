@@ -293,3 +293,37 @@ def test_risk_wait_is_bounded_in_total(tmp_path: Path, monkeypatch: pytest.Monke
     elapsed = time.monotonic() - t0
     assert out.ok and out.risk_error == "timeout"
     assert elapsed < 2.0, elapsed  # total cap 1.0 s, not 0.9 + 1.5 s
+
+
+def test_retrieval_only_no_match_with_unjudged_lessons_names_them() -> None:
+    """2026-10-08: a judge timeout used to read as "no matching lesson" while retrieval had them."""
+    risk = {
+        **RISK_WARN,
+        "verdict": "no_matching_evidence",
+        "judged": False,
+        "judge": "retrieval_only",
+        "reason": "timeout",
+        "warnings": [],
+        "omitted": 0,
+        "unjudged": _DROPPED * 2,
+        "unjudged_omitted": 1,
+    }
+    p = build_prompt(query_ok(), project="p", device="d", queried_at="t", task="x", risk=risk)
+    assert "found no matching past lesson" not in p
+    assert "no past lesson passed the retrieval warn threshold (RETRIEVAL ONLY" in p
+    assert "lists 2 retrieved lesson(s) no judge checked (1 more did not fit the budget)" in p
+    only_counter = {k: v for k, v in risk.items() if k != "unjudged"}
+    p = build_prompt(query_ok(), project="p", device="d", queried_at="t", task="x", risk=only_counter)
+    assert "Retrieval found 1 more lesson(s) that no judge checked and that did not fit the budget" in p
+
+
+def test_warn_line_mentions_unjudged_lessons_too() -> None:
+    risk = {
+        **RISK_WARN,
+        "judged": False,
+        "judge": "retrieval_only",
+        "reason": "timeout",
+        "unjudged": _DROPPED,
+    }
+    p = build_prompt(query_ok(), project="p", device="d", queried_at="t", task="x", risk=risk)
+    assert "flagged" in p and "lists 1 retrieved lesson(s) no judge checked: read them" in p

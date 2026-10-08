@@ -1,8 +1,8 @@
 """``memory.risk_check`` (PHASE2-4-ROADMAP W2d; report D.3 #7, D.4(b); D-014, D-062, D-067).
 
 ``risk_check(conn, ctx, args, deps=, judge=, detach=, reconnect=)`` → ``{project, verdict, judged,
-judge, reason?, warnings, omitted, dropped_by_judge?, dropped_omitted?, candidates_considered,
-guard_dropped?, budget}``;
+judge, reason?, warnings, omitted, dropped_by_judge?, dropped_omitted?, unjudged?, unjudged_omitted?,
+candidates_considered, guard_dropped?, budget}``;
 ``verdict ∈ {"warn", "no_matching_evidence"}``. Per D-014 it never says "no risk": the absence of
 a warning only means no stored lesson matched.
 
@@ -41,6 +41,14 @@ a warning only means no stored lesson matched.
    writer now sees it and decides. ``verdict``, ``warnings`` and ``judged`` keep their meaning, so
    the G-LIVE-C rates are unchanged. Privacy-withheld candidates are never in this list (the judge
    never saw them; they warn at ``TAU_STRICT``). Retrieval-only results carry neither field.
+   **Unjudged** (second test drive, 2026-10-08): a retrieval-only result (``judged:false``, any
+   reason) also lists, as ``unjudged``, the best candidates it did not warn on, best ``det_score``
+   first, at most ``MAX_UNJUDGED``; a candidate with ``det_score`` 0 (only a distant vector match) is
+   left out. A short task text ranks the applicable lesson in the top ``TOP_K`` but below ``TAU``, so
+   a judge timeout used to answer ``no_matching_evidence`` with nothing to read while the judged
+   call of the same task warned on it. Entries have the ``dropped_by_judge`` shape: a deterministic
+   ``why`` (kind, lists, score, the reason) and the redacted title. ``verdict``, ``warnings`` and
+   ``judged`` keep their meaning. Judged results carry neither ``unjudged`` field.
 4. **D-062**: the judge never runs inside a transaction. Over the API the request transaction
    (device FOR SHARE) is committed and its connection returned (``detach``) before the judge;
    afterwards ONE short transaction on a fresh connection re-checks the device (revoked / expired /
@@ -56,6 +64,7 @@ is added in the room left: ``dropped_by_judge`` (a best-first prefix) and ``drop
 entries that did not fit, its own counter). When not even one entry fits, only ``dropped_omitted``
 is added (no list): the caller learns that a larger budget would show N more matches. When even
 that counter does not fit, both fields are left out (the one case a caller cannot tell).
+``unjudged`` / ``unjudged_omitted`` pack the same way on a retrieval-only result.
 """
 
 from __future__ import annotations
@@ -103,6 +112,9 @@ LIST_LIMIT = 50  # per RRF list over the lesson universe
 MATCH_CHUNKS = 3  # matching chunks per candidate handed to the judge (its text window)
 MAX_WARNINGS = 3
 MAX_DROPPED = 3  # candidates above TAU that the judge did not warn on (``dropped_by_judge``)
+MAX_UNJUDGED = 3  # retrieval-only: the best candidates not warned on (``unjudged``)
+DROPPED_FIELDS = ("dropped_by_judge", "dropped_omitted")
+UNJUDGED_FIELDS = ("unjudged", "unjudged_omitted")
 _REDACTOR = Redactor()  # the librarian's redaction (secrets only; email/phone stay as written)
 WHY_MAX = rj.WHY_MAX
 
@@ -272,6 +284,14 @@ def _dropped(c: RiskCandidate) -> dict[str, Any]:
     return {"clue": c.clue, "title": _safe_title(c.title), "why": why[:WHY_MAX], "source_project": c.project}
 
 
+def _unjudged(c: RiskCandidate, reason: str) -> dict[str, Any]:
+    why = (
+        f"Retrieval found this {c.kind} ({c.lists} lists, score {c.det_score:.3f}; a retrieval-only warning "
+        f"needs {TAU:.3f}) and no judge checked it ({reason}). Drill the clue and decide whether it applies."
+    )
+    return {"clue": c.clue, "title": _safe_title(c.title), "why": why[:WHY_MAX], "source_project": c.project}
+
+
 def _det_why(c: RiskCandidate, reason: str) -> str:
     return (
         f"Retrieval-only match on this {c.kind} ({c.lists} lists, score {c.det_score:.3f}); "
@@ -292,7 +312,11 @@ def _pack(
     budget: int,
     warnings: list[dict[str, Any]],
     dropped: list[dict[str, Any]] | None = None,
+    *,
+    names: tuple[str, str] = DROPPED_FIELDS,
 ) -> dict[str, Any]:
+    """``dropped`` is the list packed after the warnings: ``dropped_by_judge`` on a judged result,
+    ``unjudged`` (``names=UNJUDGED_FIELDS``) on a retrieval-only one."""
     meter = deps.meter
     prefix = [0]
     base = meter.settle(envelope, budget)
@@ -308,27 +332,33 @@ def _pack(
     except BudgetError as exc:
         raise ToolError(exc.code, str(exc), **exc.details) from exc
     if dropped and envelope["omitted"] == 0:
-        return _pack_dropped(meter, envelope, budget, dropped)
+        return _pack_dropped(meter, envelope, budget, dropped, names)
     return envelope
 
 
 def _pack_dropped(
-    meter: Any, envelope: dict[str, Any], budget: int, dropped: list[dict[str, Any]]
+    meter: Any,
+    envelope: dict[str, Any],
+    budget: int,
+    dropped: list[dict[str, Any]],
+    names: tuple[str, str] = DROPPED_FIELDS,
 ) -> dict[str, Any]:
-    """Adds ``dropped_by_judge`` / ``dropped_omitted`` only in the room the packed warnings left,
-    on a copy. When not even one entry fits, only the counter is added (``dropped_omitted: N``, no
-    list), so a caller can tell the judge left out N matches that need a larger budget (review 116).
-    Edge: when even the counter does not fit, the envelope stays exactly as the warnings left it."""
+    """Adds the list (``names[0]``: ``dropped_by_judge`` or ``unjudged``) and its counter
+    (``names[1]``) only in the room the packed warnings left, on a copy. When not even one entry
+    fits, only the counter is added (e.g. ``dropped_omitted: N``, no list), so a caller can tell N
+    matches need a larger budget (review 116). Edge: when even the counter does not fit, the
+    envelope stays exactly as the warnings left it."""
+    key, more = names
     trial = dict(envelope)
-    trial["dropped_by_judge"] = []
-    trial["dropped_omitted"] = len(dropped)
+    trial[key] = []
+    trial[more] = len(dropped)
     prefix = [0]
     for d in dropped:
         prefix.append(prefix[-1] + meter.count(d) + 1)
 
     def apply(n: int) -> None:
-        trial["dropped_by_judge"] = dropped[:n]
-        trial["dropped_omitted"] = len(dropped) - n
+        trial[key] = dropped[:n]
+        trial[more] = len(dropped) - n
 
     try:
         base = meter.settle(trial, budget)
@@ -338,7 +368,7 @@ def _pack_dropped(
     if n > 0:
         return trial
     counter_only = dict(envelope)
-    counter_only["dropped_omitted"] = len(dropped)
+    counter_only[more] = len(dropped)
     if meter.settle(counter_only, budget) <= budget:
         return counter_only
     meter.settle(envelope, budget)  # the envelope as the warnings left it, budget block exact
@@ -434,6 +464,7 @@ async def risk_check(
     by_vid = {c.version_id: c for c in cands}
     warned: list[tuple[int, dict[str, Any]]]
     dropped: list[tuple[int, dict[str, Any]]] = []
+    unjudged: list[tuple[int, dict[str, Any]]] = []  # retrieval-only: the best candidates not warned on
     if called and res.judged:
         judged = True
         warned = [(vid, _warning(by_vid[vid], why or "Applies to this task.")) for vid, why in res.matches]
@@ -450,11 +481,13 @@ async def risk_check(
         dropped = [(c.version_id, _dropped(c)) for c in passed[:MAX_DROPPED]]
     elif all_withheld:  # nothing could be sent: the privacy-withheld rule applies to every candidate
         warned = _det(cands, "withheld by the privacy policy", TAU_STRICT)
+        unjudged = _unjudged_list(cands, warned, "withheld by the privacy policy")
     else:
         warned = _det(cands, status.replace("_", " "), TAU)
+        unjudged = _unjudged_list(cands, warned, status.replace("_", " "))
 
     if called:  # time passed without a transaction: authority and visibility are re-checked
-        shown = [v for v, _ in warned] + [v for v, _ in dropped]
+        shown = [v for v, _ in warned] + [v for v, _ in dropped] + [v for v, _ in unjudged]
         if released:
             assert reconnect is not None
             async with reconnect() as fresh_conn:
@@ -463,6 +496,7 @@ async def risk_check(
             visible = await _recheck(conn, ctx, request.project, shown)
         warned = [(v, w) for v, w in warned if v in visible]
         dropped = [(v, d) for v, d in dropped if v in visible]
+        unjudged = [(v, u) for v, u in unjudged if v in visible]
 
     envelope: dict[str, Any] = {
         "project": project.slug,
@@ -477,7 +511,10 @@ async def risk_check(
         envelope["reason"] = "withheld" if all_withheld else status
     if guard_dropped:
         envelope["guard_dropped"] = guard_dropped
-    return _pack(deps, envelope, budget, [w for _, w in warned], [d for _, d in dropped] if judged else None)
+    warnings = [w for _, w in warned]
+    if judged:
+        return _pack(deps, envelope, budget, warnings, [d for _, d in dropped])
+    return _pack(deps, envelope, budget, warnings, [u for _, u in unjudged], names=UNJUDGED_FIELDS)
 
 
 def _det(cands: list[RiskCandidate], reason: str, tau: float) -> list[tuple[int, dict[str, Any]]]:
@@ -485,9 +522,23 @@ def _det(cands: list[RiskCandidate], reason: str, tau: float) -> list[tuple[int,
     return [(c.version_id, _warning(c, _det_why(c, reason))) for c in hits[:MAX_WARNINGS]]
 
 
+def _unjudged_list(
+    cands: list[RiskCandidate], warned: list[tuple[int, dict[str, Any]]], reason: str
+) -> list[tuple[int, dict[str, Any]]]:
+    """The best retrieved candidates a retrieval-only answer did not warn on (test drive
+    2026-10-08): best ``det_score`` first, retrieval order breaking ties; a candidate that
+    qualifies in no list (``det_score`` 0: only a distant vector match) is left out."""
+    shown = {v for v, _ in warned}
+    rest = sorted(
+        (c for c in cands if c.version_id not in shown and c.det_score > 0), key=lambda c: -c.det_score
+    )
+    return [(c.version_id, _unjudged(c, reason)) for c in rest[:MAX_UNJUDGED]]
+
+
 __all__ = [
     "MATCH_CHUNKS",
     "MAX_DROPPED",
+    "MAX_UNJUDGED",
     "TAU",
     "TAU_STRICT",
     "TOOL",

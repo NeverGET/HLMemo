@@ -298,6 +298,26 @@ def term_matches(text: str, terms: Sequence[str]) -> list[tuple[int, int]]:
     return out
 
 
+#: a YAML frontmatter block opening an item: ``---``, then key, indented, list or blank lines, ``---``
+_FRONTMATTER_RE = re.compile(
+    r"\A---[ \t]*\n(?:[A-Za-z_][\w-]*:.*\n|[ \t]+\S.*\n|-[ \t].*\n|[ \t]*\n){1,40}?---[ \t]*(?:\n|\Z)"
+)
+
+
+def preview_text(text: str, ordinal: int) -> str:
+    """The text a preview is cut from: chunk 0 without a leading YAML frontmatter block (second test
+    drive, 2026-10-08). Imported files keep their frontmatter in the body, and the query-centred
+    window often landed on its ``title:`` line, which repeats the hit's title. Only the preview
+    skips it; drilldown shows the stored text. A chunk that is nothing but the block keeps it."""
+    if ordinal != 0:
+        return text
+    m = _FRONTMATTER_RE.match(text)
+    if m is None:
+        return text
+    rest = text[m.end() :].lstrip("\n")
+    return rest if rest.strip() else text
+
+
 def query_preview(meter: Meter, text: str, terms: Sequence[str], max_tokens: int) -> str:
     """D-055 query-centred preview: the ``max_tokens``-token (o200k) window of ``text`` covering the
     most distinct query terms (then the most occurrences, then the earliest start), starting
@@ -343,7 +363,7 @@ def render_hit(meter: Meter, f: Fused, preview_tok: int, terms: Sequence[str] = 
         "clue": encode_clue(row.version_id, row.ordinal),
         "kind": row.kind,
         "title": row.title,
-        "preview": query_preview(meter, row.text, terms, preview_tok),
+        "preview": query_preview(meter, preview_text(row.text, row.ordinal), terms, preview_tok),
         "score": round(f.score, SCORE_DIGITS),
         "valid_from": fmt_ts(row.valid_from),
         "tags": list(row.tags),
