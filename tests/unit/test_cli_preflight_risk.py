@@ -310,7 +310,7 @@ def test_retrieval_only_no_match_with_unjudged_lessons_names_them() -> None:
     }
     p = build_prompt(query_ok(), project="p", device="d", queried_at="t", task="x", risk=risk)
     assert "found no matching past lesson" not in p
-    assert "no past lesson passed the retrieval warn threshold (RETRIEVAL ONLY" in p
+    assert "warned on no past lesson for this task (RETRIEVAL ONLY" in p
     assert "lists 2 retrieved lesson(s) no judge checked (1 more did not fit the budget)" in p
     only_counter = {k: v for k, v in risk.items() if k != "unjudged"}
     p = build_prompt(query_ok(), project="p", device="d", queried_at="t", task="x", risk=only_counter)

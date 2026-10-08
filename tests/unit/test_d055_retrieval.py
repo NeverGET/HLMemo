@@ -621,6 +621,7 @@ _BODY = "## Mistake\nThe serving container lacked the healthcheck label, so the 
         ("---\n    print(123)\n---\nAfter", 0, "---\n    print(123)\n---\nAfter"),
         ("---\n- one\n- two\n---\nAfter", 0, "---\n- one\n- two\n---\nAfter"),
         ("---\nNote: a prose line\n---\nAfter", 0, "---\nNote: a prose line\n---\nAfter"),
+        ('---\n\tprint("keep")\n---\nTail', 0, '---\n\tprint("keep")\n---\nTail'),  # review 120 (Sol 6.1)
         # review 118 (Sol): a task list between two rules is body; a comment inside real frontmatter is fine
         (
             "---\n- [ ] rotate database\n- [x] verify backup\n---\nBody continues",

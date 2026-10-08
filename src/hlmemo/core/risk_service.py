@@ -285,9 +285,13 @@ def _dropped(c: RiskCandidate) -> dict[str, Any]:
 
 
 def _unjudged(c: RiskCandidate, reason: str) -> dict[str, Any]:
+    if c.det_score >= TAU:  # above the threshold, past the warning cap (review 120)
+        where = f"above the warn threshold, past the {MAX_WARNINGS}-warning cap"
+    else:
+        where = f"a retrieval-only warning needs {TAU:.3f}"
     why = (
-        f"Retrieval found this {c.kind} ({c.lists} lists, score {c.det_score:.3f}; a retrieval-only warning "
-        f"needs {TAU:.3f}) and no judge checked it ({reason}). Drill the clue and decide whether it applies."
+        f"Retrieval found this {c.kind} ({c.lists} lists, score {c.det_score:.3f}; {where}) and no judge "
+        f"checked it ({reason}). Drill the clue and decide whether it applies."
     )
     return {"clue": c.clue, "title": _safe_title(c.title), "why": why[:WHY_MAX], "source_project": c.project}
 

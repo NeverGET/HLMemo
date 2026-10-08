@@ -230,3 +230,10 @@ def test_pack_unjudged_uses_its_own_fields_and_keeps_the_warnings() -> None:
     small = rs._pack(_Deps(), dict(env), 256, list(warnings), [_item(10, 300)], names=rs.UNJUDGED_FIELDS)
     assert (small["warnings"], small["omitted"]) == (old["warnings"], old["omitted"])
     assert "unjudged" not in small and small.get("unjudged_omitted") in (1, None), small
+
+
+def test_unjudged_why_above_the_threshold_names_the_warning_cap() -> None:
+    """Review 120 (Sol 6.1): a fourth candidate above TAU lands in unjudged; its why names the cap."""
+    u = rs._unjudged(_cand("lesson four", score=0.05), "timeout")
+    assert "above the warn threshold, past the 3-warning cap" in u["why"] and "needs" not in u["why"], u
+    assert len(u["why"]) <= rs.WHY_MAX

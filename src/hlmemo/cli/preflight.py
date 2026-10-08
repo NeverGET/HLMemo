@@ -210,8 +210,8 @@ def risk_line(risk: dict[str, Any] | None, risk_error: str | None) -> str | None
     if listed or more:  # the judge matched none, yet retrieval found some (consults 115, 116)
         head = f"memory.risk_check: the librarian judge matched no past lesson ({how})."
         return f"{head} {extra}"
-    if u_listed or u_more:  # retrieval-only: nothing passed the warn threshold, yet some came close
-        head = f"memory.risk_check: no past lesson passed the retrieval warn threshold ({how})."
+    if u_listed or u_more:  # retrieval-only, no warning left, yet retrieval found lessons (review 120)
+        head = f"memory.risk_check warned on no past lesson for this task ({how})."
         return f"{head} {extra}"
     return (
         f"memory.risk_check found no matching past lesson for this task ({how}; not a guarantee of safety)."
