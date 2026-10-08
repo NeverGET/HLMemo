@@ -298,9 +298,15 @@ def term_matches(text: str, terms: Sequence[str]) -> list[tuple[int, int]]:
     return out
 
 
-#: a YAML frontmatter block opening an item: ``---``, then key, indented, list or blank lines, ``---``
+#: a YAML frontmatter block opening an item: ``---``, a ``key:`` line, then key, indented, list or blank
+#: lines, ``---``. It counts only with a key the importers write (review 118: prose or code between two
+#: horizontal rules is body text)
 _FRONTMATTER_RE = re.compile(
-    r"\A---[ \t]*\n(?:[A-Za-z_][\w-]*:.*\n|[ \t]+\S.*\n|-[ \t].*\n|[ \t]*\n){1,40}?---[ \t]*(?:\n|\Z)"
+    r"\A---[ \t]*\n((?:[A-Za-z_][\w-]*:.*\n)(?:[A-Za-z_][\w-]*:.*\n|[ \t]+\S.*\n|-[ \t].*\n|[ \t]*\n){0,39}?)"
+    r"---[ \t]*(?:\n|\Z)"
+)
+_FRONTMATTER_KEY_RE = re.compile(
+    r"^(?:title|name|date|tags|source_path|valid_from|kind|description|metadata|hlm_export|logical_id):", re.M
 )
 
 
@@ -312,7 +318,7 @@ def preview_text(text: str, ordinal: int) -> str:
     if ordinal != 0:
         return text
     m = _FRONTMATTER_RE.match(text)
-    if m is None:
+    if m is None or not _FRONTMATTER_KEY_RE.search(m.group(1)):
         return text
     rest = text[m.end() :].lstrip("\n")
     return rest if rest.strip() else text

@@ -617,6 +617,10 @@ _BODY = "## Mistake\nThe serving container lacked the healthcheck label, so the 
         ("---\ntitle: t\n---\n", 0, "---\ntitle: t\n---\n"),  # nothing but the block: kept
         ("---\ntitle: t\nno closing line", 0, "---\ntitle: t\nno closing line"),
         (_BODY, 0, _BODY),
+        # review 118 (Astra): code or a list between two horizontal rules is body, not frontmatter
+        ("---\n    print(123)\n---\nAfter", 0, "---\n    print(123)\n---\nAfter"),
+        ("---\n- one\n- two\n---\nAfter", 0, "---\n- one\n- two\n---\nAfter"),
+        ("---\nNote: a prose line\n---\nAfter", 0, "---\nNote: a prose line\n---\nAfter"),
     ],
 )
 def test_preview_text_skips_a_leading_yaml_block_of_chunk_zero(
@@ -634,3 +638,13 @@ def test_a_hit_preview_starts_after_the_frontmatter(meter: Meter) -> None:
     hit = render_hit(meter, f, PREVIEW_TOK, terms)
     assert "swap script" in hit["preview"], hit["preview"]
     assert "title:" not in hit["preview"] and "source_path" not in hit["preview"], hit["preview"]
+
+
+def test_preview_text_is_linear_on_long_unclosed_input() -> None:
+    import time
+
+    for n in (2_000, 64_000):
+        text = "---\ntitle: t\n" + "  x\n" * n
+        t0 = time.perf_counter()
+        assert preview_text(text, 0) == text
+        assert time.perf_counter() - t0 < 0.5, n
