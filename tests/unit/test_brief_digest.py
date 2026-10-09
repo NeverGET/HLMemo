@@ -137,9 +137,10 @@ def test_mapped_with_failed_fetch_gets_digest_and_unavailable_line(
     text = ctx(o)
     head, _, tail = text.rpartition("\n\n")
     assert head == H.digest("proj")
-    assert tail == H.unavailable("proj", o.status) and "\n" not in tail
+    assert tail == H.unavailable("proj", o.status, o.cause) and "\n" not in tail
     assert tail.startswith("# Memory brief: project proj: unavailable this session (")
-    assert o.status == ("error:ConnectionError" if status_fetcher == "error" else "timeout")
+    assert o.status == ("error:network" if status_fetcher == "error" else "timeout")
+    assert ("(server unreachable)" if status_fetcher == "error" else "(timed out after 0.2 s;") in tail
 
 
 def test_unmapped_prints_nothing(tmp_path: Path, cfg_file: Path) -> None:
@@ -175,7 +176,7 @@ def test_hlm_brief_digest_off_keeps_the_brief_only(tmp_path: Path, cfg_file: Pat
 
 def test_hlm_brief_digest_off_with_failed_fetch_prints_nothing(tmp_path: Path, cfg_file: Path) -> None:
     o = go(payload(tmp_path), cfg_file, fetcher=boom, env={"HLM_BRIEF_DIGEST": "off"})
-    assert o.output is None and o.status == "error:ConnectionError"
+    assert o.output is None and (o.status, o.cause) == ("error:network", "ConnectionError")
 
 
 def test_other_digest_values_keep_the_digest(tmp_path: Path, cfg_file: Path) -> None:
@@ -253,7 +254,7 @@ def test_watchdog_prints_digest_when_the_fetch_hangs(tmp_path: Path, cfg_file: P
     code = (
         "import sys, time\n"
         "from hlmemo.brief import hook as H\n"
-        "async def hung(slug, cfg):\n"
+        "async def hung(slug, cfg, partial=None):\n"
         "    time.sleep(30)\n"
         "H.default_fetcher = hung\n"
         "sys.exit(H.main())\n"

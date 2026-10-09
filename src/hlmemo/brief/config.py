@@ -18,7 +18,8 @@ WALL_ENV = "HLM_BRIEF_WALL_S"  # test/ops override of the hard wall clock
 
 # 2026-10-06 (D-252): 3.2 s was at the edge of measured fetch times (2.3-3.2 s; slower under librarian load)
 WALL_S = 8.0  # hard budget for the whole hook process (the registered hook timeout is 10)
-FETCH_S = 6.5  # the memory calls must finish by then; the rest is assembly + output
+FETCH_S = 6.5  # ONE deadline for the whole fetch (session open, every read, close); then assembly + output
+RETRY_MIN_S = 3.0  # a fast retryable failure is retried once, only while this much of FETCH_S is left
 BRIEF_TOKENS = 1500
 SOURCES = ("startup", "clear", "compact")
 

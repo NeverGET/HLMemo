@@ -11,6 +11,8 @@ import io
 import json
 import subprocess
 import sys
+import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,7 @@ import pytest
 from hlmemo.brief import config as BC
 from hlmemo.brief import hook as H
 from hlmemo.brief.fetch import Item, Snapshot
+from hlmemo.cli.mcp_client import MemoryClient, ToolCallError, _classify
 
 PROJ = "/w/proj"
 
@@ -34,7 +37,7 @@ def good_snapshot() -> Snapshot:
     )
 
 
-async def ok_fetcher(slug: str, cfg: Any) -> Snapshot:
+async def ok_fetcher(slug: str, cfg: Any, partial: Any = None) -> Snapshot:
     assert slug == "proj"
     return good_snapshot()
 
@@ -197,10 +200,10 @@ def test_timeout_fails_open(
         return good_snapshot()
 
     o = go(payload(tmp_path), cfg_file, fetcher=slow, env={} if digest_on else DIGEST_OFF)
-    assert o.status == "timeout"
+    assert o.status == "timeout" and o.slug == "proj"
     assert_fail_open(o, digest_on)
     if digest_on:
-        assert "(the memory read timed out)" in ctx(o)
+        assert "(timed out after 0.2 s; memory.query still works)" in ctx(o)
 
 
 @pytest.mark.parametrize("digest_on", [True, False])
@@ -226,8 +229,10 @@ def test_server_unreachable_fails_open(
 
     monkeypatch.setattr(F, "open_call_factory", refuse)
     o = H.handle(payload(tmp_path), env={} if digest_on else DIGEST_OFF, config_path=cfg_file)
-    assert o.status.startswith("error:")
+    assert (o.status, o.cause) == ("error:network", "ConnectionError")
     assert_fail_open(o, digest_on)
+    if digest_on:
+        assert "(server unreachable)" in ctx(o)
 
 
 @pytest.mark.parametrize("digest_on", [True, False])
@@ -324,6 +329,7 @@ def test_main_prints_json_and_exits_zero(
     assert doc["hookSpecificOutput"]["hookEventName"] == "SessionStart"
     log = (tmp_path / "state" / "brief.log").read_text()
     assert " injected " in log and " digest=1 " in log and "sections=Digest,Now,Lessons" in log
+    assert " slug=proj cause=- " in log
 
 
 def test_main_unmapped_prints_nothing(
@@ -365,7 +371,7 @@ def test_watchdog_ends_a_hung_process_silently_with_exit_zero() -> None:
 
 def test_wall_clock_is_eight_seconds_and_inside_the_hook_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HLM_BRIEF_WALL_S", raising=False)
-    assert BC.wall_seconds() == 8.0 and BC.FETCH_S < BC.wall_seconds() < 10.0
+    assert BC.wall_seconds() == 8.0 and BC.RETRY_MIN_S < BC.FETCH_S < BC.wall_seconds() < 10.0
     monkeypatch.setenv("HLM_BRIEF_WALL_S", "bogus")
     assert BC.wall_seconds() == 8.0
 
@@ -467,3 +473,231 @@ def test_history_and_body_settings_reach_the_brief(tmp_path: Path) -> None:
     )
     on = go(payload(tmp_path), p, fetcher=with_note).output or ""
     assert "Use the new parser." in on and "A lesson — The rule." in on
+
+
+# --------------------------------------------------------------------------- one deadline, real client
+def slow_server(delay: float) -> Any:
+    """An in-process MCP server whose every tool call takes ``delay`` seconds."""
+    from mcp import types
+    from mcp.server.lowlevel import Server
+
+    async def on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
+        tool = types.Tool(name="memory.query", description="q", inputSchema={"type": "object"})
+        return types.ListToolsResult(tools=[tool])
+
+    async def on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+        await asyncio.sleep(delay)
+        return types.CallToolResult(content=[types.TextContent(type="text", text="{}")], isError=False)
+
+    return Server("hlmemo-slow", on_list_tools=on_list_tools, on_call_tool=on_call_tool)
+
+
+def test_client_session_lets_the_deadline_cancellation_through() -> None:
+    """``MemoryClient.session()`` / ``call_async`` re-raise a cancellation unchanged, so the caller's
+    ``asyncio.timeout`` ends in TimeoutError (it was classified as ToolCallError E_UNAVAILABLE)."""
+    client = MemoryClient.in_memory(slow_server(30), timeout_s=30)
+
+    async def in_session() -> None:
+        async with asyncio.timeout(0.2):
+            async with client.session() as call:
+                await call("memory.query", {})
+
+    async def one_call() -> None:
+        async with asyncio.timeout(0.2):
+            await client.call_async("memory.query", {})
+
+    for run in (in_session, one_call):
+        with pytest.raises(TimeoutError):
+            asyncio.run(run())
+
+
+def test_a_slow_server_through_the_real_session_is_a_timeout(
+    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default fetcher over a real ``MemoryClient.session()``: a slow server is reported as a
+    timeout of the queries (it was logged as ``error:ToolCallError`` at exactly the fetch budget)."""
+    from hlmemo.brief import fetch as F
+
+    monkeypatch.setattr(BC, "FETCH_S", 0.5)
+    client = MemoryClient.in_memory(slow_server(30), timeout_s=30)
+    monkeypatch.setattr(F, "open_call_factory", lambda *a, **k: client.session())
+    t = time.monotonic()
+    o = H.handle(payload(tmp_path), env={}, config_path=cfg_file)
+    assert o.status == "timeout"  # was error:ToolCallError
+    assert o.cause == "queries" and "(timed out after 0.5 s; memory.query still works)" in ctx(o)
+    assert time.monotonic() - t < 3  # one deadline, and the session closes promptly after it
+
+
+# --------------------------------------------------------------------------- partial brief
+CARD = {"clue": "v1", "text": "# Proj\n\nReal card.", "stale": False}
+
+
+def lesson_hit(vid: int, title: str) -> dict[str, Any]:
+    return {"clue": f"v{vid}.0", "kind": "lesson", "title": title, "tags": [],
+            "valid_from": f"2026-09-{vid:02d}T10:00:00Z"}  # fmt: skip
+
+
+def raw(vid: int) -> dict[str, Any]:
+    return {"version_id": vid, "logical_id": vid + 1000, "kind": "lesson", "valid_to": None,
+            "superseded_at": None, "recorded_at": "2026-09-30T11:00:00Z", "superseded_by": [],
+            "payload_item": {"body": f"body {vid}"}, "links": [], "next_cursor": None}  # fmt: skip
+
+
+def patch_session(monkeypatch: pytest.MonkeyPatch, call: Any) -> None:
+    """``open_call_factory`` yields the fake ``call``: the real default fetcher and gather_snapshot run."""
+    from hlmemo.brief import fetch as F
+
+    @asynccontextmanager
+    async def session() -> Any:
+        yield call
+
+    monkeypatch.setattr(F, "open_call_factory", lambda *a, **k: session())
+
+
+def test_deadline_after_the_queries_injects_what_was_verified(
+    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The card and the queries came back, one lesson was verified, the other's memory.raw hangs: the
+    card and the verified lesson are shown with the cut note; the unverified lesson never is."""
+    monkeypatch.setattr(BC, "FETCH_S", 0.5)
+
+    async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        if tool == "memory.query":
+            lessons = [lesson_hit(21, "Fast lesson"), lesson_hit(20, "Slow lesson")]
+            return {"card": CARD, "hits": lessons if args["kinds"] == ["lesson"] else []}
+        if args["version_id"] == 20:
+            await asyncio.sleep(30)
+        return raw(args["version_id"])
+
+    patch_session(monkeypatch, call)
+    for env in ({}, DIGEST_OFF):
+        o = H.handle(payload(tmp_path), env=env, config_path=cfg_file)
+        text = ctx(o)
+        assert (o.status, o.cause) == ("timeout", "details") and o.tokens > 0
+        assert "## Now (project card v1, updated 2026-09-30" in text and "Real card." in text
+        assert "- [v21] Fast lesson" in text and "Slow lesson" not in text
+        assert text.endswith("\n" + H.PARTIAL_NOTE.format(s=0.5)) and "unavailable this session" not in text
+        assert o.sections[-2:] == ("Now", "Lessons") and len(text) <= H.CONTEXT_CHARS
+
+
+def test_deadline_before_the_queries_came_back_is_a_plain_timeout(
+    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(BC, "FETCH_S", 0.3)
+
+    async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        await asyncio.sleep(30)
+        return {}
+
+    patch_session(monkeypatch, call)
+    o = H.handle(payload(tmp_path), env={}, config_path=cfg_file)
+    assert (o.status, o.cause) == ("timeout", "queries")
+    assert_fail_open(o, True)
+    assert ctx(o).endswith(H.unavailable("proj", "timeout"))
+
+
+# --------------------------------------------------------------------------- the cause
+@pytest.mark.parametrize(
+    ("exc", "status", "cause"),
+    [
+        (TimeoutError(), "timeout", ""),
+        (_classify(TimeoutError()), "timeout", ""),
+        (ToolCallError("E_AUTH", "rejected"), "error:auth", "E_AUTH"),
+        (_classify(RuntimeError("HTTP 401 Unauthorized")), "error:auth", "E_AUTH"),
+        (ToolCallError("E_DEVICE_PENDING", "not yet", retryable=True), "error:auth", "E_DEVICE_PENDING"),
+        (_classify(ConnectionRefusedError("refused")), "error:network", "ConnectionRefusedError"),
+        (ConnectionError("x"), "error:network", "ConnectionError"),
+        (ToolCallError("E_UNAVAILABLE", "database down", retryable=True), "error:server", "E_UNAVAILABLE"),
+        (ToolCallError("E_BUDGET_TOO_SMALL", "x"), "error:server", "E_BUDGET_TOO_SMALL"),
+        (RuntimeError("x"), "error:RuntimeError", ""),
+    ],
+)
+def test_failure_names_the_cause(exc: BaseException, status: str, cause: str) -> None:
+    assert H.failure(exc) == (status, cause)
+
+
+@pytest.mark.parametrize(
+    ("status", "cause", "why"),
+    [
+        ("timeout", "queries", "timed out after 6.5 s; memory.query still works"),
+        ("error:auth", "E_AUTH", "the server refused this device's token"),
+        ("error:auth", "E_DEVICE_PENDING", "this device is not approved yet"),
+        ("error:network", "ConnectError", "server unreachable"),
+        ("error:server", "E_UNAVAILABLE", "server error E_UNAVAILABLE"),
+        ("error:RuntimeError", "", "the memory read failed"),
+    ],
+)
+def test_unavailable_line_says_why(status: str, cause: str, why: str) -> None:
+    assert H.unavailable("proj", status, cause) == (
+        f"# Memory brief: project proj: unavailable this session ({why}). "
+        "Use memory.query (token_budget 3000) for your task."
+    )
+
+
+def test_cause_reaches_the_line_and_the_log(
+    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def refused(slug: str, cfg: Any) -> Snapshot:
+        raise ToolCallError("E_AUTH", "server rejected the device token (401)")
+
+    o = go(payload(tmp_path), cfg_file, fetcher=refused)
+    assert (o.status, o.slug, o.cause) == ("error:auth", "proj", "E_AUTH")
+    assert "(the server refused this device's token)" in ctx(o)
+    monkeypatch.setenv("HLM_CAPTURE_STATE_DIR", str(tmp_path / "state"))
+    H.log_line(o, 42)
+    log = (tmp_path / "state" / "brief.log").read_text()
+    assert " error:auth 42ms slug=proj cause=E_AUTH tokens=0 " in log
+
+
+# --------------------------------------------------------------------------- one retry
+def flaky(errors: list[BaseException], calls: list[float], delay: float = 0.0) -> Any:
+    async def fetcher(slug: str, cfg: Any) -> Snapshot:
+        calls.append(time.monotonic())
+        await asyncio.sleep(delay)
+        if errors:
+            raise errors.pop(0)
+        return good_snapshot()
+
+    return fetcher
+
+
+def reset() -> ToolCallError:
+    return _classify(ConnectionResetError("reset by peer"))  # retryable, no answer from the server
+
+
+def test_a_fast_retryable_failure_is_retried_once(tmp_path: Path, cfg_file: Path) -> None:
+    calls: list[float] = []
+    assert go(payload(tmp_path), cfg_file, fetcher=flaky([reset()], calls)).status == "injected"
+    assert len(calls) == 2
+    calls.clear()
+    o = go(payload(tmp_path), cfg_file, fetcher=flaky([reset(), reset(), reset()], calls))
+    assert (o.status, o.cause, len(calls)) == ("error:network", "ConnectionResetError", 2)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ToolCallError("E_AUTH", "no"),
+        ToolCallError("E_DEVICE_PENDING", "wait", retryable=True),
+        ToolCallError("E_INVALID_ARG", "bad"),
+        RuntimeError("bug"),
+        ConnectionError("not a classified, retryable client error"),
+    ],
+)
+def test_auth_and_non_retryable_failures_are_not_retried(
+    tmp_path: Path, cfg_file: Path, exc: BaseException
+) -> None:
+    calls: list[float] = []
+    assert go(payload(tmp_path), cfg_file, fetcher=flaky([exc], calls)).status.startswith("error:")
+    assert len(calls) == 1
+
+
+def test_a_slow_failure_is_not_retried(
+    tmp_path: Path, cfg_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Less than RETRY_MIN_S left before the deadline: the failure is reported, not retried."""
+    monkeypatch.setattr(BC, "FETCH_S", 1.0)
+    monkeypatch.setattr(BC, "RETRY_MIN_S", 0.6)
+    calls: list[float] = []
+    o = go(payload(tmp_path), cfg_file, fetcher=flaky([reset()], calls, delay=0.5))
+    assert (o.status, len(calls)) == ("error:network", 1)

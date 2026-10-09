@@ -342,6 +342,48 @@ def test_card_date_unknown_when_raw_fails_or_no_card() -> None:
     assert run(s2).card_date is None
 
 
+def test_card_date_is_read_alongside_the_candidates() -> None:
+    """The card's memory.raw shares the candidates' round trip (it used to cost one of its own first)."""
+    s = server_with_notes()
+    s.add(1, "project_card", "Project card", "# Proj", 27)
+    events: list[str] = []
+
+    async def call(tool: str, args: dict) -> dict:
+        if tool == "memory.raw" and args["version_id"] == 1:
+            await asyncio.sleep(0.05)
+            events.append("card")
+        elif tool == "memory.raw":
+            events.append(f"v{args['version_id']}")
+        return await s(tool, args)
+
+    snap = asyncio.run(F.gather_snapshot(call, "proj", now=NOW))
+    assert events[-1] == "card" and len(events) == 5  # every candidate read started before the card's ended
+    assert snap.card_date == datetime(2026, 9, 27, 11, 0, tzinfo=UTC) and snap.stage == "done"
+
+
+def test_into_keeps_what_was_read_when_the_fetch_is_cut() -> None:
+    """A deadline that cancels the candidates' reads: ``into`` holds the card, the stage and the items
+    verified in time; ``settle`` shows those and marks the cut ones unverified."""
+    s = server_with_notes()
+
+    async def call(tool: str, args: dict) -> dict:
+        if tool == "memory.raw" and args["version_id"] == 20:
+            await asyncio.sleep(30)
+        return await s(tool, args)
+
+    async def cut(snap: F.Snapshot) -> None:
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await F.gather_snapshot(call, "proj", now=NOW, into=snap)
+
+    snap = F.Snapshot(project="proj")
+    asyncio.run(cut(snap))
+    assert snap.stage == "details" and snap.card == CARD
+    F.settle(snap)
+    assert [i.version_id for i in snap.lessons] == [21] and [i.version_id for i in snap.sessions] == [11, 10]
+    assert ("v20", "unverified") in snap.excluded
+
+
 # --------------------------------------------------------------------------- review 96 Sol #5
 def chunk(a: int, text: str, ordinal: int = 0) -> dict:
     return {"ordinal": ordinal, "char_start": a, "char_end": a + len(text), "text": text}

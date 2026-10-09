@@ -97,6 +97,11 @@ class Snapshot:
     card_date: datetime | None = None  # recorded_at of the card version (None: unknown)
     as_of: datetime | None = None  # newest recorded_at among the items read
     now: datetime = field(default_factory=lambda: datetime.now(UTC))
+    #: how far the reads got (``gather_snapshot``): session (opening it) -> queries -> details
+    #: (memory.raw of the card and the candidates) -> done
+    stage: str = "session"
+    #: the session-note and lesson candidates (``details`` on): ``settle`` keeps the verified ones
+    pools: tuple[list[Item], list[Item]] = field(default_factory=lambda: ([], []))
 
 
 def parse_ts(v: Any) -> datetime | None:
@@ -307,10 +312,16 @@ async def _card_date(call: Call, project: str, card: dict[str, Any] | None) -> d
     return parse_ts(r.get("recorded_at"))
 
 
-async def gather_snapshot(call: Call, project: str, *, now: datetime | None = None) -> Snapshot:
-    """Everything the brief shows, read-only. Raises only if NOTHING could be read."""
-    now = now or datetime.now(UTC)
-    snap = Snapshot(project=project, now=now)
+async def gather_snapshot(
+    call: Call, project: str, *, now: datetime | None = None, into: Snapshot | None = None
+) -> Snapshot:
+    """Everything the brief shows, read-only. Raises only if NOTHING could be read.
+
+    ``into`` is filled as the reads come back (``stage``, the card, the candidate pools, each verified
+    item), so a caller whose deadline cancels this can still ``settle`` what was read in time."""
+    snap = into if into is not None else Snapshot(project=project)
+    snap.now = now = now or datetime.now(UTC)
+    snap.stage = "queries"
 
     def q(query: str, kind: str) -> Awaitable[dict[str, Any]]:
         return call(
@@ -333,21 +344,36 @@ async def gather_snapshot(call: Call, project: str, *, now: datetime | None = No
             n = lib.get("pending_questions")
             snap.pending = n if isinstance(n, int) and n > 0 else 0
             snap.notices = [x for x in (lib.get("notices") or []) if isinstance(x, dict)]
-    snap.card_date = await _card_date(call, project, snap.card)
     lesson_res = results[0] if isinstance(results[0], dict) else {}
     sess_hits = [h for r in results[1:] if isinstance(r, dict) for h in (r.get("hits") or [])]
     s_pool = candidates(sess_hits, POOL_SESSIONS)
     l_pool = candidates(lesson_res.get("hits") or [], POOL_LESSONS)
+    snap.pools = (s_pool, l_pool)
+    snap.stage = "details"
+
+    async def card_date() -> None:  # in parallel with the candidates' reads, not one round trip before
+        snap.card_date = await _card_date(call, project, snap.card)
 
     sem = asyncio.Semaphore(CONCURRENCY)
     jobs = [(it, RAW_BUDGET_SESSION) for it in s_pool] + [(it, RAW_BUDGET_LESSON) for it in l_pool]
-    outcomes = await asyncio.gather(
-        *[_bounded(sem, read_raw(call, project, it, b, now)) for it, b in jobs], return_exceptions=True
+    _, *outcomes = await asyncio.gather(
+        card_date(),
+        *[_bounded(sem, read_raw(call, project, it, b, now)) for it, b in jobs],
+        return_exceptions=True,
     )
     for (it, _b), res in zip(jobs, outcomes, strict=True):
         if isinstance(res, BaseException):
             it.verified = False
+    settle(snap)
+    snap.stage = "done"
+    return snap
 
+
+def settle(snap: Snapshot) -> Snapshot:
+    """The shown sessions and lessons, the exclusions and ``as_of`` from the candidate pools. A candidate
+    whose memory.raw did not (completely) come back, e.g. one a deadline cut, is ``unverified`` and never
+    shown. (On an older server a cut pool also knows fewer superseders: the fallback gap above.)"""
+    s_pool, l_pool = snap.pools
     dead = superseded_pool_ids(s_pool + l_pool)
 
     def keep(pool: list[Item]) -> list[Item]:
@@ -369,6 +395,7 @@ async def gather_snapshot(call: Call, project: str, *, now: datetime | None = No
                 out.append(it)
         return out
 
+    snap.excluded = []
     snap.sessions, snap.lessons = keep(s_pool), keep(l_pool)
     stamps = [i.recorded_at for i in snap.sessions + snap.lessons if i.recorded_at is not None]
     snap.as_of = max(stamps) if stamps else None

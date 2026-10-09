@@ -9,8 +9,12 @@ prints ``{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalCon
    ``docs/protocol/HLMEMO-PROTOCOL.md`` section 6) with ``<slug>`` filled in, unless
    ``HLM_BRIEF_DIGEST=off``; then
 2. the memory brief (read-only memory calls), or, when the digest is on and no brief can be produced
-   (timeout, error, nothing to show), ONE line saying the brief is unavailable. With the digest off a
-   missing brief prints nothing, as before.
+   (timeout, error, nothing to show), ONE line saying the brief is unavailable and why. With the digest
+   off a missing brief prints nothing, as before.
+
+The memory calls run under ONE deadline (``FETCH_S``: session open, every read, close). When it hits
+after the card and the queries came back, the brief shows what was verified in time plus a one-line
+note. A fast retryable network/server failure is retried once while ``RETRY_MIN_S`` remain.
 
 Global install (``~/.claude/settings.json``): until the cwd is known to be mapped the hook imports only
 stdlib-light modules, opens no socket and prints nothing. ``-P`` keeps the session cwd off ``sys.path``,
@@ -49,18 +53,26 @@ SLUG_MARK = "<slug>"
 #: file and shows the model only a 2,000-character preview). Digest + brief stay below, with a margin.
 CONTEXT_CHARS = 9500
 Fetcher = Callable[[str, BC.BriefConfig], Awaitable[Any]]
+AUTH_CODES = frozenset({"E_AUTH", "E_DEVICE_PENDING"})
+#: the last line of a brief the deadline cut short (the card and the queries came back, not every detail)
+PARTIAL_NOTE = "(cut short by the {s:g} s time limit: items not verified in time are left out)"
 
 
 @dataclass
 class Outcome:
     #: killed | unmapped | ignored | dryrun, or the brief's own status: injected | empty | timeout |
-    #: error:<Type> (with the digest on, empty/timeout/error still carry an output)
+    #: error:auth | error:network | error:server | error:<Type> (with the digest on, empty/timeout/error
+    #: still carry an output; a timeout after the queries may carry a partial brief)
     status: str
     output: str | None = None  # the exact stdout (a JSON line) when something is to be injected
     tokens: int = 0  # the brief's tokens (0: no brief)
     sections: tuple[str, ...] = ()  # "Digest" first when the digest is part of the output
     digest: bool = False
     chars: int = 0  # len(additionalContext)
+    slug: str = ""  # the mapped project
+    #: why: the stage a timeout cut (session | queries | details), the error code (auth/server) or the
+    #: transport error's type (network)
+    cause: str = ""
 
 
 def hook_output(text: str) -> str:
@@ -90,10 +102,23 @@ def _digest_or_empty(slug: str, env: Mapping[str, str]) -> str:
         return ""
 
 
-def unavailable(slug: str, status: str) -> str:
-    """The one line that stands in for a brief that could not be produced."""
+def _token(s: str) -> str:
+    """A code or type name, safe for one log field or one line of context."""
+    return re.sub(r"[^A-Za-z0-9._:-]", "", s)[:64]
+
+
+def unavailable(slug: str, status: str, cause: str = "") -> str:
+    """The one line that stands in for a brief that could not be produced, with the reason."""
     if status == "timeout":
-        why = "the memory read timed out"
+        why = f"timed out after {BC.FETCH_S:g} s; memory.query still works"
+    elif status == "error:auth" and cause == "E_DEVICE_PENDING":
+        why = "this device is not approved yet"
+    elif status == "error:auth":
+        why = "the server refused this device's token"
+    elif status == "error:network":
+        why = "server unreachable"
+    elif status == "error:server":
+        why = f"server error {_token(cause)}".rstrip()
     elif status.startswith("error"):
         why = "the memory read failed"
     else:
@@ -104,6 +129,34 @@ def unavailable(slug: str, status: str) -> str:
     )
 
 
+def failure(exc: BaseException) -> tuple[str, str]:
+    """``(status, cause)`` of a failed fetch: ``timeout``; ``error:auth`` and ``error:server`` with the
+    code; ``error:network`` (no answer from the server) with the transport error's type; anything else
+    ``error:<Type>``. Never raises."""
+    if isinstance(exc, TimeoutError):
+        return "timeout", ""
+    if isinstance(exc, ConnectionError):
+        return "error:network", type(exc).__name__
+    try:
+        from hlmemo.cli.mcp_client import ToolCallError
+    except Exception:  # noqa: BLE001 - the client cannot load, so it raised nothing
+        return f"error:{type(exc).__name__}", ""
+    if not isinstance(exc, ToolCallError):
+        return f"error:{type(exc).__name__}", ""
+    if exc.code in AUTH_CODES:
+        return "error:auth", exc.code
+    if exc.transport == "TimeoutError":
+        return "timeout", ""
+    if exc.transport:
+        return "error:network", exc.transport
+    return "error:server", exc.code
+
+
+def _retryable(status: str, exc: BaseException) -> bool:
+    """Network or server failures the client/server flagged retryable (never auth, never a timeout)."""
+    return status in ("error:network", "error:server") and getattr(exc, "retryable", False) is True
+
+
 def compose(head: str, body: str) -> str:
     return f"{head}\n\n{body}" if head and body else head or body
 
@@ -112,30 +165,66 @@ def fit(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "…"
 
 
-async def default_fetcher(slug: str, cfg: BC.BriefConfig) -> Any:
-    import asyncio
-
+async def default_fetcher(slug: str, cfg: BC.BriefConfig, partial: Any = None) -> Any:
+    """The snapshot, read in one MCP session (no timer here: ``fetch_snapshot`` owns the deadline).
+    ``partial`` (a ``Snapshot``) is filled as the reads come back, for a deadline that cuts them."""
     from hlmemo.brief import fetch as F
 
     cm = F.open_call_factory(cfg.capture, timeout_s=BC.FETCH_S)
     if cm is None:  # no device token: the relay fallback runs an LLM, which this hook never does
         return None
     async with cm as call:
-        return await asyncio.wait_for(F.gather_snapshot(call, slug), timeout=BC.FETCH_S)
+        return await F.gather_snapshot(call, slug, into=partial)
 
 
-def build_brief(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None, room: int) -> tuple[str, Any]:
-    """``(status, Brief | None)``; status = injected | empty | timeout | error:<Type>. The brief keeps
-    its token budget AND fits in ``room`` characters (what the digest leaves). Never raises."""
+async def fetch_snapshot(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None) -> tuple[str, str, Any]:
+    """``(status, cause, Snapshot | None)``, status = ok | empty | timeout | error:... (``failure``),
+    under ONE deadline ``BC.FETCH_S`` from now. A retryable network/server failure is retried once while
+    ``BC.RETRY_MIN_S`` remain. When the deadline cuts the default fetcher after the card and the queries,
+    the snapshot of what was verified by then comes back with status ``timeout`` (cause: the stage)."""
+    import asyncio
+
+    from hlmemo.brief import fetch as F
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + BC.FETCH_S
+    partial: Any = None
+    try:
+        async with asyncio.timeout_at(deadline):
+            retried = False
+            while True:
+                partial = F.Snapshot(project=slug) if fetcher is None else None
+                try:
+                    snap = await (fetcher(slug, cfg) if fetcher else default_fetcher(slug, cfg, partial))
+                    return ("ok", "", snap) if snap is not None else ("empty", "", None)
+                except Exception as exc:
+                    if loop.time() >= deadline:  # the deadline's cancellation, turned into an error
+                        raise TimeoutError from exc
+                    status, cause = failure(exc)
+                    if retried or not _retryable(status, exc) or deadline - loop.time() < BC.RETRY_MIN_S:
+                        return status, cause, None
+                    retried = True
+    except TimeoutError:
+        stage = partial.stage if partial is not None else ""
+        return "timeout", stage, F.settle(partial) if stage == "details" else None
+
+
+def build_brief(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None, room: int) -> tuple[str, str, Any]:
+    """``(status, cause, Brief | None)``; status = injected | empty | timeout | error:... (``failure``).
+    A timeout that cut only the details still gives a brief of what was verified, ending in
+    ``PARTIAL_NOTE``. The brief keeps its token budget AND fits in ``room`` characters (what the digest
+    leaves). Never raises."""
     try:
         import asyncio
 
         from hlmemo.brief.assemble import assemble, count_tokens
 
-        snap = asyncio.run(asyncio.wait_for((fetcher or default_fetcher)(slug, cfg), timeout=BC.FETCH_S))
+        status, cause, snap = asyncio.run(fetch_snapshot(slug, cfg, fetcher))
         if snap is None:
-            return "empty", None
-        budget = cfg.budget_tokens
+            return status, cause, None
+        note = PARTIAL_NOTE.format(s=BC.FETCH_S) if status == "timeout" else ""
+        budget = cfg.budget_tokens - (count_tokens(note) + 1 if note else 0)
+        room -= (len(note) + 1) if note else 0
 
         def counter(text: str) -> int:  # over the room = over budget: assemble drops lines until it fits
             n = count_tokens(text)
@@ -151,15 +240,15 @@ def build_brief(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None, room: i
             counter=counter,
         )
         if brief is None:
-            return "empty", None
+            return ("timeout" if note else "empty"), cause, None
         if len(brief.text) > room:  # last resort; the drop loop normally prevents it
             brief.text, brief.truncated = fit(brief.text, room), True
+        if note:
+            brief.text += "\n" + note
         brief.tokens = count_tokens(brief.text)
-        return "injected", brief
-    except TimeoutError:
-        return "timeout", None
+        return ("timeout" if note else "injected"), cause, brief
     except BaseException as exc:  # noqa: BLE001 - fail open, always
-        return f"error:{type(exc).__name__}", None
+        return (*failure(exc), None)
 
 
 def _safe(s: str) -> str:
@@ -210,16 +299,17 @@ def handle(
         if head and arm is not None and not dry:
             arm(hook_output(compose(head, unavailable(slug, "timeout"))))
         room = CONTEXT_CHARS - (len(head) + 2 if head else 0)
-        status, brief = build_brief(slug, cfg, fetcher, room)
-        body = brief.text if brief is not None else (unavailable(slug, status) if head else "")
+        status, cause, brief = build_brief(slug, cfg, fetcher, room)
+        body = brief.text if brief is not None else (unavailable(slug, status, cause) if head else "")
         text = compose(head, body)
         if not text:
-            return Outcome(status)
+            return Outcome(status, slug=slug, cause=cause)
         tokens = brief.tokens if brief is not None else 0
         sections = (("Digest",) if head else ()) + (tuple(brief.sections) if brief is not None else ())
         if dry:
             meta = {
                 "status": status,
+                "cause": cause,
                 "digest": bool(head),
                 "tokens": tokens,
                 "sections": list(sections),
@@ -228,8 +318,8 @@ def handle(
                 "chars": len(text),
             }
             write_dryrun(dry, data, text, meta)
-            return Outcome("dryrun", None, tokens, sections, bool(head), len(text))
-        return Outcome(status, hook_output(text), tokens, sections, bool(head), len(text))
+            return Outcome("dryrun", None, tokens, sections, bool(head), len(text), slug, cause)
+        return Outcome(status, hook_output(text), tokens, sections, bool(head), len(text), slug, cause)
     except BaseException as exc:  # noqa: BLE001 - fail open, always
         return Outcome(f"error:{type(exc).__name__}")
 
@@ -242,8 +332,8 @@ def log_line(o: Outcome, ms: int) -> None:
         stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         with (d / "brief.log").open("a", encoding="utf-8") as fh:
             fh.write(
-                f"{stamp} {o.status} {ms}ms tokens={o.tokens} chars={o.chars} digest={int(o.digest)} "
-                f"sections={','.join(o.sections)}\n"
+                f"{stamp} {o.status} {ms}ms slug={_token(o.slug) or '-'} cause={_token(o.cause) or '-'} "
+                f"tokens={o.tokens} chars={o.chars} digest={int(o.digest)} sections={','.join(o.sections)}\n"
             )
     except BaseException:  # noqa: BLE001
         pass
