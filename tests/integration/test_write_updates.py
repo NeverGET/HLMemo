@@ -304,6 +304,7 @@ async def test_the_replacement_must_be_in_the_carrying_body_not_another_batch_it
     ("upd", "reason"),
     [
         ({"old_span": "90 seconds"}, "span_not_found"),
+        ({"old_span": OLD[0]}, "span_in_title"),  # the title: revise never changes it
         ({"old_span": "cache"}, "span_not_unique"),
         ({"old_span": "0 seconds"}, "span_word_boundary"),
         ({"replacement": "900 seconds"}, "replacement_not_in_body"),

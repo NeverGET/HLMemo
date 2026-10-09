@@ -33,7 +33,9 @@ from tests.integration.test_write_updates import (  # noqa: F401 - fixtures by i
     SPAN,
     _current,
     _device,
+    _links,
     _old,
+    _replay_identical,
     _rows,
     _upd,
     _write,
@@ -125,6 +127,64 @@ async def test_raw_names_the_whole_superseder_of_a_closed_item(connect, world, d
     ]
     # an item nobody supersedes: an explicit empty list (the field is always present on raw)
     assert (await _raw(connect, world, read_deps, new["version_id"]))["superseded_by"] == []
+
+
+async def test_a_supersede_quoting_the_outdated_title_closes_and_is_named_on_raw(
+    connect, world, deps, read_deps
+) -> None:  # noqa: ANN001
+    """A writer whose target's TITLE is what went stale quotes the title ("Cache settings" occurs in
+    no body line): the supersede applies, closes the old item at the cut, its link is whole-scope
+    with ``quote_in: "title"``, and memory.raw of the old version names the superseder (no quote: a
+    whole entry). A revise quoting the title is told to supersede instead."""
+    title = OLD[0]
+    assert title not in OLD[1]
+    old = await _old(connect, world, deps)
+    ack = await _write(
+        connect, world.ctx_a, MAIN, [item(*NEW_TTL, updates=[_upd(old, title, replacement=REPL)])], deps
+    )
+    (u,) = ack["updates"]
+    assert (u["status"], u["code"], u["reason"]) == ("rejected", "E_INVALID_ARG", "span_in_title")
+    assert "supersede" in u["hint"]
+    assert [r["body"] for r in _current(await _rows(connect, old["logical_id"]))] == [OLD[1]]
+    ack = await _write(
+        connect,
+        world.ctx_a,
+        MAIN,
+        [
+            item(
+                "Cache replaced",
+                "The cache was removed; responses are not cached.",
+                valid_from=D_EFF.isoformat(),
+                updates=[_upd(old, title, mode="supersede")],
+            )
+        ],
+        deps,
+    )
+    (new,) = ack["versions"]
+    assert ack["updates"] == [{"index": 0, "update": 0, "status": "applied", "mode": "supersede"}]
+    (survivor,) = _current(await _rows(connect, old["logical_id"]))
+    assert (survivor["body"], survivor["vf"], survivor["vt"]) == (OLD[1], D_OLD, D_EFF)  # closed at the cut
+    ((src, dst, dst_v, rel, _vf, props),) = await _links(connect)
+    assert (src, dst, dst_v, rel) == (new["logical_id"], old["logical_id"], old["version_id"], "supersedes")
+    assert props == {
+        "by": "writer",
+        "mode": "supersede",
+        "scope": "whole",
+        "quote": title,
+        "quote_in": "title",
+    }
+    out = await _raw(connect, world, read_deps, old["version_id"])
+    assert out["superseded_by"] == [
+        {
+            "logical_id": new["logical_id"],
+            "version_id": new["version_id"],
+            "scope": "whole",
+            "valid_from": out["superseded_by"][0]["valid_from"],
+            "valid_to": None,
+        }
+    ]
+    assert datetime.fromisoformat(out["superseded_by"][0]["valid_from"].replace("Z", "+00:00")) == D_EFF
+    await _replay_identical(connect)
 
 
 async def test_raw_marks_part_scope_and_a_revision_names_the_revised_version(

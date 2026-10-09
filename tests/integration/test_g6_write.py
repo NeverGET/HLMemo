@@ -459,6 +459,8 @@ async def test_card_too_large(connect, world, deps) -> None:
             )
         await conn.rollback()
         assert _err(ei).code == "E_CARD_TOO_LARGE" and _err(ei).details["max"] == 512
+        # the protocol's aim (what the brief shows) is named next to the hard limit
+        assert _err(ei).details["aim"] == 420 and "(max 512; aim for ≤ 420, protocol R17)" in _err(ei).message
         assert await count(conn, "events") == 0 and await count(conn, "memory_versions") == 0
         # 512 tokens or fewer is fine
         ok = await write(
