@@ -84,6 +84,9 @@ real hits within the budget. *Enforced by:* protocol only.
 
 **R6. One claim per item.** Title = the claim (aim for ≤ 80 chars). Body = the claim, why, evidence
 (`file:line`, commit, D-id, clue) and date context. Every text field carries content, not only whitespace.
+Evidence from a source kept outside HLMemo (a local library, an archive) is a pointer such as
+`<source>:<id>:s<page>` plus a short quote, never the source text; the project's own tool opens the pointer, and
+`memory.query` finds earlier uses by the pointer (D-264).
 *Why:* updates and supersession act on statements; a mixed item cannot be partly corrected. *Enforced by:*
 **server** for blank text (PV-3, §5.2). The rest is protocol only.
 

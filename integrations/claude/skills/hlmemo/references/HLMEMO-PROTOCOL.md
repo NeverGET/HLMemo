@@ -1,4 +1,4 @@
-> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-09, source sha256 a0681ae3817e44b6f2f4c194b148d6f4995c8cd076259557735fbb6de108c313. If the two differ, the source file wins.
+> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-09, source sha256 49d38beecad70b79550176992a616fbb7972fa02790e3c0b8340ab6464bada11. If the two differ, the source file wins.
 
 # HLMemo protocol v1: rules for project writers
 
@@ -86,6 +86,9 @@ real hits within the budget. *Enforced by:* protocol only.
 
 **R6. One claim per item.** Title = the claim (aim for ≤ 80 chars). Body = the claim, why, evidence
 (`file:line`, commit, D-id, clue) and date context. Every text field carries content, not only whitespace.
+Evidence from a source kept outside HLMemo (a local library, an archive) is a pointer such as
+`<source>:<id>:s<page>` plus a short quote, never the source text; the project's own tool opens the pointer, and
+`memory.query` finds earlier uses by the pointer (D-264).
 *Why:* updates and supersession act on statements; a mixed item cannot be partly corrected. *Enforced by:*
 **server** for blank text (PV-3, §5.2). The rest is protocol only.
 
