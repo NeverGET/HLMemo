@@ -119,6 +119,10 @@ def _classify(exc: BaseException) -> ToolCallError:
     """Map transport/HTTP failures to spec codes (best effort; the gate returns the JSON envelope)."""
     leaves = _flatten(exc)
     for leaf in leaves:
+        if _is_timeout(
+            leaf
+        ):  # a timeout carries no response; its text may hold numbers ("500 ms", review 124)
+            continue
         resp = getattr(leaf, "response", None)
         status = getattr(resp, "status_code", None)
         body: Any = None
@@ -150,7 +154,7 @@ def _classify(exc: BaseException) -> ToolCallError:
                 retryable=True,
                 details={"http": status},
             )
-    if any(isinstance(leaf, TimeoutError | asyncio.TimeoutError) or _http_timeout(leaf) for leaf in leaves):
+    if any(_is_timeout(leaf) for leaf in leaves):
         return ToolCallError(
             "E_UNAVAILABLE", "timeout waiting for the memory server", retryable=True, transport="TimeoutError"
         )
@@ -163,9 +167,11 @@ def _classify(exc: BaseException) -> ToolCallError:
     )
 
 
-def _http_timeout(exc: BaseException) -> bool:
-    """An HTTP client's own timeout (httpx ``ConnectTimeout``, ``ReadTimeout``, ...: subclasses of its
-    ``TimeoutException``, not of the builtin ``TimeoutError``) is a timeout too (review 123)."""
+def _is_timeout(exc: BaseException) -> bool:
+    """A builtin timeout, or an HTTP client's own (httpx ``ConnectTimeout``, ``ReadTimeout``, ...: subclasses
+    of its ``TimeoutException``, not of the builtin ``TimeoutError``; review 123)."""
+    if isinstance(exc, TimeoutError | asyncio.TimeoutError):
+        return True
     return any(c.__name__ == "TimeoutException" for c in type(exc).__mro__)
 
 

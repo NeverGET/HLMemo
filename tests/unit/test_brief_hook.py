@@ -623,6 +623,11 @@ def test_r123_an_http_timeout_is_never_retried() -> None:
         (_classify(_httpx.ReadTimeout("read timed out", request=_REQ)), "timeout", ""),
         (_classify(_httpx.ConnectTimeout("connect timed out")), "timeout", ""),
         (
+            _classify(_httpx.ReadTimeout("read timed out after 500 ms", request=_REQ)),
+            "timeout",
+            "",
+        ),  # review 124
+        (
             _classify(
                 _httpx.HTTPStatusError("503", request=_REQ, response=_httpx.Response(503, request=_REQ))
             ),
