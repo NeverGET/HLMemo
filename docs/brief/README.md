@@ -115,10 +115,19 @@ Kill switches:
 | remove the project's `[projects]` line | nothing for that project |
 
 Dry run: `HLM_BRIEF_DRYRUN=<dir>` writes `<session>-<source>-<epoch>.brief.txt` (the would-be
-`additionalContext`: digest + brief, or digest + the unavailable line) and a `.meta.json` (status, digest,
+`additionalContext`: digest + brief, or digest + the unavailable line) and a `.meta.json` (status, cause, digest,
 tokens, sections, excluded handles with reasons, ms, chars) and injects nothing. Every run appends one
 content-free line to `<capture state dir>/brief.log` (`~/.local/state/hlm/capture/`):
-`<time> <status> <ms>ms tokens=<brief tokens> chars=<context chars> digest=<0|1> sections=Digest,Now,...`.
+`<time> <status> <ms>ms slug=<slug> cause=<cause> tokens=<brief tokens> chars=<context chars> digest=<0|1>
+sections=Digest,Now,...`.
+
+Failures (2026-10-09): one deadline (`FETCH_S`) covers the whole fetch. The status says why a brief is missing:
+`timeout` (the cause names the stage it cut: session, queries or details), `error:auth`, `error:network` or
+`error:server`, and the injected line says it in words ("timed out after 6.5 s; memory.query still works",
+"server unreachable", "server error E_X"). When the deadline hits after the card and the three queries came
+back, the hook injects a partial brief: the card and the items verified in time, plus a note that the time
+limit cut it. A fast retryable network or server error is retried once while at least `RETRY_MIN_S` (3 s)
+remain; auth errors and timeouts are not retried.
 
 Follow-up (not implemented): a dedicated hook device with a read-only grant, so the hook does not use the
 owner's personal device token.
