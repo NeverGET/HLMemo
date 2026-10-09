@@ -41,7 +41,7 @@ asks, and ask before writing anything.
    force-push or anything touching secrets: lesson-backed checks are what prevent repeats.
 4. **Write as you go** (R5–R14), while the evidence is in front of you, with `updates` when your item makes
    something you read outdated. **Close once** (R17) with `call_the_day`; work after a long pause that closed the
-   session continues under a fresh `session_id`.
+   session continues under a fresh `session_id`, and that note starts with the earlier note's clue.
 
 ## 3. The tools
 
@@ -128,7 +128,7 @@ B to D; R20 and R21 have §7; the protocol has every rule's full text and server
 | R13 (server, in part: PV-2) | nothing is deleted or hidden: no `links` with `rel: "supersedes"`; `close`, `valid_to` and `logical_id` revisions only on items you wrote this session | a raw link skips every guard and hides its target |
 | R14 | decisions, facts, episodes and session notes stay apart: a decision is a `call_the_day` line with its reason; if it changes the current state, also write the new `fact` with `updates` | history stays true and the current state findable |
 | R16 | global lessons (`hlm-global`, kind `experience`) are the operator's: list them as "Promotion candidates" in the session note | a one-way door; the owner reviews each one |
-| R17 (server, in part) | close once; `card_update` only to fix a card line your session made false, or to replace the skeleton card a new project starts with; leave out the `auto-capture` tag and the text `AUTO-CAPTURED` | the note feeds the next brief, and the card is the canonical current state |
+| R17 (server, in part) | close once; `card_update` only to fix a card line your session made false, add a line the owner asked for, or replace the skeleton card a new project starts with; leave out the `auto-capture` tag and the text `AUTO-CAPTURED` | the note feeds the next brief, and the card is the canonical current state |
 | R19 (server) | one `request_id` per logical write; a transport retry resends the identical payload; a refusal gets fixed, not looped on | the retry then replays instead of writing twice |
 
 ### Example A: a good item and a bad one

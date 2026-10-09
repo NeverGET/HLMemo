@@ -182,10 +182,12 @@ owner's device was granted one for the D-234 import, and no later decision recor
 
 **R17. Close each session once with `memory.call_the_day`** (fresh UUIDs for `request_id` and `session_id`).
 A long pause that may end the session closes it; work after the pause is a new session with a fresh
-`session_id`, closed again (test-drive 2026-10-08).
+`session_id`, closed again (test-drive 2026-10-08); its note starts with the earlier note's clue ("continues
+v123"), so the two read as one day (test-drive 2026-10-09).
 `notes` = what changed, why, pointers (files, commits, D-ids, clues), then `## Open` bullets. `decisions` = one
 line each with its reason. Leave `lessons` empty, since it skips R15's schema; write every lesson with
-`memory.register_lesson`. Use `card_update` only to fix a card line your session made false: a minimal edit,
+`memory.register_lesson`. Use `card_update` only to fix a card line your session made false, or to add a line the
+owner asked for (say so in the note; test-drive 2026-10-09): a minimal edit,
 `expected_version_id` = the current card version, ≤ 420 tokens. If the project has no real card yet, write the
 initial card (present-tense lines backed by what you read). Every project starts with a skeleton card: `project
 create` writes one (D-015, `core/skeleton_card.py:1-12`), so the brief shows no "Now" section while `memory_query`
@@ -487,8 +489,8 @@ Lessons become permanent knowledge: after a mistake or a validated judgment call
 - hlm-global and experience are the operator's: list such lessons as "Promotion candidates" in the session note.
 Close once per session with memory.call_the_day (fresh UUIDs); its note feeds the next brief.
 - notes = what changed, why, pointers, then "## Open". decisions = one line each with its reason.
-- card_update only to fix a card line your session made false, or to replace the skeleton card (<= 420 tokens;
-  expected_version_id = the current card version, the skeleton's included).
+- card_update only to fix a card line your session made false, add a line the owner asked for, or replace the
+  skeleton card (<= 420 tokens; expected_version_id = the current card version, the skeleton's included).
 Catch-up ("do the HLMemo catch-up") or migration: load the `hlmemo` skill and follow it.
 Operator and owner only, because they change shared or prod state: memory.answer, hlm review, hlm curate
 --apply/--execute, hlm links, ops librarian *, hlm_ops.sh, imports outside /hlm-migrate, prod deploys.
