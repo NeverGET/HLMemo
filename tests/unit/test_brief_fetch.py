@@ -384,6 +384,57 @@ def test_into_keeps_what_was_read_when_the_fetch_is_cut() -> None:
     assert ("v20", "unverified") in snap.excluded
 
 
+def test_r123_a_cut_pool_never_shows_an_item_the_server_did_not_vouch_for() -> None:
+    """Review 123 (Astra): on an older server (no incoming status) lesson 21 supersedes 20 only through the
+    pool fallback; when 21's read is cut, a settle that ignored the cut would show the superseded 20."""
+    s = server_with_notes()
+    s.versions[21]["links"] = [sup(s.versions[20]["lid"])]
+
+    async def call(tool: str, args: dict) -> dict:
+        if tool == "memory.raw" and args["version_id"] == 21:
+            await asyncio.sleep(30)
+        return await s(tool, args)
+
+    async def cut(snap: F.Snapshot) -> None:
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await F.gather_snapshot(call, "proj", now=NOW, into=snap)
+
+    snap = F.Snapshot(project="proj")
+    asyncio.run(cut(snap))
+    assert 20 in [i.version_id for i in F.settle(snap).lessons]  # the hazard the cut flag closes
+    F.settle(snap, cut=True)
+    assert (
+        snap.lessons == []
+        and ("v20", "unverified") in snap.excluded
+        and ("v21", "unverified") in snap.excluded
+    )
+
+
+def test_r123_a_cut_pool_shows_items_the_server_vouched_for() -> None:
+    """A current server sends each item's incoming status: a cut pool still shows what it vouched for."""
+    s = server_with_notes()
+    for v in (10, 11, 20, 21):
+        s.versions[v]["incoming"] = []
+    s.versions[20]["incoming"] = [incoming(s.versions[21]["lid"])]
+
+    async def call(tool: str, args: dict) -> dict:
+        if tool == "memory.raw" and args["version_id"] == 21:
+            await asyncio.sleep(30)
+        return await s(tool, args)
+
+    async def cut(snap: F.Snapshot) -> None:
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await F.gather_snapshot(call, "proj", now=NOW, into=snap)
+
+    snap = F.Snapshot(project="proj")
+    asyncio.run(cut(snap))
+    F.settle(snap, cut=True)
+    assert [i.version_id for i in snap.sessions] == [11, 10] and snap.lessons == []
+    assert ("v20", "superseded") in snap.excluded and ("v21", "unverified") in snap.excluded
+
+
 # --------------------------------------------------------------------------- review 96 Sol #5
 def chunk(a: int, text: str, ordinal: int = 0) -> dict:
     return {"ordinal": ordinal, "char_start": a, "char_end": a + len(text), "text": text}

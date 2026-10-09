@@ -206,7 +206,7 @@ async def fetch_snapshot(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None
                     retried = True
     except TimeoutError:
         stage = partial.stage if partial is not None else ""
-        return "timeout", stage, F.settle(partial) if stage == "details" else None
+        return "timeout", stage, F.settle(partial, cut=True) if stage == "details" else None
 
 
 def build_brief(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None, room: int) -> tuple[str, str, Any]:

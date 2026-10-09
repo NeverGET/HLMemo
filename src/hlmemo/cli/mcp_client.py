@@ -141,7 +141,16 @@ def _classify(exc: BaseException) -> ToolCallError:
             return ToolCallError("E_AUTH", "server rejected the device token (401)")
         if status == 403:
             return ToolCallError("E_DEVICE_PENDING", "device not trusted yet (403)", retryable=True)
-    if any(isinstance(leaf, TimeoutError | asyncio.TimeoutError) for leaf in leaves):
+        if (
+            isinstance(status, int) and status >= 500
+        ):  # the server answered: not a network failure (review 123)
+            return ToolCallError(
+                "E_UNAVAILABLE",
+                f"memory server error (HTTP {status})",
+                retryable=True,
+                details={"http": status},
+            )
+    if any(isinstance(leaf, TimeoutError | asyncio.TimeoutError) or _http_timeout(leaf) for leaf in leaves):
         return ToolCallError(
             "E_UNAVAILABLE", "timeout waiting for the memory server", retryable=True, transport="TimeoutError"
         )
@@ -152,6 +161,12 @@ def _classify(exc: BaseException) -> ToolCallError:
         retryable=True,
         transport=type(leaves[0]).__name__,
     )
+
+
+def _http_timeout(exc: BaseException) -> bool:
+    """An HTTP client's own timeout (httpx ``ConnectTimeout``, ``ReadTimeout``, ...: subclasses of its
+    ``TimeoutException``, not of the builtin ``TimeoutError``) is a timeout too (review 123)."""
+    return any(c.__name__ == "TimeoutException" for c in type(exc).__mro__)
 
 
 def decode_result(result: Any) -> dict[str, Any]:

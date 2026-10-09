@@ -597,6 +597,15 @@ def test_deadline_before_the_queries_came_back_is_a_plain_timeout(
 
 
 # --------------------------------------------------------------------------- the cause
+_httpx = pytest.importorskip("httpx2")
+_REQ = _httpx.Request("POST", "https://memory.example/mcp")
+
+
+def test_r123_an_http_timeout_is_never_retried() -> None:
+    status, _ = H.failure(_classify(_httpx.ReadTimeout("read timed out", request=_REQ)))
+    assert status == "timeout" and not H._retryable(status, _classify(_httpx.ReadTimeout("x", request=_REQ)))
+
+
 @pytest.mark.parametrize(
     ("exc", "status", "cause"),
     [
@@ -610,6 +619,16 @@ def test_deadline_before_the_queries_came_back_is_a_plain_timeout(
         (ToolCallError("E_UNAVAILABLE", "database down", retryable=True), "error:server", "E_UNAVAILABLE"),
         (ToolCallError("E_BUDGET_TOO_SMALL", "x"), "error:server", "E_BUDGET_TOO_SMALL"),
         (RuntimeError("x"), "error:RuntimeError", ""),
+        # review 123: an HTTP client's own timeouts are timeouts; a 5xx without a JSON body is the server's
+        (_classify(_httpx.ReadTimeout("read timed out", request=_REQ)), "timeout", ""),
+        (_classify(_httpx.ConnectTimeout("connect timed out")), "timeout", ""),
+        (
+            _classify(
+                _httpx.HTTPStatusError("503", request=_REQ, response=_httpx.Response(503, request=_REQ))
+            ),
+            "error:server",
+            "E_UNAVAILABLE",
+        ),  # fmt: skip
     ],
 )
 def test_failure_names_the_cause(exc: BaseException, status: str, cause: str) -> None:

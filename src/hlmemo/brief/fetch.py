@@ -369,10 +369,12 @@ async def gather_snapshot(
     return snap
 
 
-def settle(snap: Snapshot) -> Snapshot:
+def settle(snap: Snapshot, *, cut: bool = False) -> Snapshot:
     """The shown sessions and lessons, the exclusions and ``as_of`` from the candidate pools. A candidate
     whose memory.raw did not (completely) come back, e.g. one a deadline cut, is ``unverified`` and never
-    shown. (On an older server a cut pool also knows fewer superseders: the fallback gap above.)"""
+    shown. ``cut`` (a deadline stopped the reads): a candidate without the server's own incoming status is
+    ``unverified`` too, because the pool fallback may have missed a superseder whose read was cut (review
+    123: an older server, the superseder cut, the superseded item shown)."""
     s_pool, l_pool = snap.pools
     dead = superseded_pool_ids(s_pool + l_pool)
 
@@ -389,6 +391,8 @@ def settle(snap: Snapshot) -> Snapshot:
                 snap.excluded.append((it.handle, "superseded-part"))
             elif not it.server_incoming and pool_supersedes(it, dead):  # older server only
                 snap.excluded.append((it.handle, "superseded"))
+            elif cut and not it.server_incoming:  # the fallback cannot vouch for a cut pool
+                snap.excluded.append((it.handle, "unverified"))
             elif it.logical_id is None:
                 snap.excluded.append((it.handle, "unverified"))
             else:
