@@ -3,7 +3,9 @@
 Wire format (D-024 (6)): every tool result is one `TextContent` carrying canonical JSON; errors are
 `isError:true` results whose text is `{code, message, retryable, details}`. Both are decoded here into a
 dict or a `ToolCallError`. Transport failures (timeouts, connection refused, HTTP 401/403 from the status
-gate) become `ToolCallError` with `E_UNAVAILABLE` / `E_AUTH` / `E_DEVICE_PENDING`.
+gate) become `ToolCallError` with `E_UNAVAILABLE` / `E_AUTH` / `E_DEVICE_PENDING`. A cancellation
+(``asyncio.CancelledError``, e.g. from a caller's ``asyncio.timeout``) is never classified: it propagates
+unchanged, so the caller's timeout still sees its own cancellation and reports a timeout.
 
 `MemoryClient(url, token)` talks to a server; `MemoryClient.in_memory(server)` binds an `MCPServer`
 instance in-process (unit tests), no network.
@@ -47,13 +49,22 @@ def _skip_unlisted_validation(client: Client) -> None:
 
 class ToolCallError(Exception):
     def __init__(
-        self, code: str, message: str, *, retryable: bool = False, details: dict[str, Any] | None = None
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
+        transport: str | None = None,
     ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
         self.retryable = retryable
         self.details = details or {}
+        #: no answer came from the server (a timeout, a refused connection, TLS, a proxy error): the
+        #: transport failure's exception type. None when the server (or its auth gate) sent the error.
+        self.transport = transport
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -131,9 +142,16 @@ def _classify(exc: BaseException) -> ToolCallError:
         if status == 403:
             return ToolCallError("E_DEVICE_PENDING", "device not trusted yet (403)", retryable=True)
     if any(isinstance(leaf, TimeoutError | asyncio.TimeoutError) for leaf in leaves):
-        return ToolCallError("E_UNAVAILABLE", "timeout waiting for the memory server", retryable=True)
+        return ToolCallError(
+            "E_UNAVAILABLE", "timeout waiting for the memory server", retryable=True, transport="TimeoutError"
+        )
     text = "; ".join(f"{type(leaf).__name__}: {leaf}" for leaf in leaves)[:400]
-    return ToolCallError("E_UNAVAILABLE", f"memory server unreachable: {text}", retryable=True)
+    return ToolCallError(
+        "E_UNAVAILABLE",
+        f"memory server unreachable: {text}",
+        retryable=True,
+        transport=type(leaves[0]).__name__,
+    )
 
 
 def decode_result(result: Any) -> dict[str, Any]:
@@ -197,7 +215,7 @@ class MemoryClient:
         except ToolCallError:
             raise
         except BaseException as exc:  # noqa: BLE001 - anyio groups, httpx2 errors, TimeoutError
-            if isinstance(exc, KeyboardInterrupt):
+            if isinstance(exc, KeyboardInterrupt | asyncio.CancelledError):
                 raise
             raise _classify(exc) from exc
         return decode_result(result)
@@ -210,6 +228,7 @@ class MemoryClient:
         """One MCP session for many calls (``hlm import``/``hlm export``); yields ``call(tool, args)``.
 
         Tool errors raise ``ToolCallError``; transport failures are classified like ``call_async``.
+        A cancellation (the caller's timeout) propagates unchanged from a call and from the session.
         The unlisted client tool ``hlm.export`` is not output-validated (``UNLISTED_TOOLS``).
         """
         try:
@@ -222,7 +241,7 @@ class MemoryClient:
                     except ToolCallError:
                         raise
                     except BaseException as exc:  # noqa: BLE001 - classified below
-                        if isinstance(exc, KeyboardInterrupt):
+                        if isinstance(exc, KeyboardInterrupt | asyncio.CancelledError):
                             raise
                         raise _classify(exc) from exc
                     return decode_result(result)
@@ -231,7 +250,7 @@ class MemoryClient:
         except ToolCallError:
             raise
         except BaseException as exc:  # noqa: BLE001 - session setup / teardown failures
-            if isinstance(exc, KeyboardInterrupt | GeneratorExit):
+            if isinstance(exc, KeyboardInterrupt | GeneratorExit | asyncio.CancelledError):
                 raise
             raise _classify(exc) from exc
 
