@@ -133,12 +133,16 @@ def visible_to(
 @dataclass(slots=True)
 class Check:
     """The verdict of ``check``: every guard's result (``None`` = not evaluable because an earlier
-    guard failed), the span offsets into the stored old body and the NFC replacement."""
+    guard failed), the span offsets into the stored old body and the NFC replacement. ``quote_in``
+    is where the span was found: ``body``, or ``title`` for a write-time supersede that quotes the
+    outdated title (``write_updates.update_guards``; its offsets index the NFC title and are never
+    used to change text)."""
 
     guards: dict[str, bool | None] = field(default_factory=dict)
     start: int | None = None
     end: int | None = None
     replacement: str = ""
+    quote_in: str = "body"
 
     @property
     def ok(self) -> bool:

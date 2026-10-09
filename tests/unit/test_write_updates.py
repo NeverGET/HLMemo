@@ -120,7 +120,9 @@ def test_a_non_nfc_target_cannot_be_span_revised() -> None:
 
 
 def test_the_replacement_is_searched_only_in_the_carrying_body() -> None:
-    """Consult 74 #2: the title is not searched (unlike B-real) and nothing else of the batch is."""
+    """Consult 74 #2: the carrying item's title is not searched for the replacement (unlike B-real)
+    and nothing else of the batch is. (The TARGET's title only grounds a supersede's old_span: see
+    the title tests below.)"""
     assert guards(carrier_body="Cache TTL raised.", replacement="300 seconds") == (
         None,
         "replacement_not_in_body",
@@ -211,6 +213,84 @@ def test_r96_sol3_a_closing_supersede_needs_a_carrier_as_visible_as_its_target(k
     assert ug("supersede", True, **kw)[1] is None
     hint = REASONS["replacement_visibility"][1]
     assert "widen" in hint and "supersede" not in hint  # supersede is no way around it any more
+
+
+# --------------------------------------------------------------------------- the target's title
+TITLE = "Ops defaults: cache TTL, nightly backups, Tuesday deploys"
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_a_supersede_may_quote_the_outdated_title(historical: bool) -> None:
+    """A writer superseding a memory whose TITLE is outdated quotes the title: when the span is not
+    in the body at all, the shared old_span rules run over the NFC title and the update passes as a
+    whole-memory update (``quote_in == "title"``)."""
+    chk, reason = ug("supersede", historical, old_span="Tuesday deploys", old_title=TITLE)
+    assert reason is None and chk.quote_in == "title"
+    assert (chk.start, chk.end) == (TITLE.index("Tuesday deploys"), len(TITLE))  # offsets into the title
+    # a body quote stays a body quote, also when the title holds it too
+    chk, reason = ug("supersede", historical, old_span="Backups run nightly", old_title=TITLE)
+    assert reason is None and chk.quote_in == "body"
+    chk, reason = ug("supersede", historical, old_span="cache TTL", old_title="The cache TTL is 60 seconds")
+    assert reason is None and chk.quote_in == "body"
+    # without a title the old behaviour holds
+    assert ug("supersede", historical, old_span="Tuesday deploys") == (None, "span_not_found")
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_a_revise_quoting_the_title_is_told_to_supersede(historical: bool) -> None:
+    """A revise changes only the body (and a part-scope quote must stay in it): a span found only in
+    the title is ``span_in_title``, whose hint names supersede; a span found nowhere stays
+    ``span_not_found``, whose hint says it looks in the body."""
+    kw = {"replacement": "300 seconds", "old_title": TITLE}
+    assert ug("revise", historical, old_span="Tuesday deploys", **kw) == (None, "span_in_title")
+    assert ug("revise", historical, old_span="Ops default", **kw) == (None, "span_in_title")  # any hit
+    assert ug("revise", historical, old_span="Memcached", **kw) == (None, "span_not_found")
+    code, hint = REASONS["span_in_title"]
+    assert code == "E_INVALID_ARG" and "title" in hint and "supersede" in hint
+    assert "body" in REASONS["span_not_found"][1]
+
+
+@pytest.mark.parametrize("historical", [False, True])
+@pytest.mark.parametrize(
+    ("title", "span", "reason"),
+    [
+        (TITLE, "Memcached", "span_not_found"),  # neither body nor title
+        (TITLE, "Ops default", "span_word_boundary"),  # cuts "defaults"
+        (TITLE, "efaults", "span_word_boundary"),
+        ("Ops defaults and Ops owners", "Ops", "span_not_unique"),  # twice in the title
+        ("Café hours", "Cafe hours", "span_not_found"),  # no folding beyond NFC
+    ],
+)
+def test_a_title_quote_passes_the_same_shared_rules(
+    title: str, span: str, reason: str, historical: bool
+) -> None:
+    assert ug("supersede", historical, old_span=span, old_title=title) == (None, reason)
+
+
+def test_a_title_quote_is_nfc_byte_exact_and_still_needs_a_visible_carrier() -> None:
+    nfc, nfd = "Café hours", "Café hours"
+    assert nfc != nfd
+    for title, span in ((nfd, nfc), (nfc, nfd)):
+        chk, reason = ug("supersede", old_span=span, old_title=title)
+        assert reason is None and chk.quote_in == "title"
+    # review 96 Sol #3 holds for a title quote: a closing supersede never narrows the readers
+    assert ug("supersede", old_span="Tuesday deploys", old_title=TITLE, new_scope="device:7") == (
+        None,
+        "replacement_visibility",
+    )
+    assert ug("supersede", True, old_span="Tuesday deploys", old_title=TITLE, new_scope="device:7")[1] is None
+
+
+def test_a_body_span_follows_the_body_path_even_when_the_title_would_pass() -> None:
+    """Found in the body (even twice, or cutting a word), the body's verdict stands: the title is
+    consulted only for a span the body does not hold at all."""
+    title = "Deploys on Tuesdays"
+    assert ug("supersede", old_span="on", old_title=title) == (None, "span_not_unique")
+    assert ug("revise", old_span="on", replacement="300 seconds", old_title=title) == (
+        None,
+        "span_not_unique",
+    )
+    assert ug("supersede", old_span="eploys go", old_title="eploys go") == (None, "span_word_boundary")
 
 
 # --------------------------------------------------------------------------- review 96 Astra #2

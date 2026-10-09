@@ -223,16 +223,22 @@ An agent that writes a memory which CORRECTS one it read (a `memory.query` / `me
 - `mode: revise` replaces ONLY `old_span` (verbatim, exactly once, on word boundaries, not the whole
   memory) with `replacement`, which must occur verbatim in THIS item's body (omitted: the body itself, if
   it is one statement). The target gets a new version byte-identical outside the span; the old text stays
-  valid before the cut (the item's `valid_from`, else now).
+  valid before the cut (the item's `valid_from`, else now). `old_span` is looked up in the target's BODY:
+  a span found only in its title is `span_in_title` (revise never changes the title; supersede when the
+  title is outdated), one found nowhere is `span_not_found`.
 - `mode: supersede` closes the whole memory at the cut and links `supersedes` from the new item. Its
-  `old_span` too must occur exactly once, on word boundaries (it may be the whole memory).
+  `old_span` too must occur exactly once, on word boundaries (it may be the whole memory). When the body
+  does not hold it at all, the same rules (NFC, exactly once, word boundaries) apply to the target's TITLE:
+  a memory whose title went stale can be superseded by quoting the title (the link is scope `whole` and
+  records `quote_in: "title"`). A span found in the body is always judged there.
 - A revise or a close needs THIS item to be visible wherever the target is (its projects include the
   target's, its `device_scope` is `all` or the target's); else `replacement_visibility`.
 - Historical records (episodes, session notes, decision/ADR rows) are never rewritten: both modes only add
   a `supersedes` link (`linked`, scope `part` for revise, `whole` for supersede), after the same `old_span`
   rules (and, for revise, the replacement rules). Kinds that may be changed:
   `HLM_LIBRARIAN_REVISE_KINDS` (default `fact,lesson,doc_chunk`).
-- The ack lists each update as `applied`, `linked` or `rejected` (`code`, `reason`, a fixed `hint`). Undo one:
+- The ack lists each update as `applied`, `linked` or `rejected` (`code`, `reason`, a fixed `hint`; the
+  reasons and hints are `REASONS` in `src/hlmemo/core/write_updates.py`). Undo one:
   `python -m hlmemo.ops librarian revert-update <write event> --item I --update K --reason ..` (ONE
   compensating event; refused while a later change depends on it).
 

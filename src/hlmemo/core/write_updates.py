@@ -26,7 +26,10 @@ update). A revise (also a historical one, which becomes a part-scope link) quote
 (``span_not_whole``) and passes the replacement rules (``REPLACEMENT_GUARDS``). A MUTATING update (a
 revise or a closing supersede) needs a carrying item visible wherever the target is
 (``replacement_visibility``): a narrower carrier would change the memory for readers who can never
-see why. A supersede quoting the whole memory is allowed (it IS the whole-item update).
+see why. A supersede quoting the whole memory is allowed (it IS the whole-item update). A span absent
+from the body is looked up in the TITLE: a supersede may quote the outdated title (the same span rules
+over the NFC title; a whole-scope link with ``quote_in: "title"``), a revise is rejected
+``span_in_title`` (it never changes the title, and a part-scope quote must stay in the body).
 
 Order inside the write transaction (consult 74; J/D-095): ``parse`` (pure) → ``resolve`` BEFORE
 any lock (§4.4 (a) visibility; a hidden or unknown target is ``not_found`` and never locked) →
@@ -75,7 +78,12 @@ REASONS: dict[str, tuple[str | None, str]] = {
         "E_INVALID_ARG",
         "this item already links supersedes to that memory: drop that link or the update",
     ),
-    "span_not_found": ("E_INVALID_ARG", "old_span is not in that memory: copy it verbatim"),
+    "span_not_found": ("E_INVALID_ARG", "old_span is not in that memory's body: copy it verbatim"),
+    "span_in_title": (
+        "E_INVALID_ARG",
+        "old_span is in the title, which revise does not change:"
+        " use mode supersede when the title is outdated",
+    ),
     "span_not_unique": ("E_INVALID_ARG", "old_span occurs more than once in that memory: quote more words"),
     "span_word_boundary": ("E_INVALID_ARG", "old_span must start and end at word boundaries"),
     "span_whole": ("E_INVALID_ARG", "old_span is (almost) the whole memory: use mode supersede"),
@@ -156,12 +164,18 @@ def update_guards(
     old_scope: str,
     new_projects: Any,
     new_scope: str,
+    old_title: str | None = None,
 ) -> tuple[Any, str | None]:
     """The D-118 guards of one update, pure: ``(Check, None)`` when every guard of its path holds,
     else ``(None, reason)`` of the first failed one (the order of the module doc). ``historical`` =
     the target is link-only (``revise.revisable``). The replacement is searched ONLY in the carrying
     item's body; an omitted one is the whole body, only when that is one statement and passes the
-    length ratio (else ``replacement_required``)."""
+    length ratio (else ``replacement_required``).
+
+    ``old_span`` is looked up in the target's body. Only when it does not occur there at all is
+    ``old_title`` consulted: a supersede may quote the outdated TITLE (the same ``SPAN_GUARDS`` over
+    the NFC title; the passing ``Check`` has ``quote_in == "title"``, a whole-scope link), a revise
+    is told that it never changes the title (``span_in_title``)."""
     from hlmemo.librarian import revise as rv
 
     revise = mode == "revise"
@@ -169,17 +183,31 @@ def update_guards(
     # only a text revision needs the stored body itself NFC (its span offsets index it); a close or
     # a link is grounded in the NFC text like the quote (byte-exact, no other normalisation)
     body = old_body if revise and not historical else rv.nfc(old_body)
-    chk = rv.check(
-        old_body=body,
-        old_span=old_span,
-        replacement=carrier_body.strip() if implied else (replacement or ""),
-        new_body=carrier_body,
-        old_projects=old_projects,
-        old_scope=old_scope,
-        new_projects=new_projects,
-        new_scope=new_scope,
-    )
-    failed = chk.failed_of(SPAN_GUARDS + (PART_GUARDS if revise else ()))
+
+    def run(text: str) -> tuple[Any, list[str]]:
+        chk = rv.check(
+            old_body=text,
+            old_span=old_span,
+            replacement=carrier_body.strip() if implied else (replacement or ""),
+            new_body=carrier_body,
+            old_projects=old_projects,
+            old_scope=old_scope,
+            new_projects=new_projects,
+            new_scope=new_scope,
+        )
+        return chk, chk.failed_of(SPAN_GUARDS + (PART_GUARDS if revise else ()))
+
+    chk, failed = run(body)
+    span = rv.nfc(old_span)
+    title = rv.nfc(old_title or "")
+    if failed and failed[0] == "old_span_unique" and not rv.occurrences(body, span):
+        if revise:
+            return None, "span_in_title" if rv.occurrences(title, span) else "span_not_found"
+        if not rv.occurrences(title, span):
+            return None, "span_not_found"
+        # a supersede quoting the outdated title: the shared old_span rules over the NFC title
+        chk, failed = run(title)
+        chk.quote_in = "title"
     if not failed and revise:
         if implied and rv.statement_count(carrier_body) > 1:
             return None, "replacement_required"
@@ -192,8 +220,7 @@ def update_guards(
         return chk, None
     first = failed[0]
     if first == "old_span_unique":
-        n = len(rv.occurrences(body, rv.nfc(old_span)))
-        return None, "span_not_found" if n == 0 else "span_not_unique"
+        return None, "span_not_unique"  # occurs, but not exactly once (zero is handled above)
     return None, _GUARD_REASON[first]
 
 
@@ -240,6 +267,7 @@ class Update:
     touched: set[int] = field(default_factory=set)
     action: str | None = None  # revise | close | link
     chk: Any = None
+    quote_in: str = "body"  # body | title (a supersede quoting the outdated title)
     records: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -369,10 +397,12 @@ class WriteUpdates:
                 old_scope=head.device_scope,
                 new_projects=carrier.project_ids,
                 new_scope=carrier.item.device_scope,
+                old_title=head.title,
             )
             if chk is None:
                 u.reject(reason or "span_not_found")
                 continue
+            u.quote_in = chk.quote_in
             if historical is not None:  # link-only in both modes
                 u.action, u.reason = "link", historical
             elif u.spec.mode == "supersede":
@@ -477,6 +507,14 @@ class WriteUpdates:
                 u.status = "applied"
             else:
                 u.status = "linked"
+            props: dict[str, Any] = {
+                "by": "writer",
+                "mode": u.spec.mode,
+                "scope": "part" if u.action == "link" and u.spec.mode == "revise" else "whole",
+                "quote": rv.nfc(u.spec.old_span),
+            }
+            if u.quote_in == "title":  # only a supersede (scope whole): part quotes are body text
+                props["quote_in"] = "title"
             u.records.append(
                 {
                     "op": "link_insert",
@@ -488,12 +526,7 @@ class WriteUpdates:
                     "project_id": home.project_id,
                     "project_ids": [int(p) for p in carrier.project_ids],
                     "device_scope": carrier.item.device_scope,
-                    "props": {
-                        "by": "writer",
-                        "mode": u.spec.mode,
-                        "scope": "part" if u.action == "link" and u.spec.mode == "revise" else "whole",
-                        "quote": rv.nfc(u.spec.old_span),
-                    },
+                    "props": props,
                     "valid_from": link_from,  # a close: where the target stops
                     "valid_to": None,
                     "assessed": {},

@@ -731,12 +731,16 @@ async def _check_content(conn: AsyncConnection, deps: WriteDeps, plans: list[_Pl
         it = p.item
         p.token_count = await _cpu(deps.meter.count_text, it.body)
         if p.is_card and p.token_count > CARD_MAX_TOKENS:
+            from hlmemo.brief.assemble import CARD_TOKENS  # what the brief shows: the protocol's aim
+
             raise ToolError(
                 "E_CARD_TOO_LARGE",
-                f"items[{p.index}]: project card body is {p.token_count} tokens (max {CARD_MAX_TOKENS})",
+                f"items[{p.index}]: project card body is {p.token_count} tokens"
+                f" (max {CARD_MAX_TOKENS}; aim for ≤ {CARD_TOKENS}, protocol R17)",
                 index=p.index,
                 tokens=p.token_count,
                 max=CARD_MAX_TOKENS,
+                aim=CARD_TOKENS,
             )
         if it.device_scope.startswith("device:"):
             if not await q.device_scope_target_ok(conn, int(it.device_scope.split(":", 1)[1])):
