@@ -13,7 +13,8 @@ Write into project <slug> only (another slug or extra project_ids only if the ow
 Correct with updates, since a duplicate would leave the stale item ranking as current.
 - Your item makes a memory you read outdated: add updates, item = its clue (v123 / v123.0), old_span = the outdated
   text verbatim (once, whole words). revise = one statement changed; replacement copied verbatim from your body
-  (<= 3x span, <= 1000 chars). supersede = the whole memory or its title is outdated. One update per memory per write.
+  (<= 3x span, <= 1000 chars). supersede = the whole memory or its title is outdated (old_span may quote the
+  title). One update per memory per write.
 - Supersede present-tense claims only ("still open", "prod runs X"); dated findings, measurements, reviews are history.
 - Nothing is deleted. No links rel:supersedes; close/valid_to/logical_id only on items you wrote this session.
 - Read the ack: applied | linked | rejected (follow the hint). E_VERSION_CONFLICT: drill current_clue, decide again.

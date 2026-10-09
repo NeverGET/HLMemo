@@ -1,4 +1,4 @@
-> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-09, source sha256 b3f07ea8dbd9e68a158b561f42b63de1d866444566eed3d8fb32af259872c107. If the two differ, the source file wins.
+> Copy of `docs/protocol/HLMEMO-PROTOCOL.md` (HLMemo repository, protocol v1 draft), copied 2026-10-09, source sha256 a0681ae3817e44b6f2f4c194b148d6f4995c8cd076259557735fbb6de108c313. If the two differ, the source file wins.
 
 # HLMemo protocol v1: rules for project writers
 
@@ -121,7 +121,8 @@ impossible cases: `valid_from` more than 5 minutes in the future, or `valid_to �
 **R11. Correct with `updates`, not with a duplicate.** When your new item makes a memory you have read in this
 session outdated, give the new item `updates`:
 - `item` = the clue you read;
-- `old_span` = the outdated text, verbatim, exactly once in that memory, on word boundaries;
+- `old_span` = the outdated text, verbatim, exactly once in that memory, on word boundaries; `revise` looks for it
+  in the body only (`span_in_title` when it is only in the title), `supersede` in the body and then the title;
 - `mode: revise` when one statement inside a longer memory changed: the span leaves ≥ 3 words outside it, and
   `replacement` is copied verbatim from your body (≤ 3× the span, ≤ 1000 chars);
 - `mode: supersede` when the whole memory is outdated, **or when its title states the outdated claim**: `revise`
@@ -480,7 +481,8 @@ Write into project <slug> only (another slug or extra project_ids only if the ow
 Correct with updates, since a duplicate would leave the stale item ranking as current.
 - Your item makes a memory you read outdated: add updates, item = its clue (v123 / v123.0), old_span = the outdated
   text verbatim (once, whole words). revise = one statement changed; replacement copied verbatim from your body
-  (<= 3x span, <= 1000 chars). supersede = the whole memory or its title is outdated. One update per memory per write.
+  (<= 3x span, <= 1000 chars). supersede = the whole memory or its title is outdated (old_span may quote the
+  title). One update per memory per write.
 - Supersede present-tense claims only ("still open", "prod runs X"); dated findings, measurements, reviews are history.
 - Nothing is deleted. No links rel:supersedes; close/valid_to/logical_id only on items you wrote this session.
 - Read the ack: applied | linked | rejected (follow the hint). E_VERSION_CONFLICT: drill current_clue, decide again.

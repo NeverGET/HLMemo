@@ -172,7 +172,8 @@ measurement is a new `episode` with no `updates`.
 **Read the ack.** Each update comes back `applied` (the target was revised, `clue` = its new version, or closed),
 `linked` (the target is history: an episode, a session note or a decision row keeps its text and gains only a
 `supersedes` link, which is right for a present-tense line inside history such as "still open"), or `rejected`
-with `code`, `reason` and `hint`: `span_not_found` (copy verbatim), `span_not_unique` (quote more words),
+with `code`, `reason` and `hint`: `span_not_found` (copy verbatim from the body), `span_in_title` (the outdated
+claim is in the title: use `supersede`, which may quote the title), `span_not_unique` (quote more words),
 `span_whole` (use `supersede`), `replacement_not_in_body`, `length_ratio`, `version_conflict` (drill
 `current_clue`, decide again), `project_card` (a card changes only through `call_the_day`).
 
