@@ -79,10 +79,10 @@ REASONS: dict[str, tuple[str | None, str]] = {
         "this item already links supersedes to that memory: drop that link or the update",
     ),
     "span_not_found": ("E_INVALID_ARG", "old_span is not in that memory's body: copy it verbatim"),
+    # review 121 (Sol): no hint may outgrow the longest one before it, or the pessimistic ack grows
     "span_in_title": (
         "E_INVALID_ARG",
-        "old_span is in the title, which revise does not change:"
-        " use mode supersede when the title is outdated",
+        "old_span is only in the title; revise keeps titles: use mode supersede",
     ),
     "span_not_unique": ("E_INVALID_ARG", "old_span occurs more than once in that memory: quote more words"),
     "span_word_boundary": ("E_INVALID_ARG", "old_span must start and end at word boundaries"),

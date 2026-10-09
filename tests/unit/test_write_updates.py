@@ -507,3 +507,12 @@ def test_the_wire_schema_advertises_updates_and_the_description_guides_the_agent
     desc = TOOL_BY_NAME["memory.write"].description
     for word in ("updates", "clue", "old_span", "revise", "supersede", "verbatim", "rejected"):
         assert word in desc
+
+
+def test_r121_no_hint_outgrows_the_longest_hint_before_the_title_rule() -> None:
+    """Review 121 (Sol 6.1): the pessimistic ack sizes every update by the longest hint, so a longer new hint
+    made requests that fit a budget before (322 tokens, three body-span supersedes) need 337 after."""
+    from hlmemo.core.write_updates import REASONS
+
+    longest_before = Meter().count_text("replacement is too long: at most 3x old_span and 1000 characters")
+    assert max(Meter().count_text(h) for _, h in REASONS.values()) <= longest_before
