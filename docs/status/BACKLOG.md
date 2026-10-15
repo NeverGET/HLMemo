@@ -111,6 +111,12 @@ A long project session (and its 10-08 notes) gave these items; reproduced where 
 - **DECIDED (D-264): external source pointers (`<source>:<id>:s<page>`).** Search by pointer already works (identifier/trigram legs). Resolution belongs to the client: the server cannot reach a local library, so the project's own MCP tool opens the pointer. A structured pointer list in drilldown is a later idea.
 - **Vision items (owner):** salience/importance signals for ranking and recall (surprise, cost, recurrence, the owner's reaction), spontaneous recall outside risk_check, source-project context on cross-project hits, procedural ("muscle") memory with trigger, action, reason, scope and last verification.
 
+## Ideas from claude-mem (2026-10-15): parked, evaluate later
+Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Evaluate one at a time, measure first.
+- **File-anchored recall:** inject memories tied to a file when the agent reads it (PreToolUse on Read); the cheapest form of "spontaneous recall". Items already carry `describes` → `code_refs`. Measure how often a read file has code_refs and whether the injected items help.
+- **Measured fit of the session-start block:** our brief already drops sections until it fits its token budget (`brief/assemble.py:232`); compare the drop order and whether the 9500-character room matches the host's real limit.
+- **Write-and-exit spool for capture:** the hook writes the event to a file and exits; a repeated event dedups by file name. Compare with our capture path for hook reliability.
+
 ## R4.3 candidates (2026-10-03)
 - memory.query: when a hit is flagged `superseded`, pull its superseder into the hit list (as memory.ask's `superseders_pulled` does). On 10-03 a "production budget caps" query returned 4/4 superseded hits, while the current values were only in the card.
 - memory.ask answer quality: a same-DB comparison vs main with ≥ 3 samples per arm; extractive (verbatim-only) main-sentence repair; the round-2 findings of consult 99 (URL non-path parts, the alternation bracket guard, the dangling-drop word lists, the preview filter).
