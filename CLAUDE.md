@@ -20,9 +20,8 @@ server (`hlm`, streamable HTTP). Reads are token-budgeted and progressive: clues
   - Chat is transient, so decisions belong in files.
 - **Validate locally first.** Docker compose plus the deterministic gates, before anything reaches the VPS.
 - **Reviews are proportionate.**
-  - Codex `gpt-6-astra` at low effort is the everyday second opinion. Record consults in `docs/consults/`.
-  - One-way doors (data, security, releases) get Astra low and `gpt-6.1-sol` xhigh in parallel (owner, 2026-10-08; consult 120). Write the threat model and the severity rubric before the review, cap it at 2 rounds, and give a HIGH finding a reproducing test. The owner decides any residual risk.
-  - Command: `codex exec --skip-git-repo-check -s read-only -m gpt-6-astra -c model_reasoning_effort="low" -o <out.md> - < <prompt.md>`.
+  - The everyday second opinion is one fresh-context review agent that did not write the change: it gets the goal, the diff and a severity rubric, reads the repository read-only, and returns findings with `file:line` and a concrete trigger. Record consults in `docs/consults/`.
+  - One-way doors (data, security, releases) get two such agents in parallel, on different models (for example Fable and Sonnet) and with different angles (correctness and regressions; security, privacy and contracts). Write the threat model and the severity rubric before the review, cap it at 2 rounds, and give a HIGH finding a reproducing test. The owner decides any residual risk. (Codex reviewed until 2026-10-15, D-266.)
 - **Keep 2-3 workstreams at most,** each with a timebox, and check in with the owner when a timebox ends.
 - **Production is Hostinger VM 2002259 (mcp.hlmemo.com).**
   - Deploys and prod data writes happen with the owner's OK, following `deploy/RUNBOOK.md`.

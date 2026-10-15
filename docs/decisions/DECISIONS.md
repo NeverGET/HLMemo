@@ -2435,3 +2435,8 @@ D-265 | 2026-10-09 | ACCEPTED (owner) | **Two librarian proposals were real stal
 - **Withdrawn.** The 2 proposals, plus 2 follow-ups the corrections triggered (each paired a correction with dated history: a decision row, an episode), in one fail-closed event per project.
 - **Read.** The contradiction label was right in 2 of 4 here, both times on a current-state fact or lesson, and wrong both times it pointed at dated history; that matches D-244/D-253 and the planned precision re-measure.
 - **D-262 residual risk accepted by the owner:** a frontmatter-shaped block that YAML would reject is still skipped in previews, as the importer splits it.
+D-266 | 2026-10-15 | ACCEPTED (owner) | **Codex is retired as the reviewer; independent fresh-context Claude agents review instead.**
+
+- **Why.** The owner cancelled the Codex subscription (decided 2026-10-07: useful models, not worth the cost). The value of the review rule was its independence: in the last rounds Codex found real HIGHs that tests missed (consults 118-124). That independence is kept, the vendor changes.
+- **Rule** (CLAUDE.md, the hlm-library skill, the global instructions). A routine change gets one review agent that did not write it: the goal, the diff and a severity rubric, read-only, findings with `file:line` and a trigger, recorded in `docs/consults/`. A one-way door (data, security, release) gets two in parallel, on different models and with different angles; the threat model and rubric come first, at most 2 rounds, a reproducing test for every HIGH, and the owner decides residual risk.
+- **Unchanged.** HLMemo still supports the Codex CLI as a client (`hlm mcp add codex`, the `--g7` gate); that is product support, not the review process. Consults 1-124 stay as the review history.

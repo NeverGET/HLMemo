@@ -143,9 +143,11 @@ instructions from the operator: observe on the server side only, unless the owne
 ## 8. Releases and deploys
 
 - **Before review**: write the threat model and the severity rubric (`docs/consults/<n>-…-threat-model.md`).
-- **Review**: Codex Astra low and Sol xhigh in parallel for one-way doors (data, security, releases), at most two
-  rounds; every HIGH gets a reproducing test; measure what a new validation would refuse on real items before claiming
-  it is safe (D-236); the owner decides residual risks. Tools-only changes get Astra low.
+- **Review**: two fresh-context review agents in parallel for one-way doors (data, security, releases), on different
+  models and with different angles, neither of them the author; at most two rounds; every HIGH gets a reproducing test;
+  measure what a new validation would refuse on real items before claiming it is safe (D-236); the owner decides
+  residual risks. Tools-only changes get one review agent. Each agent gets the threat model, the rubric and the diff,
+  reads the repository read-only, and returns findings with `file:line` and a trigger (D-266).
 - **Release gate** (D-063): `make gate-release` against a disposable clone of the loaded retrieval world
   (`CREATE DATABASE <clone> TEMPLATE hlm_retr`, then `alembic upgrade main@head`); in a git worktree, point
   `HLM_MODELS_DIR` at the main checkout's `models/`. It must not run against an empty database.
