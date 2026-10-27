@@ -26,7 +26,8 @@ server (`hlm`, streamable HTTP). Reads are token-budgeted and progressive: clues
 - **Production is Hostinger VM 2002259 (mcp.hlmemo.com).**
   - Deploys and prod data writes happen with the owner's OK, following `deploy/RUNBOOK.md`.
   - Prod gates run with `--no-drill`, because the drill restores over live data.
-  - The Mac reaches the server over IPv6.
+  - The Mac's working path (IPv4 or IPv6) depends on the network it is on; test both before a deploy or an ops
+    run (`hlm-library` skill §0). On 2026-10-27 both worked from home.
 - **The GitHub repo is public.**
   - Owner-project names and data stay in the gitignored `docs/private/`.
   - The `.githooks/pre-push` privacy gate blocks a leaking push. Fix the finding rather than bypass it.

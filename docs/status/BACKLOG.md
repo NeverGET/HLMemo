@@ -111,6 +111,18 @@ A long project session (and its 10-08 notes) gave these items; reproduced where 
 - **DECIDED (D-264): external source pointers (`<source>:<id>:s<page>`).** Search by pointer already works (identifier/trigram legs). Resolution belongs to the client: the server cannot reach a local library, so the project's own MCP tool opens the pointer. A structured pointer list in drilldown is a later idea.
 - **Vision items (owner):** salience/importance signals for ranking and recall (surprise, cost, recurrence, the owner's reaction), spontaneous recall outside risk_check, source-project context on cross-project hits, procedural ("muscle") memory with trigger, action, reason, scope and last verification.
 
+## Fourth test-drive findings (2026-10-27)
+Two project chats (2026-10-24/25); details private (docs/private/test-drive/).
+- **D-267 (branch): the brief "timed out after 6.5 s" was a tokenizer download.** macOS purged tiktoken's temp cache; the hook downloaded the vocabulary during assembly, outside the fetch deadline, and the watchdog ended it at 8 s (8 of 8 field failures 8.05-8.09 s; no log line). Fixed: persistent offline vocabulary + background warm-up, wall-clock-capped fetch, the last good brief on a failed read, a watchdog log line, a skeleton-card note.
+- **D-267 (branch): text and small server changes.** Digest/protocol: part-scope supersession, the `updates` fields, closing before a compaction, an optional `Day:` line, setting-scoped claims. `E_NOT_FOUND` names the project of a clue the caller can read elsewhere; `replacement_in_other_item`; the `historical_kind` hint names its scope.
+- **Recall at the moment of action (measure first).** A relevant lesson existed but nothing pulled it before a routine coordination step. Options: a PreToolUse hook that shows 1-2 tagged lessons before agent-team messages or spawns; a brief section of pinned workflow lessons. Same family as "file-anchored recall" below and the "spontaneous recall" vision item.
+- **"Similar lesson exists" hint on `register_lesson`** (two writers, one incident). Deterministic nearest-lesson lookup in the ack; measure false positives first.
+- **Fresh lessons in `dropped_by_judge`/`unjudged`:** mark lessons recorded in the last 24 h (needs `recorded_at` on risk candidates).
+- **Librarian block on every query** is noise for project chats; today labelled as the operator's queue. Dropping it from `memory.query` is a contract change (the brief reads it there).
+- **Migration kit: the hand-off requires the first card** (a migrated project kept its skeleton card for weeks).
+- **Drilldown of imported items shows the frontmatter lines** (previews skip them since D-262); a compact one-line provenance in drilldown, low priority.
+- **Declined for now: a server-generated `request_id`** (it would make transport retries write duplicates); first measure which protocol steps cost writers the most.
+
 ## Ideas from claude-mem (2026-10-15): parked, evaluate later
 Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Evaluate one at a time, measure first.
 - **File-anchored recall:** inject memories tied to a file when the agent reads it (PreToolUse on Read); the cheapest form of "spontaneous recall". Items already carry `describes` → `code_refs`. Measure how often a read file has code_refs and whether the injected items help.
