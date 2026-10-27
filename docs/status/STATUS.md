@@ -4,10 +4,10 @@ notes into fixes. The model is hybrid (D-246): project chats write under the pro
 librarian is an observer.
 
 ## Where we are (2026-10-27)
-- **Production** runs 516dff2 (D-263) on the single VM. D-267 is on branch `d267-brief-resilience` (review 125
-  in progress): the brief's tokenizer is never downloaded inside the hook, the last good brief stands in for a
-  failed read, the digest and skill answer the fourth test-drive round, and `E_NOT_FOUND` names the project of a
-  readable clue elsewhere.
+- **Production** runs 1816c1e (D-267, deployed 2026-10-27; review 125 clean after two rounds; gates PASS): the
+  brief's tokenizer is never downloaded inside the hook, the last good brief stands in for a failed read, the
+  digest and skill answer the fourth test-drive round, and `E_NOT_FOUND` names the project of a readable clue
+  elsewhere.
 - **Usage.** Several owner projects are mapped (digest + brief at session start). Test-drive notes and the
   operator's answers live in `docs/private/test-drive/`; the product side is in BACKLOG ("... test-drive findings").
 - **Process.** Reviews by fresh-context agents, two in parallel on different models for one-way doors (D-266).
