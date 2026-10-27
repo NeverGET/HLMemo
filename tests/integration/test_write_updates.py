@@ -303,6 +303,30 @@ async def test_the_replacement_must_be_in_the_carrying_body_not_another_batch_it
 
 
 @pytest.mark.parametrize(
+    ("replacement", "siblings", "reason"),
+    [
+        ("300", ["The TTL is 300 now."], "replacement_not_in_body"),  # one word: too common to name
+        (
+            "TTL is 300 seconds",
+            ["The TTL is 300 seconds now.", "Yes, TTL is 300 seconds."],
+            "replacement_not_in_body",
+        ),
+        ("TTL is 300 seconds", ["The TTL is 300 seconds now.", "Unrelated."], "replacement_in_other_item"),
+    ],
+)
+async def test_the_sibling_reason_needs_one_sibling_and_two_words(
+    connect, world, deps, replacement, siblings, reason
+) -> None:  # noqa: ANN001
+    """Review 125: name the sibling only when the replacement is specific and in exactly one sibling."""
+    old = await _old(connect, world, deps)
+    items = [item("Cache TTL raised", "The TTL was raised.", updates=[_upd(old, replacement=replacement)])]
+    items += [item(f"Sibling {i}", body) for i, body in enumerate(siblings)]
+    ack = await _write(connect, world.ctx_a, MAIN, items, deps)
+    (u,) = ack["updates"]
+    assert (u["status"], u["reason"]) == ("rejected", reason)
+
+
+@pytest.mark.parametrize(
     ("upd", "reason"),
     [
         ({"old_span": "90 seconds"}, "span_not_found"),

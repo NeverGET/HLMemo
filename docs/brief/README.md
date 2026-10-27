@@ -139,7 +139,8 @@ watchdog ended it at 8 s with "unavailable" and no log line. Now:
   skips the fetch (`timeout`, cause `start`);
 - a full brief is saved to `<capture state dir>/briefs/<slug>.json` (0600). When a later live read fails
   (`timeout` without a partial brief, `error:network`, `error:server`), the session gets that brief behind one
-  line naming the failure and the copy's age ("may be stale"). Never after an auth refusal, never older than 14
+  line naming the failure and the copy's age ("may be stale"). Only after a timeout, no answer or a transient server
+  error (`E_UNAVAILABLE`, `E_RATE_LIMITED`); never after a refusal (auth, a forbidden or missing project); never older than 14
   days; `HLM_BRIEF_CACHE=off` disables saving and showing. The log's sections end in `Cached`;
 - the watchdog logs its own `watchdog` line before it ends the process, and prints the saved brief when there is
   one;

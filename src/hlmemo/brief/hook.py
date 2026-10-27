@@ -69,8 +69,19 @@ MIN_FETCH_S = 0.5  # with less left, the fetch is not started
 CACHE_ENV = "HLM_BRIEF_CACHE"  # "off" disables saving and showing the last good brief
 CACHE_DIR = "briefs"
 CACHE_MAX_DAYS = 14
-#: statuses whose session gets the last good brief instead of the one-line "unavailable"
+#: statuses whose session gets the last good brief instead of the one-line "unavailable"; an
+#: ``error:server`` only with a transient code (review 125: E_FORBIDDEN_PROJECT is a refusal, not an outage)
 CACHE_STATUSES = ("timeout", "error:network", "error:server")
+CACHE_SERVER_CODES = frozenset({"E_UNAVAILABLE", "E_RATE_LIMITED"})
+CACHE_MAX_BYTES = 256 * 1024
+
+
+def cache_allowed(status: str, cause: str) -> bool:
+    """A failure after which the last good brief may stand in: a timeout, no answer, or a transient server
+    error. Never a refusal (auth, a missing or forbidden project) or an unexpected client error."""
+    if status == "error:server":
+        return cause in CACHE_SERVER_CODES
+    return status in CACHE_STATUSES
 
 
 @dataclass
@@ -305,7 +316,8 @@ def save_last_good(slug: str, text: str, now: datetime | None = None) -> None:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         stamp = (now or datetime.now(UTC)).isoformat()
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        tmp.unlink(missing_ok=True)  # a leftover of a killed run (unlinking a symlink removes only the link)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump({"slug": slug, "saved_at": stamp, "text": text}, fh, ensure_ascii=False)
         os.replace(tmp, path)
@@ -316,7 +328,10 @@ def save_last_good(slug: str, text: str, now: datetime | None = None) -> None:
 def load_last_good(slug: str, now: datetime | None = None) -> tuple[str, datetime] | None:
     """``(text, saved_at)`` of the saved brief of ``slug``, at most ``CACHE_MAX_DAYS`` old. Never raises."""
     try:
-        data = json.loads(_cache_path(slug).read_text(encoding="utf-8"))
+        path = _cache_path(slug)
+        if path.is_symlink() or path.stat().st_size > CACHE_MAX_BYTES:
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or data.get("slug") != slug or not isinstance(data.get("text"), str):
             return None
         saved = datetime.fromisoformat(str(data["saved_at"]))
@@ -403,7 +418,7 @@ def handle(
             status, cause, brief = build_brief(slug, cfg, fetcher, room, fetch_s)
         secs = round(BC.FETCH_S if fetch_s is None else fetch_s, 1)
         cached = None
-        if brief is None and use_cache and status in CACHE_STATUSES:
+        if brief is None and use_cache and cache_allowed(status, cause):
             cached = cached_brief(slug, status, cause, room, now, secs)
         if brief is not None and status == "injected" and use_cache and not dry:
             save_last_good(slug, brief.text, now)

@@ -135,6 +135,47 @@ def test_an_auth_refusal_never_shows_the_saved_brief(tmp_path: Path, cfg_file: P
     assert o.status == "error:auth" and "Cached" not in o.sections and "Real card." not in ctx(o)
 
 
+@pytest.mark.parametrize("code", ["E_FORBIDDEN_PROJECT", "E_NOT_FOUND", "E_FORBIDDEN", "E_INVALID_ARG"])
+def test_a_server_refusal_never_shows_the_saved_brief(tmp_path: Path, cfg_file: Path, code: str) -> None:
+    """Review 125: a revoked read grant or a missing project is a refusal, not an outage."""
+    from hlmemo.cli.mcp_client import ToolCallError
+
+    async def refused(slug: str, cfg: Any, partial: Any = None) -> Snapshot:
+        raise ToolCallError(code, "refused")
+
+    run(tmp_path, cfg_file, ok, now=NOW)
+    o = run(tmp_path, cfg_file, refused, now=NOW + timedelta(hours=1))
+    assert o.status == "error:server" and "Cached" not in o.sections and "Real card." not in ctx(o)
+
+
+@pytest.mark.parametrize("code", ["E_UNAVAILABLE", "E_RATE_LIMITED"])
+def test_a_transient_server_error_shows_the_saved_brief(tmp_path: Path, cfg_file: Path, code: str) -> None:
+    from hlmemo.cli.mcp_client import ToolCallError
+
+    async def busy(slug: str, cfg: Any, partial: Any = None) -> Snapshot:
+        raise ToolCallError(code, "busy")
+
+    run(tmp_path, cfg_file, ok, now=NOW)
+    o = run(tmp_path, cfg_file, busy, now=NOW + timedelta(hours=1))
+    assert o.status == "error:server" and "Cached" in o.sections and "Real card." in ctx(o)
+
+
+def test_a_symlinked_or_oversized_saved_brief_is_ignored(tmp_path: Path, cfg_file: Path) -> None:
+    run(tmp_path, cfg_file, ok, now=NOW)
+    p = H._cache_path("proj")
+    real = p.read_text()
+    target = tmp_path / "elsewhere.json"
+    target.write_text(real)
+    p.unlink()
+    p.symlink_to(target)
+    assert H.load_last_good("proj", NOW) is None
+    p.unlink()
+    data = json.loads(real)
+    data["text"] = "x" * (H.CACHE_MAX_BYTES + 1)
+    p.write_text(json.dumps(data))
+    assert H.load_last_good("proj", NOW) is None
+
+
 def test_nothing_is_saved_by_a_partial_or_dry_run_or_with_the_switch_off(
     tmp_path: Path, cfg_file: Path
 ) -> None:

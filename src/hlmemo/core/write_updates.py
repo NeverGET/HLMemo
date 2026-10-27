@@ -122,14 +122,19 @@ _GUARD_REASON = {
 _PESSIMISTIC_ID = 10**15
 
 
+MIN_SIBLING_WORDS = 2
+
+
 def _in_sibling(plans: list[Any], index: int, replacement: str | None) -> bool:
-    """``replacement`` occurs (NFC, verbatim) in the body of another item of the same write."""
+    """``replacement`` (at least ``MIN_SIBLING_WORDS`` words) occurs, NFC and verbatim, in the body of exactly
+    one other item of the same write."""
     from hlmemo.librarian import revise as rv
 
     rep = rv.nfc(replacement or "")
-    if not rep.strip():
+    if len(re.findall(r"\w+", rep)) < MIN_SIBLING_WORDS:  # "5" or "the" is in many bodies (review 125)
         return False
-    return any(i != index and rv.occurrences(rv.nfc(p.item.body), rep) for i, p in enumerate(plans))
+    hits = [i for i, p in enumerate(plans) if i != index and rv.occurrences(rv.nfc(p.item.body), rep)]
+    return len(hits) == 1
 
 
 def endpoint_visible(ctx: AuthContext, home_id: int, row: Any) -> bool:
