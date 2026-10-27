@@ -1,5 +1,23 @@
 # STATUS — HLMemo (read this first when resuming)
-Updated: 2026-10-03. The project is ACTIVE. The direction is GOAL-PLAN (D-206) with the librarian in ASSIST mode (D-225).
+Updated: 2026-10-27. The project is ACTIVE: real project chats use it (test drives), and the operator turns their
+notes into fixes. The model is hybrid (D-246): project chats write under the protocol, the operator curates, the
+librarian is an observer.
+
+## Where we are (2026-10-27)
+- **Production** runs 516dff2 (D-263) on the single VM. D-267 is on branch `d267-brief-resilience` (review 125
+  in progress): the brief's tokenizer is never downloaded inside the hook, the last good brief stands in for a
+  failed read, the digest and skill answer the fourth test-drive round, and `E_NOT_FOUND` names the project of a
+  readable clue elsewhere.
+- **Usage.** Several owner projects are mapped (digest + brief at session start). Test-drive notes and the
+  operator's answers live in `docs/private/test-drive/`; the product side is in BACKLOG ("... test-drive findings").
+- **Process.** Reviews by fresh-context agents, two in parallel on different models for one-way doors (D-266).
+  Every fix leaves a lesson in memory (owner, 2026-10-22).
+- **Open.** Risk judge timeouts; recall at the moment of action (measure first); librarian precision re-measure
+  (deferred); the claude-mem ideas (BACKLOG). Network: test IPv4 and IPv6 before ops; both worked from home on
+  2026-10-27.
+- **Resume** from this section, the newest `D-` entries (D-262..D-267) and the private resume notes.
+
+## Status of 2026-10-03 (kept as written)
 
 ## Where we are (2026-10-03)
 - **Prod runs ee89c86** (D-239) on the single production VM. It contains:
