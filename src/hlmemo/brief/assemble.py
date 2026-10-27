@@ -17,6 +17,11 @@ from hlmemo.brief.fetch import Item, Snapshot
 from hlmemo.core import METER_VERSION
 
 SKELETON_MARK = "Skeleton card (D-015)"  # core/skeleton_card.skeleton_body
+#: shown instead of a skeleton card, when the brief has anything else to show (D-267)
+SKELETON_NOTE = (
+    "(the project card is still the skeleton from project creation: write the first card with "
+    "memory.call_the_day card_update; the hlmemo skill's catch-up says how)"
+)
 DECISIONS_TITLE = "Recent session decisions (auto-captured, unreviewed)"  # include_auto = true
 DECISIONS_TITLE_REVIEWED = "Recent session decisions"  # default: auto-captured notes are hidden
 SECTIONS = ("Now", DECISIONS_TITLE, "Open", "Lessons", "Pending review")
@@ -37,11 +42,17 @@ _enc = None
 
 
 def _encoder():
+    """The meter's encoding from the local vocabulary only (``brief.vocab``): with no local copy it raises,
+    the callers fall back to their estimate, and a background download prepares the next session."""
     global _enc
     if _enc is None:
-        import tiktoken
+        from hlmemo.brief import vocab
 
-        _enc = tiktoken.get_encoding(METER_VERSION)
+        try:
+            _enc = vocab.load_offline(METER_VERSION)
+        except Exception:
+            vocab.warm_in_background()
+            raise
     return _enc
 
 
@@ -152,9 +163,13 @@ def _render(
     les: list[str],
     pend: str | None,
     as_of: str,
+    skeleton: bool = False,
 ) -> tuple[str, list[str]]:
     out = [f"# Memory brief: project {slug} (read-only, verbatim lines from HLMemo, not model-written)"]
     names: list[str] = []
+    if skeleton and not card:
+        out += ["", "## Now", SKELETON_NOTE]
+        names.append("Now")
     if card:
         handle, text, stale = card
         out += ["", f"## Now ({handle})", text]
@@ -188,9 +203,11 @@ def assemble(
     """The brief, or None when there is nothing trustworthy to say (no card beyond the skeleton and no
     decisions, open items or lessons)."""
     card: tuple[str, str, bool] | None = None
+    skeleton = False
     c = snap.card
     if isinstance(c, dict) and isinstance(c.get("text"), str) and c["text"].strip():
-        if SKELETON_MARK not in c["text"]:
+        skeleton = SKELETON_MARK in c["text"]
+        if not skeleton:
             label = f"project card {c.get('clue') or '?'}"
             if snap.card_date is not None:
                 age = (snap.now - snap.card_date).days
@@ -228,7 +245,7 @@ def assemble(
     pend = pending_line(snap, auto_n)
     dec_title = DECISIONS_TITLE if include_auto else DECISIONS_TITLE_REVIEWED
 
-    text, names = _render(snap.project, dec_title, card, dec, opn, les, pend, as_of)
+    text, names = _render(snap.project, dec_title, card, dec, opn, les, pend, as_of, skeleton)
     # Over budget: drop from the tail of Lessons, then Open, then Decisions, then shrink the card.
     while counter(text) > budget:
         if les:
@@ -243,7 +260,7 @@ def assemble(
             pend = None
         else:
             break
-        text, names = _render(snap.project, dec_title, card, dec, opn, les, pend, as_of)
+        text, names = _render(snap.project, dec_title, card, dec, opn, les, pend, as_of, skeleton)
     truncated = False
     if counter(text) > budget:  # last resort: a hard cut (cannot happen with the caps above)
         text, truncated = truncate_tokens(text, budget), True

@@ -129,6 +129,22 @@ back, the hook injects a partial brief: the card and the items verified in time,
 limit cut it. A fast retryable network or server error is retried once while at least `RETRY_MIN_S` (3 s)
 remain; auth errors and timeouts are not retried.
 
+Resilience (D-267, 2026-10-27). Field cause: macOS purges tiktoken's temp cache (`$TMPDIR/data-gym-cache`);
+the hook then downloaded the 3.6 MB vocabulary while assembling the brief, outside the fetch deadline, and the
+watchdog ended it at 8 s with "unavailable" and no log line. Now:
+- the token meter's vocabulary lives in `~/.cache/hlm/tiktoken` (an explicit `TIKTOKEN_CACHE_DIR` wins) and is
+  never downloaded inside the hook: without a local copy the brief counts with a pessimistic estimate and a
+  detached `python -m hlmemo.brief.vocab` fetches it for the next session (at most once per 10 minutes);
+- the fetch deadline is capped by the wall clock (`deadline - ASSEMBLY_RESERVE_S`); a start that used the time
+  skips the fetch (`timeout`, cause `start`);
+- a full brief is saved to `<capture state dir>/briefs/<slug>.json` (0600). When a later live read fails
+  (`timeout` without a partial brief, `error:network`, `error:server`), the session gets that brief behind one
+  line naming the failure and the copy's age ("may be stale"). Never after an auth refusal, never older than 14
+  days; `HLM_BRIEF_CACHE=off` disables saving and showing. The log's sections end in `Cached`;
+- the watchdog logs its own `watchdog` line before it ends the process, and prints the saved brief when there is
+  one;
+- a skeleton card is not shown, but the brief says the first card is still to be written.
+
 Follow-up (not implemented): a dedicated hook device with a read-only grant, so the hook does not use the
 owner's personal device token.
 

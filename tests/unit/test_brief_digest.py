@@ -266,7 +266,7 @@ def test_watchdog_prints_digest_when_the_fetch_hangs(tmp_path: Path, cfg_file: P
         capture_output=True,
         text=True,
         timeout=20,
-        env=_env(tmp_path, cfg_file, HLM_BRIEF_WALL_S="0.8"),
+        env=_env(tmp_path, cfg_file, HLM_BRIEF_WALL_S="2.0"),  # leaves the fetch ~1 s (D-267 cap)
     )
     assert p.returncode == 0 and __import__("time").monotonic() - t < 10
     lines = p.stdout.splitlines()

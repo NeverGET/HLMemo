@@ -24,6 +24,13 @@ It must NEVER block or break a session: any error, timeout or empty result exits
 ends the process after the hard wall clock (8 s; the registered hook timeout is 10) whatever the main
 thread is doing (imports, keychain, a hung socket). Once the cwd is mapped the watchdog first prints the
 digest with the "unavailable" line, so even a hung fetch still injects the rules.
+
+The fetch deadline is also capped by the wall clock (``deadline`` - ``ASSEMBLY_RESERVE_S``), so a slow start
+shortens the fetch instead of handing the session to the watchdog. A full brief is saved locally
+(``<state>/briefs/<slug>.json``, 0600); when a later live read fails (timeout, network or server error), that
+last good brief is shown instead, dated and marked possibly stale (``HLM_BRIEF_CACHE=off`` disables it; never
+after an auth refusal; at most ``CACHE_MAX_DAYS`` old). The watchdog logs its own line before it exits
+(D-267).
 """
 
 from __future__ import annotations
@@ -56,6 +63,14 @@ Fetcher = Callable[[str, BC.BriefConfig], Awaitable[Any]]
 AUTH_CODES = frozenset({"E_AUTH", "E_DEVICE_PENDING"})
 #: the last line of a brief the deadline cut short (the card and the queries came back, not every detail)
 PARTIAL_NOTE = "(cut short by the {s:g} s time limit: items not verified in time are left out)"
+#: seconds kept free after the fetch for assembly and output, inside the watchdog's wall clock
+ASSEMBLY_RESERVE_S = 1.0
+MIN_FETCH_S = 0.5  # with less left, the fetch is not started
+CACHE_ENV = "HLM_BRIEF_CACHE"  # "off" disables saving and showing the last good brief
+CACHE_DIR = "briefs"
+CACHE_MAX_DAYS = 14
+#: statuses whose session gets the last good brief instead of the one-line "unavailable"
+CACHE_STATUSES = ("timeout", "error:network", "error:server")
 
 
 @dataclass
@@ -107,22 +122,28 @@ def _token(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._:-]", "", s)[:64]
 
 
-def unavailable(slug: str, status: str, cause: str = "") -> str:
-    """The one line that stands in for a brief that could not be produced, with the reason."""
+def _why(status: str, cause: str = "", seconds: float | None = None) -> str:
+    if status == "timeout" and cause == "start":
+        return "the hook started too slowly to read memory in time; memory.query still works"
     if status == "timeout":
-        why = f"timed out after {BC.FETCH_S:g} s; memory.query still works"
-    elif status == "error:auth" and cause == "E_DEVICE_PENDING":
-        why = "this device is not approved yet"
-    elif status == "error:auth":
-        why = "the server refused this device's token"
-    elif status == "error:network":
-        why = "server unreachable"
-    elif status == "error:server":
-        why = f"server error {_token(cause)}".rstrip()
-    elif status.startswith("error"):
-        why = "the memory read failed"
-    else:
-        why = "nothing to show: no device token, or no current card or reviewed lessons yet"
+        secs = seconds if seconds is not None else BC.FETCH_S
+        return f"timed out after {secs:g} s; memory.query still works"
+    if status == "error:auth" and cause == "E_DEVICE_PENDING":
+        return "this device is not approved yet"
+    if status == "error:auth":
+        return "the server refused this device's token"
+    if status == "error:network":
+        return "server unreachable"
+    if status == "error:server":
+        return f"server error {_token(cause)}".rstrip()
+    if status.startswith("error"):
+        return "the memory read failed"
+    return "nothing to show: no device token, or no current card or reviewed lessons yet"
+
+
+def unavailable(slug: str, status: str, cause: str = "", seconds: float | None = None) -> str:
+    """The one line that stands in for a brief that could not be produced, with the reason."""
+    why = _why(status, cause, seconds)
     return (
         f"# Memory brief: project {slug}: unavailable this session ({why}). "
         "Use memory.query (token_budget 3000) for your task."
@@ -177,17 +198,19 @@ async def default_fetcher(slug: str, cfg: BC.BriefConfig, partial: Any = None) -
         return await F.gather_snapshot(call, slug, into=partial)
 
 
-async def fetch_snapshot(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None) -> tuple[str, str, Any]:
+async def fetch_snapshot(
+    slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None, fetch_s: float | None = None
+) -> tuple[str, str, Any]:
     """``(status, cause, Snapshot | None)``, status = ok | empty | timeout | error:... (``failure``),
-    under ONE deadline ``BC.FETCH_S`` from now. A retryable network/server failure is retried once while
-    ``BC.RETRY_MIN_S`` remain. When the deadline cuts the default fetcher after the card and the queries,
+    under ONE deadline ``fetch_s`` (default ``BC.FETCH_S``) from now. A retryable network/server failure is
+    retried once while ``BC.RETRY_MIN_S`` remain. When the deadline cuts the default fetcher after the card and the queries,
     the snapshot of what was verified by then comes back with status ``timeout`` (cause: the stage)."""
     import asyncio
 
     from hlmemo.brief import fetch as F
 
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + BC.FETCH_S
+    deadline = loop.time() + (BC.FETCH_S if fetch_s is None else fetch_s)
     partial: Any = None
     try:
         async with asyncio.timeout_at(deadline):
@@ -209,7 +232,9 @@ async def fetch_snapshot(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None
         return "timeout", stage, F.settle(partial, cut=True) if stage == "details" else None
 
 
-def build_brief(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None, room: int) -> tuple[str, str, Any]:
+def build_brief(
+    slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None, room: int, fetch_s: float | None = None
+) -> tuple[str, str, Any]:
     """``(status, cause, Brief | None)``; status = injected | empty | timeout | error:... (``failure``).
     A timeout that cut only the details still gives a brief of what was verified, ending in
     ``PARTIAL_NOTE``. The brief keeps its token budget AND fits in ``room`` characters (what the digest
@@ -219,10 +244,11 @@ def build_brief(slug: str, cfg: BC.BriefConfig, fetcher: Fetcher | None, room: i
 
         from hlmemo.brief.assemble import assemble, count_tokens
 
-        status, cause, snap = asyncio.run(fetch_snapshot(slug, cfg, fetcher))
+        secs = BC.FETCH_S if fetch_s is None else fetch_s
+        status, cause, snap = asyncio.run(fetch_snapshot(slug, cfg, fetcher, secs))
         if snap is None:
             return status, cause, None
-        note = PARTIAL_NOTE.format(s=BC.FETCH_S) if status == "timeout" else ""
+        note = PARTIAL_NOTE.format(s=round(secs, 1)) if status == "timeout" else ""
         budget = cfg.budget_tokens - (count_tokens(note) + 1 if note else 0)
         room -= (len(note) + 1) if note else 0
 
@@ -267,6 +293,67 @@ def write_dryrun(directory: str, data: dict[str, Any], text: str, meta: dict[str
     return path
 
 
+def _cache_path(slug: str) -> Path:
+    return CC.state_dir() / CACHE_DIR / f"{_safe(slug)}.json"
+
+
+def save_last_good(slug: str, text: str, now: datetime | None = None) -> None:
+    """Keep a full brief (without the digest) for a later session whose live read fails. Never raises."""
+    try:
+        path = _cache_path(slug)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stamp = (now or datetime.now(UTC)).isoformat()
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"slug": slug, "saved_at": stamp, "text": text}, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except BaseException:  # noqa: BLE001
+        pass
+
+
+def load_last_good(slug: str, now: datetime | None = None) -> tuple[str, datetime] | None:
+    """``(text, saved_at)`` of the saved brief of ``slug``, at most ``CACHE_MAX_DAYS`` old. Never raises."""
+    try:
+        data = json.loads(_cache_path(slug).read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("slug") != slug or not isinstance(data.get("text"), str):
+            return None
+        saved = datetime.fromisoformat(str(data["saved_at"]))
+        if saved.tzinfo is None:
+            return None
+        age = (now or datetime.now(UTC)) - saved
+        if age.total_seconds() < 0 or age.days >= CACHE_MAX_DAYS:
+            return None
+        return data["text"], saved
+    except BaseException:  # noqa: BLE001
+        return None
+
+
+def _ago(saved: datetime, now: datetime) -> str:
+    h = int((now - saved).total_seconds() // 3600)
+    return f"{h} h ago" if h < 48 else f"{h // 24} days ago"
+
+
+def cached_brief(
+    slug: str, status: str, cause: str, room: int, now: datetime | None = None, seconds: float | None = None
+) -> str | None:
+    """The last good brief behind one line that says the live read failed and when the copy was saved, or
+    None (no usable copy, or it does not fit ``room``)."""
+    now = now or datetime.now(UTC)
+    got = load_last_good(slug, now)
+    if got is None:
+        return None
+    text, saved = got
+    head = (
+        f"# Memory brief: project {slug}: the live read failed this session "
+        f"({_why(status, cause, seconds)}). "
+        f"Below is the brief saved {saved.strftime('%Y-%m-%d %H:%M')} UTC ({_ago(saved, now)}): it may be "
+        "stale; check anything current with memory.query."
+    )
+    out = f"{head}\n\n{text}"
+    return out if len(out) <= room else None
+
+
 def handle(
     raw: str,
     *,
@@ -274,10 +361,14 @@ def handle(
     env: dict[str, str] | None = None,
     config_path: Path | None = None,
     arm: Callable[[str], None] | None = None,
+    deadline: float | None = None,
+    now: datetime | None = None,
 ) -> Outcome:
     """Never raises. ``fetcher(slug, cfg)`` returns a ``Snapshot`` (or None); injectable for tests.
-    ``arm(line)`` receives, as soon as the cwd is mapped, the digest-only output that the watchdog prints
-    if it has to end the process before the brief is ready."""
+    ``arm(line)`` receives, as soon as the cwd is mapped, the output that the watchdog prints if it has to
+    end the process before the brief is ready (the digest with the last good brief, or the "unavailable"
+    line). ``deadline`` (``time.monotonic()`` scale) is when the watchdog fires; the fetch ends
+    ``ASSEMBLY_RESERVE_S`` before it."""
     t0 = time.monotonic()
     e = env if env is not None else os.environ
     try:
@@ -296,16 +387,37 @@ def handle(
         # Mapped: from here on the digest is always injected (unless switched off), whatever the brief does.
         head = _digest_or_empty(slug, e)
         dry = e.get(BC.DRYRUN_ENV, "").strip()
-        if head and arm is not None and not dry:
-            arm(hook_output(compose(head, unavailable(slug, "timeout"))))
+        use_cache = not BC._off(e, CACHE_ENV)
         room = CONTEXT_CHARS - (len(head) + 2 if head else 0)
-        status, cause, brief = build_brief(slug, cfg, fetcher, room)
-        body = brief.text if brief is not None else (unavailable(slug, status, cause) if head else "")
+        if arm is not None and not dry:
+            fallback = cached_brief(slug, "timeout", "", room, now) if use_cache else None
+            if head or fallback:
+                arm(hook_output(compose(head, fallback or unavailable(slug, "timeout"))))
+        fetch_s = None
+        left = None if deadline is None else deadline - ASSEMBLY_RESERVE_S - time.monotonic()
+        if left is not None and left < MIN_FETCH_S:  # the start used the time: no session at all
+            status, cause, brief = "timeout", "start", None
+        else:
+            fetch_s = None if left is None else min(BC.FETCH_S, left)
+            status, cause, brief = build_brief(slug, cfg, fetcher, room, fetch_s)
+        secs = round(BC.FETCH_S if fetch_s is None else fetch_s, 1)
+        cached = None
+        if brief is None and use_cache and status in CACHE_STATUSES:
+            cached = cached_brief(slug, status, cause, room, now, secs)
+        if brief is not None and status == "injected" and use_cache and not dry:
+            save_last_good(slug, brief.text, now)
+        if brief is not None:
+            body = brief.text
+        elif cached is not None:
+            body = cached
+        else:
+            body = unavailable(slug, status, cause, secs) if head else ""
         text = compose(head, body)
         if not text:
             return Outcome(status, slug=slug, cause=cause)
         tokens = brief.tokens if brief is not None else 0
         sections = (("Digest",) if head else ()) + (tuple(brief.sections) if brief is not None else ())
+        sections += ("Cached",) if cached is not None else ()
         if dry:
             meta = {
                 "status": status,
@@ -347,6 +459,7 @@ class Stdout:
         self._lock = threading.Lock()
         self._done = False
         self._fallback: str | None = None
+        self.t0 = time.monotonic()
 
     def arm(self, line: str) -> None:
         self._fallback = line
@@ -370,6 +483,17 @@ class Stdout:
             data = (self._fallback + "\n").encode("utf-8")
             while data:
                 data = data[os.write(1, data) :]
+            cached = "the live read failed this session" in self._fallback
+            m = re.search(r"project ([a-z0-9][a-z0-9-]*)", self._fallback)
+            log_line(
+                Outcome(
+                    "watchdog",
+                    sections=("Cached",) if cached else (),
+                    chars=len(self._fallback),
+                    slug=m.group(1) if m else "",
+                ),
+                int((time.monotonic() - self.t0) * 1000),
+            )
         except BaseException:  # noqa: BLE001
             pass
 
@@ -394,13 +518,14 @@ def start_watchdog(seconds: float, before_exit: Callable[[], None] | None = None
 def main() -> int:
     t0 = time.monotonic()
     out = Stdout()
-    watchdog = start_watchdog(BC.wall_seconds(), out.last_words)
+    wall = BC.wall_seconds()
+    watchdog = start_watchdog(wall, out.last_words)
     try:
         try:
             raw = sys.stdin.read()
         except BaseException:  # noqa: BLE001
             raw = ""
-        outcome = handle(raw, arm=out.arm)
+        outcome = handle(raw, arm=out.arm, deadline=t0 + wall)
         watchdog.cancel()
         if outcome.output:
             out.write(outcome.output)

@@ -44,3 +44,10 @@ def meter():
     from hlmemo.core.budget import Meter
 
     return Meter()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_capture_state(tmp_path_factory, monkeypatch):
+    """Keep the hooks' state (logs, the last good brief, queues) out of the real ~/.local/state (D-267).
+    A test that sets HLM_CAPTURE_STATE_DIR itself overrides this."""
+    monkeypatch.setenv("HLM_CAPTURE_STATE_DIR", str(tmp_path_factory.mktemp("capture-state")))
