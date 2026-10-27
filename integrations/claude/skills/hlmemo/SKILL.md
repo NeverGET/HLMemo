@@ -40,8 +40,9 @@ asks, and ask before writing anything.
 3. **Check risk** (R18) with `memory_risk_check` before a deploy, a migration, a prod-data change, a deletion, a
    force-push or anything touching secrets: lesson-backed checks are what prevent repeats.
 4. **Write as you go** (R5–R14), while the evidence is in front of you, with `updates` when your item makes
-   something you read outdated. **Close once** (R17) with `call_the_day`; work after a long pause that closed the
-   session continues under a fresh `session_id`, and that note starts with the earlier note's clue.
+   something you read outdated. **Close once** (R17) with `call_the_day`, and also before a long pause or a
+   compaction (only a closed note reaches the next brief); work after it continues under a fresh `session_id`, and
+   that note starts with the earlier note's clue.
 
 ## 3. The tools
 
@@ -57,7 +58,8 @@ MCP tools.
   `none`) and `omitted` (hits that did not fit). An imported item's title ends with `· <path>`: that is its import key,
   not always a repository path; the repository path is the `source_path` line in its body. A hit with `superseded: true` is not current: follow
   `superseded_by[].clue`. Scope `whole` means the item is outdated; `part` means one quoted statement is and the
-  rest still holds. A `librarian.notices` block lists review questions that are the owner's to answer.
+  rest still holds. A `librarian` block (`pending_questions`, `notices`) is the operator's review queue: there is
+  nothing for you to do with it.
 - **`mcp__hlm__memory_drilldown`**, the full text of up to 20 clues with one-hop links (`{rel, clue, stale}`):
   `{"project": "my-project", "clue_ids": ["v812.0", "v640"], "token_budget": 4000}`. Pass `next_cursor` back as
   `cursor` to read on.
@@ -82,7 +84,9 @@ MCP tools.
   `no_matching_evidence` means no stored lesson matched, not that the step is safe, so before a deploy or prod-data
   change also run `memory_query` with `kinds: ["lesson"]` for the component; `judged: false` means retrieval only,
   with no LLM judge. A warned lesson tagged `resolved` or `historical` is a reminder: say so
-  rather than treat it as a block. Lessons of every project you can read are checked.
+  rather than treat it as a block. Lessons of every project you can read are checked: a clue whose `source_project`
+  is not your slug is drilled with `project` = that slug (from your own slug, `E_NOT_FOUND` names the project in
+  `details.project`).
 - **`mcp__hlm__memory_register_lesson`** and **`mcp__hlm__memory_call_the_day`**: Examples C and D.
 - **`mcp__hlm__memory_write`**, 1–50 items in one transaction (below). Required: `project`, `request_id` (a UUID,
   e.g. from `uuidgen`), `client` and `items`, each with `kind`, `title` and `body`. The ack's `versions[]` give
@@ -102,7 +106,7 @@ MCP tools.
 | `E_VERSION_CONFLICT` | the item or card changed since you read it | drill `current_clue` (or re-query the card), then decide again |
 | `E_REQUEST_ID_CONFLICT`, `E_SESSION_CLOSED` | that `request_id` was used with another payload; that `session_id` is already closed | the earlier write or close landed; a new logical write needs a new UUID |
 | `E_TEMPORAL`, `E_CARD_TOO_LARGE` | `valid_from` in the future or `valid_to` ≤ `valid_from`; the card is over 512 tokens | use only evidence dates or omit `valid_from`; shorten the card to at most 420 tokens |
-| `E_NOT_FOUND`, `E_INVALID_CURSOR` | the clue is not visible; the cursor expired | re-query; restart the drilldown without `cursor` |
+| `E_NOT_FOUND`, `E_INVALID_CURSOR` | the clue is not visible here (`details.project`: it lives in that project, which you can read); the cursor expired | drill with that `project`, or re-query; restart the drilldown without `cursor` |
 | `E_UNAVAILABLE` (retryable) | server busy, or `memory.ask` disabled | retry once with the identical payload, then use `memory_query` or tell the owner |
 | `E_AUTH`, `E_DEVICE_PENDING`, `E_FORBIDDEN` | the device token is not usable | stop and tell the owner; minting or rotating tokens is theirs |
 
@@ -171,10 +175,12 @@ measurement is a new `episode` with no `updates`.
 
 **Read the ack.** Each update comes back `applied` (the target was revised, `clue` = its new version, or closed),
 `linked` (the target is history: an episode, a session note or a decision row keeps its text and gains only a
-`supersedes` link, which is right for a present-tense line inside history such as "still open"), or `rejected`
+`supersedes` link, which is right for a present-tense line inside history such as "still open"; with `revise` the
+link has scope `part` and marks only `old_span`, so the record's other statements still stand), or `rejected`
 with `code`, `reason` and `hint`: `span_not_found` (copy verbatim from the body), `span_in_title` (the outdated
 claim is in the title: use `supersede`, which may quote the title), `span_not_unique` (quote more words),
-`span_whole` (use `supersede`), `replacement_not_in_body`, `length_ratio`, `version_conflict` (drill
+`span_whole` (use `supersede`), `replacement_not_in_body`, `replacement_in_other_item` (the replacement is in
+another item of the same write: put the update on that item), `length_ratio`, `version_conflict` (drill
 `current_clue`, decide again), `project_card` (a card changes only through `call_the_day`).
 
 Two `updates` aimed at the same memory in one write are both rejected (`batch_conflict`): send one correction per
@@ -221,11 +227,15 @@ and returns `versions[]` and `session_note_clue`. Leave its `lessons` field empt
 ```
 - `notes` = what changed, why, and pointers (files, commits, D-ids, clues), then `## Open`. `decisions` become a
   `## Decisions` list, one line each with its reason; notes and decisions together stay within 64000 chars.
+- Optional: a last `Day:` line, one sentence of what the day was like in the owner's own words; the owner keeps
+  this memory so that shared work is remembered on both sides.
+- With an agent team, check before closing that lessons the teammates wrote into their own files (handoffs,
+  reports) reached memory through `register_lesson`.
 - `card_update` is optional. Take the current text from `memory_query` (`card.text`; drill `card.clue` if
   `card.truncated`), change only the line your session made false, stay within 420 tokens, and set
   `expected_version_id` to the number in `card.clue` (`v701` gives `701`). On `E_VERSION_CONFLICT`, redo the edit.
 - A new project has a **skeleton card**: `project create` writes one whose text starts "Skeleton card (D-015)" and
-  tags it `skeleton-card`. The brief hides it (no "Now" section), so it counts as "no real card yet". Write the
+  tags it `skeleton-card`. The brief does not show it; its "Now" section says the first card is still due. Write the
   initial card over it with `expected_version_id` = the skeleton's version from `card.clue`. Without that field
   the server answers `E_VERSION_CONFLICT` with `details.current_version_id` and stores nothing; resend with it.
 - The ack's `session_note_clue` is the note's handle; give it to the owner.
