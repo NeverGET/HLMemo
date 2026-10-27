@@ -137,7 +137,7 @@ def pending_line(snap: Snapshot, auto_n: int = 0) -> str | None:
         parts.append(f"{snap.pending} librarian question{'s' if snap.pending != 1 else ''}")
     if auto_n > 0:
         parts.append(f"at least {auto_n} auto-captured item{'s' if auto_n != 1 else ''}")
-    line = f"- {' + '.join(parts)} await review (memory.answer)"
+    line = f"- {' + '.join(parts)} await the operator's review (memory.answer; nothing to do here)"
     n = snap.notices[0] if snap.pending > 0 and snap.notices else None
     if n and isinstance(n.get("text"), str):
         clues = " ".join(str(c) for c in (n.get("clues") or [])[:3])

@@ -295,7 +295,9 @@ async def test_the_replacement_must_be_in_the_carrying_body_not_another_batch_it
         deps,
     )
     (u,) = ack["updates"]
-    assert (u["status"], u["reason"]) == ("rejected", "replacement_not_in_body")
+    # D-267: the reason names the sibling, so the writer moves the update instead of guessing
+    assert (u["status"], u["code"], u["reason"]) == ("rejected", "E_INVALID_ARG", "replacement_in_other_item")
+    assert u["hint"] == "replacement is in another item of this write: give that item the update"
     assert len(ack["versions"]) == 2
     assert [r["body"] for r in _current(await _rows(connect, old["logical_id"]))] == [OLD[1]]
 

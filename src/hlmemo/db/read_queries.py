@@ -901,6 +901,16 @@ async def endpoint_authz(
     return lids, vids
 
 
+async def version_project_ids(conn: AsyncConnection, version_id: int) -> list[int]:
+    """The projects a version belongs to, unfiltered: only for ``read_service._readable_home``, which
+    names one of them solely when the caller could read the version there."""
+    cur = await conn.execute(
+        "SELECT project_ids FROM memory_versions WHERE version_id = %(vid)s", {"vid": version_id}
+    )
+    row = await cur.fetchone()
+    return sorted(int(p) for p in row[0]) if row is not None else []
+
+
 async def project_slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[int, str]:
     if not project_ids:
         return {}

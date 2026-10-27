@@ -93,6 +93,11 @@ REASONS: dict[str, tuple[str | None, str]] = {
         "pass replacement: the new sentence copied verbatim from this item's body",
     ),
     "replacement_not_in_body": ("E_INVALID_ARG", "replacement must occur verbatim in this item's body"),
+    # D-267 (a test drive): the replacement was in a sibling item's body
+    "replacement_in_other_item": (
+        "E_INVALID_ARG",
+        "replacement is in another item of this write: give that item the update",
+    ),
     "replacement_same": ("E_INVALID_ARG", "replacement equals old_span"),
     "length_ratio": ("E_INVALID_ARG", "replacement is too long: at most 3x old_span and 1000 characters"),
     "replacement_visibility": (
@@ -115,6 +120,16 @@ _GUARD_REASON = {
     "replacement_visibility": "replacement_visibility",
 }
 _PESSIMISTIC_ID = 10**15
+
+
+def _in_sibling(plans: list[Any], index: int, replacement: str | None) -> bool:
+    """``replacement`` occurs (NFC, verbatim) in the body of another item of the same write."""
+    from hlmemo.librarian import revise as rv
+
+    rep = rv.nfc(replacement or "")
+    if not rep.strip():
+        return False
+    return any(i != index and rv.occurrences(rv.nfc(p.item.body), rep) for i, p in enumerate(plans))
 
 
 def endpoint_visible(ctx: AuthContext, home_id: int, row: Any) -> bool:
@@ -401,6 +416,8 @@ class WriteUpdates:
                 old_title=head.title,
             )
             if chk is None:
+                if reason == "replacement_not_in_body" and _in_sibling(plans, u.index, u.spec.replacement):
+                    reason = "replacement_in_other_item"
                 u.reject(reason or "span_not_found")
                 continue
             u.quote_in = chk.quote_in

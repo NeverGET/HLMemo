@@ -250,7 +250,8 @@ def test_auto_items_are_excluded_by_default_but_counted() -> None:
     assert b is not None
     assert "decide A" not in b.text and "unsure one" not in b.text and "Auto one" not in b.text
     assert "curated decision" in b.text and "Curated" in b.text
-    assert "- 4 librarian questions + at least 2 auto-captured items await review (memory.answer)" in b.text
+    line = "- 4 librarian questions + at least 2 auto-captured items await the operator's review"
+    assert line + " (memory.answer; nothing to do here)" in b.text
     assert "Open" not in b.sections  # only auto notes had open items
 
 
@@ -266,7 +267,8 @@ def test_include_auto_true_shows_them() -> None:
 def test_only_auto_content_means_card_plus_pending_count() -> None:
     b = A.assemble(snap(sessions=[note(5)]))
     assert b is not None and b.sections == ["Now", "Pending review"]
-    assert "at least 1 auto-captured item await review" in b.text and "librarian question" not in b.text
+    assert "at least 1 auto-captured item await the operator's review" in b.text
+    assert "librarian question" not in b.text
 
 
 def test_only_auto_content_and_skeleton_card_skips_the_brief() -> None:
@@ -282,7 +284,7 @@ def test_non_auto_note_still_obeys_the_age_window() -> None:
 
 def test_pending_count_singular_and_questions_only() -> None:
     b = A.assemble(snap(lessons=[lesson(7)], pending=1))
-    assert b is not None and "- 1 librarian question await review" in b.text
+    assert b is not None and "- 1 librarian question await the operator's review" in b.text
 
 
 def test_card_heading_shows_its_date_and_staleness() -> None:

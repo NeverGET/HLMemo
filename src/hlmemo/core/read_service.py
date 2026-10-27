@@ -146,6 +146,31 @@ def _not_found(what: str) -> ToolError:
     return ToolError("E_NOT_FOUND", f"{what} not found")
 
 
+async def _readable_home(
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    version_id: int,
+    pid: int,
+    scopes: list[str],
+    found: Callable[[int], Any],
+) -> str | None:
+    """The slug of another project in which the caller could read ``version_id`` (``found(pid)`` returns
+    the row there under the same rules), else None. A test drive (2026-10-24) drilled a risk_check clue of
+    another project in its own and got a bare ``E_NOT_FOUND`` (D-267). Naming the project discloses nothing
+    the caller cannot read anyway: it needs a READ grant there and the row must pass that project's checks."""
+    for other in await q.version_project_ids(conn, version_id):
+        if other != pid and ctx.has(other, Role.READ) and await found(other) is not None:
+            return (await q.project_slugs(conn, [other])).get(other)
+    return None
+
+
+def _not_found_elsewhere(what: str, slug: str | None) -> ToolError:
+    if slug is None:
+        return _not_found(what)
+    msg = f"{what} not found in this project; it is in project {slug}: pass project {slug}"
+    return ToolError("E_NOT_FOUND", msg, project=slug)
+
+
 def _pack_page(
     meter: Meter,
     envelope: dict[str, Any],
@@ -379,6 +404,7 @@ async def _expand_clues(
     valid_at: datetime,
     known_at: datetime,
     statuses: list[str],
+    ctx: AuthContext | None = None,
 ) -> list[_Unit]:
     """A chunk clue → the chunk ±1 neighbour; an item clue → the body in ordinal order.
     Unknown, out-of-scope, superseded/expired or foreign clue → ``E_NOT_FOUND`` (no distinction)."""
@@ -389,7 +415,15 @@ async def _expand_clues(
         if v is None:
             v = await q.version_live(conn, clue.version_id, pid, scopes, valid_at, known_at, statuses)
             if v is None:
-                raise _not_found("clue")
+                home = None
+                if ctx is not None:
+                    vid = clue.version_id
+
+                    async def live_in(other: int, vid: int = vid) -> Any:
+                        return await q.version_live(conn, vid, other, scopes, valid_at, known_at, statuses)
+
+                    home = await _readable_home(conn, ctx, vid, pid, scopes, live_in)
+                raise _not_found_elsewhere("clue", home)
             versions[clue.version_id] = v
         if clue.is_chunk:
             assert clue.ordinal is not None
@@ -474,7 +508,7 @@ async def drilldown(
         scopes = list(ctx.scope_values())
         statuses = _statuses(request.include_archived)
         units = await _expand_clues(
-            conn, clues, request.clue_ids, project.project_id, scopes, valid_at, known_at, statuses
+            conn, clues, request.clue_ids, project.project_id, scopes, valid_at, known_at, statuses, ctx
         )
         # Group each clue's chunks followed by its edges. Edges are independent packing
         # units, so a long list cannot make every page fail before any progress is possible.
@@ -729,7 +763,12 @@ async def raw(
         scopes = list(ctx.scope_values())
         v = await q.version_authz(conn, request.version_id, project.project_id, scopes)
         if v is None:
-            raise _not_found("version")
+
+            async def authz_in(other: int) -> Any:
+                return await q.version_authz(conn, request.version_id, other, scopes)
+
+            home = await _readable_home(conn, ctx, request.version_id, project.project_id, scopes, authz_in)
+            raise _not_found_elsewhere("version", home)
         resume = 0
         body_paged: bool | None = None  # None: decided on the first page (D-026)
         read_hash = _sha({"project": request.project, "version_id": request.version_id})
