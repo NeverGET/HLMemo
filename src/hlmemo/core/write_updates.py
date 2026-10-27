@@ -101,7 +101,8 @@ REASONS: dict[str, tuple[str | None, str]] = {
     ),
     "future_valid_from": ("E_INVALID_ARG", "this item starts in the future: send the update once it applies"),
     "cut_outside_validity": ("E_INVALID_ARG", "that memory is not valid yet at this item's start"),
-    "historical_kind": (None, "a historical record keeps its text: only a supersedes link was added"),
+    # a test drive read "only a supersedes link" as the whole record outdated (D-267): name the scope
+    "historical_kind": (None, "history kept: revise marks only old_span outdated, supersede the whole"),
     "decision_record": (None, "a decision record keeps its text: only a supersedes link was added"),
 }
 _GUARD_REASON = {

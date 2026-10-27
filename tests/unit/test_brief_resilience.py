@@ -303,3 +303,31 @@ def test_the_warm_up_starts_at_most_once_per_window(tmp_path: Path, monkeypatch:
     monkeypatch.setattr(V, "_warm_started", False)
     assert V.warm_in_background() is False  # the marker is younger than WARM_EVERY_S
     assert len(calls) == 1 and calls[0][-2:] == ["-m", "hlmemo.brief.vocab"]
+
+
+# --------------------------------------------------------------------------- the card shrink terminates
+def test_a_card_longer_than_the_room_is_shrunk_not_looped_on() -> None:
+    """D-267: ``counter`` reports any text over the room as over budget; shrinking the card by 0.8 x that
+    number never cut a 420-token card, and assembly looped forever once the digest grew."""
+    import threading
+
+    budget, room = 1500, 2000
+    words = " ".join(["documentation"] * 3000)
+
+    def counter(text: str) -> int:
+        n = A.count_tokens(text)
+        return n if len(text) <= room else max(n, budget + 1)
+
+    snap = Snapshot(
+        project="proj",
+        card={"clue": "v1", "text": "# Proj\n\n" + words, "stale": False},
+        as_of=datetime(2026, 10, 26, tzinfo=UTC),
+    )
+    out: list[Any] = []
+    t = threading.Thread(
+        target=lambda: out.append(A.assemble(snap, budget=budget, counter=counter)), daemon=True
+    )
+    t.start()
+    t.join(10)
+    assert not t.is_alive(), "assemble did not terminate"
+    assert out[0] is not None and len(out[0].text) <= room

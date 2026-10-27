@@ -96,7 +96,7 @@ def test_resource_shape() -> None:
     t = H.digest_template()
     assert t.startswith("HLMemo mode: project <slug> (MCP server `hlm`). Later sessions act on this memory")
     assert t.count("<slug>") == 2 and t.endswith("\n") and "```" not in t
-    assert 24 <= t.count("\n") <= 34  # "about 30 lines"
+    assert 24 <= t.count("\n") <= 38  # "about 30 lines" (37 since D-267: part scope, updates fields, closes)
     assert set(re.findall(r"<[a-z]+>", t)) == {"<slug>"}  # no other placeholder to fill
 
 

@@ -203,8 +203,9 @@ async def fetch_snapshot(
 ) -> tuple[str, str, Any]:
     """``(status, cause, Snapshot | None)``, status = ok | empty | timeout | error:... (``failure``),
     under ONE deadline ``fetch_s`` (default ``BC.FETCH_S``) from now. A retryable network/server failure is
-    retried once while ``BC.RETRY_MIN_S`` remain. When the deadline cuts the default fetcher after the card and the queries,
-    the snapshot of what was verified by then comes back with status ``timeout`` (cause: the stage)."""
+    retried once while ``BC.RETRY_MIN_S`` remain. When the deadline cuts the default fetcher after the card
+    and the queries, the snapshot of what was verified by then comes back with status ``timeout`` (cause:
+    the stage)."""
     import asyncio
 
     from hlmemo.brief import fetch as F

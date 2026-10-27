@@ -100,7 +100,7 @@ def test_skeleton_card_with_nothing_else_skips_the_whole_brief() -> None:
 
 
 def test_skeleton_card_is_replaced_by_a_note_and_other_sections_stay() -> None:
-    """D-267 (a test drive): a skeleton card is not shown, but the brief says the card is still to be written."""
+    """D-267 (a test drive): a skeleton card is not shown, but the brief says the first card is due."""
     b = asm(snap(card={"clue": "v1", "text": SKELETON, "stale": False}, lessons=[lesson(7)]))
     assert b is not None and b.sections == ["Now", "Lessons"] and "Skeleton card" not in b.text
     assert "## Now\n" + A.SKELETON_NOTE in b.text

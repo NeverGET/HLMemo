@@ -254,8 +254,10 @@ def assemble(
             opn.pop()
         elif dec:
             dec.pop()
-        elif card and counter(card[1]) > MIN_CARD_TOKENS:
-            card = (card[0], truncate_tokens(card[1].rstrip("…"), int(counter(card[1]) * 0.8)), card[2])
+        elif card and (n := count_tokens(card[1])) > MIN_CARD_TOKENS:
+            # the card's real size, not ``counter`` (which reports any text over the room as over budget:
+            # 0.8 x that never shrank the card, an endless loop once the digest grew, D-267)
+            card = (card[0], truncate_tokens(card[1].rstrip("…"), int(n * 0.8)), card[2])
         elif pend:
             pend = None
         else:
