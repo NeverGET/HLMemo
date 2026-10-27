@@ -27,10 +27,10 @@ digest with the "unavailable" line, so even a hung fetch still injects the rules
 
 The fetch deadline is also capped by the wall clock (``deadline`` - ``ASSEMBLY_RESERVE_S``), so a slow start
 shortens the fetch instead of handing the session to the watchdog. A full brief is saved locally
-(``<state>/briefs/<slug>.json``, 0600); when a later live read fails (timeout, network or server error), that
-last good brief is shown instead, dated and marked possibly stale (``HLM_BRIEF_CACHE=off`` disables it; never
-after an auth refusal; at most ``CACHE_MAX_DAYS`` old). The watchdog logs its own line before it exits
-(D-267).
+(``<state>/briefs/<slug>.json``, 0600); when a later live read fails (timeout, no answer, a transient server
+error), that last good brief is shown instead, dated and marked possibly stale (``HLM_BRIEF_CACHE=off``
+disables it; never after a refusal; at most ``CACHE_MAX_DAYS`` old). The watchdog logs its own line before it
+exits (D-267).
 """
 
 from __future__ import annotations
@@ -406,9 +406,14 @@ def handle(
         use_cache = not BC._off(e, CACHE_ENV)
         room = CONTEXT_CHARS - (len(head) + 2 if head else 0)
         if arm is not None and not dry:
-            fallback = cached_brief(slug, "timeout", "", room, now) if use_cache else None
-            if head or fallback:
-                arm(hook_output(compose(head, fallback or unavailable(slug, "timeout"))))
+            wall = None if deadline is None else round(max(deadline - t0, 0.0), 1)
+            if (
+                head
+            ):  # armed first: a stalled cache read must not leave the watchdog with nothing (review 125)
+                arm(hook_output(compose(head, unavailable(slug, "timeout", "", wall))))
+            fallback = cached_brief(slug, "timeout", "", room, now, wall) if use_cache else None
+            if fallback:
+                arm(hook_output(compose(head, fallback)))
         fetch_s = None
         left = None if deadline is None else deadline - ASSEMBLY_RESERVE_S - time.monotonic()
         if left is not None and left < MIN_FETCH_S:  # the start used the time: no session at all

@@ -272,7 +272,7 @@ def test_watchdog_prints_digest_when_the_fetch_hangs(tmp_path: Path, cfg_file: P
     lines = p.stdout.splitlines()
     assert len(lines) == 1
     text = json.loads(lines[0])["hookSpecificOutput"]["additionalContext"]
-    assert text == H.digest("proj") + "\n\n" + H.unavailable("proj", "timeout")
+    assert text == H.digest("proj") + "\n\n" + H.unavailable("proj", "timeout", "", 2.0)  # the wall clock
 
 
 def test_watchdog_prints_nothing_before_the_cwd_is_mapped() -> None:

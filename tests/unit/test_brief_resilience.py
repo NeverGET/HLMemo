@@ -262,7 +262,7 @@ def _main(tmp_path: Path, cfg: Path, code: str) -> tuple[str, str]:
 
 def test_the_watchdog_logs_its_line(tmp_path: Path, cfg_file: Path) -> None:
     text, log = _main(tmp_path, cfg_file, HUNG)
-    assert text.endswith(H.unavailable("proj", "timeout"))
+    assert text.endswith(H.unavailable("proj", "timeout", "", 2.0))  # names the wall clock (review 125)
     line = log.strip().splitlines()[-1]
     assert " watchdog " in line and "slug=proj" in line and "sections=" in line and "Cached" not in line
 

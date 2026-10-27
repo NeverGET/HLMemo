@@ -31,6 +31,7 @@ VOCAB_KEY = hashlib.sha1(VOCAB_URL.encode()).hexdigest()
 CACHE_ENV = "TIKTOKEN_CACHE_DIR"
 WARM_MARK = ".warming"
 WARM_EVERY_S = 600  # at most one background download attempt per 10 minutes
+DOWNLOAD_TIMEOUT_S = 60  # per socket operation in the background download
 
 
 class VocabUnavailable(LookupError):
@@ -122,12 +123,16 @@ def warm_in_background() -> bool:
 def main() -> int:
     """Download (or verify) the vocabulary into ``cache_dir()``. Outside any hook deadline."""
     os.environ[CACHE_ENV] = str(cache_dir())
+    import socket
+
+    socket.setdefaulttimeout(DOWNLOAD_TIMEOUT_S)  # tiktoken's requests.get has none (review 125)
     try:
         import tiktoken
 
         from hlmemo.core import METER_VERSION
 
         tiktoken.get_encoding(METER_VERSION)
+        (cache_dir() / WARM_MARK).unlink(missing_ok=True)
         return 0
     except Exception:  # noqa: BLE001
         return 1
