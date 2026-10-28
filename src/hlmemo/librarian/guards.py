@@ -63,6 +63,7 @@ from datetime import datetime
 from typing import Any
 
 from hlmemo.core.normalize import normalize
+from hlmemo.librarian import revise
 
 RELATIONS = ("none", "duplicate", "refines", "contradicts")
 #: the relations a FINAL judgement can carry: ``relates`` = a restated claim that is not
@@ -572,6 +573,25 @@ def apply_verification(j: Judgement, kind: str, v: dict[str, Any] | None, *, new
     j.relation, j.supersedes, j.tier = "none", "none", "abstain"
 
 
+def historical(j: Judgement, p: PairText, counts: dict[str, int] | None = None) -> None:
+    """D-269: the writers' historical-kind rule (``revise.revisable``) on the librarian path, before
+    the verifier. A supersession whose replaced side is an episode or a session note is dropped: a
+    dated event stays true for its date, and a later result is not a contradiction of it. A
+    replaced decision row keeps its link but is never closed (``no_close``), as for writers."""
+    counts = counts if counts is not None else {}
+    if not j.raised or j.relation != "contradicts" or j.supersedes not in ("new", "old"):
+        return
+    side = "old" if j.supersedes == "new" else "new"
+    kind = p.old_kind if side == "old" else p.new_kind
+    if kind in revise.PROTECTED_KINDS:
+        j.relation, j.supersedes, j.tier = "none", "none", "abstain"
+        j.flags.append("historical_kind")
+        _count(counts, "historical_kind")
+    elif revise.decision_record(p.body(side), None):
+        j.flags.append("decision_record")
+        _count(counts, "decision_record")
+
+
 def finalize(j: Judgement, p: PairText, counts: dict[str, int] | None = None) -> None:
     """After the verifier: the v2 strict action tier and the close decision (in place).
 
@@ -597,7 +617,8 @@ def finalize(j: Judgement, p: PairText, counts: dict[str, int] | None = None) ->
             _count(counts, "action_to_question")
     answer = (j.verification or {}).get("answer") or {}
     j.close_ok = (
-        j.relation == "contradicts"
+        "decision_record" not in j.flags
+        and j.relation == "contradicts"
         and j.supersedes != "none"
         and j.scope == "whole"
         and bool((j.verification or {}).get("agreed"))
@@ -679,6 +700,7 @@ __all__ = [
     "covers_all",
     "finalize",
     "high_impact",
+    "historical",
     "jaccard",
     "near_identical",
     "newer_side",

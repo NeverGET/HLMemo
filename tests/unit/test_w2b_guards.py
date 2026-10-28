@@ -180,3 +180,46 @@ def test_notice_and_rule_text_are_templates() -> None:
     assert rule_text("link", {"relation": "duplicate"}, "reject", ["v5", "v2"]) == (
         "Owner rejected a link proposal (duplicate) for v5 / v2."
     )
+
+
+def test_d269_a_replaced_episode_or_session_note_drops_the_supersession() -> None:
+    for kind in ("episode", "session_note"):
+        p = g.PairText("v2", "Since June the TTL is 300 s.", "The TTL is 60 s.", T2, T1, old_kind=kind)
+        (j,), _ = g.check_relations({"results": [_res()]}, [p])
+        counts: dict[str, int] = {}
+        g.historical(j, p, counts)
+        assert (j.relation, j.supersedes, j.tier) == ("none", "none", "abstain") and not j.raised
+        assert j.flags[-1] == "historical_kind" and counts == {"historical_kind": 1}
+    # the newer side may be the episode: only the REPLACED side's kind counts
+    p = g.PairText("v2", "Since June the TTL is 300 s.", "The TTL is 60 s.", T2, T1, new_kind="episode")
+    (j,), _ = g.check_relations({"results": [_res()]}, [p])
+    g.historical(j, p)
+    assert (j.relation, j.supersedes) == ("contradicts", "new")
+
+
+def test_d269_a_replaced_decision_row_keeps_the_link_but_is_never_closed() -> None:
+    old = "D-012 | 2026-01-01 | ACCEPTED | The TTL is 60 s."
+    p = g.PairText("v2", "Since June the TTL is 300 s.", old, T2, T1)
+    (j,), _ = g.check_relations({"results": [_res()]}, [p])
+    counts: dict[str, int] = {}
+    g.historical(j, p, counts)
+    assert (j.relation, j.supersedes) == ("contradicts", "new") and counts == {"decision_record": 1}
+    j.scope, j.verification = "whole", {"agreed": True, "answer": {"replaces_all": True}}
+    g.finalize(j, p)
+    assert j.close_ok is False
+    # a refines/none judgement is untouched
+    (j,), _ = g.check_relations({"results": [_res(relation="none", supersedes="none")]}, [p])
+    g.historical(j, p)
+    assert "decision_record" not in j.flags
+
+
+def test_d269_supersedes_old_checks_the_new_side_and_other_relations_are_untouched() -> None:
+    # supersedes "old": the candidate is newer, so the subject (new side) is the replaced one
+    p = g.PairText("v2", "The TTL is 60 s.", "Since June the TTL is 300 s.", T1, T2, new_kind="session_note")
+    j = g.Judgement("v2", relation="contradicts", supersedes="old", tier="action")
+    g.historical(j, p)
+    assert (j.relation, j.tier, j.flags) == ("none", "abstain", ["historical_kind"])
+    for rel, sup in (("refines", "none"), ("contradicts", "none")):
+        j = g.Judgement("v2", relation=rel, supersedes=sup, tier="action")
+        g.historical(j, g.PairText("v2", "a b c", "d e f", T2, T1, old_kind="episode"))
+        assert (j.relation, j.flags) == (rel, [])

@@ -497,6 +497,7 @@ class WriteReview:
                 for k, v in counts.items():
                     counters[k] = counters.get(k, 0) + v
                 for pr, j in zip(chunk, judged, strict=True):
+                    guards.historical(j, pr.text, counters)  # D-269: before any verifier call
                     pr.judgement = j
                     pr.judgement_profile = res.profile
 
