@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from hlmemo.ops import shadow
 from hlmemo.ops.librarian import shadow_report
 from tests.integration._librarian_fixtures import (
     FALLBACK,
@@ -122,10 +123,34 @@ async def test_shadow_runs_beside_the_live_pipeline_and_only_audits(
         cur = await conn.execute("SELECT count(*) FROM librarian_questions")
         assert (await cur.fetchone())[0] == 1
         rep = await shadow_report(conn, None, None)
+        detail = await shadow.pair(conn, *prop["clues"])
     # the ops report pairs the live and the shadow supersession of the same two items
     assert rep["live_supersessions"] == rep["shadow_supersessions"] == len(rep["both"]) == 1
     assert rep["live_only"] == rep["shadow_only"] == [] and rep["shadow_errors"] == {}
-    assert rep["spend"][FALLBACK]["calls"] >= 1
+    assert {r["profile"] for r in rep["ledger"]} == {FALLBACK, PRIMARY}  # shadow calls only
+    assert rep["attempts"][f"{FALLBACK}/relate"]["outcomes"] == {
+        "ok": rep["attempts"][f"{FALLBACK}/relate"]["n"]
+    }
+    assert rep["pairs_asked"] >= 1
+    # diagnostics in the block: the ledger join, every pair asked, stage times, each attempt
+    assert block["lineage"] and ["v" + c[1:] for c in block["asked"][0][:2]] == block["asked"][0][:2]
+    assert set(block["seconds"]) == {"relate", "verify", "finalize"}
+    assert {(a["task"], a["outcome"]) for a in block["attempts"]} == {
+        ("relate", "ok"),
+        ("relate_verify", "ok"),
+    }
+    # the surgical view: the exact relate input of the job and both answers for the pair
+    [job] = [j for j in detail["jobs"] if j["relate_input"]["new"]["title"] == NEW[0]]
+    assert job["relate_input"]["new"]["title"] == NEW[0]
+    assert [e["title"] for e in job["relate_input"]["existing"]] == [OLD[0]]
+    assert (
+        job["live"]["answer"]["prompt_version"] == "v2" and job["shadow"]["answer"]["prompt_version"] == "v3"
+    )
+    assert job["live"]["supersedes"] == job["shadow"]["supersedes"] == "new"
+    assert job["live"]["status"] == job["shadow"]["status"] == "judged" and job["missing_versions"] == []
+    assert job["shadow"]["verifier"]["conflict"] is True and job["shadow"]["verifier"]["current"] == "B"
+    assert job["prompts"] == {"live": ["v2"], "shadow": "v3"} and job["call_chunk"] == [job["candidate"]]
+    assert block["unanswered"] == [] and block["wall_s"] == 180.0
 
 
 async def test_a_stalled_shadow_model_ends_within_its_wall_and_the_live_result_stands(
@@ -146,7 +171,8 @@ async def test_a_stalled_shadow_model_ends_within_its_wall_and_the_live_result_s
     took = time.monotonic() - t0
     assert [k for k, _s, _a in questions] == ["contradiction"]
     errs = [s for s in shadows if s]
-    assert errs and all(s.get("error") for s in errs), errs
+    assert errs and all(s["error"]["stage"] == "relate" for s in errs), errs  # where it stopped, and why
+    assert all(s["unanswered"] and s["error"]["remaining_s"] <= 5.0 for s in errs)  # never judged, not "none"
     # one bounded attempt per job within the 5 s wall (2 jobs), never 5 retries of a read timeout
     assert took < 40, took
 
@@ -159,7 +185,11 @@ async def test_a_broken_shadow_profile_is_recorded_and_the_job_completes(
     )
     assert [k for k, _s, _a in questions] == ["contradiction"]
     errs = [s for s in shadows if s]
-    assert errs and all(s["profile"] == "no-such-profile-d272" and s["error"] for s in errs)
+    assert errs and all(
+        s["profile"] == "no-such-profile-d272" and s["error"]["stage"] == "config" for s in errs
+    )
+    # a content-free code, never the exception text (it can quote model output or data)
+    assert all(s["error"]["code"].startswith("E_") and "message" not in s["error"] for s in errs)
 
 
 async def test_the_shadow_stops_at_its_day_cap(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001

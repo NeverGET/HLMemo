@@ -57,7 +57,7 @@ from hlmemo.db import librarian_queries as lq
 from hlmemo.librarian import candidates as cands
 from hlmemo.librarian import guards, privacy
 from hlmemo.librarian import profiles as lprofiles
-from hlmemo.librarian.errors import AuthorityLost, NotReady, PrivacyDenied, SchemaFail
+from hlmemo.librarian.errors import AuthorityLost, LibrarianError, NotReady, PrivacyDenied, SchemaFail
 from hlmemo.librarian.memory import load_rules, readable_rules, rules_still_readable
 from hlmemo.librarian.prompts import TaskSpec, load_task
 from hlmemo.librarian.tasks import Plan, Proposal, user_message
@@ -230,6 +230,13 @@ class _Shadow:
     #: slow shadow model costs the job at most ``librarian_shadow_wall_s``, never the live retries
     deadline: float
     calls: list[dict[str, Any]] = field(default_factory=list)
+    #: D-272 diagnostics: every attempt the provider reports (outcome, error, latency, usage; the raw
+    #: answer only when it failed), the stage being run and the seconds each stage took
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    stage: str = "config"
+    seconds: dict[str, float] = field(default_factory=dict)
+    attempts_dropped: int = 0
+    wall_s: float = 0.0
 
 
 def _profile_named(w: Any, name: str) -> Any:
@@ -240,9 +247,48 @@ def _profile_named(w: Any, name: str) -> Any:
     return lprofiles.named_profile(name)
 
 
-def _shadow_limits(sh: _Shadow | None) -> dict[str, Any]:
-    """A shadow call: one bounded attempt per profile within the job's shadow deadline."""
-    return {} if sh is None else {"deadline": sh.deadline, "attempt_policy": "latency"}
+#: the raw answer of a failed shadow attempt is kept up to this many characters (redacted), for at
+#: most SHADOW_RAW_KEPT failures per job; at most SHADOW_ATTEMPTS attempts are listed (the rest counted)
+SHADOW_RAW_CHARS = 2000
+SHADOW_RAW_KEPT = 8
+SHADOW_ATTEMPTS = 40
+
+
+def _shadow_limits(sh: _Shadow | None, task: str = "", redact: Any = None) -> dict[str, Any]:
+    """A shadow call: one bounded attempt per profile within the job's shadow deadline, observed
+    attempt by attempt (D-189 observer: diagnostics only, it never changes the call)."""
+    if sh is None:
+        return {}
+
+    def observe(ev: dict[str, Any]) -> None:
+        if len(sh.attempts) >= SHADOW_ATTEMPTS:
+            sh.attempts_dropped += 1
+            return
+        usage = ev.get("usage") or {}
+        details = usage.get("prompt_tokens_details") or {}
+        row: dict[str, Any] = {
+            "task": task,
+            "profile": ev.get("profile"),
+            "attempt": ev.get("attempt"),
+            "outcome": ev.get("outcome"),
+            "latency_ms": ev.get("latency_ms"),
+            "tokens": {
+                "in": usage.get("prompt_tokens"),
+                "cached": details.get("cached_tokens") if isinstance(details, dict) else None,
+                "out": usage.get("completion_tokens"),
+            },
+            "cost": usage.get("cost"),
+            "system_sha256": ev.get("system_sha256"),  # which prompt text was sent (drift check)
+        }
+        if ev.get("outcome") == "schema_fail":
+            err = str(ev.get("error") or "")
+            row["error"] = (redact(err) if redact else err)[:300]
+            if sum(1 for a in sh.attempts if "raw" in a) < SHADOW_RAW_KEPT:
+                text = str(ev.get("content") or "")
+                row["raw"] = (redact(text) if redact else text)[:SHADOW_RAW_CHARS]
+        sh.attempts.append(row)
+
+    return {"deadline": sh.deadline, "attempt_policy": "latency", "observe": observe}
 
 
 async def _shadow_spent_today(w: Any) -> float:
@@ -255,6 +301,16 @@ async def _shadow_spent_today(w: Any) -> float:
         )
         row = await cur.fetchone()
     return float(row[0]) if row else 0.0
+
+
+def _shadow_error(stage: str, exc: BaseException) -> dict[str, str]:
+    """Where a shadow run stopped and why: stage, type and the content-free ``E_`` code (never the
+    exception text, which can quote model output or data; the worker's ``error_code`` rule). A
+    failed answer's detail is in ``attempts``."""
+    msg = str(exc) if isinstance(exc, LibrarianError) else ""
+    head = msg.split(" ", 1)[0]
+    code = head if head.startswith("E_") and head.replace("_", "").isalnum() else f"E_{type(exc).__name__}"
+    return {"stage": stage, "type": type(exc).__name__, "code": code}
 
 
 def shadow_enabled(w: Any) -> bool:
@@ -275,6 +331,7 @@ def shadow_config(w: Any, job: Any) -> _Shadow:
         # its own call-cap lineage (a uuid like the job's): the shadow never uses up the job's calls
         lineage=str(uuid.uuid5(uuid.NAMESPACE_URL, f"hlm-shadow:{job.lineage or job.job_id}")),
         deadline=asyncio.get_running_loop().time() + float(w.settings.librarian_shadow_wall_s),
+        wall_s=float(w.settings.librarian_shadow_wall_s),
     )
 
 
@@ -286,6 +343,16 @@ def shadow_audit(
         "profile": sh.chain[0].name,
         "verify_profile": sh.verify_chain[0].name,
         "relate_version": sh.relate_task.prompt_version,
+        "lineage": sh.lineage,  # joins llm_calls (tokens, latency, outcome of every shadow call)
+        "asked": [[_clue(pr.subject.version_id), _clue(pr.cand.version_id), pr.cross] for pr in pairs],
+        # pairs the shadow never judged (its call failed, was denied, or the run stopped before it)
+        "unanswered": [
+            [_clue(pr.subject.version_id), _clue(pr.cand.version_id)] for pr in pairs if pr.judgement is None
+        ],
+        "seconds": {k: round(v, 2) for k, v in sh.seconds.items()},
+        "wall_s": sh.wall_s,
+        "attempts": sh.attempts,
+        **({"attempts_dropped": sh.attempts_dropped} if sh.attempts_dropped else {}),
         "judgements": [
             {"subject": _clue(pr.subject.version_id), **pr.judgement.audit()}
             for pr in pairs
@@ -435,7 +502,10 @@ class WriteReview:
         ]
         plan.request_extra["guards"] = {k: v for k, v in sorted(counters.items()) if v}
         if pairs and shadow_enabled(w):
-            plan.request_extra["shadow"] = await self._shadow(w, job, plan, pairs, rules, precheck_for)
+            try:
+                plan.request_extra["shadow"] = await self._shadow(w, job, plan, pairs, rules, precheck_for)
+            except Exception as exc:  # noqa: BLE001 - last resort: even a failing audit never fails the job
+                plan.request_extra["shadow"] = {"error": _shadow_error("audit", exc)}
         if not plan.signals and not plan.proposals:
             plan.outcome = "no_change"
         return plan
@@ -459,16 +529,30 @@ class WriteReview:
                 return {"profile": str(w.settings.librarian_shadow_profile), "skipped": "day_cap"}
             sh = shadow_config(w, job)
         except Exception as exc:  # noqa: BLE001 - audit only: the shadow never changes the job
-            return {"profile": str(w.settings.librarian_shadow_profile), "error": type(exc).__name__}
+            return {
+                "profile": str(w.settings.librarian_shadow_profile),
+                "error": _shadow_error("config", exc),
+            }
+        loop = asyncio.get_running_loop()
         try:
-            await self._relate(w, job, plan, twins, rules, precheck_for, counters, shadow=sh)
-            await self._verify(w, job, plan, twins, precheck_for, counters, shadow=sh)
-            for pr in twins:
-                if pr.judgement is not None:
-                    guards.finalize(pr.judgement, pr.text, counters)
+            for stage in ("relate", "verify", "finalize"):
+                sh.stage, t0 = stage, loop.time()
+                if stage == "relate":
+                    await self._relate(w, job, plan, twins, rules, precheck_for, counters, shadow=sh)
+                elif stage == "verify":
+                    await self._verify(w, job, plan, twins, precheck_for, counters, shadow=sh)
+                else:
+                    for pr in twins:
+                        if pr.judgement is not None:
+                            guards.finalize(pr.judgement, pr.text, counters)
+                sh.seconds[stage] = loop.time() - t0
             return shadow_audit(sh, twins, counters, self._proposals(twins))
         except Exception as exc:  # noqa: BLE001 - audit only: the shadow never changes the job
-            return {**shadow_audit(sh, twins, counters, []), "error": type(exc).__name__}
+            sh.seconds[sh.stage] = loop.time() - t0
+            return {
+                **shadow_audit(sh, twins, counters, []),
+                "error": {**_shadow_error(sh.stage, exc), "remaining_s": round(sh.deadline - loop.time(), 1)},
+            }
 
     # ------------------------------------------------------------------ candidates
     async def _candidates(
@@ -614,7 +698,7 @@ class WriteReview:
                         lineage=shadow.lineage if shadow is not None else job.lineage,
                         chain=shadow.chain if shadow is not None else None,
                         precheck=await precheck_for(ids),
-                        **_shadow_limits(shadow),
+                        **_shadow_limits(shadow, task.name, w.provider.redactor.text),
                     )
                 except PrivacyDenied:
                     counters["relate_denied"] = counters.get("relate_denied", 0) + 1
@@ -622,7 +706,16 @@ class WriteReview:
                 except SchemaFail:
                     counters["relate_schema_fail"] = counters.get("relate_schema_fail", 0) + 1
                     continue
-                (shadow.calls if shadow is not None else plan.calls).append(res.audit(w.provider.redactor))
+                if shadow is None:
+                    plan.calls.append(res.audit(w.provider.redactor))
+                else:  # the shadow's own audit names what the call judged (the report matches on it)
+                    shadow.calls.append(
+                        {
+                            **res.audit(w.provider.redactor),
+                            "subject": _clue(s.version_id),
+                            "candidates": [_clue(pr.cand.version_id) for pr in chunk],
+                        }
+                    )
                 texts = relate_texts(s, [(pr.cand, pr.cross) for pr in chunk])
                 judged, counts = guards.check_relations(res.output, texts, redact=w.provider.redactor.text)
                 for k, v in counts.items():
@@ -674,11 +767,20 @@ class WriteReview:
                         lineage=shadow.lineage if shadow is not None else job.lineage,
                         chain=chain,
                         precheck=await precheck_for(sorted(set(ids))),
-                        **_shadow_limits(shadow),
+                        **_shadow_limits(shadow, task.name, w.provider.redactor.text),
                     )
-                    (shadow.calls if shadow is not None else plan.calls).append(
-                        res.audit(w.provider.redactor)
-                    )
+                    if shadow is None:
+                        plan.calls.append(res.audit(w.provider.redactor))
+                    else:  # which pair each verifier item ("p1", ...) was
+                        shadow.calls.append(
+                            {
+                                **res.audit(w.provider.redactor),
+                                "pairs": {
+                                    it["id"]: [_clue(pr.subject.version_id), _clue(pr.cand.version_id)]
+                                    for it, (pr, _kind) in zip(items, chunk, strict=True)
+                                },
+                            }
+                        )
                     answers = guards.check_verifications(res.output, [it["id"] for it in items])
                 except (PrivacyDenied, SchemaFail):
                     counters["verify_no_answer"] = counters.get("verify_no_answer", 0) + 1

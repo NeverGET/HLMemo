@@ -33,3 +33,22 @@ Each of these was caught because a test asserted that the shadow block holds no 
 - **Release state:** the manifest check passes with the new keys; the fingerprint covers them; rollback to an env without them turns the shadow off; an unknown profile only records an error in the audit.
 
 Round 2 is not needed: no HIGH is open and each fix has a test. The owner accepted the shadow week (2026-10-28).
+
+## Diagnostics delta (owner, 2026-10-28)
+Owner: "the shadow mode must log every condition that blocks promotion, so we can find it with a surgeon's precision and fix it". One fresh-context review (Sonnet) of the delta. It found no HIGH, 7 MEDIUM and 4 LOW; all were addressed.
+
+| # | Finding | Fix |
+|---|---|---|
+| M1 | The raw text of a failed attempt's schema error was not redacted. | It is now redacted. |
+| M2 | Exception text was stored, against the worker's `error_code` rule. | The block stores `{stage, type, code}` (content-free) plus `remaining_s`. |
+| M3 | `attempts` had no size cap. | At most 40 attempts (the rest counted as `attempts_dropped`) and at most 8 raw answers of 2000 characters. |
+| M4 | A report answer was matched by candidate id only. | Shadow call audits name their subject and candidates (verifier calls: their item → pair map). Live answers are aligned with the expected chunk sequence, and a failed call leaves its chunk unmatched. |
+| M5 | Pairs were keyed without the job. | Keys are `(event_id, pair)`; "both" is computed per job. |
+| M6 | An unanswered shadow pair looked like "none". | `unanswered` lists the pairs never judged; each side carries `status` (judged / none / not_answered). |
+| M7 | `pair()` did not rebuild the exact input. | It rebuilds the call's own chunk (8 per call) in order with the cross flags, names the rules by clue and the prompts by version, and lists missing versions instead of shifting. |
+| L1 | A failure inside the audit handler could escape. | A last-resort `try` around the whole shadow step records `{"error": {"stage": "audit"}}`. |
+| L2 | The ledger query mixed in other calls. | It is filtered by the reported runs' lineages and adds p95 latency per outcome. |
+| L3 | Transient errors and timeouts are not observed (no parsed answer). | They are covered by the ledger rows of the lineage (outcome, latency). |
+| L4 | The prompt text sent was not recorded. | `system_sha256` per attempt (drift check). |
+
+The live-supersession filter was checked: relation contradicts, tier not abstain, with a direction. It equals `_proposals`' `raised` contradiction branch, so both sides use the same rule.

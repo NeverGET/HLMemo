@@ -2488,3 +2488,16 @@ D-272 | 2026-10-28 | ACCEPTED (owner: "gölge modunu kabul ediyorum"; review 126
 - **Review 126.** Two parallel reviewers (Fable: correctness; Sonnet: spend, privacy, deploy). 1 HIGH (no deadline on shadow calls) and 3 MEDIUM, all fixed with tests. Unit 1894, deploy 250, librarian integration 216 green. Lesson v4142.
 - **Order (owner).** Our own goals first: W1 + W2, then W4 and the backlog quality items. Install and deployment packaging (W3, W5) come last and are re-assessed then (V1-PLAN).
 - **Next.** Deploy, install the env, then one week; `hlm ops librarian shadow` decides the promotion question.
+D-273 | 2026-10-28 | ACCEPTED (owner direction; review 126, diagnostics delta) | **The shadow week records every promotion blocker so that it can be traced to its root cause; protocol in `docs/decisions/SHADOW-WEEK.md`.**
+- **Owner.** The shadow must do more than answer "can it be promoted". Every condition that blocks a promotion is logged and reported, then found with precision and fixed.
+- **Per job (`request.shadow`).**
+  - Every pair asked and the pairs never judged.
+  - Call audits naming their subject, candidates and verifier pairs.
+  - Each attempt's outcome, latency, tokens, cost and prompt hash, and for a failed one the redacted error and raw answer (bounded).
+  - Stage timings and the wall.
+  - A content-free error `{stage, type, code, remaining_s}` and the ledger lineage.
+- **Tools (read-only).**
+  - `hlm_ops.sh librarian shadow`: the blocker report, with errors by stage, attempt statistics, guard and flag counts per side, live-only and shadow-only supersessions with both sides' judgements, answers and the verifier's verdict, the per-lineage ledger, and `--with-texts` for labelling.
+  - `--pair vA,vB`: the exact relate input of each job's call, rebuilt from the immutable versions, with both answers.
+- **Review.** One fresh-context review: no HIGH, 7 MEDIUM and 4 LOW, all fixed (consult 126).
+- **Tests.** Unit 1894 and librarian integration 216 are green.
