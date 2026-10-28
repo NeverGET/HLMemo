@@ -38,7 +38,9 @@ reopening v1.
 | W4 | **Proactive recall** | ceiling first: trigger-tagged procedural lessons, then an LLM relevance judge over the top candidates; ships at `suggest` only if useful ≥ the bar and harmful = 0 |
 | W5 | **Hardening for strangers** | dual security review of the install path and defaults; the upgrade path (migrations, rollback) tested from the previous release |
 
-Order: W1 and W2 now (they share one measurement), then W3, then W4. W5 runs before the v1 release.
+Order (owner, 2026-10-28): **our own goals first, packaging last.**
+- First, every feature works soundly on our own projects: W1 and W2 now, then W4 and the quality items in the backlog.
+- Then installability and deployment (W3, W5) are re-assessed against that final state and developed from it.
 
 ## Not in v1
 A hosted service; multi-user servers; hooks for Codex/agy; consolidation and decay; a fully autonomous librarian.

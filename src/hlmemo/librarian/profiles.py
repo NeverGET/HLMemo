@@ -91,6 +91,9 @@ class LlmProfile:
     #: (proposed D-062 (5) amendment) the provider's documented never-billed 5xx errors, OPT-IN per
     #: profile file (``unbilled_errors``); empty (the default): every 5xx settles at the worst case
     unbilled_errors: tuple[UnbilledError, ...] = ()
+    #: D-272: mark the system message for prompt caching (``cache_control`` on its text block, the
+    #: Anthropic convention OpenRouter passes through); profile files opt in with ``cache_system``
+    cache_system: bool = False
 
     def price_expired(self, today: date | None = None) -> bool:
         """R4 (R-5): today (UTC) is past ``price_valid_until``."""
@@ -177,6 +180,7 @@ def _build(name: str, raw: dict[str, Any], disabled: frozenset[str] = frozenset(
         usage_reasoning=_usage_reasoning(name, raw.get("usage_reasoning")),
         price_valid_until=_valid_until(name, raw.get("price_valid_until")),
         unbilled_errors=_unbilled_errors(name, raw.get("unbilled_errors")),
+        cache_system=_flag(raw.get("cache_system"), False),
     )
 
 

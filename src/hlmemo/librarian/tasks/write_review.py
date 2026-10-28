@@ -46,6 +46,9 @@ The worker applies the plan (role ladder, CC-3 recheck, one ``librarian`` event)
 
 from __future__ import annotations
 
+import asyncio
+import uuid
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -53,9 +56,10 @@ from hlmemo.core.temporal import fmt_ts
 from hlmemo.db import librarian_queries as lq
 from hlmemo.librarian import candidates as cands
 from hlmemo.librarian import guards, privacy
+from hlmemo.librarian import profiles as lprofiles
 from hlmemo.librarian.errors import AuthorityLost, NotReady, PrivacyDenied, SchemaFail
 from hlmemo.librarian.memory import load_rules, readable_rules, rules_still_readable
-from hlmemo.librarian.prompts import load_task
+from hlmemo.librarian.prompts import TaskSpec, load_task
 from hlmemo.librarian.tasks import Plan, Proposal, user_message
 
 OP = "write_review"
@@ -212,6 +216,98 @@ def verify_payload(pairs: list[tuple[Any, Any, bool]], start: int = 0) -> list[d
     return items
 
 
+@dataclass
+class _Shadow:
+    """D-272: one job's shadow pipeline (its own relate prompt version and profile chains, its own
+    call lineage so it never uses up the job's call cap). Audit only."""
+
+    relate_task: TaskSpec
+    verify_task: TaskSpec
+    chain: list[Any]
+    verify_chain: list[Any]
+    lineage: str
+    #: event-loop time by which every shadow call of the job has ended (``Provider`` deadline): a
+    #: slow shadow model costs the job at most ``librarian_shadow_wall_s``, never the live retries
+    deadline: float
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _profile_named(w: Any, name: str) -> Any:
+    """A profile of the live chain by name (tests and a shared profile), else its profile file."""
+    for p in w.provider.chain:
+        if p.name == name:
+            return p
+    return lprofiles.named_profile(name)
+
+
+def _shadow_limits(sh: _Shadow | None) -> dict[str, Any]:
+    """A shadow call: one bounded attempt per profile within the job's shadow deadline."""
+    return {} if sh is None else {"deadline": sh.deadline, "attempt_policy": "latency"}
+
+
+async def _shadow_spent_today(w: Any) -> float:
+    """D-272: today's (UTC) spend of shadow calls: relation calls without a job id."""
+    async with await w.connect() as conn:
+        cur = await conn.execute(
+            "SELECT coalesce(sum(cost_usd), 0) FROM llm_calls WHERE job_id IS NULL"
+            " AND task IN ('relate', 'relate_verify')"
+            " AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"
+        )
+        row = await cur.fetchone()
+    return float(row[0]) if row else 0.0
+
+
+def shadow_enabled(w: Any) -> bool:
+    """D-272: ``HLM_LIBRARIAN_SHADOW_PROFILE`` names a profile."""
+    return bool(str(getattr(w.settings, "librarian_shadow_profile", "") or "").strip())
+
+
+def shadow_config(w: Any, job: Any) -> _Shadow:
+    """D-272: the shadow pipeline of ``job`` (raises when a profile or prompt cannot be loaded)."""
+    name = str(w.settings.librarian_shadow_profile).strip()
+    vname = str(getattr(w.settings, "librarian_shadow_verify_profile", "") or "").strip() or name
+    verify = load_task("relate_verify")
+    return _Shadow(
+        relate_task=load_task("relate", int(w.settings.librarian_shadow_relate_version)),
+        verify_task=replace(verify, max_tokens=int(w.settings.librarian_shadow_verify_max_tokens)),
+        chain=[_profile_named(w, name)],
+        verify_chain=[_profile_named(w, vname)],
+        # its own call-cap lineage (a uuid like the job's): the shadow never uses up the job's calls
+        lineage=str(uuid.uuid5(uuid.NAMESPACE_URL, f"hlm-shadow:{job.lineage or job.job_id}")),
+        deadline=asyncio.get_running_loop().time() + float(w.settings.librarian_shadow_wall_s),
+    )
+
+
+def shadow_audit(
+    sh: _Shadow, pairs: list[_Pair], counters: dict[str, int], proposals: list[Proposal]
+) -> dict[str, Any]:
+    """The compact audit block of a shadow run: what the shadow judged and would have proposed."""
+    return {
+        "profile": sh.chain[0].name,
+        "verify_profile": sh.verify_chain[0].name,
+        "relate_version": sh.relate_task.prompt_version,
+        "judgements": [
+            {"subject": _clue(pr.subject.version_id), **pr.judgement.audit()}
+            for pr in pairs
+            if pr.judgement is not None and (pr.judgement.relation != "none" or pr.judgement.flags)
+        ],
+        "proposals": [
+            {
+                "kind": pr.kind,
+                "clues": pr.subject_clues,
+                "auto": pr.auto_ok,
+                "relation": pr.meta.get("relation"),
+                "supersedes": pr.meta.get("supersedes"),
+                "scope": pr.meta.get("scope"),
+                "agreed": bool((pr.meta.get("verification") or {}).get("agreed")),
+            }
+            for pr in proposals
+        ],
+        "guards": {k: v for k, v in sorted(counters.items()) if v},
+        "calls": sh.calls,
+    }
+
+
 class _Pair:
     __slots__ = ("cand", "cross", "judgement", "judgement_profile", "scored", "subject", "text")
 
@@ -338,9 +434,41 @@ class WriteReview:
             if pr.judgement is not None and (pr.judgement.relation != "none" or pr.judgement.flags)
         ]
         plan.request_extra["guards"] = {k: v for k, v in sorted(counters.items()) if v}
+        if pairs and shadow_enabled(w):
+            plan.request_extra["shadow"] = await self._shadow(w, job, plan, pairs, rules, precheck_for)
         if not plan.signals and not plan.proposals:
             plan.outcome = "no_change"
         return plan
+
+    async def _shadow(
+        self,
+        w: Any,
+        job: Any,
+        plan: Plan,
+        pairs: list[_Pair],
+        rules: list[dict[str, Any]],
+        precheck_for: Any,
+    ) -> dict[str, Any]:
+        """D-272: the same pairs through the shadow pipeline. Never raises: an error (configuration,
+        budget, provider, privacy) is recorded in the block and the primary plan stays as it is."""
+        twins = [_Pair(pr.subject, pr.cand, pr.cross, pr.scored) for pr in pairs]
+        counters: dict[str, int] = {}
+        try:
+            cap = float(w.settings.librarian_shadow_day_usd)
+            if await _shadow_spent_today(w) >= cap:  # the live work keeps the shared caps
+                return {"profile": str(w.settings.librarian_shadow_profile), "skipped": "day_cap"}
+            sh = shadow_config(w, job)
+        except Exception as exc:  # noqa: BLE001 - audit only: the shadow never changes the job
+            return {"profile": str(w.settings.librarian_shadow_profile), "error": type(exc).__name__}
+        try:
+            await self._relate(w, job, plan, twins, rules, precheck_for, counters, shadow=sh)
+            await self._verify(w, job, plan, twins, precheck_for, counters, shadow=sh)
+            for pr in twins:
+                if pr.judgement is not None:
+                    guards.finalize(pr.judgement, pr.text, counters)
+            return shadow_audit(sh, twins, counters, self._proposals(twins))
+        except Exception as exc:  # noqa: BLE001 - audit only: the shadow never changes the job
+            return {**shadow_audit(sh, twins, counters, []), "error": type(exc).__name__}
 
     # ------------------------------------------------------------------ candidates
     async def _candidates(
@@ -466,8 +594,9 @@ class WriteReview:
         rules: list[dict[str, Any]],
         precheck_for: Any,
         counters: dict[str, int],
+        shadow: _Shadow | None = None,
     ) -> None:
-        task = load_task("relate")
+        task = shadow.relate_task if shadow is not None else load_task("relate")
         by_subject: dict[int, list[_Pair]] = {}
         for pr in pairs:
             by_subject.setdefault(pr.subject.version_id, []).append(pr)
@@ -481,9 +610,11 @@ class WriteReview:
                     res = await w.provider.complete(
                         task,
                         user_message("relate", payload, rules),
-                        job_id=job.job_id,
-                        lineage=job.lineage,
+                        job_id=None if shadow is not None else job.job_id,
+                        lineage=shadow.lineage if shadow is not None else job.lineage,
+                        chain=shadow.chain if shadow is not None else None,
                         precheck=await precheck_for(ids),
+                        **_shadow_limits(shadow),
                     )
                 except PrivacyDenied:
                     counters["relate_denied"] = counters.get("relate_denied", 0) + 1
@@ -491,7 +622,7 @@ class WriteReview:
                 except SchemaFail:
                     counters["relate_schema_fail"] = counters.get("relate_schema_fail", 0) + 1
                     continue
-                plan.calls.append(res.audit(w.provider.redactor))
+                (shadow.calls if shadow is not None else plan.calls).append(res.audit(w.provider.redactor))
                 texts = relate_texts(s, [(pr.cand, pr.cross) for pr in chunk])
                 judged, counts = guards.check_relations(res.output, texts, redact=w.provider.redactor.text)
                 for k, v in counts.items():
@@ -503,7 +634,14 @@ class WriteReview:
 
     # ------------------------------------------------------------------ verifier (D-067)
     async def _verify(
-        self, w: Any, job: Any, plan: Plan, pairs: list[_Pair], precheck_for: Any, counters: dict[str, int]
+        self,
+        w: Any,
+        job: Any,
+        plan: Plan,
+        pairs: list[_Pair],
+        precheck_for: Any,
+        counters: dict[str, int],
+        shadow: _Shadow | None = None,
     ) -> None:
         todo: list[tuple[_Pair, str]] = []
         for pr in pairs:
@@ -513,13 +651,13 @@ class WriteReview:
                 todo.append((pr, kind))
         if not todo:
             return
-        task = load_task("relate_verify")
+        task = shadow.verify_task if shadow is not None else load_task("relate_verify")
         by_profile: dict[str, list[tuple[_Pair, str]]] = {}
         for pr, kind in todo:
             by_profile.setdefault(pr.judgement_profile, []).append((pr, kind))
         n = 0
         for profile, group in by_profile.items():
-            chain = verifier_chain(w, profile)
+            chain = shadow.verify_chain if shadow is not None else verifier_chain(w, profile)
             for i in range(0, len(group), PAIRS_PER_CALL):
                 chunk = group[i : i + PAIRS_PER_CALL]
                 items = verify_payload([(pr.subject, pr.cand, pr.cross) for pr, _kind in chunk], n)
@@ -532,12 +670,15 @@ class WriteReview:
                     res = await w.provider.complete(
                         task,
                         user_message("relate_verify", {"pairs": items}),
-                        job_id=job.job_id,
-                        lineage=job.lineage,
+                        job_id=None if shadow is not None else job.job_id,
+                        lineage=shadow.lineage if shadow is not None else job.lineage,
                         chain=chain,
                         precheck=await precheck_for(sorted(set(ids))),
+                        **_shadow_limits(shadow),
                     )
-                    plan.calls.append(res.audit(w.provider.redactor))
+                    (shadow.calls if shadow is not None else plan.calls).append(
+                        res.audit(w.provider.redactor)
+                    )
                     answers = guards.check_verifications(res.output, [it["id"] for it in items])
                 except (PrivacyDenied, SchemaFail):
                     counters["verify_no_answer"] = counters.get("verify_no_answer", 0) + 1

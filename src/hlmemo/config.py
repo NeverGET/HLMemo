@@ -233,6 +233,20 @@ class Settings(BaseSettings):
     # W2b (D-067): who gives the second opinion on high-impact proposals: "cross" = the other
     # profile of the chain (primary <-> fallback), "self" = the answering profile again.
     librarian_verifier: str = Field(default="cross", pattern="^(cross|self)$")
+    # D-272: the shadow pipeline. With a profile name set, every write_review job ALSO runs its relation
+    # review (prompt version ``librarian_shadow_relate_version``) on that profile and verifies its
+    # high-impact judgements on ``librarian_shadow_verify_profile`` (default: the same profile). The
+    # result goes to the job's audit record only (``shadow``): it never creates a proposal, a
+    # question or a mutation, and a shadow failure never changes the job. Its spend counts against
+    # the same caps. Empty = off.
+    librarian_shadow_profile: str = ""
+    librarian_shadow_verify_profile: str = ""
+    librarian_shadow_relate_version: int = Field(default=3, ge=1)
+    librarian_shadow_verify_max_tokens: int = Field(default=2000, ge=256, le=32000)
+    # the shadow stops for the UTC day once its own spend reaches this (the live work keeps the caps)
+    librarian_shadow_day_usd: float = Field(default=1.0, ge=0.0, le=8.0)
+    # every shadow call of one job ends within this many seconds (one bounded attempt, no retries)
+    librarian_shadow_wall_s: float = Field(default=180.0, ge=5.0, le=900.0)
     # D-113 (owner) / D-118: the item kinds a span revision or a close may change — living
     # knowledge. Historical records keep their text (episodes/session logs, and decision/ADR records
     # of any kind: librarian/revise.decision_record); a write-time update of one only adds a

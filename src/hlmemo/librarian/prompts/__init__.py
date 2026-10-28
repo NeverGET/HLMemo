@@ -54,12 +54,17 @@ MAX_TOKENS: dict[str, int] = {
 }
 #: per-version ``max_tokens`` where a version's answer is longer (relate/v2 adds scope, refiner and
 #: the replaced statements; relate_verify/v2 adds replaces_all and adds_detail)
-MAX_TOKENS_VERSION: dict[tuple[str, int | str], int] = {("relate", 2): 2000, ("relate_verify", 2): 900}
+MAX_TOKENS_VERSION: dict[tuple[str, int | str], int] = {
+    ("relate", 2): 2000,
+    ("relate_verify", 2): 900,
+    ("relate", 3): 12000,  # D-272: room for a reasoning model's thinking (the shadow pipeline)
+}
 #: versions loaded only by number (a pin or ``load_task(name, version)``), never as the default;
 #: research/v2 is the D-156 "write, then cite" prompt of ``HLM_RESEARCH_ANSWER_MODE=cite`` and
 #: research/v3 the D-162 "prose" prompt of ``HLM_RESEARCH_ANSWER_MODE=prose``, so the default (claims)
-#: mode keeps research/v1 byte for byte
-OPT_IN_VERSIONS: dict[str, frozenset[int]] = {"research": frozenset({2, 3})}
+#: mode keeps research/v1 byte for byte; relate/v3 is the D-271 policy-aligned prompt of the D-272 shadow
+#: pipeline, so the live relate stays on v2
+OPT_IN_VERSIONS: dict[str, frozenset[int]] = {"research": frozenset({2, 3}), "relate": frozenset({3})}
 _PINS: dict[str, int] = {}
 
 

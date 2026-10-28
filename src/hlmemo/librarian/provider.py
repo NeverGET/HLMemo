@@ -697,7 +697,20 @@ class Provider:
     def build_body(
         self, profile: LlmProfile, task: TaskSpec, messages: list[dict[str, str]]
     ) -> dict[str, Any]:
-        body: dict[str, Any] = {"model": profile.model_id, "messages": messages}
+        sent: list[dict[str, Any]] = list(messages)
+        if profile.cache_system:  # D-272: the static system prompt is the cached prefix
+            sent = [
+                {
+                    **m,
+                    "content": [
+                        {"type": "text", "text": m["content"], "cache_control": {"type": "ephemeral"}}
+                    ],
+                }
+                if m.get("role") == "system" and isinstance(m.get("content"), str)
+                else m
+                for m in messages
+            ]
+        body: dict[str, Any] = {"model": profile.model_id, "messages": sent}
         body.update(profile.extra)
         body["max_tokens"] = task.max_tokens
         if profile.reasoning is not None:

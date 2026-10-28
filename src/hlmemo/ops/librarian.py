@@ -111,6 +111,10 @@ def add_parser(sub: Any) -> None:
     wd.add_argument("--owner", default="owner", help="the owner's device name, recorded in the event")
     wd.add_argument("--dry-run", action="store_true", help="every check under the locks; record nothing")
     wd.add_argument("--json", action="store_true")
+    sh = lsub.add_parser("shadow", help="D-272: the shadow pipeline next to the live one (read-only)")
+    sh.add_argument("--project", help="one project (default: all)")
+    sh.add_argument("--since", help="ISO date or timestamp (default: everything)")
+    sh.add_argument("--json", action="store_true")
     lsub.add_parser("expire", help="expire questions past their 30 days now")
     bf = lsub.add_parser("backfill", help="enqueue the W2b review for history written before the librarian")
     bf.add_argument("--project", required=True)
@@ -405,6 +409,79 @@ async def role_preview(conn: AsyncConnection, role: str, project_id: int | None)
     }
 
 
+def _supersessions(props: list[dict[str, Any]]) -> dict[tuple[str, ...], dict[str, Any]]:
+    """contradiction proposals that carry a supersedes direction, keyed by their sorted clue pair"""
+    return {
+        tuple(sorted(p.get("clues") or [])): p
+        for p in props
+        if p.get("kind") == "contradiction" and p.get("supersedes") in ("new", "old")
+    }
+
+
+async def shadow_report(conn: AsyncConnection, project: str | None, since: str | None) -> dict[str, Any]:
+    """D-272: per write_review job, what the live pipeline proposed (its questions, duplicates
+    included via the judgements) and what the shadow would have proposed; spend per profile."""
+    pid = await _project_id(conn, project) if project else None
+    cur = await conn.execute(
+        """
+        SELECT e.event_id, e.received_at, p.slug, e.payload->'request', e.payload->'resolved'
+          FROM events e LEFT JOIN projects p ON p.project_id = e.project_id
+         WHERE e.kind = 'librarian' AND e.payload->'request'->>'op' = 'write_review'
+           AND e.payload->'request' ? 'shadow'
+           AND (%(pid)s::bigint IS NULL OR e.project_id = %(pid)s)
+           AND (%(since)s::timestamptz IS NULL OR e.received_at >= %(since)s::timestamptz)
+         ORDER BY e.event_id
+        """,
+        {"pid": pid, "since": since},
+    )
+    jobs, errors, live_all, shadow_all = 0, {}, {}, {}
+    first = last = None
+    for event_id, at, slug, req, _res in await cur.fetchall():
+        jobs += 1
+        first, last = first or at, at
+        sh = req.get("shadow") or {}
+        if sh.get("error"):
+            errors[sh["error"]] = errors.get(sh["error"], 0) + 1
+        live = [
+            {
+                "kind": "contradiction",
+                "clues": [j.get("subject"), j.get("cid") or j.get("id")],
+                "supersedes": j.get("supersedes"),
+                "relation": j.get("relation"),
+            }
+            for j in req.get("judgements") or []
+            if j.get("relation") == "contradicts" and j.get("tier") != "abstain"
+        ]
+        for key, p in _supersessions(live).items():
+            live_all[key] = {**p, "event_id": event_id, "project": slug}
+        for key, p in _supersessions(sh.get("proposals") or []).items():
+            shadow_all[key] = {**p, "event_id": event_id, "project": slug}
+    both = sorted(set(live_all) & set(shadow_all))
+    cur = await conn.execute(
+        """
+        SELECT profile, count(*), coalesce(sum(cost_usd), 0)
+          FROM llm_calls
+         WHERE task IN ('relate', 'relate_verify') AND job_id IS NULL  -- shadow calls carry no job id
+           AND (%(since)s::timestamptz IS NULL OR created_at >= %(since)s::timestamptz)
+         GROUP BY profile ORDER BY profile
+        """,
+        {"since": since},
+    )
+    spend = {prof: {"calls": int(n), "usd": float(usd)} for prof, n, usd in await cur.fetchall()}
+    return {
+        "jobs": jobs,
+        "from": first.isoformat() if first else None,
+        "to": last.isoformat() if last else None,
+        "shadow_errors": errors,
+        "live_supersessions": len(live_all),
+        "shadow_supersessions": len(shadow_all),
+        "both": [list(k) for k in both],
+        "live_only": [{"clues": list(k), **v} for k, v in sorted(live_all.items()) if k not in shadow_all],
+        "shadow_only": [{"clues": list(k), **v} for k, v in sorted(shadow_all.items()) if k not in live_all],
+        "spend": spend,
+    }
+
+
 async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
     action = args.action
     try:
@@ -424,6 +501,25 @@ async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
                         f"{p['relation'] or '-'}/{p['supersedes'] or '-'} conf={p['confidence'] or '-'} "
                         f"tier={p['tier'] or '-'} auto={p['auto_class']}\n"
                     )
+            return 0
+        if action == "shadow":
+            out = await shadow_report(conn, args.project, args.since)
+            if args.json:
+                _print(out)
+            else:
+                sys.stdout.write(
+                    f"jobs {out['jobs']} ({out['from']} .. {out['to']}),"
+                    f" shadow errors {out['shadow_errors']}\n"
+                    f"supersessions: live {out['live_supersessions']}, shadow {out['shadow_supersessions']},"
+                    f" both {len(out['both'])}\n"
+                )
+                for name in ("live_only", "shadow_only"):
+                    for p in out[name]:
+                        sys.stdout.write(
+                            f"  {name:<11} {p['project']} {' vs '.join(p['clues'])} {p['supersedes']}\n"
+                        )
+                for prof, v in out["spend"].items():
+                    sys.stdout.write(f"  spend {prof}: {v['calls']} calls, ${v['usd']:.4f}\n")
             return 0
         if action == "questions":
             rows = await questions_list(conn, args.project, args.status)

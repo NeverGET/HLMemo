@@ -1,0 +1,15 @@
+# D-272 shadow librarian verifier: Claude Opus 5.5 at reasoning effort LOW (D-270: behind every
+# generator it kept precision at 1.00 on the fresh set). Opus refuses reasoning off ("Reasoning is
+# mandatory") and Claude 5.x endpoints refuse `temperature` under require_parameters (2026-10-27).
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "anthropic/claude-opus-5.5"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+HLM_LLM_REASONING = '{"effort":"low","exclude":true}'
+extra = { response_format = { type = "json_object" }, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+cache_system = true
+# USD per 1M tokens for reservations: list 4/20 (2026-10-27); input padded for cache writes (1.25x)
+price_in_per_m  = 5.0
+price_out_per_m = 20.0
+supports_json_schema = false
+# R4 (R-5): re-check the list prices by this day, else the profile is skipped (the shadow only)
+price_valid_until = "2026-12-31"

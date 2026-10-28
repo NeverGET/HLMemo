@@ -1,0 +1,16 @@
+# D-272 shadow librarian generator: Claude Haiku 5.5 at reasoning effort HIGH (D-270/D-271: with the
+# policy-aligned relate/v3 it found the most true supersessions of the arms measured). Claude 5.x
+# endpoints on OpenRouter refuse `temperature` under require_parameters (2026-10-27), so it is not sent.
+HLM_LLM_BASE_URL  = "https://openrouter.ai/api/v1"
+HLM_LLM_MODEL     = "anthropic/claude-haiku-5.5"
+HLM_LLM_API_KEY   = "env:OPENROUTER_API_KEY"
+HLM_LLM_REASONING = '{"effort":"high","exclude":true}'
+extra = { response_format = { type = "json_object" }, provider = { data_collection = "deny", require_parameters = true }, usage = { include = true } }
+# the system prompt is the cached prefix (cache_control; D-270: about -25 % per relate call)
+cache_system = true
+# USD per 1M tokens for reservations: list 0.10/0.50 (2026-10-27); input padded for cache writes (1.25x)
+price_in_per_m  = 0.125
+price_out_per_m = 0.50
+supports_json_schema = false
+# R4 (R-5): re-check the list prices by this day, else the profile is skipped (the shadow only)
+price_valid_until = "2026-12-31"

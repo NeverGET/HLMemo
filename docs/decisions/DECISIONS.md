@@ -2472,3 +2472,19 @@ D-270 | 2026-10-28 | ACCEPTED (measurement; the profile switch is the owner's) |
 - **Next.** A Claude librarian profile (no temperature, cache on) in shadow for a week; then the owner decides the switch. Details private (docs/private/librarian-model-2026-10/RESULTS-2.md).
 D-271 | 2026-10-28 | ACCEPTED (measurement) | **Aligning the relate prompt with the written supersession policy helps Haiku, not luna: Haiku 5.5 high + P2 + the Opus-low verifier finds 19 of 26 strictly labelled supersessions with no false action (P0: 17).**
 The P2 variant removes "a plan next to a fact → none", names changed defaults and statuses and finished or dropped plans as supersessions, and adds an explicit history rule; the schema is unchanged. Pre-registered and run on the D-270 set. Alone, Haiku-high finds 22 of 34 known positives instead of 19 (precision .73 → .81). luna drops from 17 to 15. The verifier, still on the old policy, rejects 3 true finds, so aligning the verifier prompt is the next lever. Details private (RESULTS-2.md §7).
+D-272 | 2026-10-28 | ACCEPTED (owner: "gölge modunu kabul ediyorum"; review 126) | **The librarian's shadow pipeline: Haiku 5.5 high (relate/v3) + Opus 5.5 low (verifier) run beside the live librarian for a week, audit only.**
+
+- **What.** With `HLM_LIBRARIAN_SHADOW_PROFILE` set, every write_review job also runs its pairs through relate/v3 (the D-271 policy-aligned prompt, opt-in; the live relate stays v2), the D-269 historical guard and relate_verify on `HLM_LIBRARIAN_SHADOW_VERIFY_PROFILE`. The result goes only to the job's audit event (`request.shadow`): never a proposal, question, link or close.
+- **Bounds.**
+  - Shadow calls use one bounded attempt each within a per-job wall (`HLM_LIBRARIAN_SHADOW_WALL_S` 180 s).
+  - They have their own call-cap lineage and a daily shadow spend cap (`HLM_LIBRARIAN_SHADOW_DAY_USD` 1).
+  - They share the global caps and the privacy precheck.
+  - Any shadow error is recorded and never changes the job.
+- **Also.**
+  - `cache_system` profile flag: the system prompt gets a `cache_control` block.
+  - Two profiles: `openrouter-claude-haiku55-high` and `openrouter-claude-opus55-low`, with no temperature and a price validity date.
+  - `hlm ops librarian shadow`: a read-only live vs shadow report with shadow spend.
+  - The llm.env template, installer and fingerprint carry the two keys.
+- **Review 126.** Two parallel reviewers (Fable: correctness; Sonnet: spend, privacy, deploy). 1 HIGH (no deadline on shadow calls) and 3 MEDIUM, all fixed with tests. Unit 1894, deploy 250, librarian integration 216 green. Lesson v4142.
+- **Order (owner).** Our own goals first: W1 + W2, then W4 and the backlog quality items. Install and deployment packaging (W3, W5) come last and are re-assessed then (V1-PLAN).
+- **Next.** Deploy, install the env, then one week; `hlm ops librarian shadow` decides the promotion question.

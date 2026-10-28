@@ -115,6 +115,9 @@ FINGERPRINT_KEYS = (
     "HLM_RESEARCH_PROSE_MAX_TOKENS",
     "HLM_LLM_TIMEOUT_S",
     "HLM_LLM_JOB_CALL_CAP",
+    # D-272: the librarian's shadow pipeline (its profiles spend against the same caps)
+    "HLM_LIBRARIAN_SHADOW_PROFILE",
+    "HLM_LIBRARIAN_SHADOW_VERIFY_PROFILE",
 )
 TASK_FALLBACK_PREFIX = "HLM_FALLBACK_PROFILE__"
 #: R4 R-4: the spend guard, whatever it grows: the caps (HOUR/DAY/MONTH_USD) and HLM_LLM_BUDGET_DISABLED
