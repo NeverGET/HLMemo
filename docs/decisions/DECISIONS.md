@@ -2501,3 +2501,14 @@ D-273 | 2026-10-28 | ACCEPTED (owner direction; review 126, diagnostics delta) |
   - `--pair vA,vB`: the exact relate input of each job's call, rebuilt from the immutable versions, with both answers.
 - **Review.** One fresh-context review: no HIGH, 7 MEDIUM and 4 LOW, all fixed (consult 126).
 - **Tests.** Unit 1894 and librarian integration 216 are green.
+D-274 | 2026-11-01 | ACCEPTED (owner: "a person should be able to create projects inside their own account"; review 127) | **An account member creates their own projects. The account is a root project `<account>-global`, membership is a write grant on it, and there is no schema change.**
+- **Owner.** A guest is given their own space. Creating projects must not need the operator; the finished product will have this.
+- **Design.**
+  - Only the operator makes a root, with `ops account set <account> [--quota N] [--claim]`. The keys `account`, `account_root` and `project_quota` live in the root's `projects.policy`.
+  - A device holding a live `write`/`admin` grant on the root may call the unlisted client tool `hlm.project_create` (CLI: `hlm project create <account>-<name>`).
+  - The new project is tagged `policy.account`. Every live member gets `write` and device 1 gets `admin`. The default quota is 20 projects; the root does not count.
+  - Agents do not see the tool on `tools/list`.
+  - Rollback needs no restore: no migration, and old code ignores the keys.
+- **Owner's call (review 127 S3).** Guest items can reach the librarian's cross-project candidates only through device-1 writes. The owner's devices hold no grant on account projects.
+- **Not covered.** A guest's migration gets no pre-import dump, because that needs SSH. The secret gate (F4) is the protection there.
+- **Review.** Two parallel reviewers (Fable: correctness; Sonnet: security). No HIGH; 4 MEDIUM and 8 LOW, each fixed with a test or documented (consult 127).

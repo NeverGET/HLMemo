@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hlmemo.core import export_service
-from hlmemo.server.tools import answer, ask, handlers, query, questions, risk, schemas
+from hlmemo.server.tools import answer, ask, handlers, projects, query, questions, risk, schemas
 from hlmemo.server.tools.handlers import READ_SERVICE_AVAILABLE, Handler
 
 
@@ -89,6 +89,8 @@ CLIENT_TOOLS: tuple[ToolSpec, ...] = (
         questions.hlm_questions,
         owner_only=True,
     ),
+    # D-274: an account member creates <account>-... projects (`hlm project create`)
+    ToolSpec(projects.NAME, projects.DESCRIPTION, projects.INPUT_SCHEMA, projects.hlm_project_create),
 )
 
 TOOL_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in (*TOOLS, *CLIENT_TOOLS)}

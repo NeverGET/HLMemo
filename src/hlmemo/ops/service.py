@@ -441,6 +441,114 @@ async def project_policy_set(conn: AsyncConnection, slug: str, key: str, value: 
     return {"project": slug, "policy": policy, "previous": previous, "changed": previous != value}
 
 
+async def _account_projects(conn: AsyncConnection, account: str) -> list[dict[str, Any]]:
+    """Every project whose slug starts with ``<account>-``, with its ``policy.account`` tag."""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            "SELECT project_id, slug, policy->>'account' AS tag FROM projects"
+            " WHERE starts_with(slug, %s) ORDER BY project_id FOR UPDATE",
+            (f"{account}-",),
+        )
+        return list(await cur.fetchall())
+
+
+async def account_show(conn: AsyncConnection, account: str) -> dict[str, Any]:
+    """D-274: an account's root, quota, live members and projects (read-only)."""
+    from hlmemo.core import account_service as acc
+
+    root = await q.select_project_by_slug(conn, acc.root_slug(account))
+    if root is None:
+        raise HlmError("E_NOT_FOUND", "no root project", {"root": acc.root_slug(account)})
+    cur = await conn.execute("SELECT policy FROM projects WHERE project_id = %s", (int(root["project_id"]),))
+    row = await cur.fetchone()
+    policy = dict(row[0] or {}) if row else {}
+    members = await acc.live_members(conn, int(root["project_id"]))
+    names = {int(d["device_id"]): d["name"] for d in await q.list_all_devices(conn)}
+    async with conn.cursor(row_factory=dict_row) as c:
+        await c.execute(
+            "SELECT slug FROM projects WHERE policy->>'account' = %s ORDER BY project_id", (account,)
+        )
+        projects = [r["slug"] for r in await c.fetchall()]
+    return {
+        "account": account,
+        "root": acc.root_slug(account),
+        "is_root": policy.get("account") == account and policy.get("account_root") is True,
+        "quota": policy.get("project_quota"),
+        "used": await acc.count_projects(conn, account),
+        "members": [{"id": d, "name": names.get(d)} for d in members],
+        "projects": projects,
+    }
+
+
+async def account_set(
+    conn: AsyncConnection, account: str, *, quota: int | None = None, claim: bool = False
+) -> dict[str, Any]:
+    """D-274: make ``<account>-global`` the account root (or change its quota).
+
+    The root must exist (``project create`` first). Projects already named ``<account>-...`` that
+    carry no ``account`` tag are refused unless ``claim`` (the operator states they are this
+    account's); a project tagged for another account always stops it. Grants are never changed:
+    membership is a ``write`` grant on the root (``device grant``). One ``librarian`` system event
+    (op ``set_account``) records the change; replay keeps these policy keys (projects are kept)."""
+    from hlmemo.core import account_service as acc
+    from hlmemo.librarian.events import insert_system_event
+
+    if not acc.ACCOUNT_RE.fullmatch(account) or account in acc.RESERVED_ACCOUNTS:
+        raise invalid("account must match [a-z0-9]{2,32} and not be reserved", account=account)
+    if quota is not None and not 1 <= quota <= acc.MAX_QUOTA:
+        raise invalid(f"quota must be 1..{acc.MAX_QUOTA}", quota=quota)
+    root_slug = acc.root_slug(account)
+    pid, policy = await _project_policy_row(conn, root_slug, lock=True)
+    if str(policy.get("reserved", "")).lower() == "true":
+        raise HlmError("E_FORBIDDEN", "reserved system project", {"project": root_slug})
+    rows = await _account_projects(conn, account)
+    foreign = [r["slug"] for r in rows if r["tag"] not in (None, account)]
+    if foreign:
+        raise HlmError(
+            "E_FORBIDDEN", "projects with this prefix belong to another account", {"projects": foreign}
+        )
+    untagged = [r for r in rows if r["tag"] is None and int(r["project_id"]) != pid]
+    if untagged and not claim:
+        raise HlmError(
+            "E_INVALID_ARG",
+            "projects with this prefix carry no account tag: pass --claim if they are this account's",
+            {"projects": [r["slug"] for r in untagged]},
+        )
+    previous = {k: policy.get(k) for k in ("account", "account_root", "project_quota")}
+    new_quota = quota if quota is not None else int(policy.get("project_quota") or acc.DEFAULT_QUOTA)
+    policy.update({"account": account, "account_root": True, "project_quota": new_quota})
+    await conn.execute("UPDATE projects SET policy = %s WHERE project_id = %s", (Jsonb(policy), pid))
+    claimed = [r["slug"] for r in untagged]
+    for r in untagged:
+        await conn.execute(
+            "UPDATE projects SET policy = policy || %s WHERE project_id = %s",
+            (Jsonb({"account": account}), int(r["project_id"])),
+        )
+    at = await wq.clock_now(conn)
+    await insert_system_event(
+        conn,
+        kind="librarian",
+        project_id=pid,
+        device_id=OPERATOR_DEVICE_ID,
+        client=CLIENT,
+        request_id=uuid.uuid4(),
+        request={
+            "actor": CLIENT,
+            "op": "set_account",
+            "account": account,
+            "quota": new_quota,
+            "claim": claimed,
+            "previous": previous,
+        },
+        resolved={
+            "recorded_at": fmt_ts(at),
+            "account": {"root_project_id": pid, "quota": new_quota, "claimed": claimed},
+        },
+        at=at,
+    )
+    return {**await account_show(conn, account), "claimed": claimed, "previous": previous}
+
+
 async def list_projects(conn: AsyncConnection) -> list[dict[str, Any]]:
     rows = await q.list_projects(conn, device_id=OPERATOR_DEVICE_ID, is_admin=True)
     return [_project_public(r) for r in rows]

@@ -77,6 +77,37 @@ login --name my-mac --token-stdin`, then `hlm mcp add ...` again. A device can r
 `hlm device revoke --self`; revoking another device is `$OPS device revoke <name|id>`. Expired
 devices (`--expires`) are rejected like revoked ones; renew with `$OPS device rotate --expires`.
 
+## Accounts: creating projects yourself (D-274)
+
+An **account** lets a person other than the operator create their own projects. Its root is the project
+`<account>-global`; the operator makes it a root once, and every device with a `write` grant on the root is a
+member of that account.
+
+```sh
+# operator, once per account (the root must exist; --claim tags existing <account>-* projects as the account's)
+$OPS project create maher-global --name 'Maher: global lessons'
+$OPS account set maher --quota 20 [--claim]
+$OPS device grant maher-mac maher-global write      # membership = a write grant on the root
+$OPS account show maher                             # root, quota, used, members, projects
+
+# a member, from their own machine
+hlm project create maher-api --name 'Maher API'      # granted write to every live member device
+```
+
+**Rules:**
+- The slug must start with `<account>-`. The account name is 2–32 lowercase letters or digits, without a hyphen,
+  and is not reserved.
+- The quota counts the account's projects, its root excluded (archived ones still count). Running the same command again for an existing
+  project of the account changes nothing.
+- A slug that already exists outside the account is refused. So is any slug when the device is not a member;
+  every such refusal gives the same message.
+- The tool (`hlm.project_create`) is unlisted: agents do not see it on `tools/list`.
+- `hlm project create --admin` keeps the local-dev admin route.
+- A member who joins later is not granted the account's existing projects; the operator grants them
+  (`$OPS device grant <device> <slug> write`).
+- Removing a member: `$OPS device revoke <device>` revokes the device and every grant it holds. Revoking only the
+  root grant ends the device's right to create projects, but it keeps its grants on the account's projects.
+
 ## What `hlm claude|codex|agy` does
 
 1. Resolves config (below) and the device token.
@@ -196,7 +227,7 @@ server and `--admin` on the client; in production it is disabled (D-061).
 | `hlm device revoke --self` | public self-revoke of this device; deletes the stored token |
 | `hlm device revoke <name\|id>` · `grant <name\|id> <slug> <role>` · `ungrant <name\|id> <slug>` | roles: `read`, `write`, `admin` (dev only; production: `hlm_ops.sh`) |
 | `hlm device list` · `whoami` | `--json` for machine output |
-| `hlm project create <slug> [--name N]` · `list` | `create` needs device 1 (`--admin`) |
+| `hlm project create <slug> [--name N]` · `list` | `create`: a member of the slug's account (D-274), or `--admin` in local dev |
 | `hlm query "<q>" [--budget N] [--kind K ...] [--valid-at TS] [--known-at TS] [--include-archived]` | prints the compact, sorted JSON of `memory.query` |
 | `hlm close --notes ".." \| --notes-file F [--decision ..]* [--lesson "title::body"]* [--card FILE --card-version ID] [--session-id UUID] [--budget N]` | `memory.call_the_day`; `request_id` is a fresh UUID; `HLM_SESSION_ID` env sets the session id |
 | `hlm curate --project P (--candidates F \| --map) [--export DIR] [--run-dir D]` · `hlm curate --run-dir D [--apply --state S [--execute preview\|apply]]` | local, owner-run supersession curation: agents verify candidates, a deterministic gate checks every quote, refuters try to break each link, and the result is a preview bundle; prod is touched only by the printed RUNBOOK commands. `--map` is experimental. See [Curating supersession links](#curating-supersession-links) |

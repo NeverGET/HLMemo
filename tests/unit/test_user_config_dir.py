@@ -27,7 +27,9 @@ def test_the_settings_loader_reads_the_user_file_from_hlm_config_dir(
     assert _toml_candidates() == [cfg / "hlm.toml"]
 
 
-def test_without_an_override_the_user_file_is_under_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_without_an_override_the_user_file_is_under_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("HLM_CONFIG_DIR", raising=False)
     monkeypatch.delenv("HLM_CONFIG", raising=False)

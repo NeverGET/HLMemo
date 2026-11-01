@@ -85,6 +85,14 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("key", choices=sorted(service.POLICY_VALUES))
     ps.add_argument("value")
 
+    acct = sub.add_parser("account", help="D-274 self-service accounts: set or show an account root")
+    asub = acct.add_subparsers(dest="action", required=True)
+    aset = asub.add_parser("set", help="make <account>-global the account root (members: write grant on it)")
+    aset.add_argument("account")
+    aset.add_argument("--quota", type=int, help="projects the account may create (default 20)")
+    aset.add_argument("--claim", action="store_true", help="tag existing untagged <account>-* projects")
+    asub.add_parser("show").add_argument("account")
+
     src = sub.add_parser("sources", help="W1.5 import sources: reconcile duplicate open source keys")
     ssub = src.add_subparsers(dest="action", required=True)
     ssub.add_parser("duplicates", help="(project, source_key) groups with >1 open current item").add_argument(
@@ -208,6 +216,12 @@ async def _dispatch(conn: AsyncConnection, args: argparse.Namespace, settings: A
             _print(await service.project_policy_set(conn, args.slug, args.key, args.value))
         else:
             _print(await service.project_policy(conn, args.slug))
+        return 0
+    if group == "account" and action == "set":
+        _print(await service.account_set(conn, args.account, quota=args.quota, claim=args.claim))
+        return 0
+    if group == "account" and action == "show":
+        _print(await service.account_show(conn, args.account))
         return 0
     if group == "sources" and action == "duplicates":
         groups = await service.source_duplicates(conn)

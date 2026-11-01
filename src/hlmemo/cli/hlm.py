@@ -761,16 +761,36 @@ def project_create(
     slug: Annotated[str, typer.Argument()],
     name: Annotated[str | None, typer.Option("--name")] = None,
 ) -> None:
-    """Create a project (admin device: use --admin with HLM_ADMIN_TOKEN)."""
+    """Create a project in your account (<account>-..., D-274); --admin: the dev admin route."""
     c = _ctx(ctx)
-    with c.http() as http:
-        res = http.project_create(slug, name or slug)
+    if c.use_admin:
+        with c.http() as http:
+            res = http.project_create(slug, name or slug)
+        p = res.get("project", {})
+        _out(
+            res,
+            as_json=c.as_json,
+            human=f"created project id={p.get('id')} slug={p.get('slug')} name={p.get('name')}",
+        )
+        return
+    args: dict[str, Any] = {"slug": slug}
+    if name:
+        args["name"] = name
+    res = c.memory(timeout_s=max(c.config().timeout_s, 15.0)).call("hlm.project_create", args)
     p = res.get("project", {})
-    _out(
-        res,
-        as_json=c.as_json,
-        human=f"created project id={p.get('id')} slug={p.get('slug')} name={p.get('name')}",
-    )
+    if res.get("created"):
+        quota = res.get("quota") or {}
+        human = (
+            f"created project {p.get('slug')} (id={p.get('id')}) in account {res.get('account')};"
+            f" granted to {res.get('granted')} device(s);"
+            f" quota {quota.get('used')}/{quota.get('limit')}"
+        )
+    else:
+        human = (
+            f"project {p.get('slug')} already exists in account {res.get('account')} (nothing changed;"
+            " if your device cannot use it, ask the operator for a grant)"
+        )
+    _out(res, as_json=c.as_json, human=human)
 
 
 @project_app.command("list")
