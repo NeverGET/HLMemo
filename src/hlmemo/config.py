@@ -69,7 +69,9 @@ def _toml_candidates() -> list[Path]:
         if p.is_file():
             found.append(p)
             break
-    found.append(Path.home() / ".config" / "hlm" / "hlm.toml")
+    # the same directory `hlm init --user` writes to (cli.client_config.config_dir)
+    user_dir = os.environ.get("HLM_CONFIG_DIR")
+    found.append((Path(user_dir).expanduser() if user_dir else Path.home() / ".config" / "hlm") / "hlm.toml")
     return [p for p in found if p.is_file()]
 
 

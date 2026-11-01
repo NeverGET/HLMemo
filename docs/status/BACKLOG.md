@@ -123,6 +123,14 @@ Two project chats (2026-10-24/25); details private (docs/private/test-drive/).
 - **Drilldown of imported items shows the frontmatter lines** (previews skip them since D-262); a compact one-line provenance in drilldown, low priority.
 - **Declined for now: a server-generated `request_id`** (it would make transport retries write duplicates); first measure which protocol steps cost writers the most.
 
+## First guest onboarding dry run (2026-11-01)
+A fresh clone on macOS, followed as a guest would (details private).
+- **Fixed: the user `hlm.toml` ignored `HLM_CONFIG_DIR`.** `hlm init --user` wrote into the override, while the settings loader read `~/.config/hlm` (`tests/unit/test_user_config_dir.py`).
+- **`local_stack.sh up` starts on an incomplete model download.** Every query then fails with "read dependencies are not initialized". `up` should verify the model hashes and fail loudly.
+- **`make models` exits 69 when the server is unreachable, even after `models OK`.** `doctor --models` also checks the server; on a fresh machine this reads as a failed download.
+- **Installability (W3) input.** The guest guide needed: an alias, not PATH (the venv's python would shadow `python3`); `claude mcp add --scope user`; a settings.json merge snippet for the hook; a hand-written `capture.toml`. A `hlm setup` command could do all four.
+- **Per-account model later.** `devices.user_id` is always `owner`. A guest's "global" layer is a plain project granted only to their devices (`<name>-global`), and isolation rests on grants.
+
 ## Ideas from claude-mem (2026-10-15): parked, evaluate later
 Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Evaluate one at a time, measure first.
 - **File-anchored recall:** inject memories tied to a file when the agent reads it (PreToolUse on Read); the cheapest form of "spontaneous recall". Items already carry `describes` → `code_refs`. Measure how often a read file has code_refs and whether the injected items help.
