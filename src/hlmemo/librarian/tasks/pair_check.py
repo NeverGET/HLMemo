@@ -58,6 +58,12 @@ class PairCheck:
                 OP, _SUBJECT_OUTCOME.get(reason, "denied"), caps, request_extra={**extra, "reason": reason}
             )
         subject = items[subject_vid]
+        if caps.get("isolation_home") is None:  # D-275 (review 128): every gate checks the isolation group
+            caps = {**caps, "isolation_home": subject.project_id}
+            verdict, items = await privacy.gate(w.connect, caps, [subject_vid, *candidates])
+            if not (verdict.device_ok and verdict.allowed(subject_vid)):
+                return Plan(OP, "denied", caps, request_extra={**extra, "reason": "cross_project_isolated"})
+            subject = items[subject_vid]
         kept = [
             items[c] for c in candidates if verdict.allowed(c) and items[c].logical_id != subject.logical_id
         ]

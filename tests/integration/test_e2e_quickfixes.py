@@ -69,6 +69,17 @@ async def _policy(connect, slug: str, value: str) -> dict[str, Any]:  # noqa: AN
     return out
 
 
+async def _account(connect, slug: str, account: str | None) -> None:  # noqa: ANN001
+    """D-275: tag (or untag) ``slug`` as an account project, the key ``ops account set`` writes."""
+    async with await connect() as conn:
+        await conn.execute(
+            "UPDATE projects SET policy = CASE WHEN %(a)s::text IS NULL THEN policy - 'account'"
+            " ELSE policy || jsonb_build_object('account', %(a)s::text) END WHERE slug = %(s)s",
+            {"a": account, "s": slug},
+        )
+        await conn.commit()
+
+
 async def _drain(db_dsn, connect, oracle: Oracle) -> ScriptedLLM:  # noqa: ANN001
     llm = ScriptedLLM(default=oracle)
     provider = make_provider(db_dsn, llm, budget_disabled=True)
@@ -94,12 +105,17 @@ RELATIONS = {
 }
 
 
-@pytest.mark.parametrize("policy", ["include", "exclude"])
+@pytest.mark.parametrize("policy", ["include", "exclude", "account"])
 async def test_test_project_is_isolated_in_both_directions(
     db_dsn, connect, world: World, embedder, policy: str
 ) -> None:  # noqa: ANN001
-    set_out = await _policy(connect, OTHER, policy)
-    assert set_out["policy"][KEY] == policy and set_out["previous"] is None
+    """``account`` (D-275, review 127 S3): a guest account's project is isolated like an excluded one,
+    although the writer (``dev-a``) reads both sides, as device 1 does."""
+    if policy == "account":
+        await _account(connect, OTHER, "guest")
+    else:
+        set_out = await _policy(connect, OTHER, policy)
+        assert set_out["policy"][KEY] == policy and set_out["previous"] is None
     (a_old,) = await write_items(connect, world.ctx_a, MAIN, [item(*A_OLD, valid_from=D_OLD)])
     (t_old,) = await write_items(connect, world.ctx_a, OTHER, [item(*T_OLD, valid_from=D_OLD)])
     await write_items(connect, world.ctx_a, OTHER, [item(*T_SELF_OLD, valid_from=D_OLD)])
@@ -172,6 +188,15 @@ async def test_risk_check_never_crosses_an_excluded_project(connect, world: Worl
     assert await seen(OTHER) == {OTHER}  # T's own check works, on T's lessons only
     await _policy(connect, OTHER, "include")
     assert await seen(MAIN) == {MAIN, OTHER}
+    await _account(connect, OTHER, "guest")  # D-275: an account is an isolation group
+    assert await seen(MAIN) == {MAIN} and await seen(OTHER) == {OTHER}
+    await _account(connect, MAIN, "guest")  # one account: its projects see each other
+    assert await seen(MAIN) == {MAIN, OTHER} and await seen(OTHER) == {MAIN, OTHER}
+    await _account(connect, MAIN, "other")  # two accounts: never
+    assert await seen(MAIN) == {MAIN} and await seen(OTHER) == {OTHER}
+    await _policy(connect, OTHER, "exclude")  # exclude is stricter than the account
+    await _account(connect, MAIN, "guest")
+    assert await seen(MAIN) == {MAIN} and await seen(OTHER) == {OTHER}
 
 
 # --------------------------------------------------------------------------- #2 ops
@@ -333,13 +358,16 @@ MULTI = {
 }
 
 
-@pytest.mark.parametrize("policy", ["include", "exclude"])
+@pytest.mark.parametrize("policy", ["include", "exclude", "account"])
 async def test_multi_project_items_never_cross_an_excluded_project(
     db_dsn, connect, world: World, embedder, policy: str
 ) -> None:  # noqa: ANN001
     """Sol 54 #1: an item touching T (here [A, T]) is related with nothing outside T, and a
-    subject spanning T and A gets no candidate; ``include`` is the control."""
-    await _policy(connect, OTHER, policy)
+    subject spanning T and A gets no candidate; ``include`` is the control; ``account`` (D-275) the same."""
+    if policy == "account":
+        await _account(connect, OTHER, "guest")
+    else:
+        await _policy(connect, OTHER, policy)
     both = [MAIN, OTHER]
     (m,) = await write_items(connect, world.ctx_a, MAIN, [item(*M_AT, valid_from=D_OLD, project_ids=both)])
     (a2,) = await write_items(connect, world.ctx_a, MAIN, [item(*A_OLD2, valid_from=D_OLD)])

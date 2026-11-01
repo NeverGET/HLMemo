@@ -44,7 +44,7 @@ async def _finish(monkeypatch, rows, view):
 
     monkeypatch.setattr(rsv.sq, "version_access", version_access)
     monkeypatch.setattr(rsv.mm, "project_policies", AsyncMock(return_value={1: "on", 2: "on"}))
-    monkeypatch.setattr(rsv, "cross_project_excluded", AsyncMock(return_value=set()))
+    monkeypatch.setattr(rsv, "isolation_groups", AsyncMock(return_value={}))
     monkeypatch.setattr(rsv.mm, "view_scopes", lambda _: [None])
     monkeypatch.setattr(rsv.mm, "isolation_ok", lambda *_: True)
     run = _run(NS(execute=AsyncMock()), view)

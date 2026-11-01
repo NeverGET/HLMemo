@@ -445,11 +445,9 @@ class WriteReview:
                 await conn.commit()
                 return Plan(OP, "authority_lost", caps, request_extra=extra)
             scopes = ["all", f"class:{device_class}"]
-            excluded = await lq.cross_project_excluded(
-                conn, [*allowed, *(p for s in full for p in s.project_ids)]
-            )
+            excluded = await lq.isolation_groups(conn, [*allowed, *(p for s in full for p in s.project_ids)])
             if excluded:
-                extra["cross_project_excluded"] = sorted(excluded)
+                extra["cross_project_excluded"] = sorted(excluded)  # every project outside the default group
             pairs, cand_audit, dropped = await self._candidates(conn, full, allowed, scopes, excluded)
             rules = await load_rules(
                 conn,
@@ -561,7 +559,7 @@ class WriteReview:
         full: list[lq.SubjectRow],
         allowed: list[int],
         scopes: list[str],
-        excluded: set[int] | None = None,
+        excluded: lq.Groups | None = None,
     ) -> tuple[list[_Pair], list[dict[str, Any]], int]:
         pairs: list[_Pair] = []
         audit: list[dict[str, Any]] = []
@@ -587,7 +585,7 @@ class WriteReview:
                 args = {
                     "cross": cross,
                     "home": s.project_id,
-                    "allowed": cands.isolated_scope(s.project_ids, allowed, excluded or set()),
+                    "allowed": cands.isolated_scope(s.project_ids, allowed, excluded or {}),
                     "scopes": scopes,
                     "kinds": list(kinds),
                     "self_lid": s.logical_id,

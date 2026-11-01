@@ -349,3 +349,31 @@ def test_both_live_profiles_are_qualified_for_synthesis(monkeypatch) -> None:  #
     monkeypatch.setenv("HLM_PROFILE", "openrouter-gpt6-luna")
     settings = get_settings(profile="openrouter-gpt6-luna", fallback_profile="openrouter")
     assert [p.name for p in syn.synthesis_chain(settings)] == ["openrouter-gpt6-luna", "openrouter"]
+
+
+async def test_excerpts_outside_the_home_isolation_group_never_reach_the_prompt(monkeypatch) -> None:  # noqa: ANN001
+    """D-275 (review 128 S-1): device 1 reads every project, so a multi-project item touching a guest
+    account (or an excluded project) must not be excerpted into a synthesis of the home project."""
+    from datetime import UTC, datetime
+
+    from hlmemo.core.clues import encode_clue
+    from hlmemo.db import synthesis_queries as sq
+
+    at = datetime(2026, 11, 1, tzinfo=UTC)
+    rows = {
+        (1, 0): sq.ExcerptRow(1, 0, "home only", [10], at),
+        (2, 0): sq.ExcerptRow(2, 0, "home and guest", [10, 20], at),
+        (3, 0): sq.ExcerptRow(3, 0, "home and another home", [10, 11], at),
+    }
+
+    async def excerpt_rows(_conn: Any, _pairs: Any) -> dict[Any, Any]:
+        return rows
+
+    async def isolation_groups(_conn: Any, _pids: Any) -> dict[int, str]:
+        return {20: "a:guest"}
+
+    monkeypatch.setattr(sq, "excerpt_rows", excerpt_rows)
+    monkeypatch.setattr(ss, "isolation_groups", isolation_groups)
+    hits = [{"clue": encode_clue(v, 0), "title": f"t{v}"} for v in (1, 2, 3)]
+    out, pids = await ss._excerpts(None, hits, 10)  # type: ignore[arg-type]
+    assert [e.text for e in out] == ["home only", "home and another home"] and pids == [10, 11]

@@ -163,3 +163,11 @@ Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Eval
   and its librarian note in each window, so 0 real data was lost (D-245). Fix: make the drill opt-in (`--drill`, refused unless the
   state dir or URL is marked non-prod or `--maintenance-window` is given) and keep `--no-drill` accepted as a no-op.
 
+
+## Backups (2026-11-01, D-276)
+- **Own Google OAuth client id.** rclone's shared client id is being retired during 2026; when it stops, the
+  Drive copy fails. The unit then fails and the local dumps continue. Fix: the owner creates an OAuth client
+  (Desktop app) and publishes its consent screen to "In production" (`drive.file` is a non-sensitive scope);
+  then re-authorize with `client_id`/`client_secret` in the remote.
+- **A gate for the schedule.** `remote_gates.sh` should check `systemctl is-active hlmemo-backup.timer` and
+  the newest daily dump's age (lesson v4219).

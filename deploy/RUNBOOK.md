@@ -513,6 +513,36 @@ only (container healthcheck, `docker exec`) and printed by `hlm_ops.sh --state d
 Local development (`compose.yaml`) keeps the Phase-0 flow (`HLM_REGISTRATION_MODE=open`,
 `HLM_ADMIN_HTTP=enabled`, `HLM_ADMIN_TOKEN` from `.hlm-dev.env`): see docs/USAGE.md.
 
+### Scheduled backups and the offsite copy (D-276)
+
+The daily `pg_dump` runs from a systemd timer: 03:15 UTC, with 7 daily and 4 weekly dumps kept under
+`/var/backups/hlmemo`. A deploy does not install the timer. Install it once per host, as root:
+
+```sh
+sudo install -m 0644 /opt/hlmemo/app/deploy/backup/hlmemo-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now hlmemo-backup.timer
+systemctl list-timers hlmemo-backup.timer   # the next run
+```
+
+The units are read from that copy, so reinstall them after a release changes them. Until 2026-11-01 the
+production host had no timer; only deploy dumps existed (D-276).
+
+**Offsite copy.** `upload.py` copies every dump to `RCLONE_REMOTE` when `backup.env` sets it. In production
+this is an rclone `crypt` remote over Google Drive:
+- The Drive token is OAuth with the `drive.file` scope, so the token sees only what rclone wrote.
+- The config lives in `/etc/hlmemo/rclone.conf` (hlmdeploy, 0600, writable because rclone refreshes the
+  token there).
+- The encryption passwords are in the owner's password manager. A dump cannot be read without them.
+
+Daily dumps older than `RCLONE_KEEP_DAYS` (14) and weekly dumps older than `RCLONE_KEEP_WEEKLY_DAYS` (70)
+are deleted from the remote. Pre-upgrade and rollback dumps on the remote are kept.
+
+A failed upload exits non-zero, which makes the unit fail; the local dump is kept either way. Check it with
+`systemctl status hlmemo-backup.service`.
+
+Restore from the remote: `rclone --config /etc/hlmemo/rclone.conf copy hlmdrive-crypt:daily/<name>.dump .`,
+then the usual restore.
+
 ## Upgrade and rollback
 
 ### Compose model changes (`--accept-compose-change`)

@@ -45,7 +45,7 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from hlmemo.core import memory_map as mm
-from hlmemo.db.librarian_queries import cross_project_excluded
+from hlmemo.db.librarian_queries import isolation_groups
 from hlmemo.librarian.errors import (
     BudgetDeferred,
     JobCallCapExceeded,
@@ -101,7 +101,7 @@ async def current_groups(conn: AsyncConnection) -> dict[tuple[int, str], Group]:
     rows = await cur.fetchall()
     touched = {int(p) for r in rows for p in r[1]}
     policies = await mm.project_policies(conn, touched)
-    excluded = await cross_project_excluded(conn, touched)
+    excluded = await isolation_groups(conn, touched)
     groups: dict[tuple[int, str], Group] = {}
     for vid, pids, title, kind, system, path in rows:
         pids = [int(p) for p in pids]
@@ -137,7 +137,7 @@ async def member_gate(conn: AsyncConnection, members: list[int], project_id: int
         return False
     touched = {int(p) for r in rows for p in r[1]} | {project_id}
     policies = await mm.project_policies(conn, touched)
-    excluded = await cross_project_excluded(conn, touched)
+    excluded = await isolation_groups(conn, touched)
     return all(
         r[2] == "all"
         and r[3] == "active"

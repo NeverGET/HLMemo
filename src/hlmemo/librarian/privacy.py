@@ -13,7 +13,7 @@ prompt will contain. An item is sent only if ALL hold:
   the project is in the job's enqueue-time ``question`` capability set;
 * when the caller names the project the work is ABOUT (``capabilities["isolation_home"]``, the
   asked project of ``memory.ask``; review 79 T1), the D-083 isolation holds NOW: the item's projects
-  plus that project touch no ``policy.librarian_cross_project = exclude`` project, or exactly one
+  plus that project lie in one isolation group (an ``exclude`` project; an account, D-275)
   (``candidates.relation_allowed``).
 
 Nothing here is configurable. Enqueue-time capabilities are an upper bound, never authority.
@@ -38,6 +38,7 @@ from typing import Any
 from psycopg import AsyncConnection
 
 from hlmemo.auth.resolve import lock_device_access
+from hlmemo.db.librarian_queries import ACCOUNT_POLICY, CROSS_PROJECT_POLICY, isolation_key
 from hlmemo.librarian.candidates import relation_allowed
 
 DEVICE_NOT_TRUSTED = "device_not_trusted"
@@ -132,13 +133,15 @@ async def check(conn: AsyncConnection, capabilities: dict[str, Any], items: list
     home = int(home) if home is not None else None
     wanted = sorted({p for it in items for p in it.project_ids} | ({home} if home is not None else set()))
     cur = await conn.execute(
-        "SELECT project_id, policy->>'librarian', policy->>'librarian_cross_project' FROM projects"
+        "SELECT project_id, policy->>'librarian', policy->>%s, policy->>%s FROM projects"
         " WHERE project_id = ANY(%s)",
-        (wanted,),
+        (CROSS_PROJECT_POLICY, ACCOUNT_POLICY, wanted),
     )
     rows = await cur.fetchall()
-    policy = {int(pid): pol for pid, pol, _cross in rows}
-    excluded = {int(pid) for pid, _pol, cross in rows if cross == "exclude"}
+    policy = {int(pid): pol for pid, pol, _cross, _acct in rows}
+    excluded = {
+        int(pid): key for pid, _pol, cross, acct in rows if (key := isolation_key(int(pid), cross, acct))
+    }
     capable = {int(p) for p in capabilities.get("question") or []}
     visible = {"all", f"class:{device_class}"}
     verdict = Verdict(True)

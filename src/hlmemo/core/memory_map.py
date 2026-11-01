@@ -28,8 +28,9 @@ active, non-card items of the project whose ``device_scope`` is ``all`` or the c
 ``off`` — the privacy gate's rules (``librarian/privacy.py``), which ``memory.ask`` re-runs over the
 exact ids before every provider call — and that the D-083 isolation allows: a project whose
 ``policy.librarian_cross_project`` is ``exclude`` never takes part in librarian work with another
-project (``candidates.relation_allowed`` over the item's projects plus the asked project; review 79
-T1), so an item co-owned with an excluded project, or lying in one while another is asked, is not in
+project, nor an account's projects with any project outside the account (D-275)
+(``candidates.relation_allowed`` over the item's projects plus the asked project; review 79 T1),
+so an item co-owned with an excluded project, or lying in one while another is asked, is not in
 the view. Structural entries are cached per version id in-process
 (versions are immutable); nothing here writes to the database.
 
@@ -53,7 +54,7 @@ from psycopg import AsyncConnection
 
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.core.budget import Meter
-from hlmemo.db.librarian_queries import cross_project_excluded
+from hlmemo.db.librarian_queries import Groups, isolation_groups
 from hlmemo.librarian.candidates import relation_allowed
 
 #: D-191: a source with more entries than this ALWAYS lists its newest NEWEST_K entries first
@@ -540,7 +541,7 @@ async def load_view(conn: AsyncConnection, ctx: AuthContext, project_id: int) ->
     rows = await cur.fetchall()
     touched = {int(p) for r in rows for p in r[5]} | {project_id}
     policies = await project_policies(conn, touched)
-    excluded = await cross_project_excluded(conn, touched)
+    excluded = await isolation_groups(conn, touched)
     out: list[ViewItem] = []
     for vid, title, kind, system, path, pids, n, valid_from, recorded_at in rows:
         pids = [int(p) for p in pids]
@@ -556,9 +557,10 @@ async def load_view(conn: AsyncConnection, ctx: AuthContext, project_id: int) ->
     return out
 
 
-def isolation_ok(project_ids: Iterable[int], home: int, excluded: set[int]) -> bool:
+def isolation_ok(project_ids: Iterable[int], home: int, excluded: Groups) -> bool:
     """D-083 isolation for librarian work ABOUT ``home`` (a question asked in it, a summary of its
-    source): the item's projects plus ``home`` touch no ``exclude`` project, or exactly one project."""
+    source): the item's projects plus ``home`` lie in one isolation group (an ``exclude`` project or an
+    account, D-275)."""
     return relation_allowed({*project_ids, home}, excluded)
 
 

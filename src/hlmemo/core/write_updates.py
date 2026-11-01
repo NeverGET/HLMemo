@@ -381,7 +381,7 @@ class WriteUpdates:
         if cross:
             from hlmemo.db import librarian_queries as lq
 
-            excluded = await lq.cross_project_excluded(conn, cross, lock=True)
+            excluded = await lq.isolation_groups(conn, cross, lock=True)
             for u in self._pending():
                 if len(u.touched) > 1 and not relation_allowed(u.touched, excluded):
                     u.reject("policy_excluded")

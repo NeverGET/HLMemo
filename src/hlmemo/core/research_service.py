@@ -157,7 +157,7 @@ from hlmemo.db import librarian_queries as lq
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as kq
 from hlmemo.db import synthesis_queries as sq
-from hlmemo.db.librarian_queries import cross_project_excluded
+from hlmemo.db.librarian_queries import isolation_groups
 from hlmemo.librarian.errors import (
     AuthorityLost,
     BudgetDeferred,
@@ -1916,7 +1916,7 @@ async def _finish(run: _Run, v: rs.Validated, excerpts: list[rs.Excerpt], t_star
         rows = await sq.version_access(c, vids, t_start)
         touched = {p for r in rows for p in r.project_ids} | {run.project_id}
         policies = await mm.project_policies(c, touched)
-        excluded = await cross_project_excluded(c, touched)
+        excluded = await isolation_groups(c, touched)
     scopes = set(mm.view_scopes(fresh))
 
     def authz(r: sq.VersionAccess) -> bool:

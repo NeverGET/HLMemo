@@ -11,7 +11,8 @@ a warning only means no stored lesson matched.
    current lesson/experience it may read, in the home project, in other granted projects and in
    ``hlm-global`` if granted. A project whose ``policy.librarian_cross_project`` is ``exclude``
    (a disposable/test project) is isolated (``candidates.relation_allowed``, e2e 2026-09-24 #2,
-   Sol 54): a lesson touching it (a multi-project one too) is never a candidate for another
+   Sol 54), and so is an account's group of projects (D-275): a lesson touching it (a
+   multi-project one too) is never a candidate for another
    project's check, and its own checks see only lessons lying entirely in it. The query path's four
    RRF lists (lexical over DF-filtered terms, titles, trigram for identifiers, exact vector) are
    fused over that universe; the top ``TOP_K`` are the candidates, each with the char spans of

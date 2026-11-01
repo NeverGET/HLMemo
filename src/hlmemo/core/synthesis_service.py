@@ -68,6 +68,7 @@ from psycopg_pool import PoolTimeout
 
 from hlmemo.auth.context import AuthContext, Role
 from hlmemo.auth.errors import HlmError
+from hlmemo.core import memory_map as mm
 from hlmemo.core import read_service
 from hlmemo.core.budget import Meter
 from hlmemo.core.clues import InvalidClue, decode_clue
@@ -78,6 +79,7 @@ from hlmemo.db import auth_queries
 from hlmemo.db import read_queries as rq
 from hlmemo.db import risk_queries as kq
 from hlmemo.db import synthesis_queries as sq
+from hlmemo.db.librarian_queries import isolation_groups
 from hlmemo.librarian.tasks import synthesis as syn
 
 TOOL = "memory.query"
@@ -112,8 +114,11 @@ def weak(result: dict[str, Any], tau: float = TAU_S) -> str | None:
     return None if float(hits[0].get("score") or 0.0) < tau else STRONG
 
 
-async def _excerpts(conn: AsyncConnection, hits: list[dict[str, Any]]) -> tuple[list[syn.Excerpt], list[int]]:
-    """The top hit chunks' full text (+ the projects they belong to, for the capability set)."""
+async def _excerpts(
+    conn: AsyncConnection, hits: list[dict[str, Any]], home_pid: int
+) -> tuple[list[syn.Excerpt], list[int]]:
+    """The top hit chunks' full text (+ the projects they belong to, for the capability set). An
+    excerpt outside ``home_pid``'s isolation group never reaches the prompt (D-275, review 128)."""
     wanted: list[tuple[int, int, dict[str, Any]]] = []
     for h in hits[:MAX_EXCERPTS]:
         try:
@@ -123,11 +128,12 @@ async def _excerpts(conn: AsyncConnection, hits: list[dict[str, Any]]) -> tuple[
         if clue.ordinal is not None:
             wanted.append((clue.version_id, clue.ordinal, h))
     rows = await sq.excerpt_rows(conn, [(v, o) for v, o, _ in wanted])
+    groups = await isolation_groups(conn, {p for r in rows.values() for p in r.project_ids} | {home_pid})
     out: list[syn.Excerpt] = []
     pids: set[int] = set()
     for vid, ordinal, h in wanted:
         r = rows.get((vid, ordinal))
-        if r is None:
+        if r is None or not mm.isolation_ok(r.project_ids, home_pid, groups):
             continue
         pids.update(r.project_ids)
         out.append(
@@ -189,8 +195,15 @@ async def _recheck(
         )
         await _read_project(conn, fresh, slug)
         rows = await sq.version_access(conn, version_ids, t_query)
+        groups = await isolation_groups(conn, {p for r in rows for p in r.project_ids} | {home_pid})
     scopes = set(fresh.scope_values())
-    authz = {r.version_id for r in rows if home_pid in r.project_ids and r.device_scope in scopes}
+    authz = {
+        r.version_id
+        for r in rows
+        if home_pid in r.project_ids
+        and r.device_scope in scopes
+        and mm.isolation_ok(r.project_ids, home_pid, groups)  # D-275 (review 128)
+    }
     readable = {
         r.version_id for r in rows if r.version_id in authz and not r.changed and r.status != "tombstone"
     }
@@ -465,8 +478,8 @@ async def _synthesize(
     if (why_not := synth.unavailable()) is not None:
         return _unavailable(meter, env, budget, why_not)
     async with conn.transaction():
-        excerpts, pids = await _excerpts(conn, env["hits"])
         home = await rq.resolve_project(conn, env["project"])
+        excerpts, pids = await _excerpts(conn, env["hits"], home.project_id) if home is not None else ([], [])
         card_sources: list[int] = []
         if home is not None and env.get("card") is not None:  # the card's sources readable NOW
             va = parse_opt_ts(env["as_of"]["valid_at"], field="valid_at")
@@ -486,6 +499,7 @@ async def _synthesize(
         "trigger_device_id": ctx.device_id,
         "token_generation": ctx.token_generation,  # a rotated bearer loses authority (D-062)
         "question": [p for p in pids if ctx.has(p, Role.READ)],
+        "isolation_home": home.project_id,  # the privacy gate re-checks the isolation (D-275)
     }
     res = await synth.synthesize(
         str(args.get("query") or ""), excerpts, caps, timeout_s=end - loop.time() - RECHECK_RESERVE_S

@@ -22,6 +22,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 
 from hlmemo.cli.mcp_client import UNLISTED_TOOLS, MemoryClient
+from hlmemo.db.librarian_queries import isolation_key
 from hlmemo.librarian import risk_judge as rj
 from hlmemo.librarian.candidates import isolated_scope, relation_allowed
 
@@ -84,16 +85,33 @@ def test_windows_fill_the_room_in_body_order() -> None:
 # --------------------------------------------------------------------------- #2 isolation rule
 def test_isolation_rule_both_directions_and_multi_project_items() -> None:
     """Sol 54 #1: one rule for every pairing; T=3 is excluded."""
-    x = {3}
+    x = {3: "x:3"}
     assert relation_allowed({1, 2}, x) and relation_allowed({3}, x) and relation_allowed({1}, x)
     assert not relation_allowed({1, 3}, x)  # A with T, or A with a multi-project [A, T] item
     allowed = [1, 2, 3, 4]
-    assert isolated_scope([1], allowed, set()) == allowed
+    assert isolated_scope([1], allowed, {}) == allowed
     assert isolated_scope([1], allowed, x) == [1, 2, 4]  # another project never reaches T (or [A,T])
     assert isolated_scope([3], allowed, x) == [3]  # T sees only items lying entirely in T
     assert isolated_scope([1, 3], allowed, x) == []  # a subject spanning T and A: no candidate
     assert isolated_scope([1, 2], allowed, x) == [1, 2, 4]
     assert isolated_scope([3], [1, 2], x) == []  # (home not readable: nothing)
+
+
+def test_an_account_is_one_isolation_group() -> None:
+    """D-275: an account's projects (5, 6) relate to each other, never to the default group (1, 2),
+    another account (7) or an excluded project (3), whichever side starts."""
+    g = {3: isolation_key(3, "exclude", None), 5: "a:maher", 6: "a:maher", 7: "a:other"}
+    assert (
+        g[3] == "x:3" and isolation_key(5, None, "maher") == "a:maher" and isolation_key(1, None, None) == ""
+    )
+    assert isolation_key(5, "exclude", "maher") == "x:5"  # exclude is the stricter rule
+    assert relation_allowed({5, 6}, g) and relation_allowed({1, 2}, g)
+    for pair in ({1, 5}, {5, 7}, {3, 5}, {1, 2, 6}):
+        assert not relation_allowed(pair, g), pair
+    allowed = [1, 2, 3, 5, 6, 7]
+    assert isolated_scope([1], allowed, g) == [1, 2]  # the operator's subject never reaches an account
+    assert isolated_scope([5], allowed, g) == [5, 6]  # the guest's subject stays in its account
+    assert isolated_scope([5, 1], allowed, g) == []
 
 
 def test_window_positions_survive_casefolding() -> None:

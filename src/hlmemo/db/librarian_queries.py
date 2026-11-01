@@ -290,22 +290,44 @@ CROSS_PROJECT_VALUES = ("include", "exclude")
 REPLAYED_POLICY_KEYS = (CROSS_PROJECT_POLICY,)
 
 
-async def cross_project_excluded(
+#: ``projects.policy`` key naming the account a project belongs to (D-274); an account is an isolation group
+ACCOUNT_POLICY = "account"
+#: project id -> isolation group, for the projects outside the default group only (``isolation_key``)
+Groups = dict[int, str]
+
+
+def isolation_key(project_id: int, cross: str | None, account: str | None) -> str:
+    """The isolation group of one project: ``""`` (the default group) for an ordinary project, its own
+    group for a ``librarian_cross_project = exclude`` project, and one group per account (D-274: a
+    guest account's items never meet another account's or the operator's, whichever device writes)."""
+    if cross == "exclude":
+        return f"x:{project_id}"
+    if account:
+        return f"a:{account}"
+    return ""
+
+
+async def isolation_groups(
     conn: AsyncConnection, project_ids: list[int] | set[int], *, lock: bool = False
-) -> set[int]:
-    """The projects among ``project_ids`` whose ``policy.librarian_cross_project`` is ``exclude``
-    (e2e 2026-09-24 #2; unset or ``include`` = the default, cross-project work allowed).
-    ``lock``: read every one of those project rows ``FOR SHARE`` (sorted), so a policy change
-    (``ops project policy set``: the row ``FOR UPDATE``) either committed before this read or waits
-    until the caller's transaction ends — the apply-time recheck (Sol 54 #2)."""
+) -> Groups:
+    """The isolation group of each project among ``project_ids`` outside the default group
+    (``isolation_key``; e2e 2026-09-24 #2, D-274). ``lock``: read every one of those project rows
+    ``FOR SHARE`` (sorted), so a policy change (``ops project policy set``, ``ops account set``: the row
+    ``FOR UPDATE``) either committed before this read or waits until the caller's transaction ends —
+    the apply-time recheck (Sol 54 #2)."""
     if not project_ids:
-        return set()
+        return {}
     cur = await conn.execute(
-        "SELECT project_id, policy->>%s FROM projects WHERE project_id = ANY(%s) ORDER BY project_id"
-        + (" FOR SHARE" if lock else ""),
-        (CROSS_PROJECT_POLICY, sorted(set(project_ids))),
+        "SELECT project_id, policy->>%s, policy->>%s FROM projects WHERE project_id = ANY(%s)"
+        " ORDER BY project_id" + (" FOR SHARE" if lock else ""),
+        (CROSS_PROJECT_POLICY, ACCOUNT_POLICY, sorted(set(project_ids))),
     )
-    return {int(pid) for pid, value in await cur.fetchall() if value == "exclude"}
+    out: Groups = {}
+    for pid, cross, account in await cur.fetchall():
+        key = isolation_key(int(pid), cross, account)
+        if key:
+            out[int(pid)] = key
+    return out
 
 
 def _version_map(logical_ids: list[int], version_of: dict[int, int | None] | None) -> tuple[list, list]:
@@ -435,20 +457,23 @@ async def project_slugs(conn: AsyncConnection, project_ids: list[int]) -> dict[i
 
 
 __all__ = [
+    "ACCOUNT_POLICY",
     "CROSS_PROJECT_POLICY",
+    "Groups",
     "CROSS_PROJECT_VALUES",
     "PREPROC_VERSION",
     "REPLAYED_POLICY_KEYS",
     "CandRow",
     "SubjectRow",
     "cosines",
-    "cross_project_excluded",
     "embedding_state",
     "lexical_list",
     "load_candidates",
     "load_subjects",
     "project_slugs",
     "readable_projects",
+    "isolation_groups",
+    "isolation_key",
     "subject_vectors",
     "supersession_among",
     "supersessions_of",

@@ -2512,3 +2512,24 @@ D-274 | 2026-11-01 | ACCEPTED (owner: "a person should be able to create project
 - **Owner's call (review 127 S3).** Guest items can reach the librarian's cross-project candidates only through device-1 writes. The owner's devices hold no grant on account projects.
 - **Not covered.** A guest's migration gets no pre-import dump, because that needs SSH. The secret gate (F4) is the protection there.
 - **Review.** Two parallel reviewers (Fable: correctness; Sonnet: security). No HIGH; 4 MEDIUM and 8 LOW, each fixed with a test or documented (consult 127).
+
+D-275 | 2026-11-01 | ACCEPTED (owner: "exclude the guest's data from operator access; if he asks for it, we look again"; review 128) | **An account is an isolation group. A guest's items never take part in librarian, `risk_check`, `memory.ask`, synthesis or map work together with another group, whichever device triggers it.** This replaces the owner's call on review 127 S3.
+- **Rule.** `candidates.relation_allowed` is the one rule for every pairing. It now compares isolation groups (`librarian_queries.isolation_key`):
+  - an `exclude` project is its own group, and this wins over an account;
+  - a project with `policy.account` belongs to the group `a:<account>`;
+  - every other project is in the default group.
+
+  The SQL risk universe computes the same groups. An account's own projects still relate to each other: a `<account>-global` lesson still warns in `<account>-app`.
+- **Also closed.** The query synthesis now applies the rule; before, it had no isolation check at all, not even for `exclude`. `pair_check`'s gates do too.
+- **Kept on purpose.** Device 1 can still read an account project when it names it explicitly (support, deletion). No automatic path mixes the groups. The audit field `cross_project_excluded` lists every project outside the default group.
+- **Review.** Two parallel reviewers (Sonnet: security; Fable: correctness). No HIGH; 2 MEDIUM, fixed with a test or closed in code; 7 LOW (consult 128). No schema change; a rollback is a code rollback.
+
+D-276 | 2026-11-01 | ACCEPTED (owner: Google Drive for the backups; the Hostinger VM backup stays) | **The daily backup timer is installed in production, and every dump is also copied, encrypted, to the owner's Google Drive.**
+- **Finding.** Production had no `hlmemo-backup.timer`. The runbook never said to install it, so the only dumps were from deploys. The runbook now has a section for it.
+- **Offsite.** `upload.py` gains an optional rclone target next to S3. The remote is an rclone `crypt` remote over Drive:
+  - the OAuth scope is `drive.file`;
+  - the encryption passwords are in the owner's password manager;
+  - Drive keeps 14 days of daily dumps and 70 days of weekly dumps.
+
+  A dump is about 34 MB.
+- **Known limit.** rclone's shared Google client id is being retired during 2026. The remote should move to the owner's own OAuth client id before it stops working.
