@@ -165,9 +165,10 @@ Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Eval
 
 
 ## Backups (2026-11-01, D-276)
-- **Own Google OAuth client id.** rclone's shared client id is being retired during 2026; when it stops, the
-  Drive copy fails. The unit then fails and the local dumps continue. Fix: the owner creates an OAuth client
-  (Desktop app) and publishes its consent screen to "In production" (`drive.file` is a non-sensitive scope);
-  then re-authorize with `client_id`/`client_secret` in the remote.
+- **Own Google OAuth client id: done 2026-11-01.** The remote uses the owner's own OAuth client (Desktop app,
+  published "In production"; a forced token refresh was tested). Note: with the `drive.file` scope a client sees
+  only the files it created, so the dumps the shared client wrote are invisible to the new one and are never
+  pruned. They sit in a second `HLMemo-backups` folder (the one with `pre-upgrade/`), which the owner deletes by
+  hand.
 - **A gate for the schedule.** `remote_gates.sh` should check `systemctl is-active hlmemo-backup.timer` and
   the newest daily dump's age (lesson v4219).
