@@ -137,6 +137,11 @@ Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Eval
 - **Measured fit of the session-start block:** our brief already drops sections until it fits its token budget (`brief/assemble.py:232`); compare the drop order and whether the 9500-character room matches the host's real limit.
 - **Write-and-exit spool for capture:** the hook writes the event to a file and exits; a repeated event dedups by file name. Compare with our capture path for hook reliability.
 
+## Ideas from Rool (2026-11-03): parked, theoretical
+Rool (rool.dev, SDK github.com/rool-dev/rool-js) gives each user a private cloud VM with an embedded agent, hosted in the EU. Its "Object Memory" is files plus schema-checked JSON records under `/space/<collection>/`, with keyword search only: no AI call, no embeddings, no stored index. It has no temporal model or corrections. It is not an HLMemo alternative. Two ideas, each to be measured before any work:
+- **`hlm` as a Rool agent's memory:** a Rool machine accepts a custom remote HTTPS MCP server with header or OAuth auth. Check whether a Rool agent can drive `memory.query`/`write` under the protocol, and what token isolation it needs.
+- **EU self-hosted model as a librarian provider:** Rool promises EU-hosted models and no training on user content. That matters for steps that see private items. A public OpenAI-compatible API was not seen (models are chosen per in-machine agent via `getModels()`), so this stays parked until one exists. Then it gets one decisive probe (D-017 profile).
+
 ## R4.3 candidates (2026-10-03)
 - memory.query: when a hit is flagged `superseded`, pull its superseder into the hit list (as memory.ask's `superseders_pulled` does). On 10-03 a "production budget caps" query returned 4/4 superseded hits, while the current values were only in the card.
 - memory.ask answer quality: a same-DB comparison vs main with ≥ 3 samples per arm; extractive (verbatim-only) main-sentence repair; the round-2 findings of consult 99 (URL non-path parts, the alternation bracket guard, the dangling-drop word lists, the preview filter).
