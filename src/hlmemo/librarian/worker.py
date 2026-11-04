@@ -79,7 +79,7 @@ from hlmemo.librarian.tasks import Handler, Plan
 from hlmemo.librarian.tasks.apply_batch import ApplyBatch, proposal_actions
 from hlmemo.librarian.tasks.pair_check import PairCheck
 from hlmemo.librarian.tasks.release_pending import ReleasePending
-from hlmemo.librarian.tasks.write_review import WriteReview
+from hlmemo.librarian.tasks.write_review import WriteReview, check_relation_review, relation_review_chains
 from hlmemo.worker.lease import BACKOFF_SECONDS, MAX_ATTEMPTS, LeasedJob, lease_jobs, mark_done
 
 log = logging.getLogger("hlmemo.librarian")
@@ -1516,6 +1516,8 @@ async def _amain() -> int:
     try:  # D-094: every configured profile resolves before any job is leased (fail fast)
         for warning in check_chains(settings):
             log.warning("librarian: %s", warning)
+        for warning in check_relation_review(settings):  # D-277: the relation review's own models
+            log.warning("librarian: %s", warning)
     except LlmConfigError as exc:
         log.error("librarian: refusing to start: %s", exc)
         return 2
@@ -1545,6 +1547,7 @@ def chains_line(settings: Any) -> str:
     desc = describe_chains(settings)
     if "error" in desc:
         return f"error: {desc['error']}"
+    relation_review_chains(settings, desc["tasks"])  # D-277
     return ", ".join(f"{t}={e['primary']}>{e['fallback'] or '-'}" for t, e in desc["tasks"].items())
 
 

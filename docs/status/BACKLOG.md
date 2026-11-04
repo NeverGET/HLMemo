@@ -177,3 +177,23 @@ Rool (rool.dev, SDK github.com/rool-dev/rool-js) gives each user a private cloud
   hand.
 - **A gate for the schedule.** `remote_gates.sh` should check `systemctl is-active hlmemo-backup.timer` and
   the newest daily dump's age (lesson v4219).
+
+## Librarian after the shadow week (2026-11-05, D-277)
+- **Owner decision: the promotion criterion.** "≥ 150 labelled proposals" is out of reach. Organic writes give
+  about 11 shadow proposals a week; replay density is 2.7% of pairs, which needs about 5000 pairs per 150.
+  Options:
+  - a smaller labelled bar with the same precision bar;
+  - accumulate the weekly live-only and shadow-only labels;
+  - a larger replay after a balance top-up.
+- **Owner: OpenRouter balance.** $6.5 on 2026-11-05, shared by prod and dev. At the new pipeline's rate (about
+  $1.5 to 2 a week for the librarian) it lasts about 3 weeks.
+- **Recall is the open lever** (replay: about .2 to .45 behind the verifier). The most common miss is a decision
+  record's plan step that a later record marks done. Measure a relate prompt change on the labelled replay set
+  (private PLAN-3) before building.
+- **Watch: the shadow baseline's `relate_schema_fail`** (luna relate/v2 at 2000 output tokens now sees older
+  items of up to 4000 characters; review 129 F-M2). If it is above 0, raise `("relate", 2)` and re-record the
+  G-LIVE-B cassettes.
+- **`check_librarian.py` does not probe the relation review's profiles** (review 129 L6). A bad name stops the
+  librarian at startup instead.
+- **Weekly:** label the shadow report's live-only and shadow-only supersessions (two blind labellers, the brief in
+  the private shadow folder), so the labelled count grows toward the owner's bar.

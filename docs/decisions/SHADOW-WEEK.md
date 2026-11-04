@@ -50,3 +50,20 @@ Every blocker found gets a lesson. A fix goes through the usual review. A prompt
 - A daily check of the report: errors and failures first, so a broken shadow is fixed on day 1, not found on day 7.
 - Labelling in batches.
 - At the end of the week, a summary with the blocker list, fixes and the criteria for the owner.
+
+## Closed 2026-11-04 (D-277)
+The first shadow week ended without a promotion. The criteria were not met: 11 shadow proposals against the ≥ 150
+required. It did deliver its blockers:
+- volume;
+- a 1500-character cut of the older item in 59% of pairs;
+- a verifier on the old policy;
+- a lesson's dated record treated as current;
+- an exception read as a narrowing.
+
+The fixes for the first four were measured on a pre-registered replay set and shipped (D-277). The live relation
+review now runs Haiku 5.5 high on relate/v3 with Opus 5.5 low on relate_verify/v3. The shadow runs the previous
+live pipeline as the baseline, so the same report keeps comparing the two. Details are private
+(`docs/private/librarian-model-2026-10/shadow/final-2026-11-04/` and `replay/`).
+
+The n ≥ 150 criterion is out of reach both by organic writes (about 11 a week) and by replay within the current
+balance. Changing it is the owner's decision.

@@ -57,7 +57,14 @@ from hlmemo.db import librarian_queries as lq
 from hlmemo.librarian import candidates as cands
 from hlmemo.librarian import guards, privacy
 from hlmemo.librarian import profiles as lprofiles
-from hlmemo.librarian.errors import AuthorityLost, LibrarianError, NotReady, PrivacyDenied, SchemaFail
+from hlmemo.librarian.errors import (
+    AuthorityLost,
+    LibrarianError,
+    LlmConfigError,
+    NotReady,
+    PrivacyDenied,
+    SchemaFail,
+)
 from hlmemo.librarian.memory import load_rules, readable_rules, rules_still_readable
 from hlmemo.librarian.prompts import TaskSpec, load_task
 from hlmemo.librarian.tasks import Plan, Proposal, user_message
@@ -66,7 +73,7 @@ OP = "write_review"
 MAX_VERSIONS = 4
 PAIRS_PER_CALL = 8
 NEW_TEXT_CHARS = 3000
-OLD_TEXT_CHARS = 1500
+OLD_TEXT_CHARS = 4000  # D-277: was 1500; 59% of the shadow week's candidates were cut (replay: +3 true finds)
 PLACE_TEXT_CHARS = 2000
 
 _SUBJECT_OUTCOME = {
@@ -247,6 +254,157 @@ def _profile_named(w: Any, name: str) -> Any:
     return lprofiles.named_profile(name)
 
 
+def _setting(w: Any, name: str, default: Any) -> Any:
+    return getattr(w.settings, name, default) or default
+
+
+def _task_version(name: str, version: int, max_tokens: int = 0) -> TaskSpec:
+    task = load_task(name, version) if version else load_task(name)
+    return replace(task, max_tokens=max_tokens) if max_tokens else task
+
+
+def live_relate_task(w: Any) -> TaskSpec:
+    """D-277: the live relate prompt (``HLM_LIBRARIAN_RELATE_VERSION``; 0 = the default version)."""
+    return _task_version("relate", int(_setting(w, "librarian_relate_version", 0)))
+
+
+def live_verify_task(w: Any) -> TaskSpec:
+    """D-277: the live relate_verify prompt and its max_tokens (0 = the version's own)."""
+    return _task_version(
+        "relate_verify",
+        int(_setting(w, "librarian_relate_verify_version", 0)),
+        int(_setting(w, "librarian_relate_verify_max_tokens", 0)),
+    )
+
+
+def live_relate_chain(w: Any) -> list[Any] | None:
+    """D-277: ``HLM_LIBRARIAN_RELATE_PROFILE`` first, then the relate task's default primary (or, when
+    the named profile is that primary, its fallback) as the ONE fallback (D-019: a chain is a primary
+    and one fallback, so a failing head costs one fallback's attempts, not two); ``None`` (the
+    provider's own chain for the task) when it is not set."""
+    name = str(_setting(w, "librarian_relate_profile", "")).strip()
+    if not name:
+        return None
+    head = _profile_named(w, name)
+    return [head, *[p for p in w.provider.chain_for("relate") if p.name != head.name][:1]]
+
+
+def live_verify_chain(w: Any, answered_profile: str) -> list[Any]:
+    """D-277: ``HLM_LIBRARIAN_RELATE_VERIFY_PROFILE`` first, then the D-067 verifier chain's first
+    profile. Under ``HLM_LIBRARIAN_VERIFIER=cross`` the profile that answered the relate call is never
+    the first verifier: when the named verifier IS that profile (a relate fallback answered, review 129
+    M1), the cross verifier goes first and the named one is the last resort. Under ``self`` the
+    named verifier does not apply: the D-067 ``self`` chain verifies (the answering profile, or the
+    default primary when the answering profile is not in the default chain)."""
+    base = verifier_chain(w, answered_profile)
+    name = str(_setting(w, "librarian_relate_verify_profile", "")).strip()
+    if not name or getattr(w.settings, "librarian_verifier", "cross") == "self":
+        return base
+    head = _profile_named(w, name)
+    others = [p for p in base if p.name != head.name]
+    if head.name == answered_profile and others:
+        return [others[0], head]
+    return [head, *others[:1]]
+
+
+def relation_review_chains(settings: Any, tasks: dict[str, dict[str, Any]]) -> None:
+    """D-277 (ops status, startup log): the live relation review's own primaries
+    (``HLM_LIBRARIAN_RELATE_PROFILE`` / ``…_RELATE_VERIFY_PROFILE``) and prompt versions, shown on the
+    relate and relate_verify chains. Never raises: a profile that cannot be read shows without a
+    model id (the librarian refuses to start on it, ``check_relation_review``)."""
+    for task, attr, vattr in (
+        ("relate", "librarian_relate_profile", "librarian_relate_version"),
+        ("relate_verify", "librarian_relate_verify_profile", "librarian_relate_verify_version"),
+    ):
+        entry = tasks.get(task)
+        name = str(getattr(settings, attr, "") or "").strip()
+        version = int(getattr(settings, vattr, 0) or 0)
+        if entry is None or not (name or version):
+            continue
+        if name and name != entry["primary"]:
+            try:
+                model = lprofiles.named_profile(name).model_id
+            except Exception:  # noqa: BLE001 - a display path never raises
+                model = None
+            entry["fallback"], entry["fallback_model"] = entry["primary"], entry["primary_model"]
+            entry["primary"], entry["primary_model"] = name, model
+        entry["relation_review"] = True
+        if version:
+            entry["prompt_version"] = f"v{version}"
+
+
+#: warn at startup when a named profile's prices expire within this many days (R4 R-5: an expired
+#: profile is skipped and the relation review silently runs on its fallback)
+PRICE_WARN_DAYS = 30
+
+
+def check_relation_review(settings: Any, today: Any = None) -> list[str]:
+    """D-277 startup check (fail fast, the message names the variable): the relation review's named
+    profiles load, are priced (unless the budget guard is off) and are not disabled for their task;
+    every configured prompt version exists. Returns warnings: prices that expire soon or have
+    expired, and a verifier that is the relate profile itself (no cross second opinion)."""
+    from datetime import UTC, timedelta
+    from datetime import datetime as _dt
+
+    today = today or _dt.now(UTC).date()
+    warnings: list[str] = []
+    names: dict[str, str] = {}
+    for var, attr, task in (
+        ("HLM_LIBRARIAN_RELATE_PROFILE", "librarian_relate_profile", "relate"),
+        ("HLM_LIBRARIAN_RELATE_VERIFY_PROFILE", "librarian_relate_verify_profile", "relate_verify"),
+    ):
+        name = str(getattr(settings, attr, "") or "").strip()
+        if not name:
+            continue
+        names[var] = name
+        try:
+            profile = lprofiles.named_profile(name)
+        except Exception as exc:  # noqa: BLE001 - any unreadable profile file refuses the start
+            raise LlmConfigError(
+                f"{var}={name!r}: {type(exc).__name__}: {exc} (profiles/<name>.toml)"
+            ) from None
+        if not profile.priced and not getattr(settings, "llm_budget_disabled", False):
+            raise LlmConfigError(f"{var}={name!r}: the profile has no prices; live calls would be refused")
+        if task in profile.disabled_tasks:
+            raise LlmConfigError(
+                f"{var}={name!r}: the profile lists {task!r} in disabled_tasks (not qualified)"
+            )
+        until = getattr(profile, "price_valid_until", None)
+        if until is not None and until < today + timedelta(days=PRICE_WARN_DAYS):
+            state = "expired" if until < today else "expire"
+            warnings.append(
+                f"{var}={name}: its prices {state} on {until.isoformat()}; after that the relation review"
+                " runs on its fallback (re-check the list prices in the profile file)"
+            )
+    relate_name = names.get("HLM_LIBRARIAN_RELATE_PROFILE")
+    verify_name = names.get("HLM_LIBRARIAN_RELATE_VERIFY_PROFILE")
+    if verify_name and getattr(settings, "librarian_verifier", "cross") == "self":
+        warnings.append(
+            "HLM_LIBRARIAN_RELATE_VERIFY_PROFILE is ignored under HLM_LIBRARIAN_VERIFIER=self"
+            " (the D-067 self chain verifies)"
+        )
+    elif relate_name and relate_name == verify_name:
+        warnings.append(
+            "HLM_LIBRARIAN_RELATE_VERIFY_PROFILE equals HLM_LIBRARIAN_RELATE_PROFILE: its answers are"
+            " verified by the cross verifier first, the same profile only as the last resort"
+        )
+    for var, task, attr in (
+        ("HLM_LIBRARIAN_RELATE_VERSION", "relate", "librarian_relate_version"),
+        ("HLM_LIBRARIAN_RELATE_VERIFY_VERSION", "relate_verify", "librarian_relate_verify_version"),
+        ("HLM_LIBRARIAN_SHADOW_RELATE_VERSION", "relate", "librarian_shadow_relate_version"),
+        ("HLM_LIBRARIAN_SHADOW_VERIFY_VERSION", "relate_verify", "librarian_shadow_verify_version"),
+    ):
+        version = int(getattr(settings, attr, 0) or 0)
+        if version:
+            try:
+                load_task(task, version)
+            except (FileNotFoundError, KeyError) as exc:
+                raise LlmConfigError(
+                    f"{var}={version}: no {task}/v{version} prompt ({type(exc).__name__})"
+                ) from None
+    return warnings
+
+
 #: the raw answer of a failed shadow attempt is kept up to this many characters (redacted), for at
 #: most SHADOW_RAW_KEPT failures per job; at most SHADOW_ATTEMPTS attempts are listed (the rest counted)
 SHADOW_RAW_CHARS = 2000
@@ -322,7 +480,7 @@ def shadow_config(w: Any, job: Any) -> _Shadow:
     """D-272: the shadow pipeline of ``job`` (raises when a profile or prompt cannot be loaded)."""
     name = str(w.settings.librarian_shadow_profile).strip()
     vname = str(getattr(w.settings, "librarian_shadow_verify_profile", "") or "").strip() or name
-    verify = load_task("relate_verify")
+    verify = _task_version("relate_verify", int(_setting(w, "librarian_shadow_verify_version", 0)))
     return _Shadow(
         relate_task=load_task("relate", int(w.settings.librarian_shadow_relate_version)),
         verify_task=replace(verify, max_tokens=int(w.settings.librarian_shadow_verify_max_tokens)),
@@ -678,7 +836,8 @@ class WriteReview:
         counters: dict[str, int],
         shadow: _Shadow | None = None,
     ) -> None:
-        task = shadow.relate_task if shadow is not None else load_task("relate")
+        task = shadow.relate_task if shadow is not None else live_relate_task(w)
+        live_chain = None if shadow is not None else live_relate_chain(w)
         by_subject: dict[int, list[_Pair]] = {}
         for pr in pairs:
             by_subject.setdefault(pr.subject.version_id, []).append(pr)
@@ -694,7 +853,7 @@ class WriteReview:
                         user_message("relate", payload, rules),
                         job_id=None if shadow is not None else job.job_id,
                         lineage=shadow.lineage if shadow is not None else job.lineage,
-                        chain=shadow.chain if shadow is not None else None,
+                        chain=shadow.chain if shadow is not None else live_chain,
                         precheck=await precheck_for(ids),
                         **_shadow_limits(shadow, task.name, w.provider.redactor.text),
                     )
@@ -720,6 +879,7 @@ class WriteReview:
                     counters[k] = counters.get(k, 0) + v
                 for pr, j in zip(chunk, judged, strict=True):
                     guards.historical(j, pr.text, counters)  # D-269: before any verifier call
+                    guards.lesson_record(j, pr.text, counters)  # D-277: a lesson's dated record
                     pr.judgement = j
                     pr.judgement_profile = res.profile
 
@@ -742,13 +902,13 @@ class WriteReview:
                 todo.append((pr, kind))
         if not todo:
             return
-        task = shadow.verify_task if shadow is not None else load_task("relate_verify")
+        task = shadow.verify_task if shadow is not None else live_verify_task(w)
         by_profile: dict[str, list[tuple[_Pair, str]]] = {}
         for pr, kind in todo:
             by_profile.setdefault(pr.judgement_profile, []).append((pr, kind))
         n = 0
         for profile, group in by_profile.items():
-            chain = shadow.verify_chain if shadow is not None else verifier_chain(w, profile)
+            chain = shadow.verify_chain if shadow is not None else live_verify_chain(w, profile)
             for i in range(0, len(group), PAIRS_PER_CALL):
                 chunk = group[i : i + PAIRS_PER_CALL]
                 items = verify_payload([(pr.subject, pr.cand, pr.cross) for pr, _kind in chunk], n)

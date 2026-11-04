@@ -592,6 +592,60 @@ def historical(j: Judgement, p: PairText, counts: dict[str, int] | None = None) 
         _count(counts, "decision_record")
 
 
+_LESSON_HEAD = re.compile(r"^## (Mistake|Fix|Context)[ \t]*$", re.M)
+_LESSON_WHEN = re.compile(r"^When:", re.M)
+#: the first sentence of a ``When:`` paragraph (the trigger): up to a full stop followed by a capital
+#: letter (so "e.g." and wrapped lines stay inside), or to the paragraph's end (review 129 round 2)
+_FIRST_SENTENCE = re.compile(r"When:.*?(?:\.(?=\s+[A-ZÄÖÜİÇŞĞ])|(?=\n[ \t]*\n)|\Z)", re.S)
+
+
+def lesson_parts(body: str) -> tuple[str, str] | None:
+    """D-277: a ``memory.register_lesson`` body split into its rule and its dated record.
+
+    The rule is the Mistake section's title line(s) before ``When:``, the first sentence of the
+    ``When:`` paragraph (the protocol's trigger: when the lesson applies, review 129 M3) and the
+    whole Fix section (Do / Avoid). The record is the rest of the ``When:`` paragraph (what went
+    wrong) plus the whole Context section (evidence, scope, status, era). ``None`` when the body
+    lacks a Fix section, so a lesson written in another shape is never split."""
+    heads = list(_LESSON_HEAD.finditer(body))
+    sections: dict[str, str] = {}
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(body)
+        sections.setdefault(m.group(1), body[m.end() : end])
+    if "Fix" not in sections:
+        return None
+    mistake = sections.get("Mistake", "")
+    when = _LESSON_WHEN.search(mistake)
+    title, record = (mistake[: when.start()], mistake[when.start() :]) if when else (mistake, "")
+    trigger = _FIRST_SENTENCE.match(record)
+    if trigger:
+        title, record = f"{title}\n{trigger.group(0)}", record[trigger.end() :]
+    rule = f"{title}\n{sections['Fix']}"
+    return rule, f"{record}\n{sections.get('Context', '')}"
+
+
+def lesson_record(j: Judgement, p: PairText, counts: dict[str, int] | None = None) -> None:
+    """D-277: a lesson is a rule plus a dated record; only its rule can be outdated. A supersession
+    whose replaced side is a lesson and whose quote of that side lies in the lesson's record (its
+    ``When:`` paragraph or Context section) and not in its rule is dropped (``lesson_record``), as
+    ``historical`` drops a replaced episode. Runs after ``historical``, before the verifier."""
+    counts = counts if counts is not None else {}
+    if not j.raised or j.relation != "contradicts" or j.supersedes not in ("new", "old"):
+        return
+    side = "old" if j.supersedes == "new" else "new"
+    if (p.old_kind if side == "old" else p.new_kind) != "lesson":
+        return
+    parts = lesson_parts(p.body(side))
+    quote = j.old_quote if side == "old" else j.new_quote
+    if parts is None or not quote:
+        return
+    rule, record = parts
+    if quote_in(quote, record) and not quote_in(quote, rule):
+        j.relation, j.supersedes, j.tier = "none", "none", "abstain"
+        j.flags.append("lesson_record")
+        _count(counts, "lesson_record")
+
+
 def finalize(j: Judgement, p: PairText, counts: dict[str, int] | None = None) -> None:
     """After the verifier: the v2 strict action tier and the close decision (in place).
 

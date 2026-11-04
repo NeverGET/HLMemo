@@ -340,6 +340,8 @@ def chain_lines(chains: dict[str, Any]) -> list[str]:
         notes = []
         if e.get("source") == "task":
             notes.append("task override")
+        if e.get("relation_review"):
+            notes.append("relation review" + (f" {e['prompt_version']}" if e.get("prompt_version") else ""))
         if e.get("unqualified_fallback"):
             notes.append(f"{e['unqualified_fallback']} not qualified")
         if e.get("primary_qualified") is False:

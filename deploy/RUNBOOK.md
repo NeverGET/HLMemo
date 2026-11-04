@@ -605,6 +605,38 @@ librarian`: `... idling`). The same `llm.env` is mounted into the **api**, becau
 reaches db, worker, migrate or caddy (`tests/deploy/test_compose_isolation.py`). A role above
 `observer` needs an owner decision event (D-062), else the librarian refuses to start.
 
+### The relation review's own models and the shadow baseline (D-277)
+
+The template `deploy/llm.env.example` sets the relation review's own models:
+- `HLM_LIBRARIAN_RELATE_PROFILE` and `HLM_LIBRARIAN_RELATE_VERSION`;
+- `HLM_LIBRARIAN_RELATE_VERIFY_PROFILE`, `HLM_LIBRARIAN_RELATE_VERIFY_VERSION` and
+  `HLM_LIBRARIAN_RELATE_VERIFY_MAX_TOKENS`.
+
+The relation review is each `write_review` job's relate and verify calls. Each named profile answers first, with
+one fallback: the default primary for relate, the D-067 cross verifier for verify. Every other task keeps
+`HLM_PROFILE`. The librarian refuses to start, naming the variable, when a named profile:
+- is unknown or unreadable;
+- is unpriced while the budget guard is on;
+- lists the task in `disabled_tasks`;
+- names a prompt version that does not exist.
+
+It also logs a warning 30 days before a named profile's `price_valid_until`. After that date the profile is
+skipped and the review runs on its fallback.
+
+`hlm_ops.sh status` shows the relation review on the `relate` and `relate_verify` chain lines, for example
+`(relation review v3)`.
+
+The shadow (D-272) now runs the previous live pipeline (`HLM_LIBRARIAN_SHADOW_PROFILE`, `…_RELATE_VERSION=2`,
+`…_VERIFY_VERSION=2`) as the comparison baseline. `hlm_ops.sh librarian shadow` compares live and shadow as before.
+
+To change any of these:
+1. Edit the template on `main`.
+2. Deploy.
+3. Run `install_llm_env.sh --state "$STATE"`. It rewrites `llm.env` from the template, keeps the installed keys and
+   caps, and recreates the librarian and the api under the deploy lock.
+
+To go back to the default chain, empty the lines.
+
 ### Librarian pending queue: withdraw and the promotion guard
 
 Needs the release with migration `0011_question_withdrawn`. The migration adds the terminal question

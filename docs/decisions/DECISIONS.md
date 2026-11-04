@@ -2533,3 +2533,47 @@ D-276 | 2026-11-01 | ACCEPTED (owner: Google Drive for the backups; the Hostinge
 
   A dump is about 34 MB.
 - **Known limit.** rclone's shared Google client id is being retired during 2026. The remote should move to the owner's own OAuth client id before it stops working.
+
+D-277 | 2026-11-05 | ACCEPTED (owner goal 2026-11-04: "implement the recommendations"; review 129) | **The shadow week is closed. The live relation review runs the measured pipeline, Claude Haiku 5.5 high on relate/v3 with Claude Opus 5.5 low on the new policy-aligned relate_verify/v3. The older item reaches the model with up to 4000 characters, and a lesson's dated record can no longer be superseded. The librarian stays an observer.**
+- **Shadow week (2026-10-28 to 11-04).**
+  - Volume: 244 jobs over 5 projects, 3549 pairs, 0 shadow errors, $0.96 of shadow spend.
+  - Labels: the 21 contested pairs were labelled blind by two agents, who agreed on 18; the operator settled 3.
+  - Live (gpt-6-luna relate/v2 with a glm verifier): 8 raised, 6 correct, one false action.
+  - Shadow: 11 raised, 9 correct, no false action.
+  - The promotion criteria were not met: 11 proposals against ≥ 150.
+- **Blockers, each traced (lessons v4482, v4483).**
+  - B1, volume: n ≥ 150 would take about 14 weeks.
+  - B2: the older item was cut at 1500 characters in 59% of asked pairs.
+  - B3: the verifier, still on the old policy, rejected 2 of 6 true finds.
+  - B4: a lesson's evidence or status line was treated as a current claim.
+  - B5: an exception was read as a narrowing.
+- **Replay measurement (pre-registered; private PLAN-3 and RESULT).**
+  - Set: 349 subjects through the production candidate selection, read-only, 1369 pairs, $1.86. 97 pairs labelled
+    blind (89 agreed, 8 settled under the written policy).
+  - The shadow week's 21 pairs re-run four times, $1.43.
+  - Pooled result: the new pipeline makes 45 true finds and 6 false, against today's shadow's 41 and 9.
+  - Each fix met the ship rule: the 4000 cap +1 true and -3 false; verifier v3 +3 true and +1 false; the lesson
+    guard 0 true and -1 false.
+  - Recall behind the verifier is about .2 to .45 and is the open lever. The most common miss is a decision
+    record's plan step that a later record marks done.
+- **Code.**
+  - The settings `HLM_LIBRARIAN_RELATE_PROFILE`, `…_RELATE_VERSION`, `…_RELATE_VERIFY_PROFILE`,
+    `…_RELATE_VERIFY_VERSION` and `…_RELATE_VERIFY_MAX_TOKENS` (0, or at least 256), and
+    `…_SHADOW_VERIFY_VERSION`.
+  - The named profile answers first, with ONE fallback (D-019). The answering profile is never the first cross
+    verifier.
+  - The librarian refuses to start on an unknown, unreadable, unpriced or task-disabled profile, or on a missing
+    prompt version, and warns 30 days before a profile's prices expire.
+  - `relate_verify/v3` is opt-in, with all six fields required.
+  - `guards.lesson_record` runs after `historical`. A lesson's rule is its title, the `When:` trigger sentence and
+    Fix; its record is the rest.
+  - `OLD_TEXT_CHARS` is 4000 for every pipeline. This is accepted drift: a rollback needs the image (review 129
+    S-M1). relate/v2 keeps 2000 output tokens, and its shadow `relate_schema_fail` is watched.
+  - Ops status and the startup log show the relation review. `install_llm_env.sh` validates the new profile lines.
+- **Shadow.** It now runs the previous live pipeline (luna relate/v2, the glm verifier on relate_verify/v2) as the
+  comparison baseline.
+- **Owner decisions open (BACKLOG).** The n ≥ 150 criterion is out of reach both organically and by replay within
+  the balance. The OpenRouter balance ($6.5, shared with prod) needs a top-up.
+- **Review 129.** Two parallel agents (Fable: correctness; Sonnet: security, spend, contracts), then one round-2
+  agent. No HIGH. Round 1 found 5 MEDIUM and 7 LOW; round 2 found 1 MEDIUM and 2 LOW. Each was fixed with a test,
+  or accepted or left open with its reason (consult 129). Lessons v4514 to v4516.

@@ -12,5 +12,5 @@ cache_system = true
 price_in_per_m  = 0.125
 price_out_per_m = 0.50
 supports_json_schema = false
-# R4 (R-5): re-check the list prices by this day, else the profile is skipped (the shadow only)
+# R4 (R-5): re-check the list prices by this day, else the profile is skipped (D-277: the live relation review falls back; the librarian warns 30 days ahead)
 price_valid_until = "2026-12-31"

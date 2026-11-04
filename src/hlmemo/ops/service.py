@@ -646,6 +646,10 @@ async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[
     settings = settings or get_settings()
     out: dict[str, Any] = dict(await heartbeat_fields(conn, settings.librarian_role))
     out["chains"] = describe_chains(settings)
+    if "tasks" in out["chains"]:  # D-277: the live relation review's own primaries
+        from hlmemo.librarian.tasks.write_review import relation_review_chains
+
+        relation_review_chains(settings, out["chains"]["tasks"])
     hb = _read_heartbeat(settings.librarian_heartbeat_file)
     age = _time.time() - float(hb.get("ts", 0)) if hb is not None else None
     if hb is not None and age is not None and age <= HEARTBEAT_MAX_AGE_S:

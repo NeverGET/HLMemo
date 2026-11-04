@@ -249,6 +249,18 @@ class Settings(BaseSettings):
     librarian_shadow_day_usd: float = Field(default=1.0, ge=0.0, le=8.0)
     # every shadow call of one job ends within this many seconds (one bounded attempt, no retries)
     librarian_shadow_wall_s: float = Field(default=180.0, ge=5.0, le=900.0)
+    # D-277: the shadow verifier's prompt version (0 = the default relate_verify version)
+    librarian_shadow_verify_version: int = Field(default=0, ge=0)
+    # D-277: the LIVE relation review's own models. ``HLM_LIBRARIAN_RELATE_PROFILE`` answers the
+    # relation calls first, their default chain (D-094) follows as the fallback; ``…_RELATE_VERIFY_PROFILE``
+    # gives the second opinion first, the D-067 verifier chain follows. Empty = the default chains.
+    # ``…_VERSION`` picks a prompt version, an opt-in one included (0 = the default version);
+    # ``…_RELATE_VERIFY_MAX_TOKENS`` gives a reasoning verifier room (0 = the task's own).
+    librarian_relate_profile: str = ""
+    librarian_relate_version: int = Field(default=0, ge=0)
+    librarian_relate_verify_profile: str = ""
+    librarian_relate_verify_version: int = Field(default=0, ge=0)
+    librarian_relate_verify_max_tokens: int = Field(default=0, ge=0, le=32000)
     # D-113 (owner) / D-118: the item kinds a span revision or a close may change — living
     # knowledge. Historical records keep their text (episodes/session logs, and decision/ADR records
     # of any kind: librarian/revise.decision_record); a write-time update of one only adds a
@@ -429,6 +441,15 @@ class Settings(BaseSettings):
             if not v:
                 return None
             return json.loads(v)
+        return v
+
+    @field_validator("librarian_relate_verify_max_tokens")
+    @classmethod
+    def _verify_max_tokens(cls, v: int) -> int:
+        """D-277 (review 129): 0 (the prompt's own) or at least 256, like the shadow's own setting; a
+        verifier cut off below that would drop every supersession as ``verifier_no_answer``."""
+        if 0 < v < 256:
+            raise ValueError("HLM_LIBRARIAN_RELATE_VERIFY_MAX_TOKENS: 0 or at least 256")
         return v
 
     @field_validator("librarian_revise_kinds", mode="before")

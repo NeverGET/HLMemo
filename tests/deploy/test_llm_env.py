@@ -370,6 +370,49 @@ class InstallLlmEnvTest(unittest.TestCase):
         self.assertEqual(before, len(self.calls()), "nothing is sent")
         self.assert_never_exposed(output, KEY_A)
 
+    def test_relation_review_and_shadow_profiles_come_from_the_template_and_must_exist(self):
+        """D-277: the relation review's own profiles and the shadow's (D-272) are kept verbatim from
+        the template, with their prompt versions; a mistyped profile in either sends nothing."""
+        result, output = self.run_install()
+        self.assertEqual(0, result.returncode, output)
+        content = self.target.read_text()
+        for line in (
+            "HLM_LIBRARIAN_RELATE_PROFILE=openrouter-claude-haiku55-high",
+            "HLM_LIBRARIAN_RELATE_VERSION=3",
+            "HLM_LIBRARIAN_RELATE_VERIFY_PROFILE=openrouter-claude-opus55-low",
+            "HLM_LIBRARIAN_RELATE_VERIFY_VERSION=3",
+            "HLM_LIBRARIAN_RELATE_VERIFY_MAX_TOKENS=2000",
+            "HLM_LIBRARIAN_SHADOW_PROFILE=openrouter-gpt6-luna",
+            "HLM_LIBRARIAN_SHADOW_VERIFY_PROFILE=openrouter-glm53-flash",
+            "HLM_LIBRARIAN_SHADOW_RELATE_VERSION=2",
+            "HLM_LIBRARIAN_SHADOW_VERIFY_VERSION=2",
+        ):
+            self.assertIn(line + "\n", content)
+        template = self.repo / "deploy/llm.env.example"
+        text = template.read_text()
+        for old, typo in (
+            (
+                "HLM_LIBRARIAN_RELATE_PROFILE=openrouter-claude-haiku55-high",
+                "HLM_LIBRARIAN_RELATE_PROFILE=no-such-relate",
+            ),
+            (
+                "HLM_LIBRARIAN_RELATE_VERIFY_PROFILE=openrouter-claude-opus55-low",
+                "HLM_LIBRARIAN_RELATE_VERIFY_PROFILE=no-such-verify",
+            ),
+            (
+                "HLM_LIBRARIAN_SHADOW_PROFILE=openrouter-gpt6-luna",
+                "HLM_LIBRARIAN_SHADOW_PROFILE=no-such-shadow",
+            ),
+        ):
+            template.write_text(text.replace(old, typo))
+            before = len(self.calls())
+            result, output = self.run_install()
+            self.assertEqual(65, result.returncode, output)
+            self.assertIn(f"unknown profile in llm.env: {typo.split('=')[1]}", output)
+            self.assertEqual(before, len(self.calls()), "nothing is sent")
+            self.assert_never_exposed(output, KEY_A)
+        template.write_text(text)
+
     def test_truncated_transfer_is_refused_and_leaves_the_file(self):
         self.assertEqual(0, self.run_install()[0].returncode)
         before = self.target.read_bytes()

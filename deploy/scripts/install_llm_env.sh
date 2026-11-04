@@ -277,13 +277,14 @@ def fail(msg):
     print(f"install_llm_env: {msg}", file=sys.stderr)
     sys.exit(65)
 # D-094: the per-task fallbacks the template sets (HLM_FALLBACK_PROFILE__RERANK included) are kept
-# verbatim; R4 B5: so is the research writer (HLM_RESEARCH_WRITER_PROFILE), and D-272 the shadow
-# profiles (HLM_LIBRARIAN_SHADOW[_VERIFY]_PROFILE). Their profiles must exist too, and their keys are
-# read like the primary's.
+# verbatim; R4 B5: so is the research writer (HLM_RESEARCH_WRITER_PROFILE), D-272 the shadow
+# profiles (HLM_LIBRARIAN_SHADOW[_VERIFY]_PROFILE) and D-277 the relation review's own profiles
+# (HLM_LIBRARIAN_RELATE[_VERIFY]_PROFILE). Their profiles must exist too, and their keys are read
+# like the primary's.
 task_profiles = []
 with open(example, encoding="utf-8") as fh:
     for line in fh:
-        m = re.fullmatch(r"(?:HLM_FALLBACK_PROFILE__[A-Z][A-Z0-9_]*|HLM_RESEARCH_WRITER_PROFILE|HLM_LIBRARIAN_SHADOW(?:_VERIFY)?_PROFILE)=(.*)", line.strip())
+        m = re.fullmatch(r"(?:HLM_FALLBACK_PROFILE__[A-Z][A-Z0-9_]*|HLM_RESEARCH_WRITER_PROFILE|HLM_LIBRARIAN_(?:SHADOW|RELATE)(?:_VERIFY)?_PROFILE)=(.*)", line.strip())
         if m and m.group(1).strip():
             task_profiles.append(m.group(1).strip())
 names = []
