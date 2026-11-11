@@ -146,6 +146,14 @@ The private kit for the owner's work machine (preflight, install, verify) ran en
 - **Test trap:** GNU tar 1.35 cannot extract any archive in an emulated amd64 Fedora container on Apple silicon
   ("Function not implemented"). Test tarballs in a native container.
 
+## The owner account (2026-11-11, D-279)
+- **No ops command clears `owner_created`** (review 130 C3). An owner project named `<name>-...` blocks a later
+  account `<name>`; today only a hand edit of the policy resolves it. An `ops account release <slug>` verb would.
+- **A unique violation in `hlm.project_create` returns the generic database error** (review 130 C7, both paths):
+  when `ops project create` commits the same slug between the tool's existence check and its insert.
+- **`hlm project create` prints "needs membership of the account its slug names (<account>-...)"** for an owner
+  device that lacks the owner grant. The message must stay the one refusal, but the CLI could add a hint.
+
 ## Ideas from claude-mem (2026-10-15): parked, evaluate later
 Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Evaluate one at a time, measure first.
 - **File-anchored recall:** inject memories tied to a file when the agent reads it (PreToolUse on Read); the cheapest form of "spontaneous recall". Items already carry `describes` → `code_refs`. Measure how often a read file has code_refs and whether the injected items help.

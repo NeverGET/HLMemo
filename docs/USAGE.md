@@ -109,6 +109,41 @@ hlm project create maher-api --name 'Maher API'      # granted write to every li
 - Removing a member: `$OPS device revoke <device>` revokes the device and every grant it holds. Revoking only the
   root grant ends the device's right to create projects, but it keeps its grants on the account's projects.
 
+### The owner account: the owner's devices create unprefixed projects (D-279)
+
+The owner's own devices can create projects too, without a prefix. The root is the project `owner-global`; it holds
+no memory and only anchors the right.
+
+```sh
+# operator, once
+$OPS project create owner-global --name 'Owner account'
+$OPS account set owner --quota 100
+$OPS device grant my-mac owner-global write         # membership = a write grant on the root
+$OPS account show owner                             # quota, used, members, the projects created this way
+
+# a member, from any of the owner's machines
+hlm project create my-new-app --name 'My new app'   # granted write to every live member device
+```
+
+**Rules:**
+- The project is an ordinary one, like one made with `$OPS project create`: it carries no account tag, so it shares
+  the default isolation group with the owner's other projects. It is marked `owner_created`, which the quota counts.
+- A slug in an account's namespace (it starts with `<account>-` and a project `<account>-global` exists) always
+  takes the account path above: an owner device that is not a member of that account is refused like anyone else.
+  This holds for any project named `<x>-global`, an account root or not: the prefix `<x>-` is then closed to
+  the owner path, and the refusal reads "needs membership".
+- Refused for a member: a slug whose first segment is a reserved name (`hlm`, `owner`, `admin`, `librarian`, `mig`,
+  `system`, `root`), a slug ending in `-global` or in a hyphen, a slug that already exists unless it was created
+  this way (then nothing changes), and any new slug once the quota is used up.
+- A device that is not a member gets the same single refusal as on the account path.
+- `account set owner` takes no `--claim`: existing projects are never tagged, and grants never change. A later
+  `account set <name>` refuses to claim a project created through the owner account. So an owner project named
+  `<name>-...` blocks a later account `<name>`: choose another account name, or clear the project's
+  `owner_created` policy key by hand (no ops command does it yet).
+- A member who joins later is not granted the existing projects; the operator grants them.
+- A release older than D-279 does not know the `owner_created` stop: do not run `account set <name> --claim`
+  on such a release while projects created through the owner account exist.
+
 ## What `hlm claude|codex|agy` does
 
 1. Resolves config (below) and the device token.
@@ -228,7 +263,7 @@ server and `--admin` on the client; in production it is disabled (D-061).
 | `hlm device revoke --self` | public self-revoke of this device; deletes the stored token |
 | `hlm device revoke <name\|id>` · `grant <name\|id> <slug> <role>` · `ungrant <name\|id> <slug>` | roles: `read`, `write`, `admin` (dev only; production: `hlm_ops.sh`) |
 | `hlm device list` · `whoami` | `--json` for machine output |
-| `hlm project create <slug> [--name N]` · `list` | `create`: a member of the slug's account (D-274), or `--admin` in local dev |
+| `hlm project create <slug> [--name N]` · `list` | `create`: a member of the slug's account (D-274) or of the owner account (D-279), or `--admin` in local dev |
 | `hlm query "<q>" [--budget N] [--kind K ...] [--valid-at TS] [--known-at TS] [--include-archived]` | prints the compact, sorted JSON of `memory.query` |
 | `hlm close --notes ".." \| --notes-file F [--decision ..]* [--lesson "title::body"]* [--card FILE --card-version ID] [--session-id UUID] [--budget N]` | `memory.call_the_day`; `request_id` is a fresh UUID; `HLM_SESSION_ID` env sets the session id |
 | `hlm curate --project P (--candidates F \| --map) [--export DIR] [--run-dir D]` · `hlm curate --run-dir D [--apply --state S [--execute preview\|apply]]` | local, owner-run supersession curation: agents verify candidates, a deterministic gate checks every quote, refuters try to break each link, and the result is a preview bundle; prod is touched only by the printed RUNBOOK commands. `--map` is experimental. See [Curating supersession links](#curating-supersession-links) |

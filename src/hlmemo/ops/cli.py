@@ -85,9 +85,15 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("key", choices=sorted(service.POLICY_VALUES))
     ps.add_argument("value")
 
-    acct = sub.add_parser("account", help="D-274 self-service accounts: set or show an account root")
+    acct = sub.add_parser(
+        "account", help="self-service accounts (D-274) and the owner account (D-279): set or show a root"
+    )
     asub = acct.add_subparsers(dest="action", required=True)
-    aset = asub.add_parser("set", help="make <account>-global the account root (members: write grant on it)")
+    aset = asub.add_parser(
+        "set",
+        help="make <account>-global the account root (members: write grant on it);"
+        " `set owner` flags owner-global: its members create unprefixed default-group projects",
+    )
     aset.add_argument("account")
     aset.add_argument("--quota", type=int, help="projects the account may create (default 20)")
     aset.add_argument("--claim", action="store_true", help="tag existing untagged <account>-* projects")

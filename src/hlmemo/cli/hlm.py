@@ -761,7 +761,8 @@ def project_create(
     slug: Annotated[str, typer.Argument()],
     name: Annotated[str | None, typer.Option("--name")] = None,
 ) -> None:
-    """Create a project in your account (<account>-..., D-274); --admin: the dev admin route."""
+    """Create a project in your account (<account>-..., D-274; any free slug for the owner account,
+    D-279); --admin: the dev admin route."""
     c = _ctx(ctx)
     if c.use_admin:
         with c.http() as http:

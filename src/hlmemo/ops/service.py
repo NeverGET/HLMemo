@@ -445,7 +445,8 @@ async def _account_projects(conn: AsyncConnection, account: str) -> list[dict[st
     """Every project whose slug starts with ``<account>-``, with its ``policy.account`` tag."""
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
-            "SELECT project_id, slug, policy->>'account' AS tag FROM projects"
+            "SELECT project_id, slug, policy->>'account' AS tag,"
+            " COALESCE(policy->>'owner_created', '') = 'true' AS owner_created FROM projects"
             " WHERE starts_with(slug, %s) ORDER BY project_id FOR UPDATE",
             (f"{account}-",),
         )
@@ -464,6 +465,22 @@ async def account_show(conn: AsyncConnection, account: str) -> dict[str, Any]:
     policy = dict(row[0] or {}) if row else {}
     members = await acc.live_members(conn, int(root["project_id"]))
     names = {int(d["device_id"]): d["name"] for d in await q.list_all_devices(conn)}
+    if account == acc.OWNER_ACCOUNT:  # D-279: its projects carry `owner_created`, never an account tag
+        async with conn.cursor(row_factory=dict_row) as c:
+            await c.execute(
+                "SELECT slug FROM projects WHERE policy->>%s = 'true' ORDER BY project_id",
+                (acc.OWNER_CREATED_KEY,),
+            )
+            projects = [r["slug"] for r in await c.fetchall()]
+        return {
+            "account": account,
+            "root": acc.OWNER_ROOT,
+            "is_root": policy.get(acc.OWNER_ROOT_KEY) is True and root.get("archived_at") is None,
+            "quota": policy.get("project_quota"),
+            "used": await acc.count_owner_projects(conn),
+            "members": [{"id": d, "name": names.get(d)} for d in members],
+            "projects": projects,
+        }
     async with conn.cursor(row_factory=dict_row) as c:
         await c.execute(
             "SELECT slug FROM projects WHERE policy->>'account' = %s ORDER BY project_id", (account,)
@@ -493,6 +510,8 @@ async def account_set(
     from hlmemo.core import account_service as acc
     from hlmemo.librarian.events import insert_system_event
 
+    if account == acc.OWNER_ACCOUNT:
+        return await _owner_account_set(conn, quota=quota, claim=claim)
     if not acc.ACCOUNT_RE.fullmatch(account) or account in acc.RESERVED_ACCOUNTS:
         raise invalid("account must match [a-z0-9]{2,32} and not be reserved", account=account)
     if quota is not None and not 1 <= quota <= acc.MAX_QUOTA:
@@ -502,8 +521,8 @@ async def account_set(
     if str(policy.get("reserved", "")).lower() == "true":
         raise HlmError("E_FORBIDDEN", "reserved system project", {"project": root_slug})
     rows = await _account_projects(conn, account)
-    foreign = [r["slug"] for r in rows if r["tag"] not in (None, account)]
-    if foreign:
+    foreign = [r["slug"] for r in rows if r["tag"] not in (None, account) or r["owner_created"]]
+    if foreign:  # D-279: a project made through the owner account is never claimed, --claim or not
         raise HlmError(
             "E_FORBIDDEN", "projects with this prefix belong to another account", {"projects": foreign}
         )
@@ -547,6 +566,57 @@ async def account_set(
         at=at,
     )
     return {**await account_show(conn, account), "claimed": claimed, "previous": previous}
+
+
+async def _owner_account_set(conn: AsyncConnection, *, quota: int | None, claim: bool) -> dict[str, Any]:
+    """D-279: flag ``owner-global`` as the owner account's root (or change its quota).
+
+    Members (devices with a ``write`` grant on it) create unprefixed, default-group projects with
+    ``hlm project create``. The root must exist (``project create owner-global`` first). Nothing is
+    claimed: an existing project is never tagged, and grants are never changed. One ``librarian``
+    system event (op ``set_owner_account``) records the change; replay keeps these policy keys."""
+    from hlmemo.core import account_service as acc
+    from hlmemo.librarian.events import insert_system_event
+
+    if claim:
+        raise invalid("the owner account claims nothing: existing projects stay as they are", account="owner")
+    if quota is not None and not 1 <= quota <= acc.MAX_QUOTA:
+        raise invalid(f"quota must be 1..{acc.MAX_QUOTA}", quota=quota)
+    pid, policy = await _project_policy_row(conn, acc.OWNER_ROOT, lock=True)
+    row = await q.select_project_by_slug(conn, acc.OWNER_ROOT)
+    if (
+        str(policy.get("reserved", "")).lower() == "true"
+        or policy.get("account") is not None
+        or row is None
+        or row.get("archived_at") is not None
+    ):  # a reserved, account-tagged or archived project is never the owner root
+        raise HlmError("E_FORBIDDEN", "this project cannot be the owner root", {"project": acc.OWNER_ROOT})
+    previous = {k: policy.get(k) for k in (acc.OWNER_ROOT_KEY, "project_quota")}
+    new_quota = quota if quota is not None else int(policy.get("project_quota") or acc.DEFAULT_QUOTA)
+    policy.update({acc.OWNER_ROOT_KEY: True, "project_quota": new_quota})
+    await conn.execute("UPDATE projects SET policy = %s WHERE project_id = %s", (Jsonb(policy), pid))
+    at = await wq.clock_now(conn)
+    await insert_system_event(
+        conn,
+        kind="librarian",
+        project_id=pid,
+        device_id=OPERATOR_DEVICE_ID,
+        client=CLIENT,
+        request_id=uuid.uuid4(),
+        request={
+            "actor": CLIENT,
+            "op": "set_owner_account",
+            "account": acc.OWNER_ACCOUNT,
+            "quota": new_quota,
+            "previous": previous,
+        },
+        resolved={
+            "recorded_at": fmt_ts(at),
+            "account": {"root_project_id": pid, "quota": new_quota},
+        },
+        at=at,
+    )
+    return {**await account_show(conn, acc.OWNER_ACCOUNT), "claimed": [], "previous": previous}
 
 
 async def list_projects(conn: AsyncConnection) -> list[dict[str, Any]]:

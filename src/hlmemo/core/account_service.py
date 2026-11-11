@@ -12,6 +12,15 @@ insert are serialized per account), and the new project is tagged ``policy.accou
 ``write`` to every live member and ``admin`` to device 1, like ``ops project create``. An existing
 slug of the same account is an idempotent no-op; any other existing slug is refused. No schema change:
 the keys live in ``projects.policy``, which replay keeps (only ``REPLAYED_POLICY_KEYS`` are rebuilt).
+
+The **owner account** (D-279; threat model: docs/consults/130-d279-threat-model.md) lets the owner's own
+devices create projects without a prefix. Its root is the project ``owner-global`` with
+``policy.owner_root: true`` (``ops account set owner``); members are the devices with a live
+``write``/``admin`` grant on it. A slug that is not in an account's namespace (no ``<account>-global`` row
+exists for its prefix) takes the owner path: a member creates it, tagged ``policy.owner_created: true``
+for the quota and with **no** ``policy.account``, so it is an ordinary default-group project like one
+made by ``ops project create`` (the isolation code never learns about it). Everyone else gets the same
+single refusal as on the account path.
 """
 
 from __future__ import annotations
@@ -33,6 +42,11 @@ ACCOUNT_RE = re.compile(r"^[a-z0-9]{2,32}$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 RESERVED_ACCOUNTS = frozenset({"hlm", "owner", "admin", "librarian", "mig", "system", "root"})
 ROOT_SUFFIX = "-global"
+#: D-279: the owner's own account. Reserved as an account name, so no slug prefix maps to it.
+OWNER_ACCOUNT = "owner"
+OWNER_ROOT = OWNER_ACCOUNT + ROOT_SUFFIX
+OWNER_ROOT_KEY = "owner_root"  # on the root's policy; only `ops account set owner` sets it
+OWNER_CREATED_KEY = "owner_created"  # on a project made through the owner path; the quota counts it
 DEFAULT_QUOTA = 20
 MAX_QUOTA = 200
 OPERATOR_DEVICE_ID = 1
@@ -55,6 +69,16 @@ def root_slug(account: str) -> str:
     return f"{account}{ROOT_SUFFIX}"
 
 
+def namespace_of(slug: str) -> str | None:
+    """The account whose namespace ``slug`` would lie in: its first segment, when the slug has a
+    hyphen and that segment is a valid, unreserved account name. Wider than ``account_of``: ``maher-``
+    (an empty rest) is in ``maher``'s namespace too, as ``ops account set`` reads it (``starts_with``)."""
+    head, sep, _rest = slug.partition("-")
+    if not sep or not ACCOUNT_RE.fullmatch(head) or head in RESERVED_ACCOUNTS:
+        return None
+    return head
+
+
 async def _project_row(conn: AsyncConnection, slug: str, *, lock: bool = False) -> dict[str, Any] | None:
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
@@ -74,6 +98,30 @@ def is_root(row: dict[str, Any] | None, account: str) -> bool:
         and policy.get("account") == account
         and policy.get("account_root") is True
     )
+
+
+def is_owner_root(row: dict[str, Any] | None) -> bool:
+    """The D-279 owner root: the project ``owner-global``, live, flagged by the operator."""
+    policy = (row or {}).get("policy") or {}
+    return (
+        row is not None
+        and row["slug"] == OWNER_ROOT
+        and row.get("archived_at") is None
+        and policy.get(OWNER_ROOT_KEY) is True
+    )
+
+
+def owner_slug_refusal(slug: str) -> str | None:
+    """Why an owner member may not create ``slug`` (None = allowed): the system namespace and roots
+    stay the operator's."""
+    head = slug.partition("-")[0]
+    if head in RESERVED_ACCOUNTS:  # hlm-global, hlm-librarian and every other system slug start with one
+        return "this slug is in the reserved system namespace"
+    if slug.endswith("-"):
+        return "a slug must not end with a hyphen"
+    if slug.endswith(ROOT_SUFFIX):
+        return "a slug ending in -global names an account root; the operator makes those"
+    return None
 
 
 async def live_members(conn: AsyncConnection, root_id: int) -> list[int]:
@@ -104,6 +152,13 @@ async def count_projects(conn: AsyncConnection, account: str) -> int:
     return int(row[0]) if row else 0
 
 
+async def count_owner_projects(conn: AsyncConnection) -> int:
+    """The projects made through the owner path (what the owner account's quota limits)."""
+    cur = await conn.execute("SELECT count(*) FROM projects WHERE policy->>%s = 'true'", (OWNER_CREATED_KEY,))
+    row = await cur.fetchone()
+    return int(row[0]) if row else 0
+
+
 def _public(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": int(row["project_id"]),
@@ -116,27 +171,52 @@ def _public(row: dict[str, Any]) -> dict[str, Any]:
 async def create_project(
     conn: AsyncConnection, ctx: AuthContext, slug: str, name: str | None
 ) -> dict[str, Any]:
-    """``hlm.project_create``: runs in the caller's (request) transaction."""
+    """``hlm.project_create``: runs in the caller's (request) transaction.
+
+    A slug in an account's namespace (``<account>-<rest>`` with a project row ``<account>-global``)
+    takes the D-274 account path; any other slug takes the D-279 owner path. Both refuse a non-member
+    with the same error, before any lock."""
     if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
         raise HlmError("E_INVALID_ARG", "slug must match [a-z0-9][a-z0-9-]{1,63}", {"slug": slug})
     if name is not None and (not isinstance(name, str) or not name.strip() or len(name) > NAME_MAX):
         raise HlmError("E_INVALID_ARG", f"name must be 1..{NAME_MAX} characters", {})
-    account = account_of(slug)
-    if account is None or ctx.is_admin or slug == root_slug(account):
+    if ctx.is_admin:
         raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
-    # membership first, without a lock: a non-member never locks (or times) another account's root
-    root = await _project_row(conn, root_slug(account))
+    # Both roots are read before any decision and without a lock, for every caller alike: a non-member
+    # never locks a root, and the number of reads depends on the slug's shape only, never on whether
+    # an account of that name exists.
+    space = namespace_of(slug)
+    root = None
+    if space is not None and slug != root_slug(space):
+        root = await _project_row(conn, root_slug(space))
+    owner_root = await _project_row(conn, OWNER_ROOT)
+    if root is not None:  # the prefix is an account's namespace, whatever the state of its root
+        assert space is not None
+        if account_of(slug) != space:  # `<account>-` with nothing after it: no account creates that
+            raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
+        return await _create_in_account(conn, ctx, slug, name, space, root)
+    return await _create_as_owner(conn, ctx, slug, name, owner_root)
+
+
+async def _create_in_account(
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    slug: str,
+    name: str | None,
+    account: str,
+    root: dict[str, Any],
+) -> dict[str, Any]:
+    """D-274: a member of ``account`` creates ``<account>-<rest>``, tagged ``policy.account``."""
     if not is_root(root, account):
         raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
-    assert root is not None
     root_id = int(root["project_id"])
     # an explicit grant: device 1's admin bypass never counts
     if ctx.grants.get(root_id) not in (Role.WRITE, Role.ADMIN):
         raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
-    root = await _project_row(conn, root_slug(account), lock=True)  # serializes the account's creates
-    if not is_root(root, account):  # changed while unlocked
+    locked = await _project_row(conn, root_slug(account), lock=True)  # serializes the account's creates
+    if not is_root(locked, account):  # changed while unlocked
         raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
-    assert root is not None
+    assert locked is not None
 
     existing = await _project_row(conn, slug, lock=True)
     if existing is not None:
@@ -149,8 +229,87 @@ async def create_project(
             {"slug": slug},
         )
 
-    quota = int((root.get("policy") or {}).get("project_quota") or DEFAULT_QUOTA)
+    quota = int((locked.get("policy") or {}).get("project_quota") or DEFAULT_QUOTA)
     used = await count_projects(conn, account)
+    return await _insert_and_grant(
+        conn,
+        ctx,
+        slug,
+        name,
+        root_id=root_id,
+        account=account,
+        tag={"account": account},
+        quota=quota,
+        used=used,
+    )
+
+
+async def _create_as_owner(
+    conn: AsyncConnection, ctx: AuthContext, slug: str, name: str | None, root: dict[str, Any] | None
+) -> dict[str, Any]:
+    """D-279: a member of the owner account creates a slug outside every account's namespace. The
+    project carries ``owner_created`` and no ``account`` tag: an ordinary default-group project."""
+    if not is_owner_root(root):
+        raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
+    assert root is not None
+    root_id = int(root["project_id"])
+    # an explicit grant: device 1's admin bypass never counts
+    if ctx.grants.get(root_id) not in (Role.WRITE, Role.ADMIN):
+        raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
+    # a member from here on: the slug rules may say why
+    refusal = owner_slug_refusal(slug)
+    if refusal is not None:
+        raise HlmError("E_FORBIDDEN", f"{refusal}; ask the operator", {"slug": slug})
+    locked = await _project_row(conn, OWNER_ROOT, lock=True)  # serializes the owner account's creates
+    if not is_owner_root(locked):  # changed while unlocked
+        raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
+    assert locked is not None
+    space = namespace_of(slug)
+    if space is not None and await _project_row(conn, root_slug(space)) is not None:
+        # an account root appeared for this prefix while unlocked: the slug is in its namespace now
+        raise HlmError("E_FORBIDDEN", _NOT_MEMBER, {"slug": slug})
+
+    existing = await _project_row(conn, slug, lock=True)
+    if existing is not None:
+        if (existing.get("policy") or {}).get(OWNER_CREATED_KEY) is True:
+            return {"project": {"slug": slug}, "created": False, "account": OWNER_ACCOUNT}
+        raise HlmError(
+            "E_FORBIDDEN",
+            "this slug exists and was not created through the owner account; ask the operator",
+            {"slug": slug},
+        )
+    # A root the operator commits between the re-read above and this transaction's commit is not seen
+    # by either side (review 130 C2): the project then lies under a live account, untagged, and a later
+    # `ops account set` for that account stops on it until the operator clears `owner_created` by hand.
+    quota = int((locked.get("policy") or {}).get("project_quota") or DEFAULT_QUOTA)
+    used = await count_owner_projects(conn)
+    return await _insert_and_grant(
+        conn,
+        ctx,
+        slug,
+        name,
+        root_id=root_id,
+        account=OWNER_ACCOUNT,
+        tag={OWNER_CREATED_KEY: True},
+        quota=quota,
+        used=used,
+    )
+
+
+async def _insert_and_grant(
+    conn: AsyncConnection,
+    ctx: AuthContext,
+    slug: str,
+    name: str | None,
+    *,
+    root_id: int,
+    account: str,
+    tag: dict[str, Any],
+    quota: int,
+    used: int,
+) -> dict[str, Any]:
+    """The shared tail, under the root lock: the quota, the row with its tag, the events, the grants
+    (device 1 ``admin``, every live member ``write``) and the skeleton card."""
     if used >= quota:
         raise HlmError(
             "E_FORBIDDEN",
@@ -161,9 +320,7 @@ async def create_project(
     title = (name or slug).strip()
     row = await q.insert_project(conn, slug=slug, name=title)
     pid = int(row["project_id"])
-    await conn.execute(
-        "UPDATE projects SET policy = policy || %s WHERE project_id = %s", (Jsonb({"account": account}), pid)
-    )
+    await conn.execute("UPDATE projects SET policy = policy || %s WHERE project_id = %s", (Jsonb(tag), pid))
     members = await live_members(conn, root_id)
     await q.insert_event(
         conn,
@@ -205,11 +362,19 @@ __all__ = [
     "ACCOUNT_RE",
     "DEFAULT_QUOTA",
     "MAX_QUOTA",
+    "OWNER_ACCOUNT",
+    "OWNER_CREATED_KEY",
+    "OWNER_ROOT",
+    "OWNER_ROOT_KEY",
     "RESERVED_ACCOUNTS",
     "account_of",
+    "count_owner_projects",
     "count_projects",
     "create_project",
+    "is_owner_root",
     "is_root",
     "live_members",
+    "namespace_of",
+    "owner_slug_refusal",
     "root_slug",
 ]
