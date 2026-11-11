@@ -60,6 +60,7 @@ over SSH and the token is piped straight into `hlm device login`; it never appea
 history or logs, and `login` stores it only after `/health` reports the device `trusted`.
 
 ```sh
+# zsh (the macOS default) does not split $OPS into words: run this block in bash, or `setopt SH_WORD_SPLIT` first
 OPS="bash deploy/scripts/hlm_ops.sh --state deploy/.local/SERVER_IP"   # SSH config from first_deploy.sh
 $OPS project create my-project --name 'My project' --exists-ok
 uv run hlm init --server https://FQDN/mcp --project my-project --device-name my-mac

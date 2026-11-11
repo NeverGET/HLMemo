@@ -2577,3 +2577,22 @@ D-277 | 2026-11-05 | ACCEPTED (owner goal 2026-11-04: "implement the recommendat
 - **Review 129.** Two parallel agents (Fable: correctness; Sonnet: security, spend, contracts), then one round-2
   agent. No HIGH. Round 1 found 5 MEDIUM and 7 LOW; round 2 found 1 MEDIUM and 2 LOW. Each was fixed with a test,
   or accepted or left open with its reason (consult 129). Lessons v4514 to v4516.
+
+D-278 | 2026-11-11 | ACCEPTED (owner: "it is time to use HLMemo there too"; on the grants: "let it see everything, the use of that machine is entirely mine") | **The owner's second machine joins as a `work`-class device. This is the first real use of D-023's device class and class scope; the operator role stays on the personal machine.**
+- **Readiness, checked in the code before the mint.**
+  - Every read path filters on the device's scope values, `all`, `class:<class>` and `device:<id>` (`auth/context.py:40`; query, drilldown, raw, risk_check, the librarian's privacy gate).
+  - `memory.write` and `memory.register_lesson` accept `class:work`.
+  - The owner's projects carry no account, so they share the default isolation group (`isolation_key`, D-275): the librarian, `risk_check` and synthesis work across them, whichever of the owner's devices writes.
+  - `risk_check` reads lessons from the home project, every other granted project and `hlm-global`. Grants therefore decide which experience reaches a machine.
+- **Grants (the owner's call).**
+  - The work device: write on the projects worked on from both machines and on a new project for the workstation itself; read on the owner's other projects and on `hlm-global`.
+  - The personal device: write on the workstation project.
+  - Guest accounts and test projects: no grant.
+- **Where machine knowledge lives.** Hard rules of one machine stay in that machine's `CLAUDE.md`. Experience that holds only there is written with `device_scope: "class:work"`, which the other class never reads. `hlm-global` stays the operator's: the work device reads it and lists promotion candidates.
+- **No operator access from the work machine.** It holds no SSH key. Project creation, grants, deploys, reviews and a migration's operator steps are done from the personal machine.
+- **Token storage on Linux.** `hlm device login` runs with `PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring`, so the token lands in the 0600 credentials file. The brief hook must read it at every session start without an unlocked desktop keyring, and `hlm mcp add claude --scope user` stores the same bearer in the user's Claude configuration anyway.
+- **The kit (private: guide, `preflight.sh`, `install.sh`, `verify.sh`, a `CLAUDE.md` block).** Adapted from the guest guide of D-274. `preflight.sh` measures the network before anything is installed: the install hosts, the server over IPv4 and IPv6, and the certificate's issuer, so a TLS-inspecting office network is refused.
+- **Evidence.** Fresh Fedora 45 containers, the client cloned from the public repository at 12b7e45, the real device token, reads only.
+  - x86_64 (emulated): install twice (idempotent), login, `whoami` (class `work`, scope `class:work`), queries following the grants, a guest project and a test project refused with `E_FORBIDDEN_PROJECT`, the brief for a mapped folder, Claude Code 2.1.322 with `hlm` connected.
+  - arm64 (native): the packaged tarball from extraction to `verify.sh` passing, with an existing `settings.json` kept and backed up.
+- **Not verified.** The office network (the preflight measures it on site), GNOME keyring behaviour (avoided by the file store), and the migration kit's local rehearsal on Fedora, where `podman` is the default.

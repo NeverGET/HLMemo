@@ -479,6 +479,7 @@ key; production should not.
 ```sh
 uv sync --frozen
 export HLM_SERVER_URL=https://memory.example.org/mcp  # replace domain
+# zsh (the macOS default) does not split $OPS into words: run this block in bash, or `setopt SH_WORD_SPLIT` first
 OPS="bash deploy/scripts/hlm_ops.sh --state deploy/.local/SERVER_IP"
 $OPS project create my-project --name 'My project' --exists-ok
 uv run hlm init --server "$HLM_SERVER_URL" --project my-project --device-name my-mac

@@ -131,6 +131,21 @@ A fresh clone on macOS, followed as a guest would (details private).
 - **Installability (W3) input.** The guest guide needed: an alias, not PATH (the venv's python would shadow `python3`); `claude mcp add --scope user`; a settings.json merge snippet for the hook; a hand-written `capture.toml`. A `hlm setup` command could do all four.
 - **Per-account model later.** `devices.user_id` is always `owner`. A guest's "global" layer is a plain project granted only to their devices (`<name>-global`), and isolation rests on grants.
 
+## Second owner device, Linux (2026-11-11, D-278)
+The private kit for the owner's work machine (preflight, install, verify) ran end to end in Fedora containers.
+- **Productise it (W3 input, with the guest dry run above).** `hlm setup` should do what the kit's `install.sh`
+  does (the `~/.local/bin/hlm` wrapper, user `hlm.toml`, skills, the hook merge with a backup, a starter
+  `capture.toml`), and `hlm doctor` should grow the kit's two other checks: the network preflight (install hosts,
+  IPv4 and IPv6, the certificate issuer) and the per-mapping brief test.
+- **`hlm device login --file-store`.** On Linux the kit forces the credentials file with
+  `PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring`, because the hook cannot rely on an unlocked desktop
+  keyring. A flag would say this plainly.
+- **A second device has no channel to the operator.** `QUESTIONS-FOR-OPERATOR.md` lives in the migrating machine's
+  private folder and travels by hand. Idea: an operator-request item the operator session queries.
+- **Not verified on Fedora:** the migration kit's local rehearsal (`podman` is the default there).
+- **Test trap:** GNU tar 1.35 cannot extract any archive in an emulated amd64 Fedora container on Apple silicon
+  ("Function not implemented"). Test tarballs in a native container.
+
 ## Ideas from claude-mem (2026-10-15): parked, evaluate later
 Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Evaluate one at a time, measure first.
 - **File-anchored recall:** inject memories tied to a file when the agent reads it (PreToolUse on Read); the cheapest form of "spontaneous recall". Items already carry `describes` → `code_refs`. Measure how often a read file has code_refs and whether the injected items help.
