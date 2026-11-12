@@ -130,6 +130,8 @@ def _item(e: Entry, links: list[dict[str, Any]] | None) -> dict[str, Any]:
             item["links"] = links
     elif rec.evidenced_valid_from:
         item["valid_from"] = rec.evidenced_valid_from
+    if ex is None and e.action == "changed" and e.keep_scope and rec.kind_guess != "project_card":
+        item["device_scope"] = e.keep_scope  # set by a re-scope or a chat revision: a source file has no say
     if e.action == "changed" and rec.kind_guess != "project_card":
         item["logical_id"] = e.logical_id
     if e.action == "changed" or rec.kind_guess == "project_card":

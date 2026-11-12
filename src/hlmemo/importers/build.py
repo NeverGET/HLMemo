@@ -72,6 +72,9 @@ def _tags(system: str, rel: str, meta: dict[str, Any]) -> list[str]:
     if parent:
         tags.append(parent)
     extra = meta.get("tags")
+    if isinstance(extra, str):  # `tags: a, b`: the migration lint reads it as a list, so the import must too,
+        # element for element (migrate/lint.py `_tags`: brackets off, then quotes off each part)
+        extra = [t for t in (part.strip().strip("'\"") for part in extra.strip("[]").split(",")) if t]
     if isinstance(extra, list):
         tags += [str(t) for t in extra if isinstance(t, str | int)]
     out: list[str] = []

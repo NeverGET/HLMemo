@@ -68,6 +68,9 @@ class Entry:
     expected: int | None = None  # expected_version_id of the write (None: a new item)
     remapped_from: str | None = None
     tokens: int = 0
+    #: a narrowed ``device_scope`` of the stored item that a plain source file cannot state: the
+    #: revision carries it on, or the write's default would silently widen the item back to "all"
+    keep_scope: str | None = None
 
 
 @dataclass(slots=True)
@@ -249,12 +252,14 @@ def _classify_one(
         same = (target.get("source") or {}).get("sha256") == rec.sha256 and target.get(
             "kind", rec.kind_guess
         ) == rec.kind_guess
+        scope = target.get("device_scope") or "all"
         return Entry(
             rec,
             "unchanged" if same else "changed",
             target["logical_id"],
             target["version_id"],
             expected=target["version_id"],
+            keep_scope=scope if scope != "all" else None,
         )
     lid_of = None
     if rec.kind_guess == "project_card":
@@ -366,6 +371,8 @@ def remap(plan: Plan, old_items: list[dict[str, Any]], *, confirm_close: bool = 
         e = news[n]
         e.action, e.logical_id, e.head_version_id = "changed", lid, olds[lid]["version_id"]
         e.expected, e.remapped_from = olds[lid]["version_id"], old_key
+        old_scope = olds[lid].get("device_scope") or "all"
+        e.keep_scope = old_scope if old_scope != "all" else None  # a moved or split file keeps it too
         plan.remapped.append({"from": old_key, "to": e.record.key, "score": round(sim, 3)})
     for lid in sorted(ambiguous - used_old):
         plan.kept.append({"key": source_key(olds[lid].get("source")), "reason": "remap-ambiguous"})

@@ -154,6 +154,53 @@ The private kit for the owner's work machine (preflight, install, verify) ran en
 - **`hlm project create` prints "needs membership of the account its slug names (<account>-...)"** for an owner
   device that lacks the owner grant. The message must stay the one refusal, but the CLI could add a hint.
 
+## First migrations from the second device (2026-11-12): kit, importer and reader feedback
+Two migrations were run on the work-class device with no operator in reach: a Light one (58 items, finished) and a
+Full one in progress (about 1,700 items expected). Details and the chats' question files are private.
+- **Fixed the same day (review 131):** a changed or re-mapped re-import widened a narrowed `device_scope` back
+  to `all`; `tags: a, b` passed the lint and was dropped by the import; `local_stack.sh` needed a host `psql`;
+  `hlm project list` answered `E_NOT_FOUND` on a production server (it now shows the device's grants).
+- **A source cannot state its `device_scope`.** Everything is imported as `all`; machine-only knowledge then needs
+  an operator re-scope (export, add `device_scope` to the frontmatter, import). Wanted: a spec default and a
+  frontmatter key. Two traps for the design: a device outside the class cannot see the narrowed items, so its
+  next import classifies the sources as `new` and duplicates them (guard on `whoami`'s scope); and frontmatter in
+  a multi-entry file lands in the preamble item.
+- **No per-entry tags in a multi-entry file.** Tags are computed once per file; today's workaround is one file per
+  entry. A `Tags:` line under a dated heading would do.
+- **Item bodies keep the raw frontmatter** (`build.py` passes the whole text): readers see `title:`/`tags:` lines.
+- **`ops project policy set` cannot switch a project's librarian off** (only `librarian_cross_project` is
+  settable), although the privacy gate honours `policy.librarian = off`. An ops verb is missing.
+- **Import cost is stale in the playbook.** It gives 0.0013–0.003 USD per item for the old pipeline; the D-277
+  pipeline with the shadow measured 0.0023 on average (p90 0.0036) over 428 reviewed writes. F5 should include
+  a provider-balance check: a large import can empty the balance that `memory.ask` shares.
+- **Kit suggestions from the Full migration (candidates for the playbook):**
+  - curators read a masked copy of the sources, in which extracted secret values and internal addresses are
+    swapped by code for variable tokens with line numbers kept (`hlm migrate mask`);
+  - read every commit's diff: about a fifth of the episodes written from commit messages alone were wrong;
+  - a "not carried out" verdict is checked against the whole later history and every repository in scope;
+  - every security episode states when the condition ended;
+  - provisional ids and chain keys for a decision log that parallel packages write, with a consolidation step;
+  - §5.9 for legacy stores written in parallel (one primary store per period, the others enrich; a coverage
+    manifest checked by code, `hlm migrate coverage`).
+- **Scan:** `scan.py` reads only the curated tree, so the pre-scan of a source directory relies on gitleaks
+  alone (which found 0 where readers found 17 clear-text credential lines); the key-path rule flags
+  `~/.ssh/config` and `known_hosts`.
+- **Linux notes for the kit:** gitleaks and Docker are not in the device guide's prerequisites; in zsh a variable
+  named `path` is tied to `PATH`.
+- **Reader feedback on `memory.query`:**
+  - a stack term returns generic lessons with `evidence: "matched"` and no sign of which terms matched;
+  - chunks of one item take several slots; resolved and historical lessons rank beside active ones;
+  - previews spend the budget on provenance lines instead of the rule; import paths cost title characters;
+  - large `omitted` counts with no titles-only mode or cursor; the card eats a small budget;
+  - a lesson's version distance (`next@16` against a reader on 15.5) is not shown;
+  - a cross-project lesson search by topic or scope tag, without phrasing a task, is missing.
+- **`memory.risk_check` after a judge timeout:** the verdict reads `no_matching_evidence` while `unjudged` holds
+  applicable lessons just under the threshold (0.044 and 0.042 against 0.045). A verdict that names unjudged
+  candidates would be harder to misread. (Adds to "risk judge timeouts" above.)
+- **`memory.ask`:** the claims list repeats the answer and its headings; a compact mode would halve the reader's
+  cost.
+- **Wording.** The kit and the digest say "the owner" throughout and agents copy it; he prefers his name.
+
 ## Ideas from claude-mem (2026-10-15): parked, evaluate later
 Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Evaluate one at a time, measure first.
 - **File-anchored recall:** inject memories tied to a file when the agent reads it (PreToolUse on Read); the cheapest form of "spontaneous recall". Items already carry `describes` → `code_refs`. Measure how often a read file has code_refs and whether the injected items help.

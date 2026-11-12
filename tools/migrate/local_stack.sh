@@ -44,8 +44,19 @@ up() {
   if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "port $PORT is busy (an old scratch API?): run 'down' or set HLM_MIG_PORT" >&2; exit 1
   fi
-  PGOPTIONS="-c client_min_messages=warning" psql "$PG/postgres" -v ON_ERROR_STOP=1 -qc "DROP DATABASE IF EXISTS $DB" \
-    -c "CREATE DATABASE $DB" >/dev/null
+  # the repository's own interpreter and driver: a machine with Docker but no PostgreSQL client still works
+  HLM_MIG_ADMIN_DSN="$PG/postgres" HLM_MIG_DB="$DB" "$PY" -c '
+import os
+import psycopg
+from psycopg import sql
+db = sql.Identifier(os.environ["HLM_MIG_DB"])
+try:
+    with psycopg.connect(os.environ["HLM_MIG_ADMIN_DSN"], autocommit=True, options="-c client_min_messages=warning") as c:
+        c.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(db))
+        c.execute(sql.SQL("CREATE DATABASE {}").format(db))
+except psycopg.Error as exc:
+    raise SystemExit(f"scratch database reset failed: {str(exc).strip()}") from None
+'
   HLM_DB_DSN="$PG/$DB" HLM_MODELS_DIR="${HLM_MODELS_DIR:-$REPO/models}" "$PY" -m alembic -c "$REPO/alembic.ini" \
     upgrade main@head >"$STATE/alembic.log" 2>&1 || { tail -20 "$STATE/alembic.log" >&2; exit 1; }
   HLM_DB_DSN="$PG/$DB" "$PY" -m hlmemo.ops project create "$SLUG" --name "$SLUG (local rehearsal)" --exists-ok >/dev/null

@@ -797,12 +797,26 @@ def project_create(
 @project_app.command("list")
 @_guard
 def project_list(ctx: typer.Context) -> None:
-    """List projects visible to this device."""
+    """List projects visible to this device (on a production server: the device's grants)."""
     c = _ctx(ctx)
+    source = "projects"
     with c.http() as http:
-        rows = http.project_list()
+        try:
+            rows = http.project_list()
+        except HlmHttpError as exc:
+            if exc.status != 404:
+                raise
+            # production closes the listing route with the admin routes (404 for every device): the
+            # grants of the calling device are what it may use
+            rows = [{"slug": g["project"], "role": g["role"]} for g in http.whoami().get("grants", [])]
+            source = "grants"
     if c.as_json:
-        typer.echo(compact({"projects": rows}))
+        typer.echo(compact({"projects": rows, "source": source}))
+        return
+    if source == "grants":
+        typer.echo("this server lists no projects; this device's grants:", err=True)
+        for p in rows:
+            typer.echo(f"{p['slug']:<28} role={p['role']}")
         return
     for p in rows:
         typer.echo(f"{p.get('id'):>4}  {p.get('slug'):<24} {p.get('name', '')}  role={p.get('role', '-')}")
