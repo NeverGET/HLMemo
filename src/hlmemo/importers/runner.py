@@ -30,6 +30,24 @@ WRITE_BUDGET = 2000
 LOOKUP_BATCH = 200
 
 
+#: pauses before the retries of a READ that failed with a retryable E_UNAVAILABLE (a 5xx or a dropped
+#: connection under load: 2026-11-13, one `hlm.export` page in a 1,754-item import). Reads are
+#: idempotent, so a retry is safe; a write is never retried here (its request_id replay is the caller's)
+READ_RETRY_PAUSES_S = (2.0, 5.0)
+
+
+async def _read_with_retry(call: Call, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    for pause in (*READ_RETRY_PAUSES_S, None):
+        try:
+            return await call(tool, args)
+        except ToolCallError as exc:
+            if pause is None or exc.code != "E_UNAVAILABLE" or not exc.retryable:
+                raise
+            print(f"{tool}: {exc.code} ({exc.message}); retrying in {pause:g} s", file=sys.stderr)
+            await asyncio.sleep(pause)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 async def fetch_items(
     call: Call,
     project: str,
@@ -56,7 +74,7 @@ async def fetch_items(
             args["logical_ids"] = logical_ids
         if cursor:
             args["cursor"] = cursor
-        page = await call(EXPORT_TOOL, args)
+        page = await _read_with_retry(call, EXPORT_TOOL, args)
         as_of = page.get("as_of", as_of)
         for it in page["items"]:
             prev = items[-1] if items else None

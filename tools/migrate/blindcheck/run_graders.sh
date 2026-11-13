@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 # Two isolated blind graders for a migration's blind check (TEMPLATE §7, D-216). Each grader works in its own directory
 # OUTSIDE the repository that holds ONLY packets/ + READER-INSTRUCTIONS.md + its reader order (no key, no answers, no
-# truth set). Grader 1: `claude -p` (file tools confined to its dir, no MCP, HLM_CAPTURE=off). Grader 2: `codex exec`
-# (workspace-write in its dir). Outputs are copied back BY CODE into <work>/graders and <work>/grades-<n>.jsonl (0600).
+# truth set). Both graders are `claude -p` runs on different models (file tools confined to the grader's dir, no MCP,
+# HLM_CAPTURE=off). Outputs are copied back BY CODE into <work>/graders and <work>/grades-<n>.jsonl (0600).
 # Stale grades are deleted first; a failed or silent grader makes the script exit 1.
 #
 #   bash tools/migrate/blindcheck/run_graders.sh <work dir of blindcheck.py> <grader root outside the repo>
-# Environment: GRADER1_MODEL (default sonnet), GRADER2_MODEL (default gpt-6-astra), GRADER2_EFFORT (default low).
+# Environment: GRADER1_MODEL (default sonnet), GRADER2_MODEL (default opus).
 set -euo pipefail
 umask 077
 W="$(cd "${1:?work dir}" && pwd)"
 ROOT="${2:?grader root (outside the repository)}"
 G1=${GRADER1_MODEL:-sonnet}
-G2=${GRADER2_MODEL:-gpt-6-astra}
-E2=${GRADER2_EFFORT:-low}
+G2=${GRADER2_MODEL:-opus}
 for f in packets READER-INSTRUCTIONS.md reader-order-1.txt reader-order-2.txt; do
   [[ -e $W/$f ]] || { echo "missing $W/$f (run blindcheck.py packets)" >&2; exit 64; }
 done
@@ -43,16 +42,16 @@ EOF
     --tools "Read,Write,Glob" --allowedTools "Read" "Write" "Glob" --permission-mode acceptEdits \
     --output-format json --max-turns 60 > "$ROOT/grader-1.out.json" 2> "$ROOT/grader-1.err" ) &
 p1=$!
-( prompt 2 > "$ROOT/grader-2.prompt.md"
-  HLM_CAPTURE=off codex exec --skip-git-repo-check -s workspace-write -m "$G2" -c model_reasoning_effort="$E2" \
-    -C "$ROOT/grader-2" -o "$ROOT/grader-2.last.md" - < "$ROOT/grader-2.prompt.md" > "$ROOT/grader-2.out.log" 2>&1 ) &
+( cd "$ROOT/grader-2" && HLM_CAPTURE=off claude -p "$(prompt 2)" --model "$G2" --restricted --strict-mcp-config \
+    --tools "Read,Write,Glob" --allowedTools "Read" "Write" "Glob" --permission-mode acceptEdits \
+    --output-format json --max-turns 60 > "$ROOT/grader-2.out.json" 2> "$ROOT/grader-2.err" ) &
 p2=$!
 rc1=0; rc2=0
 wait "$p1" || rc1=$?
 wait "$p2" || rc2=$?
 echo "grader-1 rc=$rc1 grader-2 rc=$rc2"
 cp "$ROOT/grader-1.out.json" "$ROOT/grader-1.err" "$W/graders/" 2>/dev/null || true
-cp "$ROOT/grader-2.prompt.md" "$ROOT/grader-2.out.log" "$ROOT/grader-2.last.md" "$W/graders/" 2>/dev/null || true
+cp "$ROOT/grader-2.out.json" "$ROOT/grader-2.err" "$W/graders/" 2>/dev/null || true
 fail=0
 for n in 1 2; do
   if [[ -f $ROOT/grader-$n/grades-$n.jsonl ]]; then

@@ -200,3 +200,91 @@ def test_project_list_keeps_the_listing_route_and_other_errors(monkeypatch: pyte
     monkeypatch.setattr(cli, "_ctx", lambda _ctx: _FakeCtx(4041, True))
     r = CliRunner().invoke(cli.app, ["project", "list"])
     assert r.exit_code == 0 and json.loads(r.stdout) == {"projects": [], "source": "grants"}
+
+
+def _unavailable(retryable: bool = True) -> Exception:
+    from hlmemo.cli.mcp_client import ToolCallError
+
+    return ToolCallError("E_UNAVAILABLE", "memory server error (HTTP 503)", retryable=retryable)
+
+
+@pytest.mark.parametrize(
+    ("failures", "ok"),
+    [(0, True), (1, True), (2, True), (3, False)],
+)
+async def test_a_manifest_read_retries_a_transient_unavailable(
+    monkeypatch: pytest.MonkeyPatch, failures: int, ok: bool
+) -> None:
+    """2026-11-13: one `hlm.export` page answered 503 under load at a batch's start; the read is retried."""
+    from hlmemo.cli.mcp_client import ToolCallError
+    from hlmemo.importers import runner
+
+    pauses: list[float] = []
+
+    async def no_sleep(s: float) -> None:
+        pauses.append(s)
+
+    monkeypatch.setattr(runner.asyncio, "sleep", no_sleep)
+    calls = 0
+
+    async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls <= failures:
+            raise _unavailable()
+        return {"items": [{"logical_id": 1}], "as_of": {"valid_at": "t"}, "next_cursor": None}
+
+    if ok:
+        items, as_of = await runner.fetch_items(call, "fx")
+        assert items == [{"logical_id": 1}] and as_of == {"valid_at": "t"}
+        assert calls == failures + 1 and pauses == list(runner.READ_RETRY_PAUSES_S[:failures])
+    else:
+        with pytest.raises(ToolCallError):
+            await runner.fetch_items(call, "fx")
+        assert calls == 3 and pauses == list(runner.READ_RETRY_PAUSES_S)
+
+
+async def test_a_refusal_or_a_non_retryable_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hlmemo.cli.mcp_client import ToolCallError
+    from hlmemo.importers import runner
+
+    async def no_sleep(_s: float) -> None:
+        raise AssertionError("no pause expected")
+
+    monkeypatch.setattr(runner.asyncio, "sleep", no_sleep)
+    for exc in (ToolCallError("E_FORBIDDEN_PROJECT", "no read grant"), _unavailable(retryable=False)):
+        calls = 0
+
+        async def call(tool: str, args: dict[str, Any], exc: Exception = exc) -> dict[str, Any]:
+            nonlocal calls
+            calls += 1
+            raise exc
+
+        with pytest.raises(ToolCallError):
+            await runner.fetch_items(call, "fx")
+        assert calls == 1
+
+
+async def test_a_retried_page_resends_the_same_cursor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Review of the retry: page 2 fails once; the retry asks for the same signed cursor."""
+    from hlmemo.importers import runner
+
+    async def no_sleep(_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(runner.asyncio, "sleep", no_sleep)
+    seen: list[str | None] = []
+
+    async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        seen.append(args.get("cursor"))
+        if len(seen) == 2:
+            raise _unavailable()
+        if args.get("cursor") is None:
+            return {"items": [{"logical_id": 1}], "as_of": {"valid_at": "t"}, "next_cursor": "c2"}
+        return {"items": [{"logical_id": 2}], "as_of": {"valid_at": "t"}, "next_cursor": None}
+
+    items, _as_of = await runner.fetch_items(call, "fx")
+    assert [it["logical_id"] for it in items] == [1, 2] and seen == [None, "c2", "c2"]
+    assert "retrying in 2 s" in capsys.readouterr().err
