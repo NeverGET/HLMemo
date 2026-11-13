@@ -216,16 +216,23 @@ second product's security lesson about that framework as its top warning. What i
 product is affected (no fact joins "which project runs which version"), speak without being asked, or keep the
 follow-up open until someone works in the second product.
 
+**His refinement (the same evening).** A reminder has three parts: what to do, where it can be done, and when
+to raise it. At the work machine a product that lives on the home machine cannot be touched; the right move is
+to leave a note for the place where it can be ("at home, update the framework in that product"), and for that
+note to come up by itself when a session starts there.
+
 **Proposed order (a proposal, not decided):**
-1. A stack inventory per project: current "runs X at version Y" facts, kept current and searchable.
-2. Cross-project recall on request: for a described task, the other projects on the same stack with their
+1. The brief shows the open notes for this place and this project at session start. Deterministic and small;
+   the notes project between the two machines already stores them.
+2. Memory knows where a project can be worked on (each machine's folder mapping, reported to the server).
+3. A stack inventory per project: current "runs X at version Y" facts, kept current and searchable.
+4. Cross-project recall on request: for a described task, the other projects on the same stack with their
    version distance (the reader feedback of 2026-11-12 asked for the same). Ceiling first: take real past cases
-   and see whether a model that reads all memory finds the sibling project; if not, the gap is data (step 1).
-3. Push: the recall fires by itself at the right moments (session start, before a dependency or security change).
-4. Follow-through: a "this project needs it too" note stays open until a session there has dealt with it (the
-   notes project between the two machines is its first form).
-5. The librarian above observer, so memory stays true without an operator pass (needs the promotion criterion).
-6. The one-session pilot: count how often Cemal still has to carry something to another chat.
+   and see whether a model that reads all memory finds the sibling project; if not, the gap is data (step 3).
+5. Push: the recall fires by itself at the right moments (session start, before a dependency or security change),
+   and when the sibling cannot be worked on here, the session leaves the note for the place where it can.
+6. The librarian above observer, so memory stays true without an operator pass (needs the promotion criterion).
+7. The one-session pilot: count how often Cemal still has to carry something to another chat.
 
 Promoting the librarian and proactive recall are two different things: the first curates what is stored, the
 second speaks during a session. The example needs the second.
