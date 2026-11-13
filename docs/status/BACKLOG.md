@@ -221,7 +221,7 @@ to raise it. At the work machine a product that lives on the home machine cannot
 to leave a note for the place where it can be ("at home, update the framework in that product"), and for that
 note to come up by itself when a session starts there.
 
-**Proposed order (a proposal, not decided):**
+**Order (the plan since D-281, 2026-11-14; it starts after the current goal, the librarian's promotion check):**
 1. The brief shows the open notes for this place and this project at session start. Deterministic and small;
    the notes project between the two machines already stores them.
 2. Memory knows where a project can be worked on (each machine's folder mapping, reported to the server).
@@ -242,7 +242,13 @@ prospective memory and the brain's memory systems. It proposes six reminder laye
 place-bound notes, to-dos, topic-cued reminders, lessons), eight rules for them (store the cue with the intention,
 prefer cue-driven surfacing, check at natural breaks, close with a stop tag, do not over-remind, ...), and lists
 what else the comparison says is missing: use-time correction, context as the cue, offline consolidation,
-demotion of resolved items, salience capture. Nothing in it is decided.
+demotion of resolved items, salience capture.
+
+**Adopted as the planned design (D-281, 2026-11-14).** Layer by milestone: step 1 is L2; step 5 is L4; L3
+(to-dos) and L1 (must-remember) come with the stored "open" state, after step 1 has shown what the brief can
+carry. Cue matching starts with exact stack and version tags; a seeded set of intentions is the measurement (fired
+at the right moment, missed, fired when irrelevant, acted on twice). Still to settle when L1 is built: its budget
+and who may pin. The other gaps of the comparison are candidates, each behind a ceiling measurement.
 
 ## The first Full import from the second device (2026-11-13): findings on the server
 A 1,754-item import ran in ten minutes from the work-class device; verify, the blind check (24 of 25, 0 superseded
