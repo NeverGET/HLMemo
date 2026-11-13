@@ -140,8 +140,10 @@ The private kit for the owner's work machine (preflight, install, verify) ran en
 - **`hlm device login --file-store`.** On Linux the kit forces the credentials file with
   `PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring`, because the hook cannot rely on an unlocked desktop
   keyring. A flag would say this plainly.
-- **A second device has no channel to the operator.** `QUESTIONS-FOR-OPERATOR.md` lives in the migrating machine's
-  private folder and travels by hand. Idea: an operator-request item the operator session queries.
+- **Notes between the machines: solved without code (2026-11-13).** A shared project, kept out of cross-project
+  librarian work, holds them: one item per note, open until a later item supersedes it, read at session start
+  in the other place. Still wanted: the brief could show open notes for the calling device's class, and the
+  migration kit's `QUESTIONS-FOR-OPERATOR.md` step should say this instead of a file.
 - **Not verified on Fedora:** the migration kit's local rehearsal (`podman` is the default there).
 - **Test trap:** GNU tar 1.35 cannot extract any archive in an emulated amd64 Fedora container on Apple silicon
   ("Function not implemented"). Test tarballs in a native container.
