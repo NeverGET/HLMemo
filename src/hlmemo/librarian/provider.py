@@ -237,6 +237,12 @@ def is_billing_or_quota(
 Validator = Callable[[dict[str, Any]], str | None]
 #: loop lineage of the call being made (per asyncio task; concurrent calls never share it)
 _LINEAGE: contextvars.ContextVar[str | None] = contextvars.ContextVar("hlm_llm_lineage", default=None)
+#: the ceiling slots claimed inside the current ``lineage_scope``, per lineage (one mutable mapping,
+#: shared with child tasks): a run that ends in ``BudgetDeferred`` is redone from its first call, so
+#: the worker gives these back (D-280, review 133 C1)
+_CLAIMED: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar(
+    "hlm_llm_claimed", default=None
+)
 #: privacy/authority re-check run before every network attempt of the current call (Sol 37 #1)
 _PRECHECK: contextvars.ContextVar[Callable[[], Awaitable[None]] | None] = contextvars.ContextVar(
     "hlm_llm_precheck", default=None
@@ -298,13 +304,17 @@ async def _finalize(coro: Awaitable[Any]) -> None:
 
 
 @contextlib.contextmanager
-def lineage_scope(lineage: str | None) -> Iterator[None]:
+def lineage_scope(lineage: str | None) -> Iterator[dict[str, int]]:
     """Every provider call made inside (by any handler) counts against ``lineage``'s ceiling;
-    the worker wraps each job's plan in it, so a handler cannot forget to pass it."""
+    the worker wraps each job's plan in it, so a handler cannot forget to pass it. Yields the
+    slots claimed inside, per lineage (filled as the calls go out)."""
     token = _LINEAGE.set(lineage)
+    claimed: dict[str, int] = {}
+    claimed_token = _CLAIMED.set(claimed)
     try:
-        yield
+        yield claimed
     finally:
+        _CLAIMED.reset(claimed_token)
         _LINEAGE.reset(token)
 
 
@@ -601,7 +611,10 @@ class Provider:
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Clock | None = None,
         chain: list[LlmProfile] | None = None,
+        background: bool = False,
     ) -> Provider:
+        """``background`` (D-280): the caller's work can wait (the librarian worker), so its
+        reservations stop at ``llm_budget_background_share`` of each cap."""
         mode = settings.llm_mode
         cassettes = None
         if mode in ("record", "replay"):
@@ -611,7 +624,12 @@ class Provider:
         budget: BudgetGuard = (
             NoBudget()
             if settings.llm_budget_disabled
-            else DbBudget(conn, Caps.from_settings(settings), ttl_s=settings.llm_reservation_ttl_s)
+            else DbBudget(
+                conn,
+                Caps.from_settings(settings),
+                ttl_s=settings.llm_reservation_ttl_s,
+                share=settings.llm_budget_background_share if background else 1,
+            )
         )
         return cls(
             chain if chain is not None else profile_chain(settings),
@@ -1035,8 +1053,26 @@ class Provider:
         lineage = _LINEAGE.get()
         if lineage is None and job_id is not None:
             lineage = str(uuid.uuid5(uuid.NAMESPACE_URL, f"hlm-job-id:{job_id}"))
-        if lineage is not None and not await self.ledger.claim(lineage, self.job_call_cap):
+        if lineage is None:
+            return
+        if not await self.ledger.claim(lineage, self.job_call_cap):
             raise JobCallCapExceeded(f"E_CALL_CAP lineage reached {self.job_call_cap} calls")
+        claimed = _CLAIMED.get()
+        if claimed is not None:
+            claimed[lineage] = claimed.get(lineage, 0) + 1
+
+    async def refund_claims(self, claimed: dict[str, int]) -> int:
+        """Give back the ceiling slots a run claimed (``lineage_scope``'s mapping), because the run
+        ended in ``BudgetDeferred`` and will be redone from its first call. Without this a job that
+        waits at a spend bound loses a few slots on every hand-back and is failed by the ceiling
+        although it never looped. The money those calls cost stays spent."""
+        total = 0
+        for lineage, n in list(claimed.items()):
+            if n > 0:
+                await self.ledger.refund(lineage, n)
+                total += n
+        claimed.clear()
+        return total
 
     async def _run_guard(self, profile: LlmProfile, task: TaskSpec, messages: list[dict[str, str]]) -> None:
         """The caller's per-attempt guard (``AttemptGuard``), with THIS attempt's worst case priced by

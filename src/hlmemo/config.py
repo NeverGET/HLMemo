@@ -282,6 +282,9 @@ class Settings(BaseSettings):
     llm_budget_hour_usd: float = Field(default=3.0, ge=0)
     llm_budget_day_usd: float = Field(default=10.0, ge=0)
     llm_budget_month_usd: float = Field(default=60.0, ge=0)
+    # D-280: the part of each cap (hour, day, month) that the librarian worker's background calls may
+    # use; the rest stays free for the interactive calls of the API process. 1 = no separate bound.
+    llm_budget_background_share: float = Field(default=1.0, gt=0, le=1)
     llm_reservation_ttl_s: int = Field(default=600, gt=0)
     llm_job_call_cap: int = Field(default=20, gt=0)
     llm_redact_email: bool = False
@@ -442,6 +445,11 @@ class Settings(BaseSettings):
                 return None
             return json.loads(v)
         return v
+
+    @field_validator("llm_budget_background_share", mode="before")
+    @classmethod
+    def _background_share(cls, v: Any) -> Any:
+        return 1.0 if isinstance(v, str) and not v.strip() else v  # an empty env line is "unset"
 
     @field_validator("librarian_relate_verify_max_tokens")
     @classmethod

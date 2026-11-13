@@ -742,6 +742,18 @@ class R2DeployCheckTest(unittest.TestCase):
                 self.assertEqual(1, code, output)
                 self.assertIn("spend guard violates the r4 manifest (D-121)", output)
                 self.assertIn(message, output)
+        # D-280: the background share is optional; when set it is a number above 0 and at most 1
+        for share in ("0.75", "1", "0.01", ""):
+            with self.subTest(share=share):
+                code, output = self.r4(manifest={"HLM_LLM_BUDGET_BACKGROUND_SHARE": share})
+                self.assertEqual(0, code, output)
+        for share in ("0", "1.5", "-0.2", "half", "nan"):
+            with self.subTest(bad_share=share):
+                code, output = self.r4(manifest={"HLM_LLM_BUDGET_BACKGROUND_SHARE": share})
+                self.assertEqual(1, code, output)
+                self.assertIn(
+                    f"HLM_LLM_BUDGET_BACKGROUND_SHARE={share} (a number above 0 and at most 1)", output
+                )
         r3_with_r4_caps = dict(zip(CAP_KEYS, ("3", "8", "60"), strict=True))
         code, output = self.evaluate(
             report("librarian", manifest=r3_with_r4_caps),

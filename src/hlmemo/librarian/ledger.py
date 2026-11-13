@@ -63,6 +63,8 @@ class Ledger(Protocol):
 
     async def claim(self, lineage: str, cap: int) -> bool: ...
 
+    async def refund(self, lineage: str, n: int) -> None: ...
+
 
 class DbLedger:
     def __init__(self, conn: ConnCtx) -> None:
@@ -141,6 +143,17 @@ class DbLedger:
                 await conn.commit()
         return row is not None and cap > 0
 
+    async def refund(self, lineage: str, n: int) -> None:
+        """Give ``n`` claimed slots back to ``lineage`` (never below zero)."""
+        async with self._conn() as conn:
+            await conn.execute(
+                "UPDATE llm_lineage_calls SET calls = GREATEST(calls - %s, 0), updated_at = clock_timestamp()"
+                " WHERE lineage = %s",
+                (n, lineage),
+            )
+            if not conn.autocommit:
+                await conn.commit()
+
 
 class MemoryLedger:
     def __init__(self) -> None:
@@ -162,6 +175,9 @@ class MemoryLedger:
             return False
         self.claims[lineage] = n + 1  # no await between check and set: atomic on the event loop
         return True
+
+    async def refund(self, lineage: str, n: int) -> None:
+        self.claims[lineage] = max(self.claims.get(lineage, 0) - n, 0)
 
     def as_dicts(self) -> list[dict]:
         out = []

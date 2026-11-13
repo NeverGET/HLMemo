@@ -512,9 +512,10 @@ class LibrarianWorker:
                 await self.defer(await holder.get(), job, "E_UNKNOWN_OP", max_attempts=1)
                 self.stats.jobs_failed += 1
                 return
+            claimed: dict[str, int] = {}
             async with self._renewer.watch(job) as lost:
                 try:
-                    with lineage_scope(job.lineage):
+                    with lineage_scope(job.lineage) as claimed:
                         plan = await handler.plan(self, job)
                     if lost.is_set():
                         raise _LeaseLost
@@ -530,6 +531,12 @@ class LibrarianWorker:
                     await holder.fresh()
                     log.warning("job %s: lease lost before commit; nothing applied", job.job_id)
                 except BudgetDeferred:
+                    # the run is redone from its first call: its ceiling slots go back (review 133 C1);
+                    # a failing refund must not keep the job from being handed back
+                    try:
+                        await self.provider.refund_claims(claimed)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("job %s: call-ceiling refund failed (%s); handing back", job.job_id, exc)
                     await self.defer(await holder.fresh(), job, "E_BUDGET_DEFERRED", release_s=BUDGET_PAUSE_S)
                     self.stats.jobs_released += 1
                     self.pause("budget", BUDGET_PAUSE_S)
@@ -1522,8 +1529,16 @@ async def _amain() -> int:
         log.error("librarian: refusing to start: %s", exc)
         return 2
     log.info("librarian: task chains %s", chains_line(settings))
+    if not settings.llm_budget_disabled:
+        log.info(
+            "librarian: background share %g of each spend cap (hour %g, day %g, month %g USD)",
+            settings.llm_budget_background_share,
+            settings.llm_budget_hour_usd,
+            settings.llm_budget_day_usd,
+            settings.llm_budget_month_usd,
+        )
     async with open_pool(settings.db_dsn, concurrency=settings.librarian_concurrency) as pool:
-        provider = Provider.from_settings(settings, conn=pool.connection)
+        provider = Provider.from_settings(settings, conn=pool.connection, background=True)
         budget = None if settings.llm_budget_disabled else provider.budget
         worker = LibrarianWorker(
             settings,

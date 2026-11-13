@@ -289,7 +289,7 @@ async def _status(args: argparse.Namespace, settings: Any) -> int:
         f"librarian   ready={lib['ready']} in_flight={lib['in_flight']} role={lib['role']} "
         f"breaker={lib['breaker_state']} ({source}) failed_24h={lib['failed_24h']} "
         f"spend_today_usd={lib['spend_today_usd']} spend_hour_usd={lib['spend_hour_usd']} "
-        f"reserved_usd={lib['reserved_usd']}\n"
+        f"reserved_usd={lib['reserved_usd']} background_share={lib.get('background_share', 1.0):g}\n"
     )
     for line in chain_lines(lib.get("chains") or {}):
         sys.stdout.write(line + "\n")

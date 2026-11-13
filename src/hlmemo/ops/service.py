@@ -715,6 +715,8 @@ async def librarian_status(conn: AsyncConnection, settings: Any = None) -> dict[
 
     settings = settings or get_settings()
     out: dict[str, Any] = dict(await heartbeat_fields(conn, settings.librarian_role))
+    # D-280: this (api) process's setting; the librarian reads the same llm.env
+    out["background_share"] = float(getattr(settings, "llm_budget_background_share", 1.0))
     out["chains"] = describe_chains(settings)
     if "tasks" in out["chains"]:  # D-277: the live relation review's own primaries
         from hlmemo.librarian.tasks.write_review import relation_review_chains

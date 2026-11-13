@@ -3159,6 +3159,9 @@ class _TeeLedger:
     async def claim(self, lineage: str, cap: int) -> bool:
         return await self.inner.claim(lineage, cap)
 
+    async def refund(self, lineage: str, n: int) -> None:
+        await self.inner.refund(lineage, n)
+
     def take(self, lineage: str) -> tuple[int, Decimal]:
         self.outcomes.pop(lineage, None)
         self.rows.pop(lineage, None)

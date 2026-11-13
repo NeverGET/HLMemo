@@ -5,7 +5,10 @@ max_tokens × price_out`` against three windows (``hour``, ``day``, ``month``, U
 transaction locks the window rows in a fixed order (hour → day → month) and runs
 ``UPDATE … SET reserved_usd = reserved_usd + :worst WHERE spent_usd + reserved_usd + :worst <=
 cap_usd`` on each; if any affects 0 rows the transaction rolls back and the call is not made
-(``budget_deferred``). After the call ``settle`` moves the reservation to ``spent`` at the actual
+(``budget_deferred``). A guard built with ``share`` < 1 (D-280: the librarian worker's background
+calls) bounds the same counters at ``cap_usd × share`` instead, so the last ``1 − share`` of every
+window stays free for the guards built without it (the API's interactive calls); the row's
+``cap_usd`` is always the full cap. After the call ``settle`` moves the reservation to ``spent`` at the actual
 cost (worst when unknown). ``sweep`` settles reservations older than their ``expires_at`` AS
 WORST-CASE SPENT (a crash between reserve and settle is never free). Caps come from settings each
 time a row is touched, so a changed cap applies to the current window immediately.
@@ -62,10 +65,21 @@ class Caps:
 class DbBudget:
     """``llm_budget`` + ``llm_reservations``. ``conn`` yields a connection for one transaction."""
 
-    def __init__(self, conn: ConnCtx, caps: Caps, *, ttl_s: int = 600) -> None:
+    def __init__(
+        self, conn: ConnCtx, caps: Caps, *, ttl_s: int = 600, share: Decimal | float | int = 1
+    ) -> None:
         self._conn = conn
         self.caps = caps
         self.ttl_s = ttl_s
+        try:
+            self.share = Decimal(str(share))
+            in_range = Decimal(0) < self.share <= Decimal(1)
+        except ArithmeticError:  # "abc", NaN: not a number to compare
+            in_range = False
+        if not in_range:
+            raise ValueError(f"budget share must be in (0, 1], got {share!r}")
+        # share 1 keeps the statement of every release before D-280, byte for byte
+        self._bound = "cap_usd" if self.share == 1 else "cap_usd * %(share)s"
 
     async def reserve(self, call_id: uuid.UUID, worst_usd: Decimal, job_id: int | None) -> bool:
         worst = q8(worst_usd)
@@ -87,8 +101,8 @@ class DbBudget:
                         cur = await conn.execute(
                             "UPDATE llm_budget SET reserved_usd = reserved_usd + %(w)s"
                             " WHERE period_kind = %(k)s AND period_start = %(s)s"
-                            "   AND spent_usd + reserved_usd + %(w)s <= cap_usd",
-                            {"w": worst, "k": period, "s": starts[period]},
+                            f"   AND spent_usd + reserved_usd + %(w)s <= {self._bound}",
+                            {"w": worst, "k": period, "s": starts[period], "share": self.share},
                         )
                         if cur.rowcount != 1:
                             raise _Denied

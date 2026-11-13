@@ -606,6 +606,34 @@ librarian`: `... idling`). The same `llm.env` is mounted into the **api**, becau
 reaches db, worker, migrate or caddy (`tests/deploy/test_compose_isolation.py`). A role above
 `observer` needs an owner decision event (D-062), else the librarian refuses to start.
 
+### The background share of the spend caps (D-280)
+
+`HLM_LLM_BUDGET_BACKGROUND_SHARE` (template: `0.75`) is the part of each cap (hour, day, month) that the
+librarian worker's background calls may use: the write reviews, their verifier, the shadow pipeline, placement.
+The api's interactive calls (`memory.ask`, the risk judge) reserve against the full cap, so background work
+cannot take the last quarter of any window and a large import cannot switch them off for the rest of the day.
+
+- A background job at its share behaves as at a cap: `budget_deferred`, handed back for 60 seconds, no attempt
+  used, and the call-ceiling slots of the interrupted run are given back, so a job can wait for hours without
+  being failed. The queue waits for the next window. `hlmemo.ops status` shows `background_share=0.75` and,
+  while the librarian is the last caller in the ledger, `breaker=budget`; an interactive call in between makes
+  that read `closed`, and `ready` can be 0 while handed-back jobs sit out their 60 seconds.
+- What a waiting job costs: a run that is interrupted at its second or third call has already paid for the
+  earlier ones, and the next run pays for them again. That happens where the room left under the share is
+  smaller than the dearest call's worst case, or when another call takes the room between two calls of the run.
+- The month window has a share too: at 45 of 60 USD background work stops for the rest of the month while the
+  interactive calls go on. The same status line shows it.
+- `remote_gates.sh --librarian` waits for a review job. While the librarian is paused at its share that gate
+  times out: read `ops status` for `breaker=budget` before treating it as a regression.
+- A value in (0, 1]; `1`, an empty value or no line at all means no separate bound (the behaviour before
+  D-280). The librarian logs its share at startup, and `check_librarian.py` refuses any other value.
+- It is not a floor for the interactive calls: there is one set of counters, so heavy interactive use lowers what
+  background work may still take, and the caps themselves are unchanged.
+- To let a queue finish sooner on an import day, raise the share (`1` at most): change it in
+  `deploy/llm.env.example` and run `install_llm_env.sh`. Unlike the caps, the share is not an operator-preserved
+  value: an install always writes the template's, so a hand edit on the host lasts only until the next install.
+  The caps stay bounded by the release manifest.
+
 ### The relation review's own models and the shadow baseline (D-277)
 
 The template `deploy/llm.env.example` sets the relation review's own models:

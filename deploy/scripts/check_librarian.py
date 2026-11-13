@@ -101,6 +101,8 @@ _D094 = {
     "HLM_FALLBACK_PROFILE__QUERY_REWRITE": "openrouter",
     "HLM_FALLBACK_PROFILE__RISK_JUDGE": "openrouter-qwen38-27b-fast",
 }
+#: D-280: the librarian's background share of each cap; optional in every release's manifest
+BACKGROUND_SHARE_KEY = "HLM_LLM_BUDGET_BACKGROUND_SHARE"
 #: D-121: the spend guard stays ON; the operator may lower (or edit) the caps, never lift the month
 #: above the owner's target; day and hour never above the month
 _BUDGETS = {
@@ -203,6 +205,7 @@ MANIFEST_KEYS = tuple(
                 *m.get("tracked", ()),
                 *m["budgets"]["keys"],
                 m["budgets"]["disabled_key"],
+                BACKGROUND_SHARE_KEY,
             )
         }
     )
@@ -495,6 +498,14 @@ def _budget_problems(env: dict[str, Any], budgets: dict[str, Any]) -> list[str]:
     for key, value in ((budgets["keys"][1], day), (budgets["keys"][0], hour)):
         if value is not None and month is not None and value > month:
             problems.append(f"{key}={value:g} (at most the month cap {month:g})")
+    raw_share = str(env.get(BACKGROUND_SHARE_KEY) or "").strip()
+    if raw_share:  # D-280: absent or empty = 1 (no separate bound); else a number in (0, 1]
+        try:
+            share = float(raw_share)
+        except ValueError:
+            share = float("nan")
+        if not 0 < share <= 1:
+            problems.append(f"{BACKGROUND_SHARE_KEY}={raw_share} (a number above 0 and at most 1)")
     return problems
 
 

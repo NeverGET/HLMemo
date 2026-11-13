@@ -205,15 +205,21 @@ Full one in progress (about 1,700 items expected). Details and the chats' questi
 A 1,754-item import ran in ten minutes from the work-class device; verify, the blind check (24 of 25, 0 superseded
 values stated as current, 5 of 5 negatives abstained) and the first project created through the owner account all
 passed. Private details stay with the migration.
-- **A background import starves the interactive tasks.** The import's reviews used the whole day cap by
-  09:50 UTC; from then until midnight UTC `memory.ask` and the risk judge refused with `budget` for every user.
-  Decided with Cemal: background jobs stop at a share of the day cap and leave the rest to interactive tasks.
+- **A background import starved the interactive tasks: fixed by D-280** (a background share of each cap). The
+  import's reviews had used the whole day cap by 09:50 UTC; until midnight UTC `memory.ask` and the risk judge
+  refused with `budget` for every user.
 - **Cost per reviewed write was 0.0035 USD on average (p90 0.0046)** in this import, against 0.0023 measured the
   day before on small writes: the estimate given to the chat was low by half.
 - **One `hlm.export` page failed with 503 under the import's load:** PostgreSQL closed the request's connection
   with 25P03 (`idle_in_transaction_session_timeout`, 5 s) after a 15-second gap in the API log. Something held
   the event loop while a request transaction was open. The client now retries such a read (review 132); the
   stall itself is not diagnosed.
+- **A deferred run pays its earlier calls again on the next run** (review 133 C1): only where the room under the
+  bound is smaller than the dearest call's worst case. A headroom check before a job's first call would avoid it.
+- **A `ProviderUnavailable` hand-back still keeps its call-ceiling slots** (review 133 R2): bounded per outage
+  round and it stops at an open breaker, but a long half-open outage could fail a job with `E_CALL_CAP`.
+- **No sanity floor for the background share** (review 133 C6): a share whose bound is below one call's worst
+  case is accepted, and those jobs wait for ever. A startup warning would do.
 - **Deferred attempts fill the ledger:** a job that meets the cap is retried every 60 seconds and each attempt
   writes a `budget_deferred` row (1,157 for one task in a day).
 - **The blind check's second grader was `codex exec`,** retired since D-266. It is a second `claude -p` grader on
