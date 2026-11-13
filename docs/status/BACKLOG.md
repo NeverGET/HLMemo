@@ -203,6 +203,33 @@ Full one in progress (about 1,700 items expected). Details and the chats' questi
   cost.
 - **Wording.** The kit and the digest say "the owner" throughout and agents copy it; he prefers his name.
 
+## Vision: one session for every project (Cemal, 2026-11-13), and what stands before it
+**The aim.** One chat receives the day's list for several projects, plans the order (what runs in parallel, what in
+sequence, by the nature of each job), writes the plan into memory and carries it out, instead of one chat per
+project that Cemal feeds by hand. He judges it **not ready yet**: memory has to remind by itself first.
+
+**His example.** A session upgrades a framework in one product because of a CVE; memory should say, unasked,
+that another product runs a vulnerable version too, and ask what to do about it.
+
+**Measured the same evening.** `memory.risk_check` for that task, asked from the first product, did return the
+second product's security lesson about that framework as its top warning. What it did not do: say that the second
+product is affected (no fact joins "which project runs which version"), speak without being asked, or keep the
+follow-up open until someone works in the second product.
+
+**Proposed order (a proposal, not decided):**
+1. A stack inventory per project: current "runs X at version Y" facts, kept current and searchable.
+2. Cross-project recall on request: for a described task, the other projects on the same stack with their
+   version distance (the reader feedback of 2026-11-12 asked for the same). Ceiling first: take real past cases
+   and see whether a model that reads all memory finds the sibling project; if not, the gap is data (step 1).
+3. Push: the recall fires by itself at the right moments (session start, before a dependency or security change).
+4. Follow-through: a "this project needs it too" note stays open until a session there has dealt with it (the
+   notes project between the two machines is its first form).
+5. The librarian above observer, so memory stays true without an operator pass (needs the promotion criterion).
+6. The one-session pilot: count how often Cemal still has to carry something to another chat.
+
+Promoting the librarian and proactive recall are two different things: the first curates what is stored, the
+second speaks during a session. The example needs the second.
+
 ## The first Full import from the second device (2026-11-13): findings on the server
 A 1,754-item import ran in ten minutes from the work-class device; verify, the blind check (24 of 25, 0 superseded
 values stated as current, 5 of 5 negatives abstained) and the first project created through the owner account all
