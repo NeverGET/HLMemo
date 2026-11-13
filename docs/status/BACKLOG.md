@@ -237,6 +237,13 @@ note to come up by itself when a session starts there.
 Promoting the librarian and proactive recall are two different things: the first curates what is stored, the
 second speaks during a session. The example needs the second.
 
+**Research (2026-11-13):** `docs/research/08-human-memory-reminder-layers.md` reads the request against human
+prospective memory and the brain's memory systems. It proposes six reminder layers (standing rules, must-remember,
+place-bound notes, to-dos, topic-cued reminders, lessons), eight rules for them (store the cue with the intention,
+prefer cue-driven surfacing, check at natural breaks, close with a stop tag, do not over-remind, ...), and lists
+what else the comparison says is missing: use-time correction, context as the cue, offline consolidation,
+demotion of resolved items, salience capture. Nothing in it is decided.
+
 ## The first Full import from the second device (2026-11-13): findings on the server
 A 1,754-item import ran in ten minutes from the work-class device; verify, the blind check (24 of 25, 0 superseded
 values stated as current, 5 of 5 negatives abstained) and the first project created through the owner account all
