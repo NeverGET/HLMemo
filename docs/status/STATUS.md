@@ -1,9 +1,20 @@
 # STATUS — HLMemo (read this first when resuming)
-Updated: 2026-10-27. The project is ACTIVE: real project chats use it (test drives), and the operator turns their
+Updated: 2026-11-14. The project is ACTIVE: real project chats use it (test drives), and the operator turns their
 notes into fixes. The model is hybrid (D-246): project chats write under the protocol, the operator curates, the
 librarian is an observer.
 
-## Where we are (2026-10-27)
+## Where we are (2026-11-14)
+- **Production** runs 8766f3a (D-280): accounts with guest isolation (D-274, D-275), encrypted daily backups
+  (D-276), the measured relation review with the old pipeline as its shadow (D-277), a second device of the
+  owner and the owner account (D-278, D-279), and a background share of the spend caps (D-280).
+- **Current goal: the librarian's promotion check.** The check of 2026-11-14 is in BACKLOG ("Librarian check of
+  2026-11-14"): precision is at the bar on 113 labelled proposals, two blockers are open, and the code for "one
+  class to act" is not built. The librarian stays an observer (D-246).
+- **Next after that:** memory that reminds by itself, by the reminder layers of research 08 (D-281; BACKLOG,
+  "Vision: one session for every project").
+- **Resume** from this section, the newest `D-` entries (D-277..D-281), BACKLOG and the private resume notes.
+
+## Status of 2026-10-27 (kept as written)
 - **Production** runs 1816c1e (D-267, deployed 2026-10-27; review 125 clean after two rounds; gates PASS): the
   brief's tokenizer is never downloaded inside the hook, the last good brief stands in for a failed read, the
   digest and skill answer the fourth test-drive round, and `E_NOT_FOUND` names the project of a readable clue

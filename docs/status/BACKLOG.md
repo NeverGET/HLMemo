@@ -321,8 +321,51 @@ Rool (rool.dev, SDK github.com/rool-dev/rool-js) gives each user a private cloud
 - **A gate for the schedule.** `remote_gates.sh` should check `systemctl is-active hlmemo-backup.timer` and
   the newest daily dump's age (lesson v4219).
 
+## Librarian check of 2026-11-14 (the first since D-277): where the promotion stands
+**Measured** (private result file in the shadow folder, `check-2026-11-13/RESULT.md`). Since 2026-11-05 the live
+relation review judged 1,888 writes, most of them one large import, and raised 121 supersessions. 117 pairs of
+the owner's projects were labelled blind by two agents (agreement 108; the operator settled 9).
+
+| Criterion (SHADOW-WEEK.md) | Before (2026-11-05) | Now |
+|---|---|---|
+| ≥ 150 labelled proposals | 11 | 124; the waiting queue and the next import pass 150 |
+| ≥ 2 projects | 5 | yes, but 96% of the new labels come from one import |
+| Precision ≥ .90 | .82 (n = 11) | .91 strict, .97 lenient (n = 113); the action tier 41 or 42 of 42 |
+| False invalidation ≤ .02 | .0006 | .0011 |
+| No open blocker for the class | five found, four fixed | two open (below) |
+
+- **Volume is no longer the blocker,** if proposals raised during an import count as evidence. Organic writes
+  still give only a handful a week.
+- **Open blocker B5:** a later item that adds detail or states a neighbouring rule is read as a conflict (3 of
+  the false proposals, all at the question tier).
+- **New blocker B6, and a policy question for Cemal:** a decision that a later decision reverses, where the
+  reversal is not built yet (or sits on a branch). Is the earlier item outdated at the decision, or only when the
+  change is live? Six pairs split the labellers on exactly this; "strict" counts them false, "lenient" correct.
+- **Recall is unmeasured here:** the 21 verifier rejections were not labelled, and the old pipeline found three
+  true pairs the live one missed.
+
+**What "one class to act" still needs in code** (read on 2026-11-14):
+1. A per-class switch. The role is one ladder today, and `autonomous` applies only whole-scope closes: the class
+   chosen for the first promotion (a newer item replaces part of a current fact) is never applied automatically
+   in any role.
+2. A revert for a link the librarian applied (V1-PLAN: "applied automatically, as a reversible event").
+3. Pinned librarian links (today unpinned: a part link keeps flagging later versions).
+4. The automatic demotion (false invalidation above .05), which the roadmap names and the code lacks.
+5. Gates and deploy scripts that assert `observer`; `pair_check` kept out of any automatic path.
+6. Optional: who applied a link, visible to readers.
+7. A decision that supersedes D-246, with a threat model and two reviewers (a one-way door).
+
+**Proposed order (for Cemal's decision):**
+1. Finish the measurement: label the waiting queue's and the next import's proposals (n ≥ 150), settle the
+   policy question, and label the verifier rejections once.
+2. Fix B5 and B6 in the relate or verify prompt, measured on the 117 labelled pairs as a regression set (a
+   replay costs well under 1 USD), before any promotion.
+3. Build items 1 to 5, promote the action tier of the one class on the owner's projects only (a per-project
+   override can hold any project at observer), and watch it with weekly labels.
+
 ## Librarian after the shadow week (2026-11-05, D-277)
-- **Owner decision: the promotion criterion.** "≥ 150 labelled proposals" is out of reach. Organic writes give
+- **(Overtaken on 2026-11-14: an import supplied the volume; see the check above.)** Owner decision: the
+  promotion criterion. "≥ 150 labelled proposals" is out of reach. Organic writes give
   about 11 shadow proposals a week; replay density is 2.7% of pairs, which needs about 5000 pairs per 150.
   Options:
   - a smaller labelled bar with the same precision bar;
