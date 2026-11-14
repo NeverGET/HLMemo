@@ -138,7 +138,10 @@ def test_the_startup_check_names_the_variable(profiles_dir: Path) -> None:  # no
     with pytest.raises(LlmConfigError, match="HLM_LIBRARIAN_SHADOW_RELATE_VERSION=8"):
         wr.check_relation_review(settings(librarian_shadow_relate_version=8))
     # D-283: relate/v4 is selectable by number on both sides (review 134)
-    assert wr.check_relation_review(settings(librarian_relate_version=4, librarian_shadow_relate_version=4)) == []
+    assert (
+        wr.check_relation_review(settings(librarian_relate_version=4, librarian_shadow_relate_version=4))
+        == []
+    )
 
 
 def test_the_startup_check_refuses_unpriced_disabled_and_broken_profiles(profiles_dir: Path) -> None:  # noqa: F811
