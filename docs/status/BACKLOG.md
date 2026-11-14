@@ -338,11 +338,21 @@ the owner's projects were labelled blind by two agents (agreement 108; the opera
   still give only a handful a week.
 - **Open blocker B5:** a later item that adds detail or states a neighbouring rule is read as a conflict (3 of
   the false proposals, all at the question tier).
-- **New blocker B6, and a policy question for Cemal:** a decision that a later decision reverses, where the
-  reversal is not built yet (or sits on a branch). Is the earlier item outdated at the decision, or only when the
-  change is live? Six pairs split the labellers on exactly this; "strict" counts them false, "lenient" correct.
+- **Blocker B6 (ruled in D-282):** a change that is decided but not in effect (not built, or only on a branch)
+  is read as replacing the present state. Cemal's ruling: the earlier item holds until the change is in effect.
+  The six pairs that split the labellers on this count as false, so the strict column is the score.
 - **Recall is unmeasured here:** the 21 verifier rejections were not labelled, and the old pipeline found three
   true pairs the live one missed.
+
+**The waiting queue, drained on 2026-11-14** (00:00 to 00:42 UTC, 248 write reviews, the first window in which
+the shadow ran on every job):
+- Live raised 8 distinct pairs: 7 correct, 1 false (a pair of the check above, raised again from the other
+  item's job), action tier 2 of 2. The old pipeline raised 9: 7 correct, 2 false. Each side missed one true pair
+  the other found.
+- Four of the pairs repeated pairs labelled the day before; both labellers gave all four the same label again.
+- Running total, strict: 117 live proposals labelled, 107 correct (.915); action tier 43 of 44; with the shadow
+  week 128 labelled, .906. The queue added 4 new proposals, not the 18 estimated, so the next import is what
+  takes the count past 150.
 
 **What "one class to act" still needs in code** (read on 2026-11-14):
 1. A per-class switch. The role is one ladder today, and `autonomous` applies only whole-scope closes: the class
@@ -355,13 +365,16 @@ the owner's projects were labelled blind by two agents (agreement 108; the opera
 6. Optional: who applied a link, visible to readers.
 7. A decision that supersedes D-246, with a threat model and two reviewers (a one-way door).
 
-**Proposed order (for Cemal's decision):**
-1. Finish the measurement: label the waiting queue's and the next import's proposals (n ≥ 150), settle the
-   policy question, and label the verifier rejections once.
-2. Fix B5 and B6 in the relate or verify prompt, measured on the 117 labelled pairs as a regression set (a
-   replay costs well under 1 USD), before any promotion.
-3. Build items 1 to 5, promote the action tier of the one class on the owner's projects only (a per-project
-   override can hold any project at observer), and watch it with weekly labels.
+**Order (D-282, 2026-11-14: Cemal agreed, import proposals count, and the code may be built):**
+1. Fix B5 and B6 in the relate and verify prompts (every false proposal passed the verifier, so both need the
+   rule). Develop on one part of the labelled pairs and confirm on a held-out part, split by item; a replay costs
+   well under 1 USD. Label the verifier rejections once, for the recall side.
+2. Confirm on fresh data: the next import's proposals, which also take the count past 150. Everyday writes are
+   counted on their own line.
+3. Build items 1 to 5 with a threat model and two reviewers. Building promotes nothing.
+4. The promotion itself is its own decision (it supersedes D-246) with Cemal's OK: the action tier of the one
+   class, on Cemal's projects only (a per-project override can hold any project at observer), watched with
+   weekly labels.
 
 ## Librarian after the shadow week (2026-11-05, D-277)
 - **(Overtaken on 2026-11-14: an import supplied the volume; see the check above.)** Owner decision: the
