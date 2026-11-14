@@ -59,6 +59,7 @@ MAX_TOKENS_VERSION: dict[tuple[str, int | str], int] = {
     ("relate_verify", 2): 900,
     ("relate", 3): 12000,  # D-272: room for a reasoning model's thinking (the shadow pipeline)
     ("relate_verify", 3): 2000,  # D-277: the policy-aligned verifier (reasoning models)
+    ("relate", 4): 12000,  # D-283: relate/v3 plus the "false as written, today?" test (D-282)
 }
 #: versions loaded only by number (a pin or ``load_task(name, version)``), never as the default;
 #: research/v2 is the D-156 "write, then cite" prompt of ``HLM_RESEARCH_ANSWER_MODE=cite`` and
@@ -68,7 +69,7 @@ MAX_TOKENS_VERSION: dict[tuple[str, int | str], int] = {
 #: only through ``librarian_relate_verify_version`` / ``librarian_shadow_verify_version``
 OPT_IN_VERSIONS: dict[str, frozenset[int]] = {
     "research": frozenset({2, 3}),
-    "relate": frozenset({3}),
+    "relate": frozenset({3, 4}),
     "relate_verify": frozenset({3}),
 }
 _PINS: dict[str, int] = {}
