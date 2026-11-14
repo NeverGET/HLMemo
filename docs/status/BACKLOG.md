@@ -369,6 +369,27 @@ the shadow ran on every job):
 - **To fix before any automatic apply:** one proposal per pair. Today two jobs raise the same supersession and
   the review queue holds both.
 
+**B5 and B6: the prompt fix, measured the same day (D-283).** One block in the relate prompt ("is the earlier
+statement false as written, today?"). Replayed on production's own inputs, with every pair labelled again under
+the D-282 rule (116 distinct pairs, 97 true):
+
+| | Production's stored run | Today's prompts, replayed | The draft (relate/v4) |
+|---|---|---|---|
+| Raised / correct / false | 97 / 83 / 14 | 96 / 82 / 14 | 90 / 86 / 4 |
+| Precision | .856 | .854 | .956 |
+| Action tier | 33 of 34 | 30 of 31 | 32 of 32 |
+
+- Production's precision under the rule is .856: the labels of the check predated D-282 and counted four changes
+  not in effect as correct.
+- By the letter of the pre-registered acceptance the held-out half failed (true pairs lost); the losses were
+  those changes not in effect, and the blind relabel settled it. Both readings are in D-283.
+- Recall is partly chance: two runs of one prompt disagree on about one true pair in ten. A second relate pass
+  over a job is a candidate for the recall side (not measured).
+- Still false with the draft: one neighbouring-rule pair, one pair of an unbuilt redesign, and two
+  parked-proposal pairs the labellers split on twice.
+- Open: relate/v4 as an opt-in version with a reviewer; the confirmation on the next import by replay; then the
+  live switch. The verifier's matching block is drafted, not measured.
+
 **What "one class to act" still needs in code** (read on 2026-11-14):
 1. A per-class switch. The role is one ladder today, and `autonomous` applies only whole-scope closes: the class
    chosen for the first promotion (a newer item replaces part of a current fact) is never applied automatically

@@ -2651,3 +2651,24 @@ D-282 | 2026-11-14 | ACCEPTED (Cemal, answering the three questions of the libra
 - **Also on 2026-11-14.** The queue of the import drained after midnight UTC, so the 75% bound of D-280 worked as designed: a large import's reviews took two days and the interactive calls stayed available. The workstation project's four open proposals were withdrawn in one event after the operator's review (no finding; Cemal's OK).
 - **Correction (2026-11-14, after this entry was first pushed).** The ".912 on 113" above is per proposal. A pair is proposed once by the job of each of its two items, and the check's de-duplication kept both; 20 of its rows were such doubles, all correct ones. Per distinct pair, with the queue that drained on 2026-11-14: 87 of 97 = .897 (95% interval .82 to .94), the action tier 33 of 34, 108 pairs labelled with the shadow week. Precision is therefore just under the .90 bar while B6 is open, not at it. The rulings and the order do not change. From now on the unit of the measurement is the distinct pair, and one proposal per pair is a condition for any automatic apply (BACKLOG).
 - **No review:** rulings and a plan, no code and no data change beyond the withdrawal.
+
+D-283 | 2026-11-14 | ACCEPTED (the operator's choice under D-282; a live switch still needs a review and a deploy announced to Cemal) | **The fix for blockers B5 and B6 is one block in the relate prompt ("is the earlier statement false as written, today?"). Measured by replay on production's own inputs it removes most false proposals without losing true ones. It becomes relate/v4, opt-in, and is confirmed on the next import before it goes live.**
+- **The block.** After the other item, is the replaced statement false as written, today? Still true but less precise: not a contradiction. Still true because the change is not in effect (only decided, planned, on a branch, not built, parked): not a contradiction. A rule or process decision is in effect once decided; a plan is replaced by a later decision that drops it. This is D-282 in the prompt.
+- **Method.** The labelled pairs were split by item into a development and a held-out half; the prompt was written on the first, frozen, and run once on the second. Production's recorded relate inputs were replayed through today's prompts and the draft; the verifier stayed relate_verify/v3. Acceptance was written down before any paid call.
+- **By the letter the held-out check failed** (four true pairs lost against two allowed). Five of the six pairs lost in both halves were changes not in effect, which D-282 makes not outdated: the labels predated the ruling. The operator did not flip labels; every pair was labelled again blind by two agents under the brief plus the D-282 rule (agreement 111 of 116; six labels changed, all to "not outdated"; the 12 pairs a replay raised without a label are all true).
+- **Result under the rule-aware labels, per distinct pair** (116 pairs, 97 true):
+
+  | | Production's stored run | Today's prompts, replayed | The draft |
+  |---|---|---|---|
+  | Raised | 97 | 96 | 90 |
+  | Correct | 83 | 82 | 86 |
+  | False | 14 | 14 | 4 |
+  | Precision | .856 | .854 | .956 (95% interval .89 to .98) |
+  | Action tier | 33 of 34 | 30 of 31 | 32 of 32 |
+
+  Held-out half alone: today's prompts 43 correct and 5 false, the draft 44 and 1. Three of those false ones are branch-only fixes in a project and a wording the draft was not written on.
+- **Production's precision is therefore .856, not the .897 of D-282's correction:** four more of its proposals are changes not in effect. With the draft the same inputs give .956.
+- **What it does not show.** The truth was labelled again after the first scores were seen (blind, 6 of 104 changed). Labellers and live models share a vendor. Almost all pairs come from one import. Two runs of one prompt on the same inputs disagree on about one true pair in ten, so recall is partly chance and "at most two lost" was stricter than the noise allows.
+- **Not adopted:** a matching block for the verifier was drafted and not measured. A pair the relate prompt answers "none" never reaches the verifier.
+- **Next.** relate/v4 enters the code as an opt-in version with one reviewer (no behaviour change until the setting names it). After the next import its proposals are replayed through v4, labelled under the amended brief and compared; then the live switch. The labelling brief of every later check carries the D-282 rule.
+- **Cost.** 0.92 USD of provider spend; a verifier call costs about five times a relate call, so stored verdicts were reused.
