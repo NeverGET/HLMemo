@@ -350,9 +350,24 @@ the shadow ran on every job):
   item's job), action tier 2 of 2. The old pipeline raised 9: 7 correct, 2 false. Each side missed one true pair
   the other found.
 - Four of the pairs repeated pairs labelled the day before; both labellers gave all four the same label again.
-- Running total, strict: 117 live proposals labelled, 107 correct (.915); action tier 43 of 44; with the shadow
-  week 128 labelled, .906. The queue added 4 new proposals, not the 18 estimated, so the next import is what
-  takes the count past 150.
+- **Correction to the table above (found the same day):** the check counted per proposal, and a pair is
+  proposed once by the job of each of its two items. Of its 117 labelled rows 20 were such doubles, all of them
+  correct ones, so its precision was too high. Per distinct pair, both windows together, strict:
+
+  | | Per distinct pair |
+  |---|---|
+  | Labelled | 104 pairs (108 with the shadow week) |
+  | Live raised and correct | 87 of 97 = .897 (95% interval .82 to .94); .889 with the shadow week |
+  | Live, action tier | 33 of 34 = .971 (.85 to .995) |
+  | Live, question tier only | 54 of 63 = .857 |
+  | Old pipeline | 14 of 17 = .824 |
+
+  Precision is just under the bar while B6 is open (the six B6 pairs alone are the difference to .959), and the
+  count toward 150 is 108. The action tier stays above the bar on a small sample.
+- **Label reliability:** 26 pairs were labelled more than once without the labellers knowing; each labeller
+  repeated its label every time.
+- **To fix before any automatic apply:** one proposal per pair. Today two jobs raise the same supersession and
+  the review queue holds both.
 
 **What "one class to act" still needs in code** (read on 2026-11-14):
 1. A per-class switch. The role is one ladder today, and `autonomous` applies only whole-scope closes: the class

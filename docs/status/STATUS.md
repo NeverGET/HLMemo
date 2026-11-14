@@ -8,8 +8,8 @@ librarian is an observer.
   (D-276), the measured relation review with the old pipeline as its shadow (D-277), a second device of the
   owner and the owner account (D-278, D-279), and a background share of the spend caps (D-280).
 - **Current goal: the librarian's promotion.** The check of 2026-11-14 is in BACKLOG ("Librarian check of
-  2026-11-14"): 117 live proposals labelled, .915 correct by the strict reading that D-282 makes the score (128
-  and .906 with the shadow week); two blockers open (B5, B6); the code for "one class to act" is not built. Cemal
+  2026-11-14"): per distinct pair 97 live proposals labelled, .897 correct by the strict reading that D-282 makes
+  the score (.889 on 108 with the shadow week), the action tier 33 of 34; two blockers open (B5, B6); the code for "one class to act" is not built. Cemal
   ruled on 2026-11-14 (D-282): a change that is decided but not in effect does not outdate the present state,
   import proposals count toward the 150, and the code may be built. Next step: fix B5 and B6 in the relate and
   verify prompts, developed on one part of the labelled pairs and confirmed on a held-out part. The librarian
