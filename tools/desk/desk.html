@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Masa</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e3e1dc;
+  --accent: #2f5bd3; --accent-ink: #ffffff; --ok: #1f7a4d; --warn: #a86400; --bad: #b3261e;
+  --chip: #eeece7; --sel: #e8eefc; --code: #f0eee9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161618; --panel: #1f1f22; --ink: #ececee; --muted: #9a9aa2; --line: #303035;
+    --accent: #7c9cff; --accent-ink: #0d0d10; --ok: #5cc28e; --warn: #e0a24a; --bad: #ff8a80;
+    --chip: #2a2a2f; --sel: #24304f; --code: #2a2a2f;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line);
+  background: var(--panel); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 17px; margin: 0; }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+.badge.here { background: var(--accent); color: var(--accent-ink); }
+.badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); } .badge.bad { color: var(--bad); }
+main { display: grid; grid-template-columns: 280px 1fr; gap: 0; min-height: calc(100vh - 50px); }
+nav { border-right: 1px solid var(--line); padding: 12px; background: var(--panel); }
+nav .b { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: inherit;
+  padding: 10px; border-radius: 8px; cursor: pointer; }
+nav .b:hover { background: var(--chip); } nav .b.on { background: var(--sel); }
+nav .b small { display: block; color: var(--muted); }
+section#batch { padding: 20px 28px 120px; max-width: 980px; }
+.intro { color: var(--muted); margin: 4px 0 14px; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.filters button { border: 1px solid var(--line); background: var(--panel); color: inherit; border-radius: 99px;
+  padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.filters button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.card.sel { outline: 2px solid var(--accent); }
+.card.other { opacity: .72; }
+.card .top { display: flex; gap: 10px; align-items: flex-start; }
+.card .top input[type=checkbox] { margin-top: 5px; }
+.card h3 { font-size: 15px; margin: 0; flex: 1; }
+.meta { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 0 26px; }
+.body { margin: 8px 0 0 26px; }
+.body p { margin: 6px 0; } .body ul { margin: 6px 0; padding-left: 20px; }
+code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.refs { margin: 10px 0 0 26px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.refs .r { display: flex; gap: 8px; align-items: baseline; }
+.refs a, .linkish { color: var(--accent); text-decoration: none; cursor: pointer; background: none; border: 0; font: inherit; padding: 0; }
+.refs a:hover, .linkish:hover { text-decoration: underline; }
+.form { margin: 12px 0 0 26px; }
+.opts { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+textarea { width: 100%; min-height: 64px; border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+  background: var(--bg); color: var(--ink); font: inherit; resize: vertical; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.btn { border: 1px solid var(--line); background: var(--panel); color: inherit; border-radius: 8px; padding: 6px 12px;
+  font: inherit; font-size: 14px; cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+.answer { margin: 12px 0 0 26px; padding: 10px 12px; border-left: 3px solid var(--ok); background: var(--bg); border-radius: 6px; font-size: 14px; }
+.answer.open { border-color: var(--warn); }
+.answer .t { white-space: pre-wrap; }
+.small { font-size: 12px; color: var(--muted); }
+.problems { color: var(--bad); }
+#groupbar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line);
+  padding: 12px 20px; display: none; z-index: 6; box-shadow: 0 -4px 16px rgba(0,0,0,.08); }
+#groupbar.on { display: block; }
+#groupbar .inner { max-width: 1240px; margin: 0 auto; }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); width: min(1000px, 94vw); max-height: 86vh; padding: 0; }
+dialog .hd { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+dialog pre { margin: 0; padding: 14px; overflow: auto; max-height: 74vh; white-space: pre-wrap; font-size: 13px; }
+.toast { position: fixed; right: 16px; top: 62px; max-width: 420px; background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 8px; display: none; z-index: 9; }
+.empty { color: var(--muted); padding: 40px 0; }
+@media (max-width: 760px) { main { grid-template-columns: 1fr; } nav { border-right: 0; border-bottom: 1px solid var(--line); }
+  section#batch { padding: 16px; } .meta, .body, .refs, .form, .answer { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Masa</h1>
+  <span id="place" class="badge here"></span>
+  <span id="totals" class="small"></span>
+  <span style="flex:1"></span>
+  <button class="btn" id="reload">Yenile</button>
+</header>
+<main>
+  <nav id="nav"></nav>
+  <section id="batch"><div class="empty">Soldan bir dosya seç.</div></section>
+</main>
+<div id="groupbar"><div class="inner">
+  <div class="row" style="margin-top:0"><strong id="gcount"></strong>
+    <span class="small">Seçili sorulara tek cevap yazılır; her biri bu cevabı alır.</span>
+    <span style="flex:1"></span><button class="btn" id="gclear">Seçimi bırak</button></div>
+  <textarea id="gtext" placeholder="Toplu cevap, kural ya da koşullar"></textarea>
+  <div class="row">
+    <button class="btn primary" data-g="answer">Hepsine cevap</button>
+    <button class="btn" data-g="rule">Kural olarak</button>
+    <button class="btn" data-g="approve">Hepsini onayla</button>
+    <button class="btn" data-g="approve_conditional">Koşullu onay</button>
+    <button class="btn" data-g="dont_know">Bilmiyorum</button>
+    <button class="btn" data-g="later">Sonra</button>
+    <label class="small"><input type="checkbox" id="gnfm"> Belleğe girmesin</label>
+  </div>
+</div></div>
+<dialog id="viewer"><div class="hd"><span id="vtitle" class="small"></span><button class="btn" id="vclose">Kapat</button></div><pre id="vtext"></pre></dialog>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const TOKEN = "__DESK_TOKEN__";
+const PLACE = "__DESK_PLACE__";
+const PLACE_TR = { home: "Ev", work: "İş", any: "Her yerde" };
+const LOC_TR = { home: "Evde", work: "İşte" };
+const KIND_TR = { question: "Soru", approval: "Onay", decision: "Karar", info: "Bilgi" };
+const TYPE_TR = { answer: "Cevap", dont_know: "Bilmiyorum", later: "Sonra", rule: "Kural", approve: "Onaylandı",
+  approve_conditional: "Koşullu onay", reject: "Reddedildi", reopen: "Geri alındı" };
+let state = { batches: [], current: null, view: null, filter: "here", selected: new Set(), drafts: {}, req: 0 };
+
+const $ = (s) => document.querySelector(s);
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k);
+  return e;
+}
+function esc(s) { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+// Mini markdown on escaped text: paragraphs, "- " lists, `code`, **bold**, [text](https://...).
+function md(src) {
+  const inline = (t) => esc(t)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  const out = []; let list = null;
+  for (const block of (src || "").split(/\n{2,}/)) {
+    const lines = block.split("\n");
+    if (lines.every((l) => /^\s*- /.test(l))) {
+      out.push("<ul>" + lines.map((l) => "<li>" + inline(l.replace(/^\s*- /, "")) + "</li>").join("") + "</ul>");
+    } else out.push("<p>" + lines.map(inline).join("<br>") + "</p>");
+  }
+  return out.join("");
+}
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.style.display = "block"; setTimeout(() => (t.style.display = "none"), 3500); }
+const isOpen = (a) => !a || a.type === "later" || a.type === "reopen";
+const here = (p) => !p || p === "any" || p === PLACE;
+
+async function api(path, body) {
+  const headers = { "X-Desk-Token": TOKEN };
+  const opt = body ? { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) } : { headers };
+  const r = await fetch(path, opt); let j = {};
+  try { j = await r.json(); } catch (_) { /* empty body */ }
+  if (!r.ok) { const e = new Error(j.error || String(r.status)); e.status = r.status; throw e; } return j;
+}
+
+async function loadBatches() {
+  const j = await api("/api/batches"); state.batches = j.batches;
+  $("#place").textContent = "Buradasın: " + PLACE_TR[PLACE];
+  const openHere = j.batches.reduce((n, b) => n + b.open_by_place.any + b.open_by_place[PLACE], 0);
+  const openAll = j.batches.reduce((n, b) => n + b.open, 0);
+  $("#totals").textContent = `${openHere} soru burada bekliyor · toplam açık ${openAll}`;
+  const nav = $("#nav"); nav.replaceChildren();
+  if (!j.batches.length) nav.append(el("div", { class: "empty", text: "Henüz soru dosyası yok." }));
+  for (const b of j.batches) {
+    const hereN = b.open_by_place.any + b.open_by_place[PLACE];
+    const other = b.open - hereN;
+    const sub = b.problems.length ? "dosyada sorun var" :
+      (b.open ? `${hereN} burada açık` + (other ? ` · ${other} ${PLACE === "home" ? "işte" : "evde"}` : "") : "hepsi cevaplandı");
+    nav.append(el("button", { class: "b" + (state.current === b.batch ? " on" : ""), onclick: () => openBatch(b.batch) },
+      el("span", { text: b.title }), el("small", { text: `${b.project ? b.project + " · " : ""}${sub}` })));
+  }
+}
+
+async function openBatch(id) {
+  const req = ++state.req;
+  if (state.current !== id) { state.selected.clear(); updateGroupbar(); }
+  state.current = id;
+  const view = await api("/api/batch/" + encodeURIComponent(id));
+  if (req !== state.req) return;  // a newer click won: drop this stale response
+  state.view = view;
+  await loadBatches(); render();
+}
+
+function render() {
+  const v = state.view, sec = $("#batch"); sec.replaceChildren();
+  if (!v) return;
+  sec.append(el("h2", { text: v.title, style: "margin:0" }));
+  if (v.from || v.created) sec.append(el("div", { class: "small", text: [v.from, v.created].filter(Boolean).join(" · ") }));
+  if (v.problems) { sec.append(el("ul", { class: "problems" }, v.problems.map((p) => el("li", { text: p })))); return; }
+  if (v.intro) { const d = el("div", { class: "intro" }); d.innerHTML = md(v.intro); sec.append(d); }
+  const F = { here: "Burada açık", open: "Tüm açıklar", done: "Cevaplananlar", all: "Hepsi" };
+  sec.append(el("div", { class: "filters" }, Object.entries(F).map(([k, t]) =>
+    el("button", { class: state.filter === k ? "on" : "", text: t, onclick: () => { state.filter = k; state.selected.clear(); updateGroupbar(); render(); } }))));
+  const qs = v.questions.filter((q) => {
+    const o = isOpen(q.answer);
+    return state.filter === "all" || (state.filter === "done" && !o) || (state.filter === "open" && o) ||
+      (state.filter === "here" && o && here(q.place));
+  });
+  if (!qs.length) sec.append(el("div", { class: "empty", text: "Bu görünümde soru yok." }));
+  let lastGroup = null;
+  for (const q of qs) {
+    if (q.group && q.group !== lastGroup) {
+      const ids = qs.filter((x) => x.group === q.group && isOpen(x.answer)).map((x) => x.id);
+      sec.append(el("div", { class: "row", style: "margin:16px 0 6px" }, el("strong", { text: q.group }),
+        ids.length > 1 ? el("button", { class: "linkish", text: `bu gruptaki ${ids.length} açık soruyu seç`,
+          onclick: () => { ids.forEach((i) => state.selected.add(i)); updateGroupbar(); render(); } }) : null));
+    }
+    lastGroup = q.group || null;
+    sec.append(card(q));
+  }
+}
+
+function card(q) {
+  const o = isOpen(q.answer), other = !here(q.place);
+  const c = el("div", { class: "card" + (state.selected.has(q.id) ? " sel" : "") + (other ? " other" : "") });
+  const cb = o ? el("input", { type: "checkbox", title: "Toplu cevap için seç", onchange: (e) => {
+    e.target.checked ? state.selected.add(q.id) : state.selected.delete(q.id); updateGroupbar(); c.classList.toggle("sel", e.target.checked); } })
+    : el("span", { style: "width:13px" });
+  if (o) cb.checked = state.selected.has(q.id);
+  c.append(el("div", { class: "top" }, cb, el("h3", { text: q.title })));
+  c.append(el("div", { class: "meta" },
+    el("span", { class: "badge", text: KIND_TR[q.kind || "question"] }),
+    el("span", { class: "badge" + (other ? " warn" : ""), text: other ? `${LOC_TR[q.place]} cevaplanır` : PLACE_TR[q.place || "any"] }),
+    el("span", { class: "badge", text: q.id }),
+    !o ? el("span", { class: "badge ok", text: TYPE_TR[q.answer.type] }) : null));
+  if (q.body) { const b = el("div", { class: "body" }); b.innerHTML = md(q.body); c.append(b); }
+  if (q.refs && q.refs.length) c.append(el("div", { class: "refs" }, q.refs.map(ref)));
+  if (q.answer) c.append(answerView(q));
+  if (o) c.append(form(q));
+  return c;
+}
+
+function ref(r) {
+  const where = r.where && r.where !== "any" && r.where !== PLACE ? el("span", { class: "badge warn", text: `${LOC_TR[r.where]} bakılır` }) : null;
+  let target;
+  if (r.url) target = el("a", { href: r.url, target: "_blank", rel: "noopener noreferrer", text: r.label });
+  else if (r.path) target = el("button", { class: "linkish", text: r.label, onclick: () => showFile(r.path) });
+  else if (r.clue) target = el("button", { class: "linkish", text: `${r.label} (${r.clue}${r.project ? " · " + r.project : ""})`,
+    title: "Kopyala", onclick: () => { navigator.clipboard?.writeText(r.clue); toast(r.clue + " kopyalandı"); } });
+  else target = el("span", { text: r.label + (r.note ? ": " + r.note : "") });
+  return el("div", { class: "r" }, el("span", { class: "small", text: "↳" }), target, where);
+}
+
+function answerView(q) {
+  const a = q.answer, o = isOpen(a);
+  const d = el("div", { class: "answer" + (o ? " open" : "") });
+  d.append(el("div", { class: "small", text: `${TYPE_TR[a.type]} · ${a.ts.replace("T", " ").slice(0, 16)} · ${PLACE_TR[a.place] || a.place}` +
+    (a.qids.length > 1 ? ` · ${a.qids.length} soruya toplu` : "") + (a.not_for_memory ? " · belleğe girmesin" : "") }));
+  if (a.option) d.append(el("div", { text: "Seçim: " + a.option }));
+  if (a.text) d.append(el("div", { class: "t", text: a.text }));
+  if (!o) d.append(el("div", { class: "row" }, el("button", { class: "btn", text: "Geri al / değiştir",
+    onclick: () => send([q.id], "reopen", "", null, false) })));
+  return d;
+}
+
+function form(q) {
+  const f = el("div", { class: "form" });
+  const d = (state.drafts[q.id] ||= { text: "", opt: null, nfm: false });  // survives every re-render
+  if (q.options && q.options.length) {
+    f.append(el("div", { class: "opts" }, q.options.map((o) => {
+      const r = el("input", { type: "radio", name: "o-" + q.id, onchange: () => (d.opt = o) });
+      r.checked = d.opt === o;
+      return el("label", {}, r, " " + o);
+    })));
+  }
+  const ta = el("textarea", { placeholder: q.kind === "approval" ? "Not ya da koşul (isteğe bağlı)" : "Cevabın",
+    oninput: (e) => (d.text = e.target.value) });
+  ta.value = d.text;
+  const nfm = el("input", { type: "checkbox", onchange: (e) => (d.nfm = e.target.checked) });
+  nfm.checked = d.nfm;
+  const go = (t) => send([q.id], t, d.text, t === "answer" ? d.opt : null, d.nfm);
+  const btns = q.kind === "info" ? [["approve", "Okudum", true], ["later", "Sonra"]]
+    : q.kind === "approval"
+    ? [["approve", "Onayla", true], ["approve_conditional", "Koşullu onay"], ["reject", "Reddet"], ["later", "Sonra"]]
+    : [["answer", "Cevapla", true], ["rule", "Kural olarak"], ["dont_know", "Bilmiyorum"], ["later", "Sonra"]];
+  f.append(ta, el("div", { class: "row" }, btns.map(([t, label, p]) => el("button", { class: "btn" + (p ? " primary" : ""), text: label, onclick: () => go(t) })),
+    el("label", { class: "small" }, nfm, " Belleğe girmesin")));
+  return f;
+}
+
+async function send(qids, type, text, option, nfm) {
+  const v = state.view; if (!v) return false;
+  const qhash = Object.fromEntries(v.questions.filter((q) => qids.includes(q.id)).map((q) => [q.id, q.qhash]));
+  try {
+    await api("/api/answer", { batch: v.batch, qids, type, text, option, not_for_memory: nfm, qhash });
+  } catch (e) {
+    const msg = e.status === 403 ? "Masa yeniden başlatılmış: sayfayı yenile (yazdığın metin bu sekmede duruyor)"
+      : e.status === 409 ? "Soru bu arada değişmiş: Yenile'ye bas, sonra tekrar cevapla" : "Olmadı: " + e.message;
+    toast(msg); return false;
+  }
+  toast(type === "reopen" ? "Geri alındı" : "Kaydedildi");
+  qids.forEach((i) => { state.selected.delete(i); delete state.drafts[i]; }); updateGroupbar();
+  await openBatch(v.batch); return true;
+}
+
+function updateGroupbar() {
+  const n = state.selected.size; $("#groupbar").classList.toggle("on", n > 0);
+  const titles = (state.view?.questions || []).filter((q) => state.selected.has(q.id)).map((q) => q.id);
+  $("#gcount").textContent = `${n} soru seçili: ${titles.join(", ")}`;
+}
+document.querySelectorAll("#groupbar [data-g]").forEach((b) => b.addEventListener("click", async () => {
+  if (await send([...state.selected], b.dataset.g, $("#gtext").value, null, $("#gnfm").checked)) $("#gtext").value = "";
+}));
+$("#gclear").onclick = () => { state.selected.clear(); updateGroupbar(); render(); };
+$("#reload").onclick = () => (state.current ? openBatch(state.current) : loadBatches());
+$("#vclose").onclick = () => $("#viewer").close();
+async function showFile(p) {
+  try { const j = await api("/api/file?path=" + encodeURIComponent(p)); $("#vtitle").textContent = j.path; $("#vtext").textContent = j.text; $("#viewer").showModal(); }
+  catch (e) { toast("Açılamadı: " + e.message); }
+}
+loadBatches().then(() => { const first = state.batches.find((b) => b.open) || state.batches[0]; if (first) openBatch(first.batch); });
+</script>
+</body>
+</html>
