@@ -274,6 +274,16 @@ passed. Private details stay with the migration.
 - **The blind check's second grader was `codex exec`,** retired since D-266. It is a second `claude -p` grader on
   another model now (review 132); two models of one vendor are less independent than two vendors.
 
+## The third migration's blind check (2026-11-18): findings on the reader
+The check failed by the bar (20 of 24, one superseded value stated as current); private details stay with the
+migration. A rerun with a corrected truth set follows.
+- **A revision is not reliably found for minutes after it is written.** A rule was revised about an hour before the
+  run; one language's answer gave the new rule, the other the old one. Asked again hours later, both give the new
+  one. A fresh revision should be searchable at once (lexically at least) and outrank the version it revises.
+- **`memory.ask` misses a PROPOSED decision row on a "what is the goal" question.** A plain query ranks the row
+  first; the research librarian's planned queries never reach it and it answers "the goal" from history.
+- **A revise keeps the old title** over a body that now says the opposite (known: stale titles after revise).
+
 ## Ideas from claude-mem (2026-10-15): parked, evaluate later
 Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Evaluate one at a time, measure first.
 - **File-anchored recall:** inject memories tied to a file when the agent reads it (PreToolUse on Read); the cheapest form of "spontaneous recall". Items already carry `describes` → `code_refs`. Measure how often a read file has code_refs and whether the injected items help.
