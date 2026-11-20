@@ -284,6 +284,33 @@ migration. A rerun with a corrected truth set follows.
   first; the research librarian's planned queries never reach it and it answers "the goal" from history.
 - **A revise keeps the old title** over a body that now says the opposite (known: stale titles after revise).
 
+## Cemal's answers to the memory-test ideas (2026-11-20)
+- **Approved, next:** a quote that is only punctuation does not count as support in `memory.ask` (small fix, deploy).
+- **Approved, next:** a curated profile in the owner's global project for personal cross-project questions; later a
+  cross-project `memory.ask` (code and deploy).
+- **Approved (kit):** in a shared project the migration asks whether the co-developer has memory files outside the
+  system (a `.fable` folder or similar); getting them is an intermediate step that waits for Cemal, and the missing
+  pieces are filled in when he brings them.
+- **Approved (kit):** add `Whose:` lines from git authorship to older migrations; the project chat writes them.
+- **Backlog, talk later:** "when was X first" questions miss older evidence filed under another topic.
+- **Desk, later:** show a reference (commit, file, document) inside the question, especially for conflicts.
+- **Third migration's rerun:** a question answered right in the first run was wrong in the second (retrieval varies
+  between runs on the same memory).
+
+## Rust port: parked until the project is finalized (Cemal, 2026-11-20)
+Report: docs/research/rust-port/REPORT.md (inventory, ecosystem, performance, independent review). About 170
+person-days for the whole system (estimate, range 120-220); every dependency has a Rust counterpart; the gain is small
+on the server (a query ~15-30 ms faster, writes, imports and LLM paths unchanged). Cemal: "ileride bunun için paralel
+bir çalışma başlatırız, parça parça. Önce elimizdeki proje finalize olsun."
+- **Later, as a parallel workstream, piece by piece:** client first (hooks and `hlm`, one binary for guests), then the
+  read path behind a Python-vs-Rust comparison harness; never one big switch.
+- **Before that, in Python (cheap, measurable):** query embedding off the event loop (`core/read_service.py:261`)
+  and ONNX threads matched to the CPU limit; faster preview/`normalize` in query packing (byte-identical, gated); one
+  server-side call for the session brief; a lighter client than the full `mcp` SDK in the hooks; batched import
+  writes.
+- **Open checks for the port:** a pilot of one module to turn the estimate into a measurement; embedding parity under
+  ort; prod per-stage timing of `memory.query`.
+
 ## Ideas from claude-mem (2026-10-15): parked, evaluate later
 Comparison and evidence: docs/research/07-claude-mem-comparison-2026-10.md. Evaluate one at a time, measure first.
 - **File-anchored recall:** inject memories tied to a file when the agent reads it (PreToolUse on Read); the cheapest form of "spontaneous recall". Items already carry `describes` → `code_refs`. Measure how often a read file has code_refs and whether the injected items help.
