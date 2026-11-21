@@ -103,8 +103,8 @@ class InstallLlmEnvTest(unittest.TestCase):
         for line in (
             "HLM_LIBRARIAN_ENABLED=true",
             "HLM_LIBRARIAN_ROLE=observer",
-            # D-286: class C1 ships off; its daily budget per project
-            "HLM_LIBRARIAN_C1=off",
+            # D-286: class C1 is on since Cemal's OK (the per-project grants still decide); its cap
+            "HLM_LIBRARIAN_C1=on",
             "HLM_LIBRARIAN_C1_DAILY_MAX=10",
             "HLM_PROFILE=openrouter-gpt6-luna",
             # D-094 production mapping, straight from the template
