@@ -65,7 +65,8 @@ MAX_TOKENS_VERSION: dict[tuple[str, int | str], int] = {
 #: research/v2 is the D-156 "write, then cite" prompt of ``HLM_RESEARCH_ANSWER_MODE=cite`` and
 #: research/v3 the D-162 "prose" prompt of ``HLM_RESEARCH_ANSWER_MODE=prose``, so the default (claims)
 #: mode keeps research/v1 byte for byte; relate/v3 is the D-271 policy-aligned prompt of the D-272 shadow
-#: pipeline, so the live relate stays on v2; relate_verify/v3 is its policy-aligned verifier (D-277), loaded
+#: pipeline (live since D-277), relate/v4 adds the D-282 test (live since D-285); relate_verify/v3 is the
+#: policy-aligned verifier (D-277), loaded
 #: only through ``librarian_relate_verify_version`` / ``librarian_shadow_verify_version``
 OPT_IN_VERSIONS: dict[str, frozenset[int]] = {
     "research": frozenset({2, 3}),

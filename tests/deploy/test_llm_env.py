@@ -378,7 +378,7 @@ class InstallLlmEnvTest(unittest.TestCase):
         content = self.target.read_text()
         for line in (
             "HLM_LIBRARIAN_RELATE_PROFILE=openrouter-claude-haiku55-high",
-            "HLM_LIBRARIAN_RELATE_VERSION=3",
+            "HLM_LIBRARIAN_RELATE_VERSION=4",
             "HLM_LIBRARIAN_RELATE_VERIFY_PROFILE=openrouter-claude-opus55-low",
             "HLM_LIBRARIAN_RELATE_VERIFY_VERSION=3",
             "HLM_LIBRARIAN_RELATE_VERIFY_MAX_TOKENS=2000",
