@@ -18,14 +18,20 @@ write review apply exactly one action of exactly one class. Nothing pending is r
 ## The class C1 (all conditions, decided in code)
 A write-review judgement is C1 only if every one holds:
 1. relation `contradicts`, supersedes `new`, scope `part`;
-2. the action tier after `guards.finalize` (verifier agreed, quotes pin the claim, same kind);
+2. the action tier after `guards.finalize` (verifier agreed, quotes pin the claim, same kind), and the verifier
+   answered on another profile than the relate call (review 1 L3: `HLM_LIBRARIAN_VERIFIER=self`, a one-profile
+   chain or both calls fallen back to the same profile is not C1);
 3. both items are kind `fact` (no decision rows: the `decision_record` flag excludes; no lesson, episode,
    session note, experience, doc chunk);
 4. `same_class`: same home project, identical `device_scope`, neither item pinned;
-5. the newer item's `valid_from` ≥ the older's;
+5. the new item is strictly the later one: `valid_from`, then `recorded_at` on a tie (`guards.newer_side`); on a
+   full tie neither side replaces the other (review 1 M1);
 6. a non-empty, verified outdated-span quote;
-7. the older item not stale (the assessed version is still the head) and no pending question for the pair;
-8. the pair (newer logical, older logical) was never reverted (below);
+7. the older item not stale (the assessed version is still the head), no live `supersedes` link between the two
+   items in either direction, and no question for the pair in any status but `expired` or `superseded`: a pair
+   Cemal or the operator decided (rejected, withdrawn, answered, applied) stays decided (review 1 M2);
+8. no C1 link between the two items was ever ended, in either direction (by a revert or by a writer), and no revert
+   recorded the pair (below);
 9. the project's daily C1 budget is not used up.
 
 Measured (private files, fresh-data check of 2026-11-20 and the check of 2026-11-14): the action tier of this class
@@ -51,14 +57,22 @@ Daily cap: `HLM_LIBRARIAN_C1_DAILY_MAX` applies per project per UTC day (default
   explicit-link revert), records the pair as reverted (never auto again: rule 8), and checks demotion.
 - **Automatic demotion:** after a revert, if reverted ÷ applied over the project's last 30 days is above .05, the
   same event records `set_class C1 off` for that project (actor: the operator running the revert, reason
-  `auto-demotion`). Re-granting needs a new decision.
+  `auto-demotion`). Re-granting needs a new decision. With fewer than 20 applied links in 30 days any revert
+  demotes; that is intended. Demotion runs only at revert time: when nobody reverts, the weekly `class applied`
+  review is the guard.
+- **What counts (review 1 M3):** an *applied* C1 link is one written by a write-review job's event with
+  `props.auto = "C1"`; a writer's survivor copy of it (a close of the newer item, or an import restating the link,
+  cuts the link and copies its props) is not an apply. A *reverted* one is one a `class_revert` event names as its
+  origin (`origin_link_id`; reverting a survivor copy reverts the applied link it came from). A link a writer ended
+  is listed `ended_by_write`, not reverted, and never counts toward demotion. The daily cap, the demotion rate and
+  `class applied` all use these rules; rule 8 stays conservative (any ended C1 link blocks a re-apply).
 - Readers: `superseded_by` entries and `memory.raw` links show `applied_by: "librarian (C1)"` for C1 links, so an
   agent can tell an automatic correction from a writer's or operator's.
 
 ## Threat model
 | # | Threat | Mitigation | Residual |
 |---|---|---|---|
-| T1 | A wrong C1 link hides a still-true statement (query demotes, brief drops `superseded-part` items) | precision bar, part scope only (item never closed), pinned link (a later revision of the older item is not flagged), daily cap, revert, auto-demotion | one wrong link per false positive until the weekly label; brief loses that item |
+| T1 | A wrong C1 link hides a still-true statement (query demotes, brief drops `superseded-part` items) | precision bar, part scope only (item never closed), pinned link: it also flags a later version of the older item that still holds the quote (once, on word boundaries), and stops flagging once a revision drops the quote; daily cap, revert, auto-demotion | one wrong link per false positive until the weekly label; brief loses that item |
 | T2 | Promotion releases the pending queue or other classes | role stays observer; C1 path is separate and applies one action kind; tests assert observer behaviour unchanged for every other class | none if tests hold |
 | T3 | Prompt-shaped item text steers the model into a C1 link | verifier on another model, verified verbatim quote, kind and project constraints, cap; nothing is deleted | a crafted pair in a granted project can produce one part link per day-cap slot |
 | T4 | Cross-project or device-scope leak through a link | same home project, identical `device_scope`, lowest grant over recorded project_ids, `policy_blocked` | none known |

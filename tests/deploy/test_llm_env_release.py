@@ -345,6 +345,16 @@ class LlmEnvHelperTest(unittest.TestCase):
             ["HLM_LIBRARIAN_C1: disk=off running=on"],
             ler.mismatches(disk, {**disk, "HLM_LIBRARIAN_C1": "on"}),
         )
+        # review 1 L1: the cap is fingerprinted; a switch value that is neither on nor off never matches
+        self.assertEqual("10", disk["HLM_LIBRARIAN_C1_DAILY_MAX"])
+        self.assertEqual(
+            ["HLM_LIBRARIAN_C1_DAILY_MAX: disk=10 running=50"],
+            ler.mismatches(disk, {**disk, "HLM_LIBRARIAN_C1_DAILY_MAX": "50"}),
+        )
+        bad = {**disk, "HLM_LIBRARIAN_C1": "maybe"}
+        self.assertEqual(1, len(ler.mismatches(disk, bad)))
+        self.assertEqual(1, len(ler.mismatches(bad, bad)), "an unreadable switch is never 'the same'")
+        self.assertEqual([], ler.mismatches(disk, {**disk, "HLM_LIBRARIAN_C1": "n"}))  # pydantic's off
 
     def test_provenance_requires_both_the_api_and_the_librarian(self):
         """R4 R-4 (review 77): a missing librarian (or api) report is a provenance failure, not a

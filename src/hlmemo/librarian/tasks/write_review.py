@@ -129,13 +129,17 @@ def c1_link(
     same_class: bool,
     props: dict[str, Any],
     assessed: dict[str, int],
+    newer: str | None,
+    profiles: tuple[str, str],
 ) -> dict[str, Any] | None:
     """D-286: the plan-time conditions of class C1 ("a newer fact replaces part of a current
     fact"), ``docs/decisions/PROMOTION-C1.md`` conditions 1-6; the worker checks 7-9 and the
     switches at apply time (``librarian/classes.c1_action``). Returns the ONLY action C1 may apply:
     the ``supersedes`` link newer -> older, part scope, the verified quote, PINNED to the assessed
     older version, ``props.auto = "C1"`` (the grant's decision id is added at apply time); else
-    ``None``. ``s`` is the subject (the new item), ``c`` the candidate."""
+    ``None``. ``s`` is the subject (the new item), ``c`` the candidate; ``newer`` is
+    ``guards.newer_side`` of the pair (valid_from, then recorded_at; ``None`` on a full tie) and
+    ``profiles`` the (relate, verify) profiles that answered."""
     quote = str(props.get("quote") or "")
     ok = (
         # 1. contradicts, the NEW item supersedes, part scope (never a close)
@@ -143,9 +147,13 @@ def c1_link(
         and j.supersedes == "new"
         and j.scope == "part"
         and not j.close_ok
-        # 2. the action tier after guards.finalize (verifier agreed, quotes pin the claim, same kind)
+        # 2. the action tier after guards.finalize (verifier agreed, quotes pin the claim, same kind),
+        # the verifier answered on ANOTHER profile than the relate call (review 1 L3)
         and j.tier == "action"
         and bool((j.verification or {}).get("agreed"))
+        and bool(profiles[0])
+        and bool(profiles[1])
+        and profiles[0] != profiles[1]
         # 3. both items are facts; a decision row never
         and s.kind == "fact"
         and c.kind == "fact"
@@ -153,8 +161,10 @@ def c1_link(
         # 4. same home project, identical device_scope, neither pinned, never across projects
         and same_class
         and not cross
-        # 5. the newer item is not older than the one it replaces
+        # 5. the new item is STRICTLY the later one (valid_from, then recorded_at): on a tie neither
+        # side may replace the other automatically (review 1 M1)
         and s.valid_from >= c.valid_from
+        and newer == "new"
         # 6. a non-empty outdated-span quote, verified verbatim
         and bool(quote.strip())
         and "quote_unverified" not in j.flags
@@ -582,7 +592,16 @@ def shadow_audit(
 
 
 class _Pair:
-    __slots__ = ("cand", "cross", "judgement", "judgement_profile", "scored", "subject", "text")
+    __slots__ = (
+        "cand",
+        "cross",
+        "judgement",
+        "judgement_profile",
+        "scored",
+        "subject",
+        "text",
+        "verify_profile",
+    )
 
     def __init__(self, subject: lq.SubjectRow, cand: lq.CandRow, cross: bool, scored: cands.Scored) -> None:
         self.subject = subject
@@ -591,6 +610,7 @@ class _Pair:
         self.scored = scored
         self.judgement: guards.Judgement | None = None
         self.judgement_profile = ""  # the profile that answered the relate call (verifier choice)
+        self.verify_profile = ""  # D-286: the profile that answered its verify call ("" = none)
         self.text: guards.PairText = relate_texts(subject, [(cand, cross)])[0]
 
 
@@ -965,6 +985,7 @@ class WriteReview:
                 ]
                 n += len(chunk)
                 answers: dict[str, dict[str, Any]] = {}
+                answered_by = ""
                 try:
                     res = await w.provider.complete(
                         task,
@@ -988,10 +1009,12 @@ class WriteReview:
                             }
                         )
                     answers = guards.check_verifications(res.output, [it["id"] for it in items])
+                    answered_by = res.profile
                 except (PrivacyDenied, SchemaFail):
                     counters["verify_no_answer"] = counters.get("verify_no_answer", 0) + 1
                 for it, (pr, kind) in zip(items, chunk, strict=True):
                     assert pr.judgement is not None
+                    pr.verify_profile = answered_by
                     new_is_b = pr.subject.valid_from >= pr.cand.valid_from
                     guards.apply_verification(pr.judgement, kind, answers.get(it["id"]), new_is_b=new_is_b)
                     counters["verified" if pr.judgement.verification["agreed"] else "verify_disagreed"] = (
@@ -1108,7 +1131,15 @@ class WriteReview:
                     sup_props = {**props, "scope": j.scope, "quote": quote}
                     actions.append(_link("supersedes", newer, older, sup_props, assessed))
                     c1 = c1_link(
-                        j, s, c, cross=pr.cross, same_class=same_class, props=sup_props, assessed=assessed
+                        j,
+                        s,
+                        c,
+                        cross=pr.cross,
+                        same_class=same_class,
+                        props=sup_props,
+                        assessed=assessed,
+                        newer=guards.newer_side(pr.text),
+                        profiles=(pr.judgement_profile, pr.verify_profile),
                     )
                     meta.update(scope=j.scope, close_ok=j.close_ok)
                     if j.close_ok and newer.valid_from > older.valid_from:

@@ -666,6 +666,26 @@ To change any of these:
 
 To go back to the default chain, empty the lines.
 
+### Librarian class C1 (D-286; docs/decisions/PROMOTION-C1.md)
+
+The librarian stays `observer`. Class C1 ("a newer fact replaces part of a current fact") lets the write review
+apply one action itself: the pinned part `supersedes` link. It needs two switches, and both must be on:
+- **The process switch:** `HLM_LIBRARIAN_C1=on` (with `HLM_LIBRARIAN_C1_DAILY_MAX`, the links per project per UTC
+  day, default 10) in the template `deploy/llm.env.example`. It is installed by `install_llm_env.sh` like the
+  relate version: every install writes the template's value, so set it on `main`, deploy, then install. The
+  template ships `off`; write `on` or `off` only.
+- **The grant, per project, with Cemal's OK:**
+  `hlm_ops.sh librarian class set C1 on --project P --decision D-286` (admin; `off` revokes; the latest decision
+  per project wins; a guest account's project is refused).
+
+`hlm_ops.sh status` shows `c1=on|off cap=N granted=<projects>` on the librarian line.
+
+Weekly: `hlm_ops.sh librarian class applied [--project P] [--since D] [--json]` lists every applied link (both
+items, the quote, the job event; `reverted` and `ended_by_write` marked). A wrong one:
+`hlm_ops.sh librarian class revert LINK --reason '…'` ends it in one event and the pair is never applied again.
+When a project's reverted ÷ applied over 30 days is above .05, that revert also turns the project's grant off
+(`auto-demotion`; with fewer than 20 links in 30 days any revert does). Re-granting needs a new decision.
+
 ### Librarian pending queue: withdraw and the promotion guard
 
 Needs the release with migration `0011_question_withdrawn`. The migration adds the terminal question

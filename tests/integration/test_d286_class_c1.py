@@ -725,3 +725,331 @@ async def test_one_revert_in_many_does_not_demote(db_dsn, connect, world: World,
     async with await connect() as conn:
         assert (await classes.grant(conn, world.main_id))[0] is True
         await conn.commit()
+
+
+# --------------------------------------------------------------------------- review 1 (M1-M4, L3)
+D_SEP = datetime(2026, 9, 1, tzinfo=UTC).isoformat()
+
+
+async def _plan_one(db_dsn, connect, oracle: Any, **kw: Any) -> tuple[Any, Any, Any, Any]:  # noqa: ANN001
+    """Lease and plan the next job (no apply): (worker, provider, job, plan)."""
+    provider = make_provider(db_dsn, ScriptedLLM(default=oracle), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_c1=True, **kw), provider, connect)
+    job = await worker.lease_one()
+    assert job is not None
+    with lineage_scope(job.lineage):
+        plan = await worker.handlers[job.payload["op"]].plan(worker, job)
+    return worker, provider, job, plan
+
+
+async def _apply(connect, worker: Any, job: Any, plan: Any) -> None:  # noqa: ANN001
+    async with await connect() as conn:
+        await worker.apply(conn, job, plan)
+
+
+async def _c1_link_id(connect) -> int:  # noqa: ANN001
+    async with await connect() as conn:
+        cur = await conn.execute(
+            "SELECT link_id FROM links WHERE props->>'auto' = 'C1' ORDER BY link_id LIMIT 1"
+        )
+        (link_id,) = await cur.fetchone()
+        await conn.commit()
+    return int(link_id)
+
+
+async def test_m1_valid_from_tie_applies_one_direction_only(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """M1: X and Y share valid_from; the later-RECORDED one may replace; the backfill review of the
+    other side (the model says the reverse) applies nothing: exactly one link."""
+    await _grant(connect, world)
+    (x,) = await write_items(connect, world.ctx_a, MAIN, [item(*MULTI, valid_from=D1)])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, Oracle())  # X's own review: nothing to compare yet
+    (y,) = await write_items(connect, world.ctx_a, MAIN, [item(*TTL, valid_from=D1)])  # the same valid_from
+    await embed(connect, embedder)
+    rel = {
+        (TTL[0], MULTI[0]): ("contradicts", "new", "high"),
+        (MULTI[0], TTL[0]): ("contradicts", "new", "high"),
+    }
+    scope = {(TTL[0], MULTI[0]): "part", (MULTI[0], TTL[0]): "part"}
+    await _drain(db_dsn, connect, Oracle(relations=rel, scope=scope))
+    await _enqueue_review(connect, world, x, "backfill-x")
+    await _drain(db_dsn, connect, Oracle(relations=rel, scope=scope))
+    links = await _links(connect)
+    assert [(r, s_, d) for r, s_, d, _v, _p, _l in links] == [("supersedes", y.logical_id, x.logical_id)]
+
+
+@pytest.mark.parametrize("decision", ["reject", "withdraw"])
+async def test_m2_a_decided_pair_is_sticky(db_dsn, connect, world: World, embedder, decision: str) -> None:  # noqa: ANN001
+    """M2: Cemal rejected the pair (or the operator withdrew it): a later review never applies it."""
+    from hlmemo.librarian.withdraw import withdraw
+
+    _old, new = await _pair(connect, world, embedder)
+    await _drain(db_dsn, connect, c1_oracle(), c1=False)
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT question_id::text, batch_id::text FROM librarian_questions")
+        qid, batch = await cur.fetchone()
+        if decision == "reject":
+            await record_batch_decision(conn, batch_id=batch, approver=world.ctx_a, decision="reject")
+        else:
+            await withdraw(conn, project=MAIN, question_ids=[qid], reason="test", by=world.ctx_admin)
+        await conn.commit()
+    await _grant(connect, world)
+    await _enqueue_review(connect, world, new, "again")
+    await _drain(db_dsn, connect, c1_oracle())
+    assert await _links(connect) == []
+    statuses = sorted(s for _k, s, _c, _p in await _questions(connect))
+    assert statuses == sorted(["open", "rejected" if decision == "reject" else "withdrawn"])  # asked again
+
+
+async def test_m3_a_writer_close_is_not_an_apply_nor_a_revert(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """M3: a writer closes the newer item: the C1 link ends and a survivor copy keeps its props. One
+    apply, no revert, ``ended_by_write``; reverting the survivor reverts the applied link."""
+    await _grant(connect, world)
+    _old, new = await _pair(connect, world, embedder)
+    await _drain(db_dsn, connect, c1_oracle())
+    origin = await _c1_link_id(connect)
+    closing = item(
+        *TTL,
+        logical_id=new.logical_id,
+        expected_version_id=new.version_id,
+        valid_from=D3,
+        valid_to=D_SEP,
+        close=True,
+    )
+    async with await connect() as conn:
+        await write(conn, world.ctx_a, write_req(MAIN, [closing]), deps=default_deps())
+        await conn.commit()
+    async with await connect() as conn:
+        assert await count(conn, "links", "props->>'auto' = 'C1'") == 2  # the original + the survivor
+        now = await conn.execute("SELECT clock_timestamp()")
+        (at,) = await now.fetchone()
+        assert await classes.applied_on_day(conn, world.main_id, at) == 1
+        assert (await classes.demotion_rate(conn, world.main_id, at))["reverted"] == 0
+        [row] = await classes.applied(conn, world.main_id)
+        cur = await conn.execute(
+            "SELECT link_id FROM links WHERE props->>'auto' = 'C1' AND superseded_at = 'infinity'"
+        )
+        (survivor,) = await cur.fetchone()
+        await conn.commit()
+    assert row["link_id"] == origin and row["ended_by_write"] and not row["reverted"] and row["live"]
+    assert row["job"].startswith("librarian_write:")
+    async with await connect() as conn:
+        res = await classes.revert(conn, survivor, by=world.ctx_admin, reason="wrong")
+        [row] = await classes.applied(conn, world.main_id)
+        await conn.commit()
+    assert res["origin_link_id"] == origin and res["rate"]["applied"] == 1 and res["rate"]["reverted"] == 1
+    assert row["reverted"] and not row["ended_by_write"] and not row["live"]
+    await _replay_identical(connect)
+
+
+async def test_m3_a_writer_restating_the_link_is_not_a_revert(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """M3: an import revision of the newer item that restates the supersedes link ends the C1 link
+    (write_service's link restatement): listed ``ended_by_write``, never counted as a revert."""
+    await _grant(connect, world)
+    old, new = await _pair(connect, world, embedder)
+    await _drain(db_dsn, connect, c1_oracle())
+    origin = await _c1_link_id(connect)
+    source = {"system": "test", "path": "notes/ttl.md", "sha256": "a" * 64}
+    restated = item(
+        *TTL,
+        logical_id=new.logical_id,
+        expected_version_id=new.version_id,
+        valid_from=D3,
+        source=source,
+        links=[{"rel": "supersedes", "target": old.logical_id}],
+    )
+    async with await connect() as conn:
+        await write(conn, world.ctx_a, write_req(MAIN, [restated]), deps=default_deps())
+        await conn.commit()
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT superseded_at = 'infinity' FROM links WHERE link_id = %s", (origin,))
+        assert (await cur.fetchone())[0] is False  # the writer's restatement ended it
+        now = await conn.execute("SELECT clock_timestamp()")
+        (at,) = await now.fetchone()
+        assert await classes.applied_on_day(conn, world.main_id, at) == 1
+        assert (await classes.demotion_rate(conn, world.main_id, at))["reverted"] == 0
+        [row] = await classes.applied(conn, world.main_id)
+        await conn.commit()
+    assert row["link_id"] == origin and row["ended_by_write"] and not row["reverted"]
+
+
+async def test_m4a_memory_answer_accept_stays_pending_with_c1_on(
+    db_dsn, connect, world: World, embedder
+) -> None:  # noqa: ANN001
+    """M4a: with C1 on and granted, an owner's ``memory.answer`` accept of a (whole-scope) question
+    is recorded accepted_pending; nothing is released or applied, by the worker or its sweeper."""
+    import uuid as _uuid
+
+    from hlmemo.librarian.questions import answer
+
+    await _grant(connect, world)
+    await _pair(connect, world, embedder)
+    await _drain(db_dsn, connect, c1_oracle(scope={}))  # whole scope: a question
+    [(_k, status, _c, _p)] = await _questions(connect)
+    assert status == "open"
+    async with await connect() as conn:
+        cur = await conn.execute("SELECT question_id::text FROM librarian_questions")
+        (qid,) = await cur.fetchone()
+        args = {"project": MAIN, "request_id": str(_uuid.uuid4()), "question_id": qid, "decision": "accept"}
+        await answer(conn, world.ctx_a, args, raw=args, configured_role="observer")
+        await conn.commit()
+    provider = make_provider(db_dsn, ScriptedLLM(default=Oracle()), budget_disabled=True)
+    worker = make_worker(lib_settings(db_dsn, librarian_c1=True), provider, connect)
+    await worker.drain(concurrency=1)
+    assert await worker.maybe_release(force=True) == 0
+    await provider.aclose()
+    assert [s for _k, s, _c, _p in await _questions(connect)] == ["accepted_pending"]
+    assert await _links(connect) == []
+    async with await connect() as conn:
+        assert await count(conn, "jobs", "payload->>'op' = 'apply_batch'") == 0
+        assert (
+            await count(conn, "memory_versions", "superseded_at <> 'infinity' OR valid_to <> 'infinity'") == 0
+        )
+
+
+def _permissive_c1(
+    j: Any, s: Any, c: Any, *, props: dict[str, Any], assessed: dict[str, int], **_kw: Any
+) -> Any:
+    """Every plan-time condition bypassed (only a part supersedes by the new item is kept)."""
+    from hlmemo.librarian.tasks import write_review as wr
+
+    if j.relation != "contradicts" or j.supersedes != "new":
+        return None
+    link = wr._link("supersedes", s, c, {**props, "scope": "part", "auto": "C1"}, assessed)
+    link["dst_version_id"] = c.version_id
+    return link
+
+
+APPLY_TIME = {
+    "kind changed (lessons)": {"old_kw": {"kind": "lesson"}, "new_kw": {"kind": "lesson"}},
+    "device scope differs": {"new_kw": {"device_scope": "class:personal"}},
+    "older pinned": {"old_kw": {"pinned": True}},
+    "another home project": {"old_project": OTHER, "grant_other": True},
+}
+
+
+@pytest.mark.parametrize("case", sorted(APPLY_TIME))
+async def test_m4b_apply_time_row_checks_hold_without_the_plan_time_ones(
+    db_dsn, connect, world: World, embedder, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:  # noqa: ANN001
+    from hlmemo.librarian.tasks import write_review as wr
+
+    monkeypatch.setattr(wr, "c1_link", _permissive_c1)
+    spec = APPLY_TIME[case]
+    await _grant(connect, world)
+    if spec.get("grant_other"):
+        await _grant(connect, world, project=world.other_id)
+    await _pair(
+        connect,
+        world,
+        embedder,
+        old_kw=spec.get("old_kw"),
+        new_kw=spec.get("new_kw"),
+        old_project=spec.get("old_project", MAIN),
+    )
+    await _drain(db_dsn, connect, c1_oracle())
+    assert await _links(connect) == [], case
+    assert len(await _questions(connect)) == 1
+
+
+async def test_m4b_older_head_moved_is_never_linked(
+    db_dsn, connect, world: World, embedder, monkeypatch: pytest.MonkeyPatch
+) -> None:  # noqa: ANN001
+    """The pinned version must still be the older item's head, even if the stale check missed it."""
+    from hlmemo.librarian import actor
+
+    await _grant(connect, world)
+    (old,) = await write_items(connect, world.ctx_a, MAIN, [item(*MULTI, valid_from=D1)])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, c1_oracle())
+    await write_items(connect, world.ctx_a, MAIN, [item(*TTL, valid_from=D3)])
+    await embed(connect, embedder)
+    worker, provider, job, plan = await _plan_one(db_dsn, connect, c1_oracle())
+    reworded = item(
+        MULTI[0], MULTI[1] + "\n- Reworded.", logical_id=old.logical_id, expected_version_id=old.version_id
+    )
+    async with await connect() as conn:
+        await write(conn, world.ctx_a, write_req(MAIN, [reworded]), deps=default_deps())
+        await conn.commit()
+
+    async def never_stale(conn: Any, mutation: Any) -> bool:  # noqa: ARG001
+        return False
+
+    monkeypatch.setattr(actor, "is_stale", never_stale)
+    await _apply(connect, worker, job, plan)
+    await provider.aclose()
+    assert await _links(connect) == []
+
+
+async def test_m4c_grant_revoked_between_plan_and_apply(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    await _grant(connect, world)
+    await write_items(connect, world.ctx_a, MAIN, [item(*MULTI, valid_from=D1)])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, c1_oracle())
+    await write_items(connect, world.ctx_a, MAIN, [item(*TTL, valid_from=D3)])
+    await embed(connect, embedder)
+    worker, provider, job, plan = await _plan_one(db_dsn, connect, c1_oracle())
+    assert [p.c1 is not None for p in plan.proposals] == [True]
+    await _grant(connect, world, on=False, decision="D-revoke")
+    await _apply(connect, worker, job, plan)
+    await provider.aclose()
+    assert await _links(connect) == []
+    assert [s for _k, s, _c, _p in await _questions(connect)] == ["open"]
+
+
+async def test_m4d_daily_cap_holds_under_two_concurrent_jobs(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """Two jobs of one project apply at the same time with a budget of 1: one link, one question."""
+    import asyncio
+
+    other = ("Cache size", "The API cache holds 500 entries.\n- It is warmed at startup.")
+    other_new = ("Cache size raised", "Since June the API cache holds 900 entries.")
+    await _grant(connect, world)
+    await write_items(connect, world.ctx_a, MAIN, [item(*MULTI, valid_from=D1), item(*other, valid_from=D1)])
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, Oracle())
+    await write_items(connect, world.ctx_a, MAIN, [item(*TTL, valid_from=D3)])
+    await write_items(connect, world.ctx_a, MAIN, [item(*other_new, valid_from=D3)])
+    await embed(connect, embedder)
+    rel = {
+        (TTL[0], MULTI[0]): ("contradicts", "new", "high"),
+        (other_new[0], other[0]): ("contradicts", "new", "high"),
+    }
+    scope = {(TTL[0], MULTI[0]): "part", (other_new[0], other[0]): "part"}
+    oracle = Oracle(relations=rel, scope=scope)
+    w1, p1, j1, plan1 = await _plan_one(db_dsn, connect, oracle, librarian_c1_daily_max=1)
+    w2, p2, j2, plan2 = await _plan_one(db_dsn, connect, oracle, librarian_c1_daily_max=1)
+    assert sum(p.c1 is not None for p in [*plan1.proposals, *plan2.proposals]) == 2
+    await asyncio.gather(_apply(connect, w1, j1, plan1), _apply(connect, w2, j2, plan2))
+    await p1.aclose()
+    await p2.aclose()
+    assert await _c1_links(connect) == 1
+    assert [s for _k, s, _c, _p in await _questions(connect)] == ["open"]
+
+
+async def test_l3_verifier_on_the_same_profile_is_not_c1(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """L3: ``HLM_LIBRARIAN_VERIFIER=self`` (the verifier answers on the relate call's profile)."""
+    await _grant(connect, world)
+    await _pair(connect, world, embedder)
+    await _drain(db_dsn, connect, c1_oracle(), librarian_verifier="self")
+    assert await _links(connect) == []
+    [(_k, status, _c, prop)] = await _questions(connect)
+    assert status == "open" and prop["tier"] == "action"  # the same judgement, asked
+
+
+async def test_l2_status_shows_the_c1_state(connect, world: World) -> None:  # noqa: ANN001
+    from types import SimpleNamespace
+
+    await _grant(connect, world)
+    async with await connect() as conn:
+        st = await classes.c1_status(conn, SimpleNamespace(librarian_c1=True, librarian_c1_daily_max=7))
+        await conn.commit()
+    assert st == {"c1": "on", "c1_cap": 7, "c1_granted": 1}
+    await _grant(connect, world, on=False)
+    async with await connect() as conn:
+        st = await classes.c1_status(conn, SimpleNamespace())
+        await conn.commit()
+    assert st == {"c1": "off", "c1_cap": 0, "c1_granted": 0}

@@ -9,9 +9,10 @@ nothing else. Nothing pending is released and answers stay labels.
 * Plan time (``tasks/write_review.c1_link``): conditions 1-6 of the class (relation, action tier,
   kinds, same class, time order, verified quote) put the link on ``Proposal.c1``.
 * Apply time (``c1_action``): the switches (``HLM_LIBRARIAN_C1`` on; the latest ``set_class`` decision
-  of EVERY touched project says on) and conditions 7-9 (the assessed heads are current, no pending
-  question for the pair, the pair never reverted, the project's daily budget
-  ``HLM_LIBRARIAN_C1_DAILY_MAX`` per UTC day) on the CURRENT rows. Any failure: today's path (a
+  of EVERY touched project says on) and conditions 7-9 (the assessed heads are current; no question
+  for the pair but an expired or superseded one; no live supersedes link and no ended C1 link of
+  the pair, either way; the project's daily budget ``HLM_LIBRARIAN_C1_DAILY_MAX`` per UTC day) on the
+  CURRENT rows. Any failure: today's path (a
   question), unchanged.
 * Grants: ``record_class_decision`` (admin only, per project only) records a ``librarian`` event
   ``{op: set_class, class, on, decision}``; its ``resolved.set_class`` is what ``grant`` reads (the
@@ -55,7 +56,6 @@ APPLIED_BY = {C1: "librarian (C1)"}
 #: automatic demotion: reverted ÷ applied over the project's last ``DEMOTION_WINDOW`` above this
 DEMOTION_RATE = 0.05
 DEMOTION_WINDOW = timedelta(days=30)
-_PENDING = ("open", "approved", "accepted_pending")
 
 
 def applied_by(props: dict[str, Any] | None) -> str | None:
@@ -143,54 +143,103 @@ async def record_class_decision(
     return event_id
 
 
+async def c1_status(conn: AsyncConnection, settings: Any) -> dict[str, Any]:
+    """Read-only C1 state for the heartbeat and ``ops status`` (review 1 L2): the process switch,
+    the daily cap and how many projects the latest grant decision has on."""
+    cur = await conn.execute(
+        """
+        SELECT count(*) FROM (
+            SELECT DISTINCT ON (project_id) payload->'resolved'->'set_class'->>'on' AS on_
+              FROM events
+             WHERE kind = 'librarian' AND project_id IS NOT NULL
+               AND payload->'resolved'->'set_class'->>'class' = %s
+             ORDER BY project_id, event_id DESC) g
+         WHERE g.on_ = 'true'
+        """,
+        (C1,),
+    )
+    return {
+        "c1": "on" if getattr(settings, "librarian_c1", False) else "off",
+        "c1_cap": int(getattr(settings, "librarian_c1_daily_max", 0) or 0),
+        "c1_granted": int((await cur.fetchone())[0]),
+    }
+
+
+# --------------------------------------------------------------------------- what counts (review 1 M3)
+#: an APPLIED C1 link (alias ``l``): written by a write_review job's event with ``props.auto = C1``.
+#: A writer's survivor copy of it (a close or a link restatement cuts the link and copies its props)
+#: is NOT an apply: it is never counted, listed or demoted on.
+_APPLIED = """l.rel = 'supersedes' AND l.props->>'auto' = %(c)s
+           AND EXISTS (SELECT 1 FROM events je WHERE je.event_id = l.source_event_id
+                        AND je.kind = 'librarian' AND je.payload->'request'->>'op' = 'write_review')"""
+#: an applied link (alias ``l``) is REVERTED when a ``class_revert`` event names it as its origin
+_REVERT_OF = """(SELECT r.event_id FROM events r
+                  WHERE r.kind = 'librarian' AND r.payload->'request'->>'op' = %(op)s
+                    AND (r.payload->'request'->>'origin_link_id')::bigint = l.link_id
+                  ORDER BY r.event_id LIMIT 1)"""
+
+
 # --------------------------------------------------------------------------- apply-time checks
-async def pair_reverted(conn: AsyncConnection, src: int, dst: int) -> bool:
-    """Condition 8: a C1 link of the pair (newer logical, older logical) was ever ended, or a C1
-    revert recorded the pair. Reads ended links too (T6: no re-apply loop)."""
+async def pair_reverted(conn: AsyncConnection, a: int, b: int) -> bool:
+    """Condition 8, in EITHER direction (review 1 M1): a C1 link between the two items was ever
+    ended (by a revert or by a writer: conservative), or a C1 revert recorded the pair. Reads ended
+    links too (T6: no re-apply loop)."""
     cur = await conn.execute(
         """
         SELECT 1 FROM links
-         WHERE rel = 'supersedes' AND src_logical_id = %(s)s AND dst_logical_id = %(d)s
-           AND props->>'auto' = %(c)s AND superseded_at <> 'infinity'
+         WHERE rel = 'supersedes' AND props->>'auto' = %(c)s AND superseded_at <> 'infinity'
+           AND ((src_logical_id = %(a)s AND dst_logical_id = %(b)s)
+                OR (src_logical_id = %(b)s AND dst_logical_id = %(a)s))
         UNION ALL
         SELECT 1 FROM events
          WHERE kind = 'librarian' AND payload->'request'->>'op' = %(op)s
-           AND payload->'request'->'pair' = jsonb_build_array(%(s)s::bigint, %(d)s::bigint)
+           AND payload->'request'->'pair' IN (jsonb_build_array(%(a)s::bigint, %(b)s::bigint),
+                                              jsonb_build_array(%(b)s::bigint, %(a)s::bigint))
         LIMIT 1
         """,
-        {"s": int(src), "d": int(dst), "c": C1, "op": OP_REVERT},
+        {"a": int(a), "b": int(b), "c": C1, "op": OP_REVERT},
     )
     return await cur.fetchone() is not None
 
 
-async def pending_pair(conn: AsyncConnection, logical_ids: list[int]) -> bool:
-    """Condition 7: a pending (open, approved or accepted_pending) question of ANY kind whose
-    subjects are exactly these logical items, in any of their versions."""
+async def pair_asked(conn: AsyncConnection, logical_ids: list[int]) -> bool:
+    """Condition 7 (review 1 M2: a decided pair is sticky): a question of ANY kind whose subjects
+    are exactly these logical items, in any of their versions, in any status but ``expired`` or
+    ``superseded`` — pending ones (the pair waits for Cemal) and decided ones alike (applied,
+    rejected, withdrawn, answered: Cemal or the operator has spoken on the pair)."""
     lids = sorted({int(x) for x in logical_ids})
     cur = await conn.execute(
         """
         SELECT 1 FROM librarian_questions lq
-         WHERE lq.status = ANY(%(st)s)
+         WHERE lq.status NOT IN ('expired', 'superseded')
            AND lq.subject_version_ids && ARRAY(SELECT version_id FROM memory_versions
                                                 WHERE logical_id = ANY(%(lids)s))
            AND ARRAY(SELECT DISTINCT v.logical_id FROM memory_versions v
                       WHERE v.version_id = ANY(lq.subject_version_ids) ORDER BY 1) = %(lids)s::bigint[]
          LIMIT 1
         """,
-        {"st": list(_PENDING), "lids": lids},
+        {"lids": lids},
     )
     return await cur.fetchone() is not None
 
 
+async def supersedes_between(conn: AsyncConnection, a: int, b: int) -> bool:
+    """A live ``supersedes`` link joins the two items in EITHER direction (review 1 M1)."""
+    return await actor.link_exists(conn, a, b, "supersedes") or await actor.link_exists(
+        conn, b, a, "supersedes"
+    )
+
+
 async def applied_on_day(conn: AsyncConnection, project_id: int, at: datetime) -> int:
-    """Condition 9: the C1 links of the project recorded on ``at``'s UTC day (reverted ones too)."""
+    """Condition 9: the APPLIED C1 links of the project recorded on ``at``'s UTC day (reverted ones
+    too; a writer's survivor copy never)."""
     cur = await conn.execute(
-        """
-        SELECT count(*) FROM links
-         WHERE rel = 'supersedes' AND props->>'auto' = %s AND project_id = %s
-           AND recorded_at >= (date_trunc('day', %s::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
-        """,
-        (C1, int(project_id), at),
+        f"""
+        SELECT count(*) FROM links l
+         WHERE {_APPLIED} AND l.project_id = %(pid)s
+           AND l.recorded_at >= (date_trunc('day', %(at)s::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+        """,  # noqa: S608 - fixed fragments
+        {"c": C1, "pid": int(project_id), "at": at},
     )
     return int((await cur.fetchone())[0])
 
@@ -203,12 +252,13 @@ async def c1_action(
     link: dict[str, Any],
     project_ids: list[int],
     at: datetime,
-    used: dict[int, int],
+    used: dict[int, set[tuple[int, int]]],
 ) -> dict[str, Any] | None:
     """The C1 link to apply directly, with the grant's decision id in its props, or ``None`` (the
     proposal then takes today's path). The caller holds the item locks of the proposal and the
     role-order lock (shared), checked the cross-project policy and that the assessed heads are
-    current (``actor.is_stale``). ``used``: the C1 links this job already applied, per project."""
+    current (``actor.is_stale``). ``used``: the pairs this job already applies, per project (a set,
+    so a link the materialization skips as a repeat is never counted twice, review 1 L4)."""
     if not getattr(settings, "librarian_c1", False):
         return None
     if (
@@ -245,10 +295,10 @@ async def c1_action(
         or dst.version_id != int(link["dst_version_id"])
     ):
         return None
-    if await actor.link_exists(conn, src.logical_id, dst.logical_id, "supersedes"):
-        return None  # a live supersedes link joins the pair already: nothing for C1 to add
-    if await pending_pair(conn, [src.logical_id, dst.logical_id]):
-        return None  # 7: the pair waits for Cemal
+    if await supersedes_between(conn, src.logical_id, dst.logical_id):
+        return None  # a live supersedes link joins the pair already (either way): nothing to add
+    if await pair_asked(conn, [src.logical_id, dst.logical_id]):
+        return None  # 7: the pair waits for Cemal, or he (or the operator) decided it
     if await pair_reverted(conn, src.logical_id, dst.logical_id):
         return None  # 8
     home = src.project_id
@@ -256,9 +306,11 @@ async def c1_action(
     # to commit, taken after the item locks and before the batch lock, like the batch lock itself
     await conn.execute("SELECT pg_advisory_xact_lock(6, hashtext(%s))", (f"librarian_c1:{home}",))
     cap = int(getattr(settings, "librarian_c1_daily_max", 0) or 0)
-    if await applied_on_day(conn, home, at) + used.get(home, 0) >= cap:
+    pairs = used.setdefault(home, set())
+    key = (src.logical_id, dst.logical_id)
+    if key not in pairs and await applied_on_day(conn, home, at) + len(pairs) >= cap:
         return None
-    used[home] = used.get(home, 0) + 1
+    pairs.add(key)
     return {**link, "props": {**props, "decision": grants[home][1]}}
 
 
@@ -266,31 +318,34 @@ async def c1_action(
 async def applied(
     conn: AsyncConnection, project_id: int | None = None, since: datetime | None = None
 ) -> list[dict[str, Any]]:
-    """Every C1 link (of one project, recorded since ``since``): both items' clues and titles
-    (redacted), the quote, the job event and, for a reverted one, ``reverted`` with its revert
-    event. Oldest first."""
+    """Every APPLIED C1 link (of one project, recorded since ``since``): both items' clues and
+    titles (redacted), the quote, the job event, and its state: ``reverted`` (a ``class_revert``
+    names it; ``revert_event_id``), ``ended_by_write`` (a writer's close or link restatement ended
+    it; not a revert) and ``live`` (it, or a writer's survivor copy of it, still stands). Oldest
+    first."""
     from hlmemo.librarian.redact import Redactor
 
     red = Redactor()
     cur = await conn.execute(
-        """
+        f"""
         SELECT l.link_id, p.slug, l.src_logical_id, l.dst_logical_id, l.dst_version_id, l.props,
                l.recorded_at, nullif(l.superseded_at, 'infinity'), l.source_event_id,
                e.payload->'request'->>'dedupe_key',
                (SELECT m->'assessed' FROM jsonb_array_elements(e.payload->'resolved'->'mutations') m
                  WHERE (m->>'link_id')::bigint = l.link_id LIMIT 1),
-               (SELECT r.event_id FROM events r
-                 WHERE r.kind = 'librarian' AND r.payload->'request'->>'op' = %(op)s
-                   AND (r.payload->'request'->>'link_id')::bigint = l.link_id
-                 ORDER BY r.event_id LIMIT 1)
+               {_REVERT_OF},
+               EXISTS (SELECT 1 FROM links s
+                        WHERE s.rel = 'supersedes' AND s.props->>'auto' = %(c)s
+                          AND s.src_logical_id = l.src_logical_id AND s.dst_logical_id = l.dst_logical_id
+                          AND s.superseded_at = 'infinity')
           FROM links l
           JOIN projects p ON p.project_id = l.project_id
-          LEFT JOIN events e ON e.event_id = l.source_event_id
-         WHERE l.rel = 'supersedes' AND l.props->>'auto' = %(c)s
+          JOIN events e ON e.event_id = l.source_event_id
+         WHERE {_APPLIED}
            AND (%(pid)s::bigint IS NULL OR l.project_id = %(pid)s)
            AND (%(since)s::timestamptz IS NULL OR l.recorded_at >= %(since)s)
          ORDER BY l.link_id
-        """,
+        """,  # noqa: S608 - fixed fragments
         {"op": OP_REVERT, "c": C1, "pid": project_id, "since": since},
     )
     rows = await cur.fetchall()
@@ -308,6 +363,7 @@ async def applied(
         job,
         assessed,
         revert_event,
+        live,
     ) in rows:
         assessed = assessed if isinstance(assessed, dict) else {}
         newer_vid = assessed.get(str(src))
@@ -320,6 +376,7 @@ async def applied(
                 r = await c.fetchone()
                 title = red.text(r[0]) if r else None
             sides[side] = {"clue": f"v{vid}" if vid is not None else None, "title": title}
+        reverted = revert_event is not None
         out.append(
             {
                 "link_id": int(link_id),
@@ -332,9 +389,11 @@ async def applied(
                 "recorded_at": fmt_ts(recorded),
                 "event_id": int(event_id),
                 "job": job,
-                "reverted": ended is not None,
-                "reverted_at": fmt_ts(ended) if ended is not None else None,
-                "revert_event_id": int(revert_event) if revert_event is not None else None,
+                "live": bool(live) and not reverted,
+                "reverted": reverted,
+                "revert_event_id": int(revert_event) if reverted else None,
+                "ended_by_write": ended is not None and not reverted,
+                "ended_at": fmt_ts(ended) if ended is not None else None,
             }
         )
     return out
@@ -343,16 +402,16 @@ async def applied(
 async def demotion_rate(
     conn: AsyncConnection, project_id: int, at: datetime, *, reverting: int | None = None
 ) -> dict[str, Any]:
-    """The project's C1 links recorded in the last ``DEMOTION_WINDOW`` before ``at`` and how many
-    of them are reverted (``reverting``: a link of the window being reverted now counts as
-    reverted)."""
+    """The project's APPLIED C1 links recorded in the last ``DEMOTION_WINDOW`` before ``at`` and
+    how many of them are REVERTED (a ``class_revert`` names them; ``reverting``: the origin being
+    reverted now counts too). A link a writer ended is not a revert (review 1 M3)."""
     cur = await conn.execute(
-        """
-        SELECT count(*), count(*) FILTER (WHERE superseded_at <> 'infinity' OR link_id = %s)
-          FROM links
-         WHERE rel = 'supersedes' AND props->>'auto' = %s AND project_id = %s AND recorded_at >= %s
-        """,
-        (reverting, C1, int(project_id), at - DEMOTION_WINDOW),
+        f"""
+        SELECT count(*), count(*) FILTER (WHERE {_REVERT_OF} IS NOT NULL OR l.link_id = %(rev)s)
+          FROM links l
+         WHERE {_APPLIED} AND l.project_id = %(pid)s AND l.recorded_at >= %(since)s
+        """,  # noqa: S608 - fixed fragments
+        {"op": OP_REVERT, "c": C1, "rev": reverting, "pid": int(project_id), "since": at - DEMOTION_WINDOW},
     )
     n_applied, n_reverted = (int(x) for x in await cur.fetchone())
     rate = n_reverted / n_applied if n_applied else 0.0
@@ -364,12 +423,34 @@ async def demotion_rate(
     }
 
 
+async def _origin(conn: AsyncConnection, link: q.LinkRow) -> q.LinkRow | None:
+    """The APPLIED C1 link ``link`` stands for: itself, or the link a writer's survivor copy was cut
+    from (``supersedes_link_id``, transitively; a visited set stops a cycle)."""
+    seen: set[int] = set()
+    cur_link: q.LinkRow | None = link
+    while cur_link is not None and cur_link.link_id not in seen:
+        seen.add(cur_link.link_id)
+        cur = await conn.execute(
+            "SELECT kind = 'librarian' AND payload->'request'->>'op' = 'write_review' FROM events"
+            " WHERE event_id = %s",
+            (int(cur_link.source_event_id),),
+        )
+        row = await cur.fetchone()
+        if row is not None and row[0]:
+            return cur_link
+        if cur_link.supersedes_link_id is None:
+            return None
+        cur_link = await q.get_link(conn, int(cur_link.supersedes_link_id))
+    return None
+
+
 # --------------------------------------------------------------------------- revert
 async def revert(conn: AsyncConnection, link_id: int, *, by: AuthContext, reason: str) -> dict[str, Any]:
-    """End the C1 link ``link_id`` in ONE ``librarian`` event (op ``class_revert``): its
-    ``link_supersede`` mutation (transaction time ends; nothing deleted), the pair (never applied
-    again) and, when the project's 30-day reverted ÷ applied is above ``DEMOTION_RATE`` and the
-    grant is on, ``resolved.set_class`` off (``reason: auto-demotion``). Caller commits."""
+    """End the live C1 link ``link_id`` (the applied link, or a writer's survivor copy of it) in ONE
+    ``librarian`` event (op ``class_revert``): its ``link_supersede`` mutation (transaction time
+    ends; nothing deleted), the applied link it stands for (``origin_link_id``), the pair (never
+    applied again) and, when the project's 30-day reverted ÷ applied is above ``DEMOTION_RATE`` and
+    the grant is on, ``resolved.set_class`` off (``reason: auto-demotion``). Caller commits."""
     reason = str(reason or "").strip()
     if not reason:
         raise ToolError("E_INVALID_ARG", "a revert names its reason")
@@ -379,8 +460,11 @@ async def revert(conn: AsyncConnection, link_id: int, *, by: AuthContext, reason
     link = await q.get_link(conn, int(link_id))
     if link is None or link.rel != "supersedes" or (link.props or {}).get("auto") != C1:
         raise ToolError("E_NOT_FOUND", "no C1 link with this id")
-    pid = int(link.project_id)
-    union = {pid, *(int(p) for p in link.project_ids)}
+    origin = await _origin(conn, link)
+    if origin is None:
+        raise ToolError("E_NOT_FOUND", "no C1 link with this id")
+    pid = int(origin.project_id)
+    union = {pid, int(link.project_id), *(int(p) for p in link.project_ids)}
     if not all(by.has(p, Role.WRITE) for p in sorted(union)):
         raise ToolError("E_FORBIDDEN_PROJECT", "reverting needs write on every project of the link")
     await q.lock_logical_ids(conn, [link.src_logical_id, link.dst_logical_id])
@@ -392,7 +476,7 @@ async def revert(conn: AsyncConnection, link_id: int, *, by: AuthContext, reason
         raise ToolError("E_VERSION_CONFLICT", "the C1 link is no longer live", status="reverted")
     await lock_event_refs(conn, pid, by.device_id)
     T = select_T(await q.clock_now(conn), link.recorded_at)  # after the link it ends
-    rate = await demotion_rate(conn, pid, T, reverting=int(link_id))
+    rate = await demotion_rate(conn, pid, T, reverting=int(origin.link_id))
     on, decision = await grant(conn, pid)
     demote = on and rate["rate"] > DEMOTION_RATE
     mutations = [{"op": "link_supersede", "link_id": int(link_id), "rel": "supersedes"}]
@@ -411,12 +495,13 @@ async def revert(conn: AsyncConnection, link_id: int, *, by: AuthContext, reason
         project_id=pid,
         device_id=by.device_id,
         client=by.client,
-        request_id=uuid.uuid5(NS_LIBRARIAN, f"{OP_REVERT}:{int(link_id)}"),
+        request_id=uuid.uuid5(NS_LIBRARIAN, f"{OP_REVERT}:{int(origin.link_id)}"),
         request={
             "actor": CLIENT,
             "op": OP_REVERT,
             "class": C1,
             "link_id": int(link_id),
+            "origin_link_id": int(origin.link_id),
             "pair": [int(link.src_logical_id), int(link.dst_logical_id)],
             "reason": reason[:500],
             "rate": rate,
@@ -424,12 +509,13 @@ async def revert(conn: AsyncConnection, link_id: int, *, by: AuthContext, reason
         resolved=resolved,
         at=T,
     )
-    if event_id is None:  # pragma: no cover - checked above under the locks
+    if event_id is None:  # the applied link was reverted already (through another copy)
         raise ToolError("E_VERSION_CONFLICT", "the C1 link was already reverted", status="reverted")
     await actor.apply_mutations(conn, mutations, event_id, T)
     return {
         "event_id": event_id,
         "link_id": int(link_id),
+        "origin_link_id": int(origin.link_id),
         "project_id": pid,
         "pair": [int(link.src_logical_id), int(link.dst_logical_id)],
         "rate": rate,
@@ -453,12 +539,14 @@ __all__ = [
     "applied_by",
     "applied_on_day",
     "c1_action",
+    "c1_status",
     "demotion_rate",
     "grant",
     "guest_projects",
     "pair_reverted",
+    "supersedes_between",
     "parse_since",
-    "pending_pair",
+    "pair_asked",
     "record_class_decision",
     "revert",
 ]

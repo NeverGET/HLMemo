@@ -65,7 +65,8 @@ MCP tools.
   `cursor` to read on.
 - **`mcp__hlm__memory_raw`**, the provenance of one version (dates, the source event, the incoming `superseded_by`
   with the outdated `quote`): `{"project": "my-project", "version_id": 812, "token_budget": 2000}`. `version_id` is
-  the number inside the clue (`v812.0` gives `812`).
+  the number inside the clue (`v812.0` gives `812`). A `superseded_by` entry or link with
+  `applied_by: "librarian (C1)"` is an automatic librarian correction (D-286), not a writer's or the operator's.
 - **`mcp__hlm__memory_ask`**, the research librarian (listed only while research is enabled; about 10–20 s):
   `{"question": "Why was the API cache TTL raised, and when?", "project": "my-project", "token_budget": 6000}`.
   It returns `answer`, `confidence`, `abstained`, `claims[]` (each with `support[]` of `{handle, quote}`),

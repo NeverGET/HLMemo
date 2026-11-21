@@ -120,6 +120,7 @@ FINGERPRINT_KEYS = (
     "HLM_LIBRARIAN_SHADOW_VERIFY_PROFILE",
     # D-286: the class C1 switch (the librarian applies one class of links itself while it is on)
     "HLM_LIBRARIAN_C1",
+    "HLM_LIBRARIAN_C1_DAILY_MAX",
 )
 TASK_FALLBACK_PREFIX = "HLM_FALLBACK_PROFILE__"
 #: R4 R-4: the spend guard, whatever it grows: the caps (HOUR/DAY/MONTH_USD) and HLM_LLM_BUDGET_DISABLED
@@ -136,7 +137,9 @@ SWITCHES = (
 SHARED = ("HLM_PROFILE", "HLM_FALLBACK_PROFILE")
 #: R4 R-4 (review 77): the services that read llm.env; each must report the env it was created with
 REQUIRED_SERVICES = ("api", "librarian")
-_FALSE = frozenset({"", "0", "false", "no", "off"})
+#: a switch's states, as pydantic reads a bool (D-286 review 1 L1); anything else is no switch value
+_FALSE = frozenset({"", "0", "false", "no", "off", "f", "n"})
+_TRUE = frozenset({"1", "true", "yes", "on", "t", "y"})
 _LINE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*")
 
 
@@ -175,8 +178,10 @@ def fingerprint_of_file(target: str) -> dict[str, str]:
     return {} if target == ABSENT or not path.is_file() else fingerprint_of_dotenv(path.read_text())
 
 
-def _on(value: str | None) -> bool:
-    return value is not None and value.strip().lower() not in _FALSE
+def _on(value: str | None) -> bool | None:
+    """A switch's state (absent = off); ``None`` for a value that is neither on nor off."""
+    v = "" if value is None else value.strip().lower()
+    return True if v in _TRUE else False if v in _FALSE else None
 
 
 def mismatches(disk: dict[str, str], running: dict[str, str]) -> list[str]:
@@ -184,7 +189,8 @@ def mismatches(disk: dict[str, str], running: dict[str, str]) -> list[str]:
     out = []
     for key in sorted(set(disk) | set(running)):
         if key in SWITCHES:
-            differs = _on(disk.get(key)) != _on(running.get(key))
+            a, b = _on(disk.get(key)), _on(running.get(key))
+            differs = a is None or b is None or a != b
         elif key in SHARED:
             differs = key in disk and disk[key] != running.get(key)
         else:

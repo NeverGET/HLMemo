@@ -690,7 +690,7 @@ class LibrarianWorker:
         path above, unchanged."""
         caps = plan.capabilities
         auto = role == "autonomous"
-        c1_used: dict[int, int] = {}
+        c1_used: dict[int, set[tuple[int, int]]] = {}
         direct: list[dict[str, Any]] = []
         questions: list[dict[str, Any]] = []
         superseded = 0
@@ -1259,6 +1259,7 @@ class LibrarianWorker:
         self._last_heartbeat = now
         async with await self.connect() as conn:
             hb = await heartbeat_fields(conn, self.settings.librarian_role)
+            hb.update(await classes.c1_status(conn, self.settings))  # D-286 (read-only)
             await conn.commit()
         hb.update(
             enabled=enabled,

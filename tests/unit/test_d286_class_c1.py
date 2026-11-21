@@ -52,6 +52,8 @@ def _c1(j: Judgement | None = None, *, new: Any = None, old: Any = None, **kw: A
             "quote": QUOTE,
         },
         "assessed": {"20": 21, "10": 11},
+        "newer": "new",
+        "profiles": ("relate-profile", "verify-profile"),
     }
     args.update(kw)
     return c1_link(j or _judgement(), new or _row(20, 21, NEW_T), old or _row(10, 11, OLD_T), **args)
@@ -94,6 +96,12 @@ def test_c1_link_is_the_pinned_part_supersedes_link_alone() -> None:
         ("5 newer is older in valid time", {"new": _row(20, 21, datetime(2025, 1, 1, tzinfo=UTC))}),
         ("6 empty quote", {"props": {"scope": "part", "quote": "  "}}),
         ("6 unverified quote", {"j": _judgement(flags=["quote_unverified"])}),
+        # review 1 M1: on a valid_from tie the new item must be the later-recorded one
+        ("5 full tie", {"new": _row(20, 21, OLD_T), "newer": None}),
+        ("5 tie, the OLD one recorded later", {"new": _row(20, 21, OLD_T), "newer": "old"}),
+        # review 1 L3: the verifier answered on another profile than the relate call
+        ("2 verifier on the same profile", {"profiles": ("p", "p")}),
+        ("2 verifier did not answer", {"profiles": ("p", "")}),
     ],
 )
 def test_each_plan_time_condition_false_gives_no_c1(case: str, kw: dict[str, Any]) -> None:
