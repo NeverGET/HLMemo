@@ -37,6 +37,11 @@ Updated 2026-09-23. Source of each item in parentheses.
 - Writes accepted between the live pre-upgrade dump and `dc stop` are lost if that snapshot is restored (documented in RUNBOOK).
 - bootstrap.sh re-run with a changed --admin-cidr may stop before 80/443 under set -e; provider "allow 22" rules make --admin-cidr ineffective (consults/23, Low).
 - middleware.py docstring says register is "gated" (it is checked only post-body).
+- `tests/deploy/test_release_convergence.py`: 7 tests fail on main since D-280 (the running-vs-disk comparison of `HLM_LLM_BUDGET_BACKGROUND_SHARE`); the same 7 on 180fe47 and 837bce0 (found 2026-11-21 in the D-286 work).
+- The G4 latency test of `make gate-release` rewrites `HARDWARE.md`, so the file shows as modified after every gate run; write it to a scratch path or only on request.
+- A stale `.git/index.lock` appeared three times in the main checkout (the last one 13 hours old, 2026-11-21) with no git process running; cause unknown (a killed agent's git call is the guess).
+- The privacy denylist holds a common English word (a project slug), so the pre-push gate fails on old, unrelated lines of any file a push changes (2026-11-21: two lines reworded). Match that term on word boundaries in code paths, or keep rewording.
+- D-286 follow-ups: demotion runs only at revert time (a time-based check would guard an unwatched week); `class applied` is reviewed weekly by the operator.
 - Writer 503 follow-up (consults/93 #4, NOT in the unbilled-503 settlement change): an opt-in, measured single retry of the research writer after a fast, verified-unbilled 503 (per-profile flag; jitter; honour `Retry-After`; re-reserve its worst case; skip it unless the fallback keeps a protected time share); tests for deadline/cancellation and at most two attempts.
 ## Retrieval / embeddings (D-042)
 - Embedder provider interface + async query embedding; gemini-embedding-2 / pplx-embed-v1-4b as opt-in profiles after RRF re-tuning and latency measured from the VPS.
