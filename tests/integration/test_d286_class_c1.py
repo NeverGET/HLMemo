@@ -562,6 +562,10 @@ async def test_grant_is_admin_only_per_project_and_latest_wins(connect, world: W
             (world.ctx_a, world.main_id, "D-286"),  # a writer device: never
             (world.ctx_admin, None, "D-286"),  # no project-less grant
             (world.ctx_admin, world.main_id, "  "),  # a grant names its decision
+            (world.ctx_admin, world.main_id, "D-1"),  # round 2 L2: a DECISIONS.md id, D-NNN(N)
+            (world.ctx_admin, world.main_id, "d-286"),
+            (world.ctx_admin, world.main_id, "D-286 and more"),
+            (world.ctx_admin, world.main_id, "D-28600"),
         ):
             with pytest.raises(ToolError):
                 await classes.record_class_decision(
@@ -685,9 +689,11 @@ async def test_revert_ends_the_link_records_the_pair_and_demotes(
         demotion, device = await cur.fetchone()
         await conn.commit()
     assert demotion["on"] is False and demotion["reason"] == "auto-demotion" and device == 1
-    # a second revert of the same link is refused
+    # a second revert of the same link is a no-op that says so (nothing recorded)
     proc = _ops(db_dsn, "class", "revert", str(link_id), "--reason", "again")
-    assert proc.returncode != 0
+    assert proc.returncode == 0, proc.stderr
+    again = json.loads(proc.stdout)
+    assert again["noop"] is True and "already reverted" in again["reason"]
     # applied lists it, marked reverted
     proc = _ops(db_dsn, "class", "applied", "--project", MAIN, "--json")
     assert proc.returncode == 0, proc.stderr
@@ -994,7 +1000,7 @@ async def test_m4c_grant_revoked_between_plan_and_apply(db_dsn, connect, world: 
     await embed(connect, embedder)
     worker, provider, job, plan = await _plan_one(db_dsn, connect, c1_oracle())
     assert [p.c1 is not None for p in plan.proposals] == [True]
-    await _grant(connect, world, on=False, decision="D-revoke")
+    await _grant(connect, world, on=False, decision="D-290")
     await _apply(connect, worker, job, plan)
     await provider.aclose()
     assert await _links(connect) == []
@@ -1053,3 +1059,84 @@ async def test_l2_status_shows_the_c1_state(connect, world: World) -> None:  # n
         st = await classes.c1_status(conn, SimpleNamespace())
         await conn.commit()
     assert st == {"c1": "off", "c1_cap": 0, "c1_granted": 0}
+
+
+# --------------------------------------------------------------------------- review 2
+D_JUL = datetime(2026, 7, 1, tzinfo=UTC).isoformat()
+D_AUG = datetime(2026, 8, 1, tzinfo=UTC).isoformat()
+
+
+async def test_r2_revert_ends_every_live_copy_of_the_applied_link(
+    db_dsn, connect, world: World, embedder, read_deps
+) -> None:  # noqa: ANN001
+    """Round 2 HIGH: an import restating the link over July-August cuts the C1 link into two live
+    survivor copies; reverting through either one ends both, and readers stop showing a C1 link."""
+    await _grant(connect, world)
+    old, new = await _pair(connect, world, embedder)
+    await _drain(db_dsn, connect, c1_oracle())
+    restated = item(
+        TTL[0],
+        TTL[1] + " Checked.",
+        logical_id=new.logical_id,
+        expected_version_id=new.version_id,
+        valid_from=D_JUL,
+        valid_to=D_AUG,
+        source={"system": "test", "path": "notes/ttl.md", "sha256": "b" * 64},
+        links=[{"rel": "supersedes", "target": old.logical_id}],
+    )
+    async with await connect() as conn:
+        await write(conn, world.ctx_a, write_req(MAIN, [restated]), deps=default_deps())
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT link_id FROM links WHERE props->>'auto' = 'C1' AND superseded_at = 'infinity'"
+            " ORDER BY link_id"
+        )
+        copies = [r[0] for r in await cur.fetchall()]
+        await conn.commit()
+    assert len(copies) == 2  # June-July and August-onward
+    async with await connect() as conn:
+        res = await classes.revert(conn, copies[0], by=world.ctx_admin, reason="wrong")
+        await conn.commit()
+    assert sorted(res["links_ended"]) == copies
+    async with await connect() as conn:
+        assert await count(conn, "links", "props->>'auto' = 'C1' AND superseded_at = 'infinity'") == 0
+        out = await raw(
+            conn,
+            world.ctx_a,
+            {"project": MAIN, "version_id": old.version_id, "token_budget": 4000},
+            deps=read_deps,
+        )
+        [row] = await classes.applied(conn, world.main_id)
+        again = await classes.revert(conn, copies[1], by=world.ctx_admin, reason="again")
+        await conn.commit()
+    assert all("applied_by" not in e for e in out["superseded_by"])  # only the writer's own link is left
+    assert row["reverted"] and not row["live"]
+    assert again["noop"] is True and again["revert_event_id"] == res["event_id"]
+    await _replay_identical(connect)
+
+
+async def test_r2_a_live_link_the_other_way_blocks_c1(db_dsn, connect, world: World, embedder) -> None:  # noqa: ANN001
+    """Round 2 L1: a writer's live supersedes link older -> newer (an import) blocks the C1 link
+    newer -> older (``supersedes_between`` checks both directions)."""
+    await _grant(connect, world)
+    (old,) = await write_items(connect, world.ctx_a, MAIN, [item(*MULTI, valid_from=D1)])
+    (new,) = await write_items(connect, world.ctx_a, MAIN, [item(*TTL, valid_from=D3)])
+    reverse = item(
+        MULTI[0],
+        MULTI[1],
+        logical_id=old.logical_id,
+        expected_version_id=old.version_id,
+        valid_from=D1,
+        source={"system": "test", "path": "notes/cache.md", "sha256": "c" * 64},
+        links=[{"rel": "supersedes", "target": new.logical_id}],
+    )
+    async with await connect() as conn:
+        await write(conn, world.ctx_a, write_req(MAIN, [reverse]), deps=default_deps())
+        await conn.commit()
+    await embed(connect, embedder)
+    await _drain(db_dsn, connect, c1_oracle())
+    assert await _c1_links(connect) == 0
+    links = await _links(connect)
+    assert [(s_, d) for _r, s_, d, _v, _p, _l in links] == [(old.logical_id, new.logical_id)]
+    review = await _resolved(connect)
+    assert any(q_["proposal"]["relation"] == "contradicts" for r in review for q_ in r["questions"])  # asked

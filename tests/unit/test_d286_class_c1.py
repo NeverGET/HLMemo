@@ -162,3 +162,16 @@ def test_ops_parser_class_commands() -> None:
             parser.parse_args(bad)
     assert classes.parse_since("2026-11-01") == datetime(2026, 11, 1, tzinfo=UTC)
     assert classes.parse_since(None) is None
+
+
+def test_class_applied_prints_no_control_characters() -> None:
+    """Round 2 L3: titles and quotes in ``class applied`` carry no control or bidi characters."""
+    assert classes._printable("a\x1b[31mb‮c\td\ne\x00f⁦") == "a[31mbc d ef"
+    assert classes._printable("Cache TTL changed") == "Cache TTL changed"
+
+
+def test_decision_id_shape() -> None:
+    for ok in ("D-286", "D-1234"):
+        assert classes.DECISION_RE.match(ok)
+    for bad in ("D-1", "d-286", "D-286 x", "D-28600", "", "286"):
+        assert not classes.DECISION_RE.match(bad)

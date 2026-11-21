@@ -32,6 +32,7 @@ Replay: the link and its revert are ordinary ``link_insert`` / ``link_supersede`
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -56,6 +57,8 @@ APPLIED_BY = {C1: "librarian (C1)"}
 #: automatic demotion: reverted ÷ applied over the project's last ``DEMOTION_WINDOW`` above this
 DEMOTION_RATE = 0.05
 DEMOTION_WINDOW = timedelta(days=30)
+#: a grant names the decision that authorizes it: a DECISIONS.md id (round 2 L2)
+DECISION_RE = re.compile(r"^D-\d{3,4}$")
 
 
 def applied_by(props: dict[str, Any] | None) -> str | None:
@@ -116,9 +119,9 @@ async def record_class_decision(
         raise ToolError("E_INVALID_ARG", "a class grant is per project: name the project")
     if not decided_by.is_admin:
         raise ToolError("E_FORBIDDEN", "a class grant is recorded by the operator (admin device) only")
-    decision = str(decision or "").strip()[:200]
-    if not decision:
-        raise ToolError("E_INVALID_ARG", "a class grant names the decision that authorizes it")
+    decision = str(decision or "").strip()
+    if not DECISION_RE.match(decision):
+        raise ToolError("E_INVALID_ARG", "a class grant names the decision that authorizes it (D-NNN)")
     from hlmemo.librarian.roles import lock_role_order
 
     await lock_role_order(conn, exclusive=True)  # an apply in flight commits first
@@ -315,6 +318,15 @@ async def c1_action(
 
 
 # --------------------------------------------------------------------------- audit
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def _printable(text: str) -> str:
+    """Round 2 L3: no control or bidi characters in what ``class applied`` prints (a title or
+    quote can carry any text); tabs and newlines become spaces."""
+    return _CONTROL.sub("", text.replace("\t", " ").replace("\n", " "))
+
+
 async def applied(
     conn: AsyncConnection, project_id: int | None = None, since: datetime | None = None
 ) -> list[dict[str, Any]]:
@@ -333,11 +345,7 @@ async def applied(
                e.payload->'request'->>'dedupe_key',
                (SELECT m->'assessed' FROM jsonb_array_elements(e.payload->'resolved'->'mutations') m
                  WHERE (m->>'link_id')::bigint = l.link_id LIMIT 1),
-               {_REVERT_OF},
-               EXISTS (SELECT 1 FROM links s
-                        WHERE s.rel = 'supersedes' AND s.props->>'auto' = %(c)s
-                          AND s.src_logical_id = l.src_logical_id AND s.dst_logical_id = l.dst_logical_id
-                          AND s.superseded_at = 'infinity')
+               {_REVERT_OF}
           FROM links l
           JOIN projects p ON p.project_id = l.project_id
           JOIN events e ON e.event_id = l.source_event_id
@@ -363,7 +371,6 @@ async def applied(
         job,
         assessed,
         revert_event,
-        live,
     ) in rows:
         assessed = assessed if isinstance(assessed, dict) else {}
         newer_vid = assessed.get(str(src))
@@ -374,25 +381,26 @@ async def applied(
             if vid is not None:
                 c = await conn.execute("SELECT title FROM memory_versions WHERE version_id = %s", (int(vid),))
                 r = await c.fetchone()
-                title = red.text(r[0]) if r else None
+                title = _printable(red.text(r[0])) if r else None
             sides[side] = {"clue": f"v{vid}" if vid is not None else None, "title": title}
         reverted = revert_event is not None
+        live = bool(await live_copies(conn, int(link_id)))
         out.append(
             {
                 "link_id": int(link_id),
                 "project": slug,
                 "newer": {"logical_id": int(src), **sides["newer"]},
                 "older": {"logical_id": int(dst), **sides["older"]},
-                "quote": red.text(str((props or {}).get("quote") or "")),
+                "quote": _printable(red.text(str((props or {}).get("quote") or ""))),
                 "confidence": (props or {}).get("confidence"),
                 "decision": (props or {}).get("decision"),
                 "recorded_at": fmt_ts(recorded),
                 "event_id": int(event_id),
                 "job": job,
-                "live": bool(live) and not reverted,
+                "live": live,
                 "reverted": reverted,
                 "revert_event_id": int(revert_event) if reverted else None,
-                "ended_by_write": ended is not None and not reverted,
+                "ended_by_write": ended is not None and not reverted,  # the applied row itself
                 "ended_at": fmt_ts(ended) if ended is not None else None,
             }
         )
@@ -444,13 +452,38 @@ async def _origin(conn: AsyncConnection, link: q.LinkRow) -> q.LinkRow | None:
     return None
 
 
+async def live_copies(conn: AsyncConnection, origin_id: int, *, lock: bool = False) -> list[tuple[int, Any]]:
+    """``[(link_id, recorded_at)]`` of every LIVE link that stands for the applied link ``origin_id``:
+    itself and every copy cut from it (``supersedes_link_id``, transitively: a writer's close or
+    restatement can leave several survivor copies, round 2 HIGH). Only C1 copies (``props.auto``):
+    a writer's own restated link also names the link it replaced and is never ended here.
+    ``lock``: ``FOR UPDATE``."""
+    cur = await conn.execute(
+        """
+        WITH RECURSIVE d(link_id) AS (
+            SELECT %s::bigint
+          UNION
+            SELECT c.link_id FROM links c JOIN d ON c.supersedes_link_id = d.link_id
+             WHERE c.rel = 'supersedes' AND c.props->>'auto' = 'C1')
+        SELECT l.link_id, l.recorded_at FROM links l JOIN d ON d.link_id = l.link_id
+         WHERE l.superseded_at = 'infinity' AND l.props->>'auto' = 'C1'
+         ORDER BY l.link_id
+        """
+        + (" FOR UPDATE OF l" if lock else ""),
+        (int(origin_id),),
+    )
+    return [(int(i), r) for i, r in await cur.fetchall()]
+
+
 # --------------------------------------------------------------------------- revert
 async def revert(conn: AsyncConnection, link_id: int, *, by: AuthContext, reason: str) -> dict[str, Any]:
-    """End the live C1 link ``link_id`` (the applied link, or a writer's survivor copy of it) in ONE
-    ``librarian`` event (op ``class_revert``): its ``link_supersede`` mutation (transaction time
-    ends; nothing deleted), the applied link it stands for (``origin_link_id``), the pair (never
-    applied again) and, when the project's 30-day reverted ÷ applied is above ``DEMOTION_RATE`` and
-    the grant is on, ``resolved.set_class`` off (``reason: auto-demotion``). Caller commits."""
+    """Revert the applied C1 link that ``link_id`` stands for (the applied link, or any writer's
+    survivor copy of it) in ONE ``librarian`` event (op ``class_revert``): a ``link_supersede`` of
+    EVERY live copy of it (transaction time ends; nothing deleted), the applied link
+    (``origin_link_id``), the pair (never applied again) and, when the project's 30-day reverted ÷
+    applied is above ``DEMOTION_RATE`` and the grant is on, ``resolved.set_class`` off (``reason:
+    auto-demotion``). An applied link with no live copy left is a no-op that says so (``noop``;
+    nothing recorded). Caller commits."""
     reason = str(reason or "").strip()
     if not reason:
         raise ToolError("E_INVALID_ARG", "a revert names its reason")
@@ -467,19 +500,30 @@ async def revert(conn: AsyncConnection, link_id: int, *, by: AuthContext, reason
     union = {pid, int(link.project_id), *(int(p) for p in link.project_ids)}
     if not all(by.has(p, Role.WRITE) for p in sorted(union)):
         raise ToolError("E_FORBIDDEN_PROJECT", "reverting needs write on every project of the link")
-    await q.lock_logical_ids(conn, [link.src_logical_id, link.dst_logical_id])
-    cur = await conn.execute(
-        "SELECT superseded_at = 'infinity' FROM links WHERE link_id = %s FOR UPDATE", (int(link_id),)
-    )
-    (live,) = await cur.fetchone()
-    if not live:
-        raise ToolError("E_VERSION_CONFLICT", "the C1 link is no longer live", status="reverted")
+    pair = [int(origin.src_logical_id), int(origin.dst_logical_id)]
+    await q.lock_logical_ids(conn, pair)
+    copies = await live_copies(conn, int(origin.link_id), lock=True)
+    out: dict[str, Any] = {"link_id": int(link_id), "origin_link_id": int(origin.link_id), "project_id": pid}
+    if not copies:
+        cur = await conn.execute(
+            "SELECT event_id FROM events WHERE kind = 'librarian' AND payload->'request'->>'op' = %s"
+            " AND (payload->'request'->>'origin_link_id')::bigint = %s ORDER BY event_id LIMIT 1",
+            (OP_REVERT, int(origin.link_id)),
+        )
+        done = await cur.fetchone()
+        why = "already reverted" if done else "ended by a writer"
+        return {
+            **out,
+            "noop": True,
+            "reason": f"no live copy of the C1 link is left ({why}); nothing recorded",
+            "revert_event_id": int(done[0]) if done else None,
+        }
     await lock_event_refs(conn, pid, by.device_id)
-    T = select_T(await q.clock_now(conn), link.recorded_at)  # after the link it ends
+    T = select_T(await q.clock_now(conn), *(r for _i, r in copies))  # after every link it ends
     rate = await demotion_rate(conn, pid, T, reverting=int(origin.link_id))
     on, decision = await grant(conn, pid)
     demote = on and rate["rate"] > DEMOTION_RATE
-    mutations = [{"op": "link_supersede", "link_id": int(link_id), "rel": "supersedes"}]
+    mutations = [{"op": "link_supersede", "link_id": i, "rel": "supersedes"} for i, _r in copies]
     resolved: dict[str, Any] = {"recorded_at": fmt_ts(T), "mutations": mutations}
     if demote:
         resolved["set_class"] = {
@@ -502,22 +546,22 @@ async def revert(conn: AsyncConnection, link_id: int, *, by: AuthContext, reason
             "class": C1,
             "link_id": int(link_id),
             "origin_link_id": int(origin.link_id),
-            "pair": [int(link.src_logical_id), int(link.dst_logical_id)],
+            "link_ids": [i for i, _r in copies],
+            "pair": pair,
             "reason": reason[:500],
             "rate": rate,
         },
         resolved=resolved,
         at=T,
     )
-    if event_id is None:  # the applied link was reverted already (through another copy)
+    if event_id is None:  # pragma: no cover - a recorded revert left no live copy (checked above)
         raise ToolError("E_VERSION_CONFLICT", "the C1 link was already reverted", status="reverted")
     await actor.apply_mutations(conn, mutations, event_id, T)
     return {
+        **out,
         "event_id": event_id,
-        "link_id": int(link_id),
-        "origin_link_id": int(origin.link_id),
-        "project_id": pid,
-        "pair": [int(link.src_logical_id), int(link.dst_logical_id)],
+        "links_ended": [i for i, _r in copies],
+        "pair": pair,
         "rate": rate,
         "demoted": demote,
     }
@@ -538,6 +582,7 @@ __all__ = [
     "applied",
     "applied_by",
     "applied_on_day",
+    "live_copies",
     "c1_action",
     "c1_status",
     "demotion_rate",
