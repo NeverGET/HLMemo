@@ -230,7 +230,7 @@ and returns `versions[]` and `session_note_clue`. Leave its `lessons` field empt
   `## Decisions` list, one line each with its reason; notes and decisions together stay within 64000 chars.
 - Optional: a last `Day:` line, one sentence of what the day was like in the owner's own words; the owner keeps
   this memory so that shared work is remembered on both sides.
-- With an agent team, check before closing that lessons the teammates wrote into their own files (handoffs,
+- With an agent team, check before closing that lessons the teammates wrote into their own files (hand-over notes,
   reports) reached memory through `register_lesson`.
 - `card_update` is optional. Take the current text from `memory_query` (`card.text`; drill `card.clue` if
   `card.truncated`), change only the line your session made false, stay within 420 tokens, and set

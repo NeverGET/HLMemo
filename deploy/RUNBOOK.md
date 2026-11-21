@@ -412,7 +412,7 @@ checks public HTTPS readiness with certificate validation and the public route t
 (failure leaves the internally healthy stack running, like the readiness probe). The runner itself is extracted on the server with `git show` from
 that same fetched commit. A ref without `deploy/scripts/remote-deploy.sh`, or without the exact supported
 `HLM_RUNNER_PROTOCOL=3` marker, is rejected before checkout, build, backup or restore. Older and
-unknown protocols are refused; the bootstrap retains its deployment lock across runner handoff. A first uncached model build can take several minutes.
+unknown protocols are refused; the bootstrap retains its deployment lock across the runner hand-over. A first uncached model build can take several minutes.
 Application images use `repository:<commit-sha>`; each release build carries `org.opencontainers.image.revision=<target-sha>`.
 An existing image is reused only if that label matches the target. The label is checked again
 before migration and application startup. Missing/mismatched labels abort instead of overwriting
