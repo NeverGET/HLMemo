@@ -38,7 +38,8 @@ enqueue). Plan (reads in short committed transactions; provider calls outside an
    (``resolution: split_and_supersede`` for the owner). ``auto_ok`` marks the auto-rule class: the
    strict action tier (verifier agreement, quotes pinning the claim, same kind), same home project,
    identical ``device_scope``, neither item pinned, no ``experience``, the newer ``valid_from`` ≥
-   the older's, and a close only for a one-statement item. A cross-project
+   the older's, and a close only for a one-statement item. D-286: a part supersession that meets
+   class C1 also carries its pinned link alone (``Proposal.c1``, ``c1_link``). A cross-project
    duplicate/refinement/restatement is a ``widen_scope`` question in every role.
 
 The worker applies the plan (role ladder, CC-3 recheck, one ``librarian`` event).
@@ -57,6 +58,7 @@ from hlmemo.db import librarian_queries as lq
 from hlmemo.librarian import candidates as cands
 from hlmemo.librarian import guards, privacy
 from hlmemo.librarian import profiles as lprofiles
+from hlmemo.librarian.classes import C1
 from hlmemo.librarian.errors import (
     AuthorityLost,
     LibrarianError,
@@ -116,6 +118,52 @@ def _link(rel: str, src: Any, dst: Any, props: dict[str, Any], assessed: dict[st
         "dst_project_ids": list(dst.project_ids),
         "assessed": assessed,
     }
+
+
+def c1_link(
+    j: guards.Judgement,
+    s: Any,
+    c: Any,
+    *,
+    cross: bool,
+    same_class: bool,
+    props: dict[str, Any],
+    assessed: dict[str, int],
+) -> dict[str, Any] | None:
+    """D-286: the plan-time conditions of class C1 ("a newer fact replaces part of a current
+    fact"), ``docs/decisions/PROMOTION-C1.md`` conditions 1-6; the worker checks 7-9 and the
+    switches at apply time (``librarian/classes.c1_action``). Returns the ONLY action C1 may apply:
+    the ``supersedes`` link newer -> older, part scope, the verified quote, PINNED to the assessed
+    older version, ``props.auto = "C1"`` (the grant's decision id is added at apply time); else
+    ``None``. ``s`` is the subject (the new item), ``c`` the candidate."""
+    quote = str(props.get("quote") or "")
+    ok = (
+        # 1. contradicts, the NEW item supersedes, part scope (never a close)
+        j.relation == "contradicts"
+        and j.supersedes == "new"
+        and j.scope == "part"
+        and not j.close_ok
+        # 2. the action tier after guards.finalize (verifier agreed, quotes pin the claim, same kind)
+        and j.tier == "action"
+        and bool((j.verification or {}).get("agreed"))
+        # 3. both items are facts; a decision row never
+        and s.kind == "fact"
+        and c.kind == "fact"
+        and "decision_record" not in j.flags
+        # 4. same home project, identical device_scope, neither pinned, never across projects
+        and same_class
+        and not cross
+        # 5. the newer item is not older than the one it replaces
+        and s.valid_from >= c.valid_from
+        # 6. a non-empty outdated-span quote, verified verbatim
+        and bool(quote.strip())
+        and "quote_unverified" not in j.flags
+    )
+    if not ok:
+        return None
+    link = _link("supersedes", s, c, {**props, "auto": C1}, assessed)
+    link["dst_version_id"] = c.version_id
+    return link
 
 
 def _close(item: Any, cut: datetime, assessed: dict[str, int]) -> dict[str, Any]:
@@ -1051,6 +1099,7 @@ class WriteReview:
             elif j.relation == "contradicts":
                 actions = [_link("contradicts", s, c, props, assessed)]
                 auto = False
+                c1 = None
                 verified = bool((j.verification or {}).get("agreed"))
                 if j.supersedes in ("new", "old"):
                     newer, older = (s, c) if j.supersedes == "new" else (c, s)
@@ -1058,6 +1107,9 @@ class WriteReview:
                     quote = "" if "quote_unverified" in j.flags else j.replaced_quote
                     sup_props = {**props, "scope": j.scope, "quote": quote}
                     actions.append(_link("supersedes", newer, older, sup_props, assessed))
+                    c1 = c1_link(
+                        j, s, c, cross=pr.cross, same_class=same_class, props=sup_props, assessed=assessed
+                    )
                     meta.update(scope=j.scope, close_ok=j.close_ok)
                     if j.close_ok and newer.valid_from > older.valid_from:
                         actions.append(_close(older, newer.valid_from, assessed))
@@ -1074,7 +1126,7 @@ class WriteReview:
                         and j.close_ok
                         and j.single_statement  # a multi-statement item is never closed without the owner
                     )
-                out.append(Proposal("contradiction", actions, auto, assessed, clues, touched, meta))
+                out.append(Proposal("contradiction", actions, auto, assessed, clues, touched, meta, c1))
         return out
 
 
@@ -1082,6 +1134,7 @@ __all__ = [
     "MAX_VERSIONS",
     "OP",
     "WriteReview",
+    "c1_link",
     "place_payload",
     "relate_payload",
     "relate_texts",

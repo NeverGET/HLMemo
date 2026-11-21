@@ -220,6 +220,12 @@ class Settings(BaseSettings):
     # --- librarian runtime (PHASE2-4-ROADMAP W2a) ---
     librarian_enabled: bool = False  # off until R2
     librarian_role: str = Field(default="observer", pattern="^(observer|assistant|autonomous)$")
+    # D-286: the process switch of class C1 (a newer fact replaces part of a current fact): with it on,
+    # the write review applies the pinned part supersedes link of a C1 judgement directly in every
+    # project whose latest grant decision (``ops librarian class set C1 on``) says on; off = today's
+    # behaviour exactly. ``…_DAILY_MAX``: C1 links per project per UTC day; beyond it, a question.
+    librarian_c1: bool = False
+    librarian_c1_daily_max: int = Field(default=10, ge=0)
     librarian_lease_s: int = Field(default=120, gt=0)
     librarian_lease_renew_s: float = Field(default=30.0, gt=0)
     librarian_poll_s: float = Field(default=1.0, gt=0)

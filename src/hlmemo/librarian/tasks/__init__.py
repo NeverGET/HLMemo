@@ -42,7 +42,12 @@ class Proposal:
 
     ``auto_ok``: the proposal is in the W2b auto-rule class (only then may ``autonomous`` apply it
     without an owner decision). ``assessed`` maps every subject logical id (str) to the version the
-    model assessed (the apply-time staleness check). ``project_ids``: every project it touches."""
+    model assessed (the apply-time staleness check). ``project_ids``: every project it touches.
+
+    ``c1`` (D-286): the pinned part ``supersedes`` link alone when the judgement meets the plan-time
+    conditions of class C1 (``librarian/classes.py``); the worker applies it instead of asking only
+    when the class is switched on and granted for every touched project. Never part of a question
+    row or the audit record."""
 
     kind: str  # contradiction | link | widen_scope (librarian_questions.kind)
     actions: list[dict[str, Any]]
@@ -51,6 +56,7 @@ class Proposal:
     subject_clues: list[str]
     project_ids: list[int]
     meta: dict[str, Any] = field(default_factory=dict)
+    c1: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

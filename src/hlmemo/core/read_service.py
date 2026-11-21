@@ -63,6 +63,7 @@ from hlmemo.db import import_queries as iq
 from hlmemo.db import librarian_queries as lq
 from hlmemo.db import read_queries as q
 from hlmemo.db.write_queries import ProjectRef
+from hlmemo.librarian.classes import APPLIED_BY
 from hlmemo.librarian.questions import pending_block
 
 PREPROC_VERSION = 1
@@ -745,6 +746,24 @@ def _superseded_entry(s: q.SupersededBy) -> dict[str, Any]:
     if s.part and s.quote:
         n = q.SUPERSEDED_QUOTE_CHARS
         out["quote"] = s.quote if len(s.quote) <= n else s.quote[: n - 1] + "…"
+    if s.auto in APPLIED_BY:  # D-286: an automatic class correction, told apart from a writer's
+        out["applied_by"] = APPLIED_BY[s.auto]
+    return out
+
+
+def _raw_link(ln: q.RawLink) -> dict[str, Any]:
+    """One ``memory.raw`` outgoing link; D-286: ``applied_by`` only on a link a class applied."""
+    out: dict[str, Any] = {
+        "rel": ln.rel,
+        "dst_logical_id": ln.dst_logical_id,
+        "dst_version_id": ln.dst_version_id,
+        "valid_from": fmt_ts(ln.valid_from),
+        "valid_to": fmt_ts(ln.valid_to),
+        "recorded_at": fmt_ts(ln.recorded_at),
+        "superseded_at": fmt_ts(ln.superseded_at),
+    }
+    if ln.auto in APPLIED_BY:
+        out["applied_by"] = APPLIED_BY[ln.auto]
     return out
 
 
@@ -827,18 +846,7 @@ async def raw(
             {"ordinal": s.ordinal, "char_start": s.char_start, "char_end": s.char_end, "text": s.text}
             for s in spans
         ]
-        rendered_links = [
-            {
-                "rel": ln.rel,
-                "dst_logical_id": ln.dst_logical_id,
-                "dst_version_id": ln.dst_version_id,
-                "valid_from": fmt_ts(ln.valid_from),
-                "valid_to": fmt_ts(ln.valid_to),
-                "recorded_at": fmt_ts(ln.recorded_at),
-                "superseded_at": fmt_ts(ln.superseded_at),
-            }
-            for ln in links
-        ]
+        rendered_links = [_raw_link(ln) for ln in links]
         # D-026: a verbatim payload_item too large for the budget is no longer E_BUDGET_TOO_SMALL.
         # Its body is moved into the cursor stream as `payload_body` segments (fixed character
         # windows, deterministic across pages); `payload_item` keeps every other field plus

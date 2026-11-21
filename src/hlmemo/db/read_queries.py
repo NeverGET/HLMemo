@@ -122,6 +122,8 @@ class RawLink:
     valid_to: datetime | None
     recorded_at: datetime
     superseded_at: datetime | None
+    #: D-286: ``props.auto`` (the librarian class that applied the link, e.g. "C1"), else None
+    auto: str | None = None
 
 
 @dataclass(slots=True)
@@ -615,7 +617,7 @@ async def raw_links(
     cur = await conn.execute(
         f"""
         SELECT l.rel, l.dst_logical_id, l.dst_version_id, l.valid_from, nullif(l.valid_to, 'infinity'),
-               l.recorded_at, nullif(l.superseded_at, 'infinity')
+               l.recorded_at, nullif(l.superseded_at, 'infinity'), l.props->>'auto'
         FROM links l
         WHERE l.src_logical_id = %(lid)s AND {AUTHZ_L}
           AND l.valid_from < coalesce(%(valid_to)s::timestamptz, 'infinity')
@@ -665,6 +667,8 @@ class SupersededBy:
     quote: str
     valid_from: datetime
     valid_to: datetime | None
+    #: D-286: ``props.auto`` (the librarian class that applied the link, e.g. "C1"), else None
+    auto: str | None = None
 
 
 def pinned_copy(link: str, version: str) -> str:
@@ -775,7 +779,8 @@ async def incoming_supersedes(
     cur = await conn.execute(
         f"""
         SELECT l.src_logical_id, s.version_id, COALESCE(l.props->>'scope', 'whole') = 'part',
-               COALESCE(l.props->>'quote', ''), l.valid_from, nullif(l.valid_to, 'infinity')
+               COALESCE(l.props->>'quote', ''), l.valid_from, nullif(l.valid_to, 'infinity'),
+               l.props->>'auto'
           FROM links l
           JOIN LATERAL (
                 SELECT s.version_id FROM memory_versions s
@@ -811,7 +816,9 @@ async def incoming_supersedes(
             "carry": carry,
         },
     )
-    return [SupersededBy(int(a), int(b), bool(c), str(d), e, f) for a, b, c, d, e, f in await cur.fetchall()]
+    return [
+        SupersededBy(int(a), int(b), bool(c), str(d), e, f, g) for a, b, c, d, e, f, g in await cur.fetchall()
+    ]
 
 
 async def superseded_hits(

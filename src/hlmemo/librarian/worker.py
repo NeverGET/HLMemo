@@ -55,7 +55,7 @@ from hlmemo.auth.resolve import lock_device_access
 from hlmemo.core.budget import Meter
 from hlmemo.core.temporal import select_T
 from hlmemo.db import write_queries as q
-from hlmemo.librarian import actor
+from hlmemo.librarian import actor, classes
 from hlmemo.librarian.budget import DbBudget, budget_snapshot
 from hlmemo.librarian.errors import (
     AuthorityLost,
@@ -682,9 +682,15 @@ class LibrarianWorker:
         ``autonomous`` applies the auto-rule class directly; everything else becomes a question
         (``question(P)``: every touched project readable by the triggering device NOW). The actions
         of a question are applied later by an owner decision under the relevant authority
-        (``apply_batch``: this job's capabilities; ``memory.answer``: the answering device)."""
+        (``apply_batch``: this job's capabilities; ``memory.answer``: the answering device).
+
+        D-286: a write review proposal carrying a class C1 link (``Proposal.c1``) applies that link
+        ALONE, in any role (observer included), when ``classes.c1_action`` allows it (switch on,
+        every touched project granted, conditions 7-9 on the current rows); otherwise it takes the
+        path above, unchanged."""
         caps = plan.capabilities
         auto = role == "autonomous"
+        c1_used: dict[int, int] = {}
         direct: list[dict[str, Any]] = []
         questions: list[dict[str, Any]] = []
         superseded = 0
@@ -702,6 +708,13 @@ class LibrarianWorker:
                 continue
             stale = await actor.is_stale(conn, {"assessed": prop.assessed})
             superseded += int(stale)
+            if prop.c1 is not None and plan.op == "write_review" and not stale:
+                c1 = await classes.c1_action(
+                    conn, self.settings, ctx, caps, prop.c1, prop.project_ids, T, c1_used
+                )
+                if c1 is not None:  # the pinned part link alone: no contradicts, no close, no question
+                    direct.append(c1)
+                    continue
             if (
                 auto
                 and prop.auto_ok

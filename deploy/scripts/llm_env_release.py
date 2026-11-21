@@ -118,6 +118,8 @@ FINGERPRINT_KEYS = (
     # D-272: the librarian's shadow pipeline (its profiles spend against the same caps)
     "HLM_LIBRARIAN_SHADOW_PROFILE",
     "HLM_LIBRARIAN_SHADOW_VERIFY_PROFILE",
+    # D-286: the class C1 switch (the librarian applies one class of links itself while it is on)
+    "HLM_LIBRARIAN_C1",
 )
 TASK_FALLBACK_PREFIX = "HLM_FALLBACK_PROFILE__"
 #: R4 R-4: the spend guard, whatever it grows: the caps (HOUR/DAY/MONTH_USD) and HLM_LLM_BUDGET_DISABLED
@@ -128,6 +130,7 @@ SWITCHES = (
     "HLM_RESEARCH_ENABLED",
     "HLM_MAP_SUMMARY_ENABLED",
     "HLM_LLM_BUDGET_DISABLED",
+    "HLM_LIBRARIAN_C1",
 )
 #: keys another env file (app.env) may also set: compared only when llm.env sets them
 SHARED = ("HLM_PROFILE", "HLM_FALLBACK_PROFILE")

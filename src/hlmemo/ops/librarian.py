@@ -17,6 +17,16 @@ librarian's proposals. Runs in the ops transaction (``ops/cli.py``); nothing pri
         (``approved``/``accepted_pending``) is refused with the counts per project unless
         ``--release-pending`` names that exact total; ``--dry-run`` prints the counts and the apply
         jobs it would queue and records nothing;
+    librarian class set C1 on|off --project P --decision D-NNN
+        D-286: the per-project grant of librarian class C1 (a ``librarian`` event, op ``set_class``;
+        admin only; the latest decision per project wins). The worker also needs HLM_LIBRARIAN_C1=on;
+    librarian class applied [--project P] [--since D] [--json]
+        every C1 link with both items' clues and titles, the quote and the job event (reverted ones
+        marked): the weekly labels, since an automatic apply writes no question row;
+    librarian class revert LINK --reason TEXT [--owner NAME]
+        ends one C1 link by ONE event (op ``class_revert``), records the pair (never applied again)
+        and records ``set_class C1 off`` for the project when its 30-day reverted ÷ applied is above
+        .05 (``auto-demotion``);
     librarian withdraw --project P (--question-ids Q1,Q2 | --ids-file F|-) --reason TEXT
                        [--resolved-by-link LINK] [--owner NAME] [--dry-run] [--json]
         moves open/approved/accepted_pending questions of P to the terminal ``withdrawn`` by ONE
@@ -51,6 +61,7 @@ from hlmemo import __version__
 from hlmemo.auth.context import AuthContext
 from hlmemo.auth.errors import HlmError
 from hlmemo.core.errors import ToolError
+from hlmemo.librarian.classes import CLASSES
 from hlmemo.librarian.redact import Redactor
 from hlmemo.librarian.roles import ROLES, record_batch_decision, record_role_decision
 
@@ -92,6 +103,21 @@ def add_parser(sub: Any) -> None:
     rs.add_argument(
         "--dry-run", action="store_true", help="show what the decision would release; record nothing"
     )
+    cl = lsub.add_parser("class", help="D-286: the librarian class grant C1 (grant, audit, revert)")
+    csub = cl.add_subparsers(dest="caction", required=True)
+    cs = csub.add_parser("set", help="grant or revoke a class for one project (a set_class event)")
+    cs.add_argument("cls", choices=CLASSES, metavar="CLASS")
+    cs.add_argument("state", choices=("on", "off"))
+    cs.add_argument("--project", required=True)
+    cs.add_argument("--decision", required=True, help="the D-entry that authorizes the grant")
+    ca = csub.add_parser("applied", help="every link a class applied (the weekly labels)")
+    ca.add_argument("--project")
+    ca.add_argument("--since", help="ISO date or timestamp")
+    ca.add_argument("--json", action="store_true")
+    cr = csub.add_parser("revert", help="end one class link by a compensating event")
+    cr.add_argument("link", type=int, help="the link id (class applied)")
+    cr.add_argument("--reason", required=True)
+    cr.add_argument("--owner", default="owner", help="the owner's device name, recorded in the event")
     wd = lsub.add_parser(
         "withdraw", help="retract open/approved/accepted_pending questions of one project (never applied)"
     )
@@ -421,6 +447,44 @@ async def shadow_report(
     return await shadow.report(conn, pid, since, with_texts=with_texts)
 
 
+async def _class(conn: AsyncConnection, args: argparse.Namespace) -> int:
+    """D-286: ``librarian class set|applied|revert``."""
+    from hlmemo.librarian import classes
+
+    if args.caction == "set":
+        project_id = await _project_id(conn, args.project)
+        on = args.state == "on"
+        event_id = await classes.record_class_decision(
+            conn, cls=args.cls, on=on, decided_by=_ops_ctx(), decision=args.decision, project_id=project_id
+        )
+        _print(
+            {
+                "class": args.cls,
+                "on": on,
+                "project": args.project,
+                "decision": args.decision,
+                "event_id": event_id,
+            }
+        )
+        return 0
+    if args.caction == "applied":
+        project_id = await _project_id(conn, args.project) if args.project else None
+        rows = await classes.applied(conn, project_id, classes.parse_since(args.since))
+        if args.json:
+            _print({"applied": rows})
+            return 0
+        for r in rows:
+            mark = f" REVERTED {r['reverted_at']}" if r["reverted"] else ""
+            sys.stdout.write(
+                f"link {r['link_id']} {r['project']} {r['newer']['clue']} -> {r['older']['clue']}"
+                f" event {r['event_id']} {r['recorded_at']}{mark}\n"
+                f"  newer: {r['newer']['title']}\n  older: {r['older']['title']}\n  quote: {r['quote']}\n"
+            )
+        return 0
+    _print(await classes.revert(conn, args.link, by=_ops_ctx(args.owner), reason=args.reason))
+    return 0
+
+
 async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
     action = args.action
     try:
@@ -514,6 +578,8 @@ async def dispatch(conn: AsyncConnection, args: argparse.Namespace) -> int:
             )
             _print({**out, "event_id": event_id, "release_pending": args.release_pending})
             return 0
+        if action == "class":
+            return await _class(conn, args)
         if action == "withdraw":
             from hlmemo.librarian.withdraw import withdraw
 
