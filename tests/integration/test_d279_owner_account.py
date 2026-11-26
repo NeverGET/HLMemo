@@ -57,7 +57,9 @@ async def test_an_owner_member_creates_an_unprefixed_default_group_project(db_ds
         assert out["created"] and out["account"] == "owner" and out["granted"] == 2
         assert out["quota"] == {"limit": 20, "used": 1} and out["project"]["slug"] == "atlasapp"
         listed = await mcp_rpc(client, mac, "tools/list", {})
-        assert TOOL not in [t["name"] for t in listed.json()["result"]["tools"]]  # T9
+        assert {TOOL, TOOL.replace(".", "_")}.isdisjoint(
+            t["name"] for t in listed.json()["result"]["tools"]
+        )  # T9
 
         err, again = await _create(client, mac, "atlasapp")  # idempotent, nothing beyond the slug
         assert not err and again == {"project": {"slug": "atlasapp"}, "created": False, "account": "owner"}

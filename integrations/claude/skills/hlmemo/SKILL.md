@@ -11,7 +11,8 @@ truth is `references/HLMEMO-PROTOCOL.md` (§2 rules R1–R21 with server citatio
 
 ## 1. What HLMemo is
 
-A self-hosted, bi-temporal memory server, reached as the MCP server `hlm` (tools `mcp__hlm__memory_*`). Later
+A self-hosted, bi-temporal memory server, reached as the MCP server `hlm`. Its tools are named `memory.query`, `memory.write` and so on; Claude Code
+shows them as `mcp__hlm__memory_query`, other clients may prefix them differently. Later
 sessions act on what it holds, so the aim is memory that stays true and lean. Three properties explain most rules:
 - **Append-only.** Nothing is deleted; a change makes a new version and old versions stay readable as history.
   A wrong write is expensive to undo, so write less and write well.
@@ -50,7 +51,7 @@ Every call takes `project` = your slug. Budgets are o200k tokens, 256–32000. E
 block; an error is `{code, message, retryable, details}`. The `hlm` CLI makes the same calls; in a chat, use the
 MCP tools.
 
-- **`mcp__hlm__memory_query`**, the first call in any area:
+- **`memory.query`**, the first call in any area:
   `{"project": "my-project", "query": "how is the API cache configured", "token_budget": 3000}`.
   Optional: `kinds` (e.g. `["lesson"]`), `valid_at`/`known_at` (read the past), `synthesize: true` (adds a cited
   draft answer; verify its clues). It returns the `card` (`stale` = a source the card pins has changed;
@@ -60,21 +61,21 @@ MCP tools.
   `superseded_by[].clue`. Scope `whole` means the item is outdated; `part` means one quoted statement is and the
   rest still holds. A `librarian` block (`pending_questions`, `notices`) is the operator's review queue: there is
   nothing for you to do with it.
-- **`mcp__hlm__memory_drilldown`**, the full text of up to 20 clues with one-hop links (`{rel, clue, stale}`):
+- **`memory.drilldown`**, the full text of up to 20 clues with one-hop links (`{rel, clue, stale}`):
   `{"project": "my-project", "clue_ids": ["v812.0", "v640"], "token_budget": 4000}`. Pass `next_cursor` back as
   `cursor` to read on.
-- **`mcp__hlm__memory_raw`**, the provenance of one version (dates, the source event, the incoming `superseded_by`
+- **`memory.raw`**, the provenance of one version (dates, the source event, the incoming `superseded_by`
   with the outdated `quote`): `{"project": "my-project", "version_id": 812, "token_budget": 2000}`. `version_id` is
   the number inside the clue (`v812.0` gives `812`). A `superseded_by` entry or link with
   `applied_by: "librarian (C1)"` is an automatic librarian correction (D-286), not a writer's or the operator's.
-- **`mcp__hlm__memory_ask`**, the research librarian (listed only while research is enabled; about 10–20 s):
+- **`memory.ask`**, the research librarian (listed only while research is enabled; about 10–20 s):
   `{"question": "Why was the API cache TTL raised, and when?", "project": "my-project", "token_budget": 6000}`.
   It returns `answer`, `confidence`, `abstained`, `claims[]` (each with `support[]` of `{handle, quote}`),
   `primary[]` and `related[]`. Pass `project` every time; without it the server uses the device's default project.
   The quotes are verbatim but the answer is an LLM's, so open the primary handles with `memory_drilldown` before
   you act on it. `abstained: true` means memory does not say; it is not a "no". For a subagent's brief, ask for
   an area's known open risks and lessons with their clues, and pass the checked ones on.
-- **`mcp__hlm__memory_risk_check`**, past lessons against a planned step:
+- **`memory.risk_check`**, past lessons against a planned step:
   `{"project": "my-project", "task": "Run the migration that adds an index on events(created_at) in prod", "token_budget": 2000}`.
   `verdict: "warn"` lists `warnings[]` (`clue`, `title`, `why`, `source_project`): drill each one and say how you
   comply. A judged result also lists `dropped_by_judge[]` (same fields): retrieval matches the judge did not warn
@@ -88,8 +89,8 @@ MCP tools.
   rather than treat it as a block. Lessons of every project you can read are checked: a clue whose `source_project`
   is not your slug is drilled with `project` = that slug (from your own slug, `E_NOT_FOUND` names the project in
   `details.project`).
-- **`mcp__hlm__memory_register_lesson`** and **`mcp__hlm__memory_call_the_day`**: Examples C and D.
-- **`mcp__hlm__memory_write`**, 1–50 items in one transaction (below). Required: `project`, `request_id` (a UUID,
+- **`memory.register_lesson`** and **`memory.call_the_day`**: Examples C and D.
+- **`memory.write`** (set `client` to your client: `claude-code`, `agy`, …), 1–50 items in one transaction (below). Required: `project`, `request_id` (a UUID,
   e.g. from `uuidgen`), `client` and `items`, each with `kind`, `title` and `body`. The ack's `versions[]` give
   each new item's `version_id`, so its clue is `v<version_id>`. `replayed: true` means this `request_id` was
   already stored and you got the stored ack, so nothing was written twice. With `updates`, an `updates[]` ack
@@ -192,28 +193,9 @@ A rejected update does not fail the write: your new item is stored, and resendin
 it. To retry a fixed update, send a revision of the item you just wrote (`logical_id`, `expected_version_id` = its
 `version_id` from the ack, same title and body) carrying only the corrected `updates`; otherwise note it in `## Open`.
 
-### Example C: a lesson in the D-222 mapping
+### Example C: a lesson
 
-`memory_register_lesson` requires `project`, `request_id`, `mistake` and `fix`; `context` and `tags` are optional.
-The server takes the title from `mistake` line 1, builds the body as `## Mistake`, `## Fix`, `## Context`, and
-returns `clue`, `logical_id`, `version_id`, `replayed`.
-```json
-{"project": "my-project", "request_id": "<fresh UUID>",
- "mistake": "Test schema migrations on a restored prod copy before prod\nWhen: applying a schema migration to the production database. It ran on prod first, locked a large table for 4 minutes and timed out requests.",
- "fix": "Do: run it on a restored copy of the prod dump, time it, and schedule lock-heavy steps in a quiet window.\nAvoid: running an untested migration on prod; trusting a dev-sized table to predict the prod lock time.",
- "context": "Evidence: \"lock timeout on table events\" (deploy log 2026-09-28, episode v733).\nNot verified for: online schema-change tools.\nScope: postgres@16.\nStatus: active.\nEra: observed 2026-09-28, the current model era.",
- "tags": ["postgres@16", "active"]}
-```
-- `mistake` line 1 is the title the brief shows: at most 120 chars, readable on its own. The rest of `mistake` is
-  **When** + what went wrong; `fix` = **Do** + **Avoid**; `context` = **Evidence** (a verbatim quote and its
-  pointer), **Not verified for**, **Scope**, **Status**, **Era** (from dated evidence, not guessed).
-- `tags` = the scope (`<stack>@<version>`) plus exactly one of `active` or `resolved`, plus `historical` for a
-  lesson from an earlier model era. A historical lesson is `resolved` + `historical`; the server refuses
-  `active` together with either (PV-5).
-- A lesson states a lasting rule. A value that changes (a version string, a setting in use) belongs in a `fact` the
-  lesson points to; inside the lesson it goes stale with the next change.
-- A lesson that would hold in every project is still registered in your project and named under "Promotion
-  candidates". Merging duplicate lessons and changing a lesson's status or era is the operator's job.
+Before `memory.register_lesson`, read `references/example-lesson.md` (the D-222 mapping, worked through).
 
 ### Example D: call_the_day
 
@@ -241,56 +223,16 @@ and returns `versions[]` and `session_note_clue`. Leave its `lessons` field empt
   the server answers `E_VERSION_CONFLICT` with `details.current_version_id` and stores nothing; resend with it.
 - The ack's `session_note_clue` is the note's handle; give it to the owner.
 
-## 5. Catch-up (protocol §4b)
+## 5. Catch-up (protocol §4b) and 6. Migration (protocol §4)
 
-The owner starts it in the project's own chat ("do the HLMemo catch-up"). The goal: the project's memory matches
-the project's current state. You write only into this project's slug, under R1–R21.
-
-1. **Read memory.** The brief (card, lessons, pending counts), then `memory_query` the main areas: overview,
-   architecture, deploy, current work, open problems, lessons. Drill the top hits; list what memory calls current.
-2. **Read the project**, without changing it: README and docs, CLAUDE.md, `git log` since the newest memory
-   item's date, open TODOs, and this folder's auto-memory files (`~/.claude/projects/<dir>/memory`) if they exist.
-3. **Diff.** Three lists: (a) present-tense memory claims that are no longer true; (b) durable facts and
-   decisions missing from memory; (c) lessons the project learned that memory lacks.
-4. **Correct the stale** (R11, R12). For each (a), write the current fact with `updates` against the clue you
-   read and a verbatim `old_span`: `revise` for one changed statement, `supersede` for a wholly outdated item.
-5. **Add what is missing** (R5, R6, R8): one claim per item, with evidence and dates from the source. Lessons
-   via `register_lesson`, project scope only; cross-project ones become "Promotion candidates" in the session note.
-6. **Fix or create the card** (R17). If a card line is now false, make a minimal `card_update`. With no real card
-   yet (the brief has no "Now" section; `memory_query` returns the skeleton card), write the initial card in
-   `call_the_day` `card_update`: present-tense lines only (what the project is, its stack, production state,
-   current work and conventions), ≤ 420 tokens, every line backed by an item or file you read, with
-   `expected_version_id` = the skeleton's version (Example D).
-7. **Close** with `call_the_day`: the counts (corrected, added, lessons), the clues written, and `## Open` for
-   anything you could not decide.
-8. **Report to the owner**, then stop. The operator checks the result in the next library session.
-
-At most about 40 writes per catch-up session; if more are needed, close and continue in a new session. Legacy
-files (old memory stores, notes from other tools) are migration material, not catch-up material. The report:
-```
-HLMemo catch-up: project <slug>, session note v<id>
-Corrected: <n> stale claims (applied <a>, linked <l>, rejected <r>): v.., v..
-Added: <n> facts/episodes: v.., v..   Lessons: <n>: v..
-Card: unchanged | updated (v<old> -> v<new>)
-Promotion candidates: <n> (listed in the note)
-Left for a next session: <what the write limit cut, or "nothing">
-Questions for you:
-1. <a decision only the owner can make, with the clues involved>
-```
-
-## 6. Migration (protocol §4)
-
-Migrating a project's legacy memory (auto-memory, serena, `CLAUDE.md`, NotebookLM, repository notes) into its **own
-slug** has its own skill: load **`hlm-migrate`** and follow it. It follows `docs/migration/PLAYBOOK.md` in the HLMemo
-repository: owner decisions and the tier first, curated and dated items (facts hold only the present), a secret gate,
-a local rehearsal, a sealed review package, then production batches after the owner's OK, with the operator opening
-and closing the production side. Legacy files are migration material, not catch-up material (§5).
+When the owner says "do the HLMemo catch-up" or asks to migrate a project's memory, read
+`references/procedures.md` first and follow it.
 
 ## 7. Boundaries: operator tools and privacy
 
 These tools, like the operator's role itself, belong to the operator and the owner because they change shared or
 production state (R20). They stay with them even when a tool is listed or your shell can reach it:
-- `mcp__hlm__memory_answer`: it answers the librarian's review questions, the owner's job in `hlm review`;
+- `memory.answer`: it answers the librarian's review questions, the owner's job in `hlm review`;
 - `hlm review`, `hlm curate --apply` / `--execute`, `hlm links backfill|explicit`, `hlm import` outside a
   `/hlm-migrate` run;
 - `ops librarian withdraw|role set|approve-batch|revert-update|expire`, `hlm_ops.sh`, prod deploys;

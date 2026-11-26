@@ -474,3 +474,10 @@ the D-282 rule (116 distinct pairs, 97 true):
   librarian at startup instead.
 - **Weekly:** label the shadow report's live-only and shadow-only supersessions (two blind labellers, the brief in
   the private shadow folder), so the labelled count grows toward the owner's bar.
+
+## agy port follow-ups (2026-11-26, D-287; review 135)
+- Model-facing strings still name tools with a dot (harmless; dotted names resolve): `core/write_updates.py` hints, `core/research_service.py` and `server/tools/ask.py` errors, `core/skeleton_card.py`, `cli/preflight.py`, the protocol, the digest and the skills. Switch them to the wire form in one pass, with the tests that match those strings.
+- The agy brief takes `workspacePaths[0]` when `cwd` is missing; in a multi-root workspace that may be the wrong root (still only a mapped project's brief).
+- The agy capture CHECKPOINT step (agy's summary of earlier context) passes the scrub but is model text, the same exposure as Claude's summary segment.
+- agy capture: the idle tail is written only when another agy hook runs or `--flush` is run; consider a scheduled flush.
+- The G7 gate passed for agy an hour before agy's self-update broke every tool (D-287): rerun G7 after a client update, or check the client's log for rejected tools.

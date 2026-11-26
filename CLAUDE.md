@@ -7,7 +7,7 @@ server (`hlm`, streamable HTTP). Reads are token-budgeted and progressive: clues
 - **The hybrid model (D-246).**
   - Project chats write memory under the protocol in `docs/protocol/HLMEMO-PROTOCOL.md`.
   - The orchestrator acts as the library operator in sessions the owner starts.
-  - The server librarian answers `memory.ask` (the research librarian of D-130) and flags candidates; it does not act on its own.
+  - The server librarian answers `memory.ask` (the research librarian of D-130) and flags candidates. It acts on its own in one class only, C1 (D-286): in granted projects it applies a newer fact's part `supersedes` link, reviewed weekly.
   - A fully autonomous librarian is a later goal.
 - **The aim is LLM quality, not infrastructure polish.**
   - Measure a ceiling (an oracle or prototype run on real data, at most a day) before building an LLM-quality feature.

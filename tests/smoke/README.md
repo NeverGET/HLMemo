@@ -49,5 +49,5 @@ Knobs: `HLM_SERVER_LOG=<file>` (api log file; default `docker compose logs api -
 | server log | both tool names appear in the api log since the run started (skipped with a WARN if no log source) |
 
 Headless forms used are the spec ones: `claude -p`, `codex exec -C <root>`, `agy --add-dir <root> --print`.
-`claude -p` needs the MCP tools pre-allowed (`--allowedTools mcp__hlm__memory.write,mcp__hlm__memory.query`);
+`claude -p` needs the MCP tools pre-allowed (`--allowedTools mcp__hlm__memory_write,mcp__hlm__memory_query`; D-287 wire names);
 codex gets the token through the `HLM_DEVICE_TOKEN` env var its registration names.

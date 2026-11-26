@@ -776,7 +776,7 @@ async def test_g_surf_and_wire_contract(db_dsn, world) -> None:  # noqa: ANN001
         _did, token = await _reader(client, "syn-surf")
         r = await mcp_rpc(client, token, "tools/list")
         tools = r.json()["result"]["tools"]
-        q_tool = next(t for t in tools if t["name"] == "memory.query")
+        q_tool = next(t for t in tools if t["name"] == "memory_query")  # D-287 wire name
         assert q_tool["inputSchema"]["properties"]["synthesize"]["type"] == "boolean"
         n = Meter().count_text(json.dumps(r.json()["result"], ensure_ascii=False, separators=(",", ":")))
         print(f"\nG-SURF: tools/list = {n} o200k tokens for {len(tools)} tools (limit 3000)")

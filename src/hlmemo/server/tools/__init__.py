@@ -3,10 +3,18 @@
 ``TOOLS`` is the single registry ``server/mcp_server.py`` advertises on ``tools/list`` and
 dispatches ``tools/call`` against. New tools live in their own modules and register with one line.
 An ``app_bound`` handler is called as ``handler(conn, auth, args, app=<Starlette app>)``.
+
+Names (D-287): ``ToolSpec.name`` is the canonical dotted name (``memory.query``) used everywhere
+inside the server (logs, meters, events, budgets, audit, error ``tool=`` fields). Only the MCP
+boundary differs: ``tools/list`` advertises ``wire_name(name)`` (``memory_query``), because the
+Gemini/OpenAI function-name rule ``^[a-zA-Z0-9_-]{1,64}$`` rejects dots (agy 1.2.9 drops every dotted
+tool), and ``tools/call`` accepts either form (``resolve_tool``), so older hooks and CLIs that call
+``memory.query`` keep working.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -96,6 +104,39 @@ CLIENT_TOOLS: tuple[ToolSpec, ...] = (
 TOOL_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in (*TOOLS, *CLIENT_TOOLS)}
 TOOL_NAMES: tuple[str, ...] = tuple(t.name for t in TOOLS)
 
+#: the function-name rule of the Gemini and OpenAI tool APIs (agy, D-287): every wire name matches it
+WIRE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def wire_name(name: str) -> str:
+    """The name ``tools/list`` advertises for the canonical ``name`` (D-287): ``.`` becomes ``_``."""
+    return name.replace(".", "_")
+
+
+def _wire_map(specs: tuple[ToolSpec, ...]) -> dict[str, ToolSpec]:
+    """``{wire name: spec}``; refuses (at import) a wire name that breaks the rule or that collides
+    with another tool's wire or canonical name, so a call can never reach the wrong handler."""
+    out: dict[str, ToolSpec] = {}
+    for t in specs:
+        if TOOL_BY_NAME.get(t.name) is not t:
+            raise RuntimeError(f"tool name {t.name!r} is registered twice")
+        w = wire_name(t.name)
+        if not WIRE_NAME_RE.fullmatch(w):
+            raise RuntimeError(f"tool wire name {w!r} does not match {WIRE_NAME_RE.pattern}")
+        clash = out.get(w) or TOOL_BY_NAME.get(w)
+        if clash is not None and clash is not t:
+            raise RuntimeError(f"tool wire name {w!r} of {t.name!r} collides with {clash.name!r}")
+        out[w] = t
+    return out
+
+
+TOOL_BY_WIRE: dict[str, ToolSpec] = _wire_map((*TOOLS, *CLIENT_TOOLS))
+
+
+def resolve_tool(name: str) -> ToolSpec | None:
+    """The spec a ``tools/call`` name addresses: the canonical dotted name or its wire form."""
+    return TOOL_BY_NAME.get(name) or TOOL_BY_WIRE.get(name)
+
 
 def advertised_tools(settings: Any) -> tuple[ToolSpec, ...]:
     """What ``tools/list`` advertises under ``settings`` (a conditional tool only while enabled)."""
@@ -109,8 +150,12 @@ __all__ = [
     "READ_SERVICE_AVAILABLE",
     "READ_TOOL_NAMES",
     "TOOL_BY_NAME",
+    "TOOL_BY_WIRE",
     "TOOL_NAMES",
     "TOOLS",
+    "WIRE_NAME_RE",
     "ToolSpec",
     "advertised_tools",
+    "resolve_tool",
+    "wire_name",
 ]

@@ -33,15 +33,15 @@ async def test_export_tool_is_unlisted_but_callable_and_the_cli_session_imports(
         token = await writer_on(client, "wire-fx")
         async with sdk_client(client.app, token) as sdk:
             listed = await sdk.list_tools()
-            assert sorted(t.name for t in listed.tools) == [
-                "memory.answer",  # W2c
-                "memory.call_the_day",
-                "memory.drilldown",
-                "memory.query",
-                "memory.raw",
-                "memory.register_lesson",
-                "memory.risk_check",
-                "memory.write",
+            assert sorted(t.name for t in listed.tools) == [  # D-287 wire names
+                "memory_answer",  # W2c
+                "memory_call_the_day",
+                "memory_drilldown",
+                "memory_query",
+                "memory_raw",
+                "memory_register_lesson",
+                "memory_risk_check",
+                "memory_write",
             ]
         http = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=client.app), base_url="http://test", headers=bearer(token)

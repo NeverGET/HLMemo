@@ -25,7 +25,7 @@ QUERY_DESCRIPTION = (
     "Hybrid (lexical + trigram + vector, RRF) search over the project's memory at a bi-temporal "
     "point. Returns the project card, ranked hits with clues and query-centred preview excerpts, "
     "and evidence:'matched'|'none' within token_budget. Drill the top 5 clues with "
-    "memory.drilldown before relying on a preview. Read-only. synthesize:true (a question) adds a "
+    "memory_drilldown before relying on a preview. Read-only. synthesize:true (a question) adds a "
     "cited draft answer when the evidence is weak; verify its clues."
 )
 QUERY_INPUT: dict[str, Any] = copy.deepcopy(schemas.QUERY_INPUT)

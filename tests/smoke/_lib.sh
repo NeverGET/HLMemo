@@ -73,16 +73,18 @@ smoke_prompt() {
   local marker="$1" req="$2"
   cat <<PROMPT
 You are running a non-interactive smoke test of the MCP server named "hlm". Do exactly this, using only the MCP tools, then stop:
-1. Call the tool memory.write with arguments: {"project":"$HLM_PROJECT","request_id":"$req","client":"smoke-$CLI","items":[{"kind":"fact","title":"$marker","body":"Smoke test write from $CLI at $marker.","tags":["smoke"]}]}
+1. Call the tool memory_write with arguments: {"project":"$HLM_PROJECT","request_id":"$req","client":"smoke-$CLI","items":[{"kind":"fact","title":"$marker","body":"Smoke test write from $CLI at $marker.","tags":["smoke"]}]}
    Note the integer version_id of the written item in the result; call it V below.
-2. Call the tool memory.query with arguments: {"project":"$HLM_PROJECT","query":"$marker","token_budget":512}
-3. Call the tool memory.drilldown with arguments: {"project":"$HLM_PROJECT","clue_ids":["vV"],"token_budget":512} where vV is the letter v followed by V, e.g. "v42".
-4. Call the tool memory.raw with arguments: {"project":"$HLM_PROJECT","version_id":V,"token_budget":512}
+2. Call the tool memory_query with arguments: {"project":"$HLM_PROJECT","query":"$marker","token_budget":512}
+3. Call the tool memory_drilldown with arguments: {"project":"$HLM_PROJECT","clue_ids":["vV"],"token_budget":512} where vV is the letter v followed by V, e.g. "v42".
+4. Call the tool memory_raw with arguments: {"project":"$HLM_PROJECT","version_id":V,"token_budget":512}
 5. Print, verbatim and on separate lines: "CALLED memory.write", "CALLED memory.query", "CALLED memory.drilldown", "CALLED memory.raw", the raw JSON result of step 2, and finally "MARKER $marker".
 Do not edit any files. Do not run shell commands.
 PROMPT
 }
 
+# canonical names: the CALLED lines and the api log (which logs canonical names, D-287); the
+# prompt above names the wire form (memory_write) that tools/list advertises since D-287
 SMOKE_TOOLS="memory.write memory.query memory.drilldown memory.raw"
 
 # verify_output <output-file> <marker>

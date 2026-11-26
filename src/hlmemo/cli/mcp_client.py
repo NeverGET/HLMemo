@@ -36,12 +36,17 @@ UNLISTED_TOOLS = frozenset({"hlm.export", "hlm.questions", "hlm.project_create"}
 
 def _skip_unlisted_validation(client: Client) -> None:
     """Make an entered ``Client`` skip output validation for ``UNLISTED_TOOLS`` (no warning and no
-    extra ``tools/list`` round trip per call); listed tools are validated as before."""
+    extra ``tools/list`` round trip per call); listed tools are validated as before.
+
+    D-287: a server lists wire names (``memory_query``) and still accepts the dotted name this
+    client calls (``memory.query``, so it keeps working against a server from before D-287). A
+    dotted name is then never in the listing, so it is not validated either: HLMemo tools declare
+    no output schema (D-024 (6)), so there is nothing to validate, only a warning and a re-list."""
     session = client.session
     validate = session.validate_tool_result
 
     async def validate_listed(name: str, result: Any) -> None:
-        if name not in UNLISTED_TOOLS:
+        if name not in UNLISTED_TOOLS and "." not in name:
             await validate(name, result)
 
     session.validate_tool_result = validate_listed  # type: ignore[method-assign]

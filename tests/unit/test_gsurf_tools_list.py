@@ -1,13 +1,13 @@
 """G-SURF (CC-4): the ``tools/list`` payload stays within 3,000 o200k tokens.
 
-Measured on exactly what ``server/mcp_server.on_list_tools`` advertises (name, description,
+Measured on exactly what ``server/mcp_server.on_list_tools`` advertises (wire name (D-287), description,
 inputSchema per tool; no outputSchema), serialized canonically like every HLMemo payload.
 """
 
 from __future__ import annotations
 
 from hlmemo.core.budget import Meter
-from hlmemo.server.tools import TOOLS
+from hlmemo.server.tools import TOOLS, wire_name
 
 G_SURF_MAX_TOKENS = 3000
 
@@ -15,7 +15,8 @@ G_SURF_MAX_TOKENS = 3000
 def tools_list_tokens() -> int:
     payload = {
         "tools": [
-            {"name": t.name, "description": t.description, "inputSchema": t.input_schema} for t in TOOLS
+            {"name": wire_name(t.name), "description": t.description, "inputSchema": t.input_schema}
+            for t in TOOLS
         ]
     }
     return Meter().count(payload)

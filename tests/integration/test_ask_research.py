@@ -1941,7 +1941,7 @@ async def test_ask_over_mcp_outlives_the_request_db_deadline(world, db_dsn) -> N
     async with ask_app(db_dsn, llm, request_db_timeout_s=1.5) as client:
         _did, token = await trusted_device(client, "ask-mcp", grants=[{"project": MAIN, "role": "read"}])
         listed = (await mcp_rpc(client, token, "tools/list")).json()["result"]["tools"]
-        assert "memory.ask" in {t["name"] for t in listed}
+        assert "memory_ask" in {t["name"] for t in listed}  # D-287 wire name
         res = await call_tool_raw(
             client, token, "memory.ask", {"question": "What is the retrieval p95 target?"}
         )
@@ -1969,7 +1969,7 @@ async def test_ask_not_listed_when_disabled(world, db_dsn) -> None:  # noqa: ANN
     async with ask_app(db_dsn, ScriptedLLM(default={}), research_enabled=False) as client:
         _did, token = await trusted_device(client, "ask-off-dev", grants=[{"project": MAIN, "role": "read"}])
         listed = (await mcp_rpc(client, token, "tools/list")).json()["result"]["tools"]
-        assert "memory.ask" not in {t["name"] for t in listed}
+        assert {"memory.ask", "memory_ask"}.isdisjoint(t["name"] for t in listed)
         res = await call_tool_raw(client, token, "memory.ask", {"question": "x", "project": MAIN})
         assert res["isError"] and json.loads(res["content"][0]["text"])["details"]["reason"] == "disabled"
 

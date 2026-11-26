@@ -453,7 +453,7 @@ async def test_g_surf_tools_list_budget_and_authz(db_dsn, world) -> None:  # noq
         r = await mcp_rpc(client, token, "tools/list")
         tools = r.json()["result"]["tools"]
         names = {t["name"] for t in tools}
-        assert {"memory.risk_check", "memory.register_lesson"} <= names
+        assert {"memory_risk_check", "memory_register_lesson"} <= names  # D-287 wire names
         n = Meter().count_text(json.dumps(r.json()["result"], ensure_ascii=False, separators=(",", ":")))
         print(f"\nG-SURF: tools/list = {n} o200k tokens for {len(tools)} tools (limit 3000)")
         assert n <= 3000

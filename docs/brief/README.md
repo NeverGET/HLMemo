@@ -199,6 +199,37 @@ Output (stdout, exit 0): `{"hookSpecificOutput":{"hookEventName":"SessionStart",
 To inspect before relying on it, set `HLM_BRIEF_DRYRUN=/tmp/hlm-brief` in the hook command for a few
 sessions and read the files.
 
+## agy (Antigravity CLI)
+
+The same command serves agy's `SessionStart` hook; the hook tells the two apart by its input
+(`hookEventName` without `hook_event_name` is agy) and answers in the matching format, with the same text
+and the same mapping, kill switch, cache and watchdog. Entry in agy's `hooks.json` (placeholders: the
+HLMemo repo path, the server URL, this machine's device name):
+
+```json
+{
+  "hlmemo-brief": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "HLM_SERVER_URL=https://<your-server> HLM_DEVICE_NAME=<device> <repo>/.venv/bin/python -P -m hlmemo.brief.hook",
+        "timeout": 30
+      }
+    ]
+  }
+}
+```
+
+- **Input:** camelCase `conversationId`, `workspacePaths`, `cwd`, `hookEventName = "SessionStart"`, no
+  `source` (every agy SessionStart counts as `startup`). agy runs the hook in the folder holding
+  `hooks.json`, so the project folder comes only from `cwd`, or `workspacePaths[0]` when `cwd` is
+  missing; the process's own cwd is never used.
+- **Output:** `{"injectSteps":[{"systemMessage":{"systemMessage":"<digest>\n\n<brief>"}}]}`; nothing on
+  stdout means nothing to inject (unmapped folder, kill switch, digest off with no brief).
+- **Size:** agy documents no limit for a system message; the hook keeps Claude Code's 9,500-character cap.
+- **Time:** agy's timeout defaults to 30 s; the hook still ends itself at its own 8 s wall clock.
+- `brief.log` lines end in `agent=claude` or `agent=agy`.
+
 ## Reviewed items only by default (D-206)
 
 `include_auto = false` (default): decisions/open lines of auto-captured notes and auto-captured lessons

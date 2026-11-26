@@ -447,7 +447,7 @@ async def test_review79_t5_an_r3_env_on_this_image_leaves_memory_ask_off_and_spe
     async with r3_app(settings) as client:
         _did, token = await trusted_device(client, "ask-r3", grants=[{"project": MAIN, "role": "read"}])
         listed = (await mcp_rpc(client, token, "tools/list")).json()["result"]["tools"]
-        assert "memory.ask" not in {t["name"] for t in listed}
+        assert {"memory.ask", "memory_ask"}.isdisjoint(t["name"] for t in listed)
         res = await call_tool_raw(client, token, "memory.ask", {"question": "p95 target?", "project": MAIN})
         assert res["isError"] and json.loads(res["content"][0]["text"])["details"]["reason"] == "disabled"
     async with await connect() as conn:

@@ -1,4 +1,4 @@
-"""Claude Code SessionStart hook entry point: ``python -P -m hlmemo.brief.hook``.
+"""SessionStart hook entry point (Claude Code and agy): ``python -P -m hlmemo.brief.hook``.
 
 Reads the hook JSON from stdin (``cwd``, ``session_id``, ``source`` = startup/resume/clear/compact),
 applies the kill switch and the capture project mapping (unmapped = no-op) and, for a mapped project,
@@ -31,6 +31,13 @@ shortens the fetch instead of handing the session to the watchdog. A full brief 
 error), that last good brief is shown instead, dated and marked possibly stale (``HLM_BRIEF_CACHE=off``
 disables it; never after a refusal; at most ``CACHE_MAX_DAYS`` old). The watchdog logs its own line before it
 exits (D-267).
+
+Two input dialects, one code path (``normalize``): Claude Code's snake_case input above, and agy's camelCase
+input (``hookEventName``, ``conversationId``, ``cwd`` or else ``workspacePaths[0]``, no ``source``: always a
+new session, so ``startup``). agy is recognised by ``hookEventName`` without ``hook_event_name``; its output
+is ``{"injectSteps": [{"systemMessage": {"systemMessage": <text>}}]}`` (``hook_output``), the same text in
+every case (brief, last good brief, "unavailable", the watchdog's armed line). Nothing printed = nothing
+injected, in both.
 """
 
 from __future__ import annotations
@@ -58,7 +65,9 @@ DIGEST_RESOURCE = "protocol_digest.txt"
 SLUG_MARK = "<slug>"
 #: Claude Code caps a hook's additionalContext at 10,000 characters (beyond that it saves the text to a
 #: file and shows the model only a 2,000-character preview). Digest + brief stay below, with a margin.
+#: agy documents no cap for an injected systemMessage; it gets the same limit.
 CONTEXT_CHARS = 9500
+CLAUDE, AGY = "claude", "agy"  # the hook's input/output dialects
 Fetcher = Callable[[str, BC.BriefConfig], Awaitable[Any]]
 AUTH_CODES = frozenset({"E_AUTH", "E_DEVICE_PENDING"})
 #: the last line of a brief the deadline cut short (the card and the queries came back, not every detail)
@@ -99,12 +108,34 @@ class Outcome:
     #: why: the stage a timeout cut (session | queries | details), the error code (auth/server) or the
     #: transport error's type (network)
     cause: str = ""
+    agent: str = CLAUDE  # the input dialect (claude | agy), for the log
 
 
-def hook_output(text: str) -> str:
-    return json.dumps(
-        {"hookSpecificOutput": {"hookEventName": EVENT, "additionalContext": text}}, ensure_ascii=False
-    )
+def normalize(data: Any) -> tuple[str, Any]:
+    """``(dialect, data)``: agy's camelCase input (``hookEventName`` without ``hook_event_name``) mapped to
+    the Claude Code fields the hook reads; anything else unchanged, as Claude Code input. agy's ``cwd`` is
+    the agent's working directory (the hook process runs in the folder of hooks.json, so the process cwd is
+    never used); without it, the first workspace path. agy has no ``source``: SessionStart is a new
+    session."""
+    if not isinstance(data, dict) or "hook_event_name" in data or "hookEventName" not in data:
+        return CLAUDE, data
+    paths = data.get("workspacePaths")
+    cwd = data.get("cwd") or (paths[0] if isinstance(paths, list) and paths else "")
+    return AGY, {
+        "hook_event_name": data.get("hookEventName"),
+        "cwd": str(cwd or ""),
+        "session_id": str(data.get("conversationId") or ""),
+        "source": "startup",
+    }
+
+
+def hook_output(text: str, dialect: str = CLAUDE) -> str:
+    """The stdout line that injects ``text`` into the session, in the agent's own format."""
+    if dialect == AGY:
+        doc: dict[str, Any] = {"injectSteps": [{"systemMessage": {"systemMessage": text}}]}
+    else:
+        doc = {"hookSpecificOutput": {"hookEventName": EVENT, "additionalContext": text}}
+    return json.dumps(doc, ensure_ascii=False)
 
 
 def digest_template() -> str:
@@ -387,18 +418,19 @@ def handle(
     ``ASSEMBLY_RESERVE_S`` before it."""
     t0 = time.monotonic()
     e = env if env is not None else os.environ
+    agent = CLAUDE
     try:
         if BC.killed(e):
             return Outcome("killed")
-        data = json.loads(raw or "{}")
+        agent, data = normalize(json.loads(raw or "{}"))
         if not isinstance(data, dict) or data.get("hook_event_name") != EVENT:
-            return Outcome("ignored")
+            return Outcome("ignored", agent=agent)
         cfg = BC.load_config(config_path)
         if str(data.get("source") or "startup") not in cfg.sources:
-            return Outcome("ignored")
+            return Outcome("ignored", agent=agent)
         slug = BC.map_cwd(cfg, str(data.get("cwd") or ""))
         if slug is None:
-            return Outcome("unmapped")
+            return Outcome("unmapped", agent=agent)
 
         # Mapped: from here on the digest is always injected (unless switched off), whatever the brief does.
         head = _digest_or_empty(slug, e)
@@ -410,10 +442,10 @@ def handle(
             if (
                 head
             ):  # armed first: a stalled cache read must not leave the watchdog with nothing (review 125)
-                arm(hook_output(compose(head, unavailable(slug, "timeout", "", wall))))
+                arm(hook_output(compose(head, unavailable(slug, "timeout", "", wall)), agent))
             fallback = cached_brief(slug, "timeout", "", room, now, wall) if use_cache else None
             if fallback:
-                arm(hook_output(compose(head, fallback)))
+                arm(hook_output(compose(head, fallback), agent))
         fetch_s = None
         left = None if deadline is None else deadline - ASSEMBLY_RESERVE_S - time.monotonic()
         if left is not None and left < MIN_FETCH_S:  # the start used the time: no session at all
@@ -435,7 +467,7 @@ def handle(
             body = unavailable(slug, status, cause, secs) if head else ""
         text = compose(head, body)
         if not text:
-            return Outcome(status, slug=slug, cause=cause)
+            return Outcome(status, slug=slug, cause=cause, agent=agent)
         tokens = brief.tokens if brief is not None else 0
         sections = (("Digest",) if head else ()) + (tuple(brief.sections) if brief is not None else ())
         sections += ("Cached",) if cached is not None else ()
@@ -451,10 +483,11 @@ def handle(
                 "chars": len(text),
             }
             write_dryrun(dry, data, text, meta)
-            return Outcome("dryrun", None, tokens, sections, bool(head), len(text), slug, cause)
-        return Outcome(status, hook_output(text), tokens, sections, bool(head), len(text), slug, cause)
+            return Outcome("dryrun", None, tokens, sections, bool(head), len(text), slug, cause, agent)
+        out = hook_output(text, agent)
+        return Outcome(status, out, tokens, sections, bool(head), len(text), slug, cause, agent)
     except BaseException as exc:  # noqa: BLE001 - fail open, always
-        return Outcome(f"error:{type(exc).__name__}")
+        return Outcome(f"error:{type(exc).__name__}", agent=agent)
 
 
 def log_line(o: Outcome, ms: int) -> None:
@@ -466,7 +499,8 @@ def log_line(o: Outcome, ms: int) -> None:
         with (d / "brief.log").open("a", encoding="utf-8") as fh:
             fh.write(
                 f"{stamp} {o.status} {ms}ms slug={_token(o.slug) or '-'} cause={_token(o.cause) or '-'} "
-                f"tokens={o.tokens} chars={o.chars} digest={int(o.digest)} sections={','.join(o.sections)}\n"
+                f"tokens={o.tokens} chars={o.chars} digest={int(o.digest)} sections={','.join(o.sections)} "
+                f"agent={_token(o.agent)}\n"
             )
     except BaseException:  # noqa: BLE001
         pass
@@ -512,6 +546,7 @@ class Stdout:
                     sections=("Cached",) if cached else (),
                     chars=len(self._fallback),
                     slug=m.group(1) if m else "",
+                    agent=AGY if self._fallback.startswith('{"injectSteps"') else CLAUDE,
                 ),
                 int((time.monotonic() - self.t0) * 1000),
             )

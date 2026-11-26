@@ -132,7 +132,7 @@ def _fake_server(listings: list[int]) -> Server[Any]:
     async def on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
         listings.append(1)
         return types.ListToolsResult(
-            tools=[types.Tool(name="memory.query", description="q", inputSchema={"type": "object"})]
+            tools=[types.Tool(name="memory_query", description="q", inputSchema={"type": "object"})]
         )
 
     async def on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
@@ -151,7 +151,12 @@ async def test_unlisted_client_tool_is_not_validated(caplog: pytest.LogCaptureFi
         for _ in range(3):
             assert await call("hlm.export", {"project": "p"}) == {"tool": "hlm.export"}
         assert listings == []  # no tools/list round trip per call (it was one per call)
-        assert await call("memory.query", {}) == {"tool": "memory.query"}
+        # D-287: the server lists the wire name; the dotted name this client calls is accepted
+        # but never listed, so it must not cost a tools/list round trip (or a warning) per call
+        for _ in range(3):
+            assert await call("memory.query", {}) == {"tool": "memory.query"}
+        assert listings == []
+        assert await call("memory_query", {}) == {"tool": "memory_query"}
     assert listings == [1]  # a listed tool is still validated against the listing
     assert not [r for r in caplog.records if "not listed" in r.getMessage()]
     assert await client.call_async("hlm.export", {}) == {"tool": "hlm.export"}

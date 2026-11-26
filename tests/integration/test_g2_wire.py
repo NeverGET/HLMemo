@@ -22,7 +22,7 @@ import httpx
 import pytest
 
 from hlmemo.core.budget import BUDGET_MAX, BUDGET_MIN, Meter, canonical
-from hlmemo.server.tools import READ_SERVICE_AVAILABLE, TOOL_BY_NAME, TOOL_NAMES
+from hlmemo.server.tools import READ_SERVICE_AVAILABLE, TOOL_BY_NAME, TOOL_NAMES, resolve_tool, wire_name
 from tests.integration._mcp_fixtures import (
     bearer,
     call_tool_raw,
@@ -43,6 +43,7 @@ FIVE = {"memory.query", "memory.drilldown", "memory.raw", "memory.write", "memor
 W2D = {"memory.risk_check", "memory.register_lesson"}  # W2d (CC-4); the name FIVE is kept for the diff
 FIVE = FIVE | W2D
 ADVERTISED = FIVE | {"memory.answer"}  # W2c (CC-4: 9 tools after Phase 4)
+ADVERTISED_WIRE = {wire_name(n) for n in ADVERTISED}  # D-287: tools/list carries memory_query, ...
 ENVELOPE_KEYS = {"code", "message", "retryable", "details"}
 READ_TOOLS = ("memory.query", "memory.drilldown", "memory.raw")
 
@@ -122,15 +123,16 @@ async def test_tools_list_has_five_tools_no_output_schema(db_dsn) -> None:
         tools = r.json()["result"]["tools"]
         # D-136: memory.ask is registered but advertised only with HLM_RESEARCH_ENABLED AND the
         # librarian LLM runtime (off in this fixture); test_ask_research covers it listed
-        assert {t["name"] for t in tools} == ADVERTISED == set(TOOL_NAMES) - {"memory.ask"}
+        assert {t["name"] for t in tools} == ADVERTISED_WIRE
+        assert ADVERTISED == set(TOOL_NAMES) - {"memory.ask"}
         assert TOOL_BY_NAME["memory.ask"].listed is not None
         for t in tools:
             assert "outputSchema" not in t, t["name"]
-            assert t["inputSchema"] == TOOL_BY_NAME[t["name"]].input_schema
+            assert t["inputSchema"] == resolve_tool(t["name"]).input_schema
             assert t["inputSchema"]["additionalProperties"] is False
             assert t["description"]
         # required inputs per §3
-        req = {t["name"]: set(t["inputSchema"]["required"]) for t in tools}
+        req = {resolve_tool(t["name"]).name: set(t["inputSchema"]["required"]) for t in tools}
         assert req["memory.query"] == {"project", "query", "token_budget"}
         assert req["memory.drilldown"] == {"project", "clue_ids", "token_budget"}
         assert req["memory.raw"] == {"project", "version_id", "token_budget"}
@@ -142,8 +144,33 @@ async def test_tools_list_has_five_tools_no_output_schema(db_dsn) -> None:
 
         async with sdk_client(client.app, token) as sdk:  # type: ignore[attr-defined]
             listed = await sdk.list_tools()
-            assert {t.name for t in listed.tools} == ADVERTISED
+            assert {t.name for t in listed.tools} == ADVERTISED_WIRE
             assert all(t.output_schema is None for t in listed.tools)
+
+
+async def test_wire_and_dotted_names_call_the_same_tool(db_dsn) -> None:
+    """D-287: ``tools/call`` accepts the listed wire name (agy, Gemini/OpenAI function-name rule)
+    and the canonical dotted name (older hooks and CLIs); both reach the same handler."""
+    async with wired(db_dsn) as (client, token):
+        res = await call_tool_raw(
+            client, token, "memory_write", write_args(PROJECT, [fact("Wire name", "svc-wn1 reads WIRE_DSN.")])
+        )
+        (version,) = _single_text(res)["versions"]
+        args = {"project": PROJECT, "query": "svc-wn1 WIRE_DSN", "token_budget": 2000}
+        hits = {}
+        for name in ("memory_query", "memory.query"):
+            res = await call_tool_raw(client, token, name, args)
+            assert not res.get("isError"), res
+            hits[name] = [h["clue"] for h in _single_text(res)["hits"]]
+        assert hits["memory_query"] == hits["memory.query"] and hits["memory_query"]
+        for name in ("memory_raw", "memory.raw"):
+            res = await call_tool_raw(
+                client,
+                token,
+                name,
+                {"project": PROJECT, "version_id": version["version_id"], "token_budget": 4000},
+            )
+            assert not res.get("isError"), res
 
 
 # --------------------------------------------------------------------------- one text block
@@ -302,6 +329,8 @@ async def test_tool_error_envelope(db_dsn) -> None:
 
         e = await err("memory.nope", {})
         assert e["code"] == "E_INVALID_ARG" and e["details"] == {"tool": "memory.nope"}
+        e = await err("memory_nope", {})  # D-287: an unknown wire name is the same error
+        assert e["code"] == "E_INVALID_ARG" and e["details"] == {"tool": "memory_nope"}
 
         # role check: a read-only device cannot write
         _rid, reader = await trusted_device(client, "reader", grants=[{"project": PROJECT, "role": "read"}])

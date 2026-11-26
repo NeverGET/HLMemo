@@ -83,7 +83,9 @@ async def test_a_member_creates_a_project_granted_to_every_live_member(db_dsn, c
         assert out["created"] and out["account"] == "maher" and out["quota"] == {"limit": 20, "used": 2}
         # the claimed sandbox counts; the root does not
         listed = await mcp_rpc(client, mac, "tools/list", {})
-        assert TOOL not in [t["name"] for t in listed.json()["result"]["tools"]]  # T7
+        assert {TOOL, TOOL.replace(".", "_")}.isdisjoint(
+            t["name"] for t in listed.json()["result"]["tools"]
+        )  # T7
 
         again_err, again = await _create(client, mac, "maher-api")  # idempotent, no grant change
         assert not again_err and again["created"] is False

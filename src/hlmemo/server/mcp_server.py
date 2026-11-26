@@ -59,17 +59,18 @@ from hlmemo.core.budget import BudgetError, canonical
 from hlmemo.core.clues import InvalidClue
 from hlmemo.core.errors import ToolError
 from hlmemo.core.secret_guard import redact_for_log
-from hlmemo.server.tools import READ_TOOL_NAMES, TOOL_BY_NAME, TOOLS, advertised_tools
+from hlmemo.server.tools import READ_TOOL_NAMES, TOOLS, advertised_tools, resolve_tool, wire_name
 from hlmemo.server.tools.handlers import ReadHandler
 
 log = logging.getLogger("hlmemo.server.mcp")
 
 SERVER_NAME = "hlmemo"
+#: names tools in their wire form (D-287): what a model sees on tools/list and can call
 INSTRUCTIONS = (
-    "HLMemo: bi-temporal long-term memory. Call memory.query before acting (memory.ask, when listed, "
-    "to have the librarian research a question and answer with sources), memory.drilldown to "
-    "expand clues, memory.raw for provenance, memory.write to remember, memory.call_the_day to "
-    "close a session, memory.risk_check before a risky step, memory.register_lesson after a "
+    "HLMemo: bi-temporal long-term memory. Call memory_query before acting (memory_ask, when listed, "
+    "to have the librarian research a question and answer with sources), memory_drilldown to "
+    "expand clues, memory_raw for provenance, memory_write to remember, memory_call_the_day to "
+    "close a session, memory_risk_check before a risky step, memory_register_lesson after a "
     "mistake. Every result is one JSON text block with a `budget` block; errors are "
     "`{code,message,retryable,details}` with isError=true."
 )
@@ -208,15 +209,21 @@ async def on_list_tools(
     request = ctx.request
     settings = getattr(request.app.state, "settings", None) if isinstance(request, Request) else None
     tools = TOOLS if settings is None else advertised_tools(settings)
+    # D-287: the wire name (``memory_query``); everything behind this boundary keeps the dotted name
     return types.ListToolsResult(
-        tools=[types.Tool(name=t.name, description=t.description, inputSchema=t.input_schema) for t in tools]
+        tools=[
+            types.Tool(name=wire_name(t.name), description=t.description, inputSchema=t.input_schema)
+            for t in tools
+        ]
     )
 
 
 async def on_call_tool(
     ctx: ServerRequestContext[Any, Any], params: types.CallToolRequestParams
 ) -> types.CallToolResult:
-    spec = TOOL_BY_NAME.get(params.name)
+    # D-287: the wire name or the canonical dotted name; from here on only ``spec.name`` (canonical)
+    # is used, so logs, meters, the owner check and error ``tool=`` fields never see the wire form
+    spec = resolve_tool(params.name)
     if spec is None:
         name = redact_for_log(params.name)
         return error_result(ToolError("E_INVALID_ARG", f"unknown tool {name!r}", tool=name))
@@ -247,7 +254,7 @@ async def on_call_tool(
                 # Savepoint inside the request transaction: a failing tool leaves the connection
                 # usable and the middleware still commits the (read-only) outer transaction.
                 async with conn.transaction():
-                    if params.name in READ_TOOL_NAMES:
+                    if spec.name in READ_TOOL_NAMES:
                         # Never enter the standalone service's lazy model path from HTTP.
                         deps = ctx.request.app.state.read_deps
                         if deps is None:
@@ -260,16 +267,16 @@ async def on_call_tool(
         return error_result(err)
     except pgerrors.Error as err:
         outcome = "E_UNAVAILABLE"
-        log.warning("tool %s: database error %s", params.name, getattr(err, "sqlstate", None))
+        log.warning("tool %s: database error %s", spec.name, getattr(err, "sqlstate", None))
         return error_result(err)
     except Exception as err:  # noqa: BLE001 - every failure must become an isError result
         outcome = "crash"
-        log.exception("tool %s crashed", params.name)
+        log.exception("tool %s crashed", spec.name)
         return error_result(err)
     finally:
         log.info(
             "mcp tools/call %s device=%s client=%s outcome=%s ms=%d",
-            params.name,
+            spec.name,
             device_id if device_id is not None else "-",
             redact_for_log(_client_of(ctx)),  # a caller label: never a secret in the log (review 112)
             outcome,

@@ -16,7 +16,7 @@ from hlmemo.server.tools.schemas import DEFS
 
 NAME = questions.TOOL
 DESCRIPTION = (
-    "Answer a librarian question listed under librarian.notices in memory.query: accept applies the "
+    "Answer a librarian question listed under librarian.notices in memory_query: accept applies the "
     "proposed action (rechecked; a changed subject makes it superseded) or, while the librarian is an "
     "observer, records it as accepted_pending; reject discards it, custom records your note and asks "
     "the librarian to re-plan. Idempotent per request_id."

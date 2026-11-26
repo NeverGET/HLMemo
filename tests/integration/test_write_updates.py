@@ -785,7 +785,7 @@ async def test_over_mcp_the_schema_is_listed_and_a_rejected_update_is_not_an_err
     async with running_app(db_dsn) as client:
         token = await writer_on(client, "wu-wire")
         listed = (await mcp_rpc(client, token, "tools/list")).json()["result"]["tools"]
-        (w,) = [t for t in listed if t["name"] == "memory.write"]
+        (w,) = [t for t in listed if t["name"] == "memory_write"]  # D-287 wire name
         assert "updates" in w["inputSchema"]["$defs"]["Item"]["properties"] and "old_span" in w["description"]
         first = await call_tool_raw(client, token, "memory.write", write_args("wu-wire", [fact(*OLD)]))
         (old,) = json.loads(first["content"][0]["text"])["versions"]

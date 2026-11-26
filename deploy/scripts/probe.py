@@ -111,15 +111,17 @@ class Probe:
         self.rpc(token, "notifications/initialized", notification=True)
         tools = self.rpc(token, "tools/list")["tools"]
         # CC-4: the five Phase-0 tools plus W2d's two; client-only tools (hlm.export) are never listed.
+        # D-287: a server lists wire names (memory_query); one from before D-287 lists memory.query.
+        # Both forms are compared as wire names, so the probe passes on either side of the deploy.
         expected = {
-            "memory.query",
-            "memory.drilldown",
-            "memory.raw",
-            "memory.write",
-            "memory.call_the_day",
+            "memory_query",
+            "memory_drilldown",
+            "memory_raw",
+            "memory_write",
+            "memory_call_the_day",
         }
         # Core ⊆ listed: later phases add tools (risk_check, register_lesson, answer, ...).
-        if not expected <= {tool["name"] for tool in tools}:
+        if not expected <= {tool["name"].replace(".", "_") for tool in tools}:
             raise ValueError("tools/list does not expose the core memory tools")
 
     def ops(self, *args):

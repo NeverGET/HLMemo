@@ -319,7 +319,9 @@ async def test_an_agent_cannot_call_hlm_questions_over_the_wire(
         assert json.loads(res["content"][0]["text"])["code"] == "E_FORBIDDEN"
         # still unadvertised (G-SURF unchanged)
         listed = await mcp_rpc(client, TOKEN, "tools/list", id=2)
-        assert "hlm.questions" not in {t["name"] for t in listed.json()["result"]["tools"]}
+        assert {"hlm.questions", "hlm_questions"}.isdisjoint(
+            t["name"] for t in listed.json()["result"]["tools"]
+        )
         client.headers.update(OWNER_HEADERS)  # the owner's CLI
         res = await call_tool_raw(client, TOKEN, "hlm.questions", {"project": MAIN})
         assert res["isError"] is False

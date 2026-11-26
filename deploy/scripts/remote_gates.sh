@@ -333,7 +333,8 @@ with httpx.Client(base_url=url, verify=verify, timeout=60) as c:
         r = c.post("/mcp", headers=h, json={"jsonrpc": "2.0", "id": next(seq), "method": method, "params": params})
         r.raise_for_status()
         return r.json()["result"]
-    if "memory.risk_check" not in {t["name"] for t in rpc("tools/list", {})["tools"]}:
+    # D-287: wire names (memory_risk_check) since D-287, dotted before: compare in wire form
+    if "memory_risk_check" not in {t["name"].replace(".", "_") for t in rpc("tools/list", {})["tools"]}:
         print("SKIP memory.risk_check is not on tools/list (release before W2d)")
         sys.exit(0)
     def call(name, arguments):
