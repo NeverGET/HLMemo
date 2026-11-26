@@ -6,6 +6,9 @@ When a Claude Code session in a **mapped** project ends (or compacts), HLMemo re
 - the **decisions** that were explicitly made (at most 12);
 - **lessons**, only where a mistake or learning is explicit in the session (0 is the normal case).
 
+Sessions of Google's Antigravity CLI (`agy`) are captured the same way through its `Stop` hook; see
+"agy (Antigravity CLI)" below for what differs.
+
 Everything goes through `memory.call_the_day` (no card update). Status: **installed for the HLMemo
 project only** (D-218: project-local hooks in the HLMemo repo's `.claude/settings.local.json`, the mapping
 file lists only that project). Any wider install is an owner decision (see "Install").
@@ -25,6 +28,7 @@ tests in `tests/unit/` like the rest. `tools/` does not exist in this repo.
 | `hook.py` | the hook entry point: stdlib only, ~35 ms, queues the input and starts the worker **detached** |
 | `run.py` | the detached worker: per-session lock, state, pipeline; `python -m hlmemo.capture.run --dry-run DIR ...` for offline use |
 | `reduce.py` | JSONL transcript -> about 40k chars |
+| `reduce_agy.py` | agy step log -> the same reduced form (see "agy (Antigravity CLI)") |
 | `scrub.py` | secrets + emails, before any LLM call and again before writing |
 | `summarize.py` | `claude -p` (Haiku), strict JSON schema, validation, grounding checks |
 | `write.py` | payload composition, `uuid5` session key, writers (direct `hlm` client, `claude -p` relay, dry-run file) |
@@ -140,6 +144,10 @@ exclude = [".claude/worktrees"]      # path fragments that are never captured
 # model = "claude-haiku-4-5-20251001"
 # cap_chars = 40000
 
+# agy_min_owner_messages = 12        # agy: a live Stop writes once the uncaptured part has this many
+# agy_min_chars = 30000              #   owner messages OR this many reduced chars (see "agy")
+# agy_idle_minutes = 30              # agy: a conversation idle this long gets its tail flushed
+
 # [writer]                           # optional overrides of the hlm client config
 # server_url = "https://mcp.hlmemo.com/mcp"
 # device_name = "cemals-mb-pro-3"
@@ -213,6 +221,104 @@ Hook facts that shaped the design:
   Fallback if it does not survive: a `launchd` WatchPaths job that runs the worker over
   `<state>/queue/*.json` (the hook already writes that queue file before spawning).
 
+## agy (Antigravity CLI)
+
+agy (checked against v1.2.9) has no SessionEnd or PreCompact hook. Its `Stop` hook fires when the agent's
+execution loop stops, which is the end of EVERY turn. The same hook module serves both clients; it tells
+them apart by the input's key style (agy sends camelCase: `hookEventName`, `conversationId`,
+`transcriptPath`, `cwd`, `workspacePaths`, `modelName`, `terminationReason`, ...).
+
+### Trigger, threshold, tail
+
+- **Stop** queues a capture check for the conversation (`conversationId` is the session id) and starts
+  the same detached worker. It prints `{}` (agy reads a JSON object from stdout; anything other than
+  `"decision": "continue"` lets the agent stop), so it never blocks or prolongs a turn. The agent's
+  directory is the input's `cwd` (fallback `workspacePaths[0]`); the hook process itself runs in the
+  hooks.json folder, so nothing uses its own working directory.
+- **Threshold.** A live Stop writes the uncaptured segment only when it has at least
+  `min_owner_messages` (3) owner messages AND either `agy_min_owner_messages` (12) owner messages or
+  `agy_min_chars` (30,000) reduced chars. Otherwise nothing is written and the cursor does not move:
+  the segment keeps growing and is re-checked at the next Stop. Why these numbers: one owner turn
+  reduces to about 2-3k chars, so 12 turns or 30k chars is about three quarters of the summarizer's
+  40k window. Each note then summarises a window-sized piece, like a Claude PreCompact segment, instead
+  of one note per turn (one note per turn would be noisy and cost one summarizer call each).
+- **The tail is never dropped silently.** The part after the last written segment waits for the next
+  Stop that passes the threshold. If the conversation ends before that, the **idle flush** writes it:
+  every agy worker (any Stop, and agy `SessionStart`) looks for conversations whose last Stop is at least
+  `agy_idle_minutes` (30) old and that were not flushed since. It captures them with the plain floor
+  (3 owner messages), or any owner message at all once the conversation already has a segment. At most
+  5 conversations are flushed per run. By hand: `python -m hlmemo.capture.run --flush
+  [--idle-minutes 0] [--dry-run DIR]`. A conversation that never reaches 3 owner messages is skipped
+  and logged (`skip_small`), like a small Claude session. A tail stays pending (never lost) until some
+  agy hook runs again in a mapped project or `--flush` is run.
+- **Idempotency** is the same disjoint-segment scheme, keyed by `uuid5("<conversationId>:<slug>[:segN]")`,
+  with one difference: the cursor is agy's `step_index`, not a line number (below). Per Stop the lock
+  wait is 5 s, not 15 min: a busy lock means the running worker or the next Stop covers the turn.
+- **Late steps, busy logs, errors** (review 135). A segment also takes any uncaptured step up to
+  `LATE_WINDOW` (64) indices below the cursor; the captured indices are kept as `recent_steps`. A Stop
+  worker waits until the log has been quiet for 2 s (at most 20 s), else returns `busy` and only records
+  the Stop for the idle flush; the flush skips a log changed in the last 120 s. An agy error backs off
+  per conversation (10 min, doubling, at most 6 h) and a segment that failed the secret or payload check
+  is not summarized again until it grows. `below_threshold` and `backoff` write no log line.
+- Notes say `agy capture hook`, `agy conversation: <id>` and `agent model: <modelName>` (as agy reports
+  it, e.g. `auto`); the payload's `client` is `agy/capture-hook`. A flushed tail says `(segment N, idle
+  flush)`. The summarizer is unchanged (`claude -p`, see above).
+
+### The transcript (`reduce_agy.py`)
+
+agy logs one JSON object per step under `.../brain/<conversationId>/.system_generated/logs/`:
+`transcript.jsonl` (the hook's `transcriptPath`, long fields truncated) and `transcript_full.jsonl`. On
+real logs either file can start later than the other (its head is missing) and steps are sometimes
+written after their successor, so: both files are merged by `step_index` (the full record wins), steps
+are sorted by index, and the state cursor is "the next step index", which stays valid when a log's
+head is dropped. Mapping onto the reduced form:
+
+| agy step | becomes |
+| --- | --- |
+| `USER_INPUT` (source `USER_*`) | owner message: only the text inside `<USER_REQUEST>`; a step without that tag gives no owner text (fail closed, review 135) |
+| `PLANNER_RESPONSE.content` | assistant text (the last one before the next owner message is the turn's final text); `thinking` dropped |
+| `PLANNER_RESPONSE.tool_calls` | `write_to_file` / `replace_file_content` / `multi_replace_file_content` `TargetFile` -> files; `run_command` `CommandLine` with `git commit -m` -> commit message; MCP edit tools via `call_mcp_tool` -> files |
+| `RUN_COMMAND.content` | commit hashes from `[branch abc1234] subject` lines of the output |
+| `CHECKPOINT` | agy's own summary of earlier context: kept as EARLIER-SUMMARY only in the first segment and only before any owner message (when the log starts mid-conversation) |
+| everything else | dropped (tool outputs such as `VIEW_FILE`, `GREP_SEARCH`, `SEARCH_WEB`; `SYSTEM_MESSAGE`, `CONVERSATION_HISTORY`, ...) |
+
+### Install
+
+agy reads `hooks.json` from a customization root: `<repo>/.agents/hooks.json` (project) or
+`~/.gemini/config/hooks.json` (global; the capture mapping still limits it to mapped cwds). Add a named
+entry next to any existing ones (agy merges named hooks; `Stop` and `SessionStart` take a flat list of
+handlers). `<HLMEMO_REPO>` is the absolute path of this repository's checkout; `-P` keeps the hooks.json
+folder off `sys.path`:
+
+```json
+{
+  "hlm-capture": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "<HLMEMO_REPO>/.venv/bin/python -P -m hlmemo.capture.hook",
+        "timeout": 5
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "<HLMEMO_REPO>/.venv/bin/python -P -m hlmemo.capture.hook",
+        "timeout": 5
+      }
+    ]
+  }
+}
+```
+
+`SessionStart` is optional: it only triggers the idle flush. A project-local `.agents/hooks.json` holds
+an absolute path, so keep it out of a public repository (gitignore it) or use the global file.
+`HLM_CAPTURE=off` and `[capture] enabled = false` work for agy as for Claude Code.
+
+Measured here (synthetic transcript, fake summarizer, dry run): the hook returns `{}` in about 50 ms,
+spawn included. Not yet verified with a live agy session: that agy runs the hook with the documented
+input on this version, and that the detached worker survives the agy process exiting.
+
 ## Disable
 
 - Per session / shell: `HLM_CAPTURE=off` (also `0`, `false`, `no`); the hook and the worker both check it.
@@ -250,6 +356,12 @@ payload (residual scan over both). Lesson grounding dropped 2-3 unsupported less
 Outputs: `docs/private/capture-eval/` (gitignored, 0600).
 
 ## Tests
+
+`tests/unit/test_capture_agy.py` (14 tests, synthetic agy logs): step mapping, cursor with out-of-order,
+duplicate and half-written steps, the two-log merge, checkpoints, the hook's dialect detection and `{}`
+reply, the Stop threshold (owner messages, chars, floor), two Stops = two disjoint segments (also when
+the log's head is dropped), the idle flush (once, again after a resume, tiny conversations skipped),
+unmapped cwd, the short lock, and the Claude payload and state unchanged.
 
 `tests/unit/test_capture.py`, `tests/unit/test_capture_writer.py` (40 tests, no network): reduction (noise
 dropped, cap, resume offset, partial last line, compaction summary, MCP edit tools), scrub (secrets, emails,

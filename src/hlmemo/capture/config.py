@@ -19,6 +19,13 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MIN_OWNER_MESSAGES = 3
 DEFAULT_CAP_CHARS = 40_000
 CLIENT_NAME = "claude-code/capture-hook"
+CLIENT_NAME_AGY = "agy/capture-hook"
+# agy has no SessionEnd/PreCompact: its Stop hook fires at the end of EVERY turn. A live Stop captures
+# the uncaptured segment only once it is big enough to deserve its own note (about one summarizer
+# window); a tail below that is written by the idle flush (see run.sweep_agy), never dropped silently.
+DEFAULT_AGY_MIN_OWNER_MESSAGES = 12
+DEFAULT_AGY_MIN_CHARS = 30_000
+DEFAULT_AGY_IDLE_MINUTES = 30
 
 
 def killed(env: dict[str, str] | None = None) -> bool:
@@ -53,6 +60,9 @@ class CaptureConfig:
     server_url: str | None = None  # writer overrides; default: the hlm client config (./hlm.toml)
     device_name: str | None = None
     relay_fallback: bool = True
+    agy_min_owner_messages: int = DEFAULT_AGY_MIN_OWNER_MESSAGES  # live Stop threshold (OR agy_min_chars)
+    agy_min_chars: int = DEFAULT_AGY_MIN_CHARS  # reduced chars of the uncaptured segment
+    agy_idle_minutes: int = DEFAULT_AGY_IDLE_MINUTES  # a conversation idle this long gets its tail flushed
 
 
 def _norm(p: str) -> str:
@@ -92,6 +102,9 @@ def load_config(path: Path | None = None) -> CaptureConfig:
         server_url=wr.get("server_url") if isinstance(wr.get("server_url"), str) else None,
         device_name=wr.get("device_name") if isinstance(wr.get("device_name"), str) else None,
         relay_fallback=bool(wr.get("relay_fallback", True)),
+        agy_min_owner_messages=_int(cap.get("agy_min_owner_messages"), DEFAULT_AGY_MIN_OWNER_MESSAGES),
+        agy_min_chars=_int(cap.get("agy_min_chars"), DEFAULT_AGY_MIN_CHARS),
+        agy_idle_minutes=_int(cap.get("agy_idle_minutes"), DEFAULT_AGY_IDLE_MINUTES),
     )
 
 

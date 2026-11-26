@@ -71,6 +71,7 @@ class Reduced:
     first_ts: str | None = None
     last_ts: str | None = None
     end_line: int = 0  # the line index AFTER the last line read (next segment starts here)
+    steps: list[int] = field(default_factory=list)  # agy only: the step indices this segment covers
     segments_total: int = 0
     segments_kept: int = 0
 
@@ -327,7 +328,12 @@ def facts_header(red: Reduced) -> str:
 
 
 def reduce_lines(lines: list[str], *, start: int = 0, cap: int = 40_000, cwd_hint: str = "") -> Reduced:
-    red = parse_lines(lines, start=start, cwd_hint=cwd_hint)
+    return finish(parse_lines(lines, start=start, cwd_hint=cwd_hint), cap)
+
+
+def finish(red: Reduced, cap: int) -> Reduced:
+    """Prepare, score and pack the parsed segments (``red._segs``) into ``red.text``. Shared by every
+    transcript dialect (Claude Code here, agy in ``reduce_agy``)."""
     segs: list[Segment] = red._segs  # type: ignore[attr-defined]
     for s in segs:
         _prepare(s)

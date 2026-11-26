@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import uuid
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from hlmemo.capture.config import CLIENT_NAME, CaptureConfig
+from hlmemo.capture.config import CLIENT_NAME, CLIENT_NAME_AGY, CaptureConfig
 from hlmemo.capture.reduce import Reduced, commit_rows
 from hlmemo.capture.scrub import ScrubReport, scrub_text
 from hlmemo.capture.summarize import Summary
@@ -51,14 +52,44 @@ def _date(last_ts: str | None, first_ts: str | None) -> str:
     return ((last_ts or first_ts or datetime.now(UTC).isoformat())[:10]) or "unknown-date"
 
 
-def _facts_block(red: Reduced, *, sid: str, segment: int, event: str, model: str | None) -> str:
+_AGENT_MODEL_RE = re.compile(r"[^\w.:/ ()+-]")
+
+
+def agent_model_label(name: object) -> str | None:
+    """The agent's own model name as the client reported it (agy ``modelName``), made safe to print."""
+    if not isinstance(name, str):
+        return None
+    v = _AGENT_MODEL_RE.sub("", name).strip()[:80]
+    return v or None
+
+
+def _source(client: str) -> tuple[str, str, str]:
+    """(hook label, session label, the event that needs no mention) per client dialect."""
+    if client == "agy":
+        return "agy capture hook", "agy conversation", "Stop"
+    return "claude-code capture hook", "Claude session", "SessionEnd"
+
+
+def _facts_block(
+    red: Reduced,
+    *,
+    sid: str,
+    segment: int,
+    event: str,
+    model: str | None,
+    client: str = "claude-code",
+    agent_model: str | None = None,
+) -> str:
     span = f"{(red.first_ts or '?')[:16]} to {(red.last_ts or '?')[:16]} UTC"
+    hook_label, session_label, quiet_event = _source(client)
+    if agent_model:
+        hook_label += f"; agent model: {agent_model}"
     head = [
-        "AUTO-CAPTURED session note (claude-code capture hook); "
+        f"AUTO-CAPTURED session note ({hook_label}); "
         + (f"summarised by {model}" if model else "NO summary (minimal note)")
         + "; not reviewed by the owner.",
-        f"- Claude session: {sid}"
-        + (f" (segment {segment}, {event})" if segment or event != "SessionEnd" else ""),
+        f"- {session_label}: {sid}"
+        + (f" (segment {segment}, {event})" if segment or event != quiet_event else ""),
         f"- Span: {span}; owner messages: {red.owner_messages}",
     ]
     rows = commit_rows(red, 25)
@@ -82,10 +113,21 @@ def compose(
     event: str,
     model: str,
     report: ScrubReport | None = None,
+    client: str = "claude-code",
+    agent_model: str | None = None,
 ) -> dict[str, Any]:
-    """notes / decisions / lessons (all scrubbed again: the summary is model output)."""
+    """notes / decisions / lessons (all scrubbed again: the summary is model output). ``client`` is
+    ``claude-code`` (default) or ``agy``; ``agent_model`` is the agent's model as the client reported it."""
     date = _date(red.last_ts, red.first_ts)
-    facts = _facts_block(red, sid=sid, segment=segment, event=event, model=model if summary else None)
+    facts = _facts_block(
+        red,
+        sid=sid,
+        segment=segment,
+        event=event,
+        model=model if summary else None,
+        client=client,
+        agent_model=agent_model_label(agent_model),
+    )
     if summary is None:
         tail = "The automatic summary was unavailable; only the facts above are recorded."
         notes = f"Session {date}\n\n{facts}\n\n{tail}"
@@ -98,7 +140,7 @@ def compose(
     for ls in summary.lessons:
         lb = (
             f'{ls["body"]}\n\nEvidence (verbatim from the session): "{ls["evidence"]}"\n'
-            f"Source: auto-captured from Claude session {sid[:8]}, {date}; unreviewed."
+            f"Source: auto-captured from {_source(client)[1]} {sid[:8]}, {date}; unreviewed."
         )
         lessons.append(
             {
@@ -122,12 +164,13 @@ def build_payload(
     segment: int,
     last_ts: str | None,
     request_id: str,
+    client: str = "claude-code",
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "project": slug,
         "request_id": request_id,
         "session_id": session_key(claude_sid, slug, segment),
-        "client": CLIENT_NAME,
+        "client": CLIENT_NAME_AGY if client == "agy" else CLIENT_NAME,
         "occurred_at": occurred_at(last_ts),
         "notes": composed["notes"],
     }
