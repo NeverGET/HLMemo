@@ -481,3 +481,4 @@ the D-282 rule (116 distinct pairs, 97 true):
 - The agy capture CHECKPOINT step (agy's summary of earlier context) passes the scrub but is model text, the same exposure as Claude's summary segment.
 - agy capture: the idle tail is written only when another agy hook runs or `--flush` is run; consider a scheduled flush.
 - The G7 gate passed for agy an hour before agy's self-update broke every tool (D-287): rerun G7 after a client update, or check the client's log for rejected tools.
+- The brief's fetch deadline is a fixed 6.5 s (`brief/config.py` FETCH_S, sized for Claude's 10 s hook). On 2026-11-26 it was hit both by Claude's session start and by an agy session (the card was cut short). agy's hook timeout is 30 s by default: consider an env override (`HLM_BRIEF_FETCH_S`, clamped, the wall clock following it) and measure prod read latency at session start first.
